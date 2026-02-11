@@ -14,22 +14,22 @@ La aplicación utiliza la infraestructura de **Cloudflare (R2 y D1)** para ofrec
 - **Integración con la Nube**: Utiliza **Cloudflare R2** para el almacenamiento de los archivos de drivers y la configuración del sistema de usuarios.
 - **Modo Portable**: Funciona directamente desde una unidad USB sin necesidad de instalación local. La configuración se almacena de forma cifrada en el propio dispositivo.
 - **Seguridad Robusta**:
-    - **Configuración Cifrada**: Las credenciales de la nube se guardan en un archivo `config.enc` cifrado con **AES-256**.
-    - **Inyección Segura**: Al iniciar por primera vez, consume un archivo `portable_config.json`, lo cifra y lo elimina para no dejar rastros de las credenciales en texto plano.
-    - **Verificación de Integridad**: Usa **HMAC** para asegurar que la configuración no ha sido alterada.
+- **Configuración Cifrada**: Las credenciales de la nube se guardan en un archivo `config.enc` cifrado con **AES-256**.
+- **Inyección Segura**: Al iniciar por primera vez, consume un archivo `portable_config.json`, lo cifra y lo elimina para no dejar rastros de las credenciales en texto plano.
+- **Verificación de Integridad**: Usa **HMAC** para asegurar que la configuración no ha sido alterada.
 - **Sistema Multi-Usuario con Roles**:
-    - **super_admin**: Control total, incluyendo la gestión de credenciales de la nube y la creación de otros usuarios.
-    - **admin**: Puede gestionar drivers (subir/eliminar) y ver el historial, pero no puede ver ni modificar las credenciales de la nube.
-    - **viewer**: Rol de solo lectura (aún en desarrollo).
+  - **super_admin**: Control total, incluyendo la gestión de credenciales de la nube y la creación de otros usuarios.
+  - **admin**: Puede gestionar drivers (subir/eliminar) y ver el historial, pero no puede ver ni modificar las credenciales de la nube.
+  - **viewer**: Rol de solo lectura (aún en desarrollo).
 - **Historial y Auditoría de Instalaciones**:
-    - Cada instalación (exitosa o fallida) se registra en una base de datos **Cloudflare D1** a través de una API (Worker).
-    - Permite editar registros para añadir notas o corregir tiempos.
-    - Log de auditoría detallado para acciones críticas (logins, subidas, eliminaciones, etc.).
+  - Cada instalación (exitosa o fallida) se registra en una base de datos **Cloudflare D1** a través de una API (Worker).
+  - Permite editar registros para añadir notas o corregir tiempos.
+  - Log de auditoría detallado para acciones críticas (logins, subidas, eliminaciones, etc.).
 - **Generación de Reportes**: Exporta el historial de instalaciones a archivos **Excel (.xlsx)** para reportes diarios o mensuales.
 - **Caché Local**: Guarda los drivers descargados en una caché local para agilizar futuras instalaciones.
 - **Interfaz Moderna**:
-    - Soporte para temas (claro y oscuro).
-    - Interfaz intuitiva organizada en pestañas.
+  - Soporte para temas (claro y oscuro).
+  - Interfaz intuitiva organizada en pestañas.
 
 ---
 
@@ -40,11 +40,11 @@ La aplicación utiliza la infraestructura de **Cloudflare (R2 y D1)** para ofrec
 - **Almacenamiento en la Nube**: Cloudflare R2 (compatible con S3)
 - **Base de Datos en la Nube**: Cloudflare D1 (a través de un Worker API)
 - **Comunicación Cloud**:
-    - `boto3`: Para interactuar con el almacenamiento R2.
-    - `requests`: Para comunicarse con la API del historial en Cloudflare Workers.
+  - `boto3`: Para interactuar con el almacenamiento R2.
+  - `requests`: Para comunicarse con la API del historial en Cloudflare Workers.
 - **Seguridad**:
-    - `cryptography`: Para el cifrado AES-256.
-    - `bcrypt`: Para el hashing seguro de contraseñas de usuario.
+  - `cryptography`: Para el cifrado AES-256.
+  - `bcrypt`: Para el hashing seguro de contraseñas de usuario.
 - **Reportes**: `openpyxl` (para la generación de archivos Excel).
 
 ---
@@ -53,9 +53,9 @@ La aplicación utiliza la infraestructura de **Cloudflare (R2 y D1)** para ofrec
 
 La aplicación está diseñada para ser **portable**. Sigue estos pasos para configurarla en una unidad USB:
 
-1.  **Clona o copia los archivos del proyecto** en la raíz de tu unidad USB.
+1. **Clona o copia los archivos del proyecto** en la raíz de tu unidad USB.
 
-2.  **Crea el archivo de configuración portable**: En la misma carpeta raíz, crea un archivo llamado `portable_config.json` con tus credenciales de Cloudflare.
+2. **Crea el archivo de configuración portable**: En la misma carpeta raíz, crea un archivo llamado `portable_config.json` con tus credenciales de Cloudflare.
 
     ```json
     {
@@ -67,14 +67,14 @@ La aplicación está diseñada para ser **portable**. Sigue estos pasos para con
     }
     ```
 
-3.  **Ejecuta la aplicación**: Inicia `main.py` o el ejecutable `DriverManager.exe`.
+3. **Ejecuta la aplicación**: Inicia `main.py` o el ejecutable `DriverManager.exe`.
 
     - **En el primer inicio**, la aplicación detectará `portable_config.json`.
     - Cifrará su contenido y lo guardará en una carpeta `config/` dentro del USB con el nombre `config.enc`.
     - Por seguridad, **eliminará automáticamente el archivo `portable_config.json`**.
     - Te guiará para crear el primer usuario **super_admin**.
 
-4.  **Inicios Posteriores**: La aplicación leerá directamente del archivo cifrado `config.enc`, manteniendo tus credenciales seguras.
+4. **Inicios Posteriores**: La aplicación leerá directamente del archivo cifrado `config.enc`, manteniendo tus credenciales seguras.
 
 ---
 
@@ -82,18 +82,18 @@ La aplicación está diseñada para ser **portable**. Sigue estos pasos para con
 
 La interfaz se divide en tres pestañas principales:
 
-### 1. 📦 Drivers Disponibles
-- Filtra los drivers por marca.
+1. 📦 Drivers Disponibles
+   - Filtra los drivers por marca.
 - Selecciona un driver para ver sus detalles (versión, tamaño, fecha).
-- **Descarga** el driver a tu equipo o **Descarga e Instala** directamente. La instalación intentará ejecutarse de forma silenciosa y, si no es posible, solicitará permisos de administrador.
+  - **Descarga** el driver a tu equipo o **Descarga e Instala** directamente. La instalación intentará ejecutarse de forma silenciosa y, si no es posible, solicitará permisos de administrador.
 
-### 2. 📊 Historial y Reportes
+2. 📊 Historial y Reportes
 - Visualiza un historial de todas las instalaciones realizadas.
 - Edita registros para añadir notas o corregir el tiempo de instalación.
-- Genera reportes en formato Excel del día actual o de un mes específico.
-- Consulta estadísticas de instalaciones.
+  - Genera reportes en formato Excel del día actual o de un mes específico.
+  - Consulta estadísticas de instalaciones.
 
-### 3. 🔐 Administración
+3. 🔐 Administración
 - **Inicio de Sesión**: Accede con tu usuario y contraseña. El panel se adaptará a tu rol.
 - **Gestión de Drivers (admin/super_admin)**: Sube nuevos drivers a la nube o elimina los existentes.
 - **Gestión de Usuarios (super_admin)**: Crea nuevos usuarios, desactívalos y gestiona roles.
@@ -115,4 +115,4 @@ La seguridad es un pilar fundamental de este proyecto, especialmente al manejar 
 
 ## 📄 Licencia
 
-Este proyecto se distribuye bajo la licencia MIT. Consulta el archivo `LICENSE` para más detalles.
+Este proyecto se distribuye bajo la licencia MIT. Consulta el archivo `LICENSE` para más detalles
