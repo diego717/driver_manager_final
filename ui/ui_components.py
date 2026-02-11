@@ -2,13 +2,22 @@
 Componentes de UI para Driver Manager
 """
 
+from pathlib import Path
+from datetime import datetime
+
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QListWidget, QLabel, QLineEdit, QComboBox, QTextEdit,
                              QListWidgetItem, QGroupBox, QStackedWidget, QDialog,
-                             QSpinBox, QDialogButtonBox)
+                             QSpinBox, QDialogButtonBox, QInputDialog, QMessageBox)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
-from datetime import datetime
+
+from core.logger import get_logger
+from ui.widgets.drop_zone_widget import DropZoneWidget
+from ui.dialogs.quick_upload_dialog import QuickUploadDialog
+
+
+logger = get_logger()
 
 
 class DriversTab(QWidget):
@@ -294,8 +303,6 @@ class HistoryTab(QWidget):
     
     def _delete_old_records(self):
         """Eliminar registros antiguos con autenticación"""
-        from PyQt6.QtWidgets import QInputDialog, QMessageBox
-        
         # Verificar autenticación
         if not self.parent.is_admin:
             QMessageBox.warning(self.parent, "Error", "Debes iniciar sesión como administrador primero")
@@ -335,7 +342,7 @@ class HistoryTab(QWidget):
 
 
 class AdminTab(QWidget):
-    """Tab de administración"""
+    """Tab de administración con Drag & Drop"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -343,6 +350,7 @@ class AdminTab(QWidget):
         self.init_ui()
     
     def init_ui(self):
+        """Inicializar interfaz"""
         layout = QVBoxLayout(self)
         
         # Panel de autenticación
@@ -380,6 +388,9 @@ class AdminTab(QWidget):
         
         # Configuración R2
         self._create_r2_config_section(admin_content_layout)
+        
+        # ===== NUEVA SECCIÓN: DRAG & DROP UPLOAD =====
+        self._create_drag_drop_upload_section(admin_content_layout)
         
         # Subir drivers
         self._create_upload_section(admin_content_layout)
@@ -436,6 +447,182 @@ class AdminTab(QWidget):
         self.admin_content.setVisible(False)
         layout.addWidget(self.admin_content)
         layout.addStretch()
+    
+    def _create_drag_drop_upload_section(self, layout):
+        """
+        NUEVA SECCIÓN: Crear sección de upload con drag & drop
+        """
+        upload_group = QGroupBox("☁️ Subir Nuevo Driver")
+        upload_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 2px solid #27AE60;
+                border-radius: 5px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+                color: #27AE60;
+            }
+        """)
+        upload_layout = QVBoxLayout()
+        
+        # Instrucciones
+        instructions = QLabel(
+            "💡 <b>Métodos para subir:</b><br>"
+            "• Arrastra un archivo .exe, .zip o .msi directamente a la zona de abajo<br>"
+            "• Haz clic en la zona para abrir el explorador de archivos"
+        )
+        instructions.setWordWrap(True)
+        instructions.setStyleSheet("""
+            QLabel {
+                background-color: #E8F8F5;
+                color: #117A65;
+                padding: 10px;
+                border-radius: 5px;
+                border: 1px solid #A9DFBF;
+            }
+        """)
+        upload_layout.addWidget(instructions)
+        
+        # Drop Zone Widget
+        self.drop_zone = DropZoneWidget(
+            parent=self,
+            accepted_extensions=['.exe', '.zip', '.msi']
+        )
+        self.drop_zone.file_dropped.connect(self.on_file_dropped)
+        upload_layout.addWidget(self.drop_zone)
+        
+        upload_group.setLayout(upload_layout)
+        layout.addWidget(upload_group)
+        layout.addSpacing(20)
+    
+    def on_file_dropped(self, file_path):
+        """
+        Manejador cuando se suelta/selecciona un archivo
+        
+        Args:
+            file_path (str): Ruta del archivo seleccionado
+        """
+        logger.operation_start("handle_dropped_file", file=file_path)
+        
+        # Verificar autenticación
+        if not self.parent.is_admin:
+            QMessageBox.warning(
+                self,
+                "Autenticación Requerida",
+                "Debes iniciar sesión como administrador para subir drivers."
+            )
+            logger.warning("Upload attempted without authentication")
+            logger.operation_end("handle_dropped_file", success=False, reason="not_authenticated")
+            return
+        
+        # Verificar permisos (admin o super_admin)
+        if not self.parent.user_manager or not self.parent.user_manager.current_user:
+            QMessageBox.warning(
+                self,
+                "Error",
+                "No se pudo verificar los permisos de usuario."
+            )
+            logger.operation_end("handle_dropped_file", success=False, reason="no_user_manager")
+            return
+        
+        user_role = self.parent.user_manager.current_user.get('role')
+        if user_role not in ['admin', 'super_admin']:
+            QMessageBox.warning(
+                self,
+                "Permisos Insuficientes",
+                "Solo usuarios admin o super_admin pueden subir drivers."
+            )
+            logger.security_event(
+                "unauthorized_upload_attempt",
+                self.parent.user_manager.current_user.get('username'),
+                False,
+                details={'file': file_path},
+                severity='WARNING'
+            )
+            logger.operation_end("handle_dropped_file", success=False, reason="insufficient_permissions")
+            return
+        
+        # Mostrar diálogo de upload
+        dialog = QuickUploadDialog(file_path, self)
+        
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            data = dialog.get_data()
+            
+            # Validar datos
+            if not data['version']:
+                QMessageBox.warning(
+                    self,
+                    "Error de Validación",
+                    "La versión es obligatoria."
+                )
+                logger.operation_end("handle_dropped_file", success=False, reason="missing_version")
+                return
+            
+            # Guardar info para el callback
+            self.parent.current_upload_info = {
+                'brand': data['brand'],
+                'version': data['version'],
+                'description': data['description'],
+                'file_path': file_path
+            }
+            
+            # Iniciar upload
+            logger.info(f"Starting upload: {data['brand']} v{data['version']}")
+            
+            try:
+                # Usar el download_manager existente
+                self.parent.download_manager.start_upload(
+                    file_path,
+                    data['brand'],
+                    data['version'],
+                    data['description']
+                )
+                
+                # Log de auditoría
+                if self.parent.user_manager and self.parent.user_manager.current_user:
+                    self.parent.user_manager._log_access(
+                        action="upload_driver_started",
+                        username=self.parent.user_manager.current_user.get('username'),
+                        success=True,
+                        details={
+                            'driver_brand': data['brand'],
+                            'driver_version': data['version'],
+                            'file_name': Path(file_path).name
+                        }
+                    )
+                
+                logger.operation_end("handle_dropped_file", success=True)
+                
+            except Exception as e:
+                logger.error(f"Error starting upload: {e}", exc_info=True)
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    f"Error al iniciar la subida:\n{str(e)}"
+                )
+                
+                # Log de auditoría de error
+                if self.parent.user_manager and self.parent.user_manager.current_user:
+                    self.parent.user_manager._log_access(
+                        action="upload_driver_failed",
+                        username=self.parent.user_manager.current_user.get('username'),
+                        success=False,
+                        details={
+                            'driver_brand': data['brand'],
+                            'driver_version': data['version'],
+                            'error': str(e)
+                        }
+                    )
+                
+                logger.operation_end("handle_dropped_file", success=False, reason=str(e))
+        else:
+            logger.info("Upload cancelled by user")
+            logger.operation_end("handle_dropped_file", success=False, reason="cancelled")
     
     def _create_r2_config_section(self, layout):
         """Crear sección de configuración R2"""
@@ -525,8 +712,6 @@ class AdminTab(QWidget):
     
     def _create_config_field(self, layout, label_text, input_attr, button_attr):
         """Crear campo de configuración con botón de visibilidad"""
-        from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton
-        
         field_layout = QHBoxLayout()
         field_layout.addWidget(QLabel(label_text))
         
@@ -546,8 +731,6 @@ class AdminTab(QWidget):
     
     def _create_upload_section(self, layout):
         """Crear sección de subida de drivers"""
-        from PyQt6.QtWidgets import QHBoxLayout, QLabel, QComboBox, QLineEdit, QPushButton
-        
         upload_label = QLabel("➕ Subir Nuevo Driver")
         upload_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         layout.addWidget(upload_label)
@@ -584,8 +767,6 @@ class AdminTab(QWidget):
     
     def _create_delete_section(self, layout):
         """Crear sección de eliminación de drivers"""
-        from PyQt6.QtWidgets import QListWidget, QPushButton
-        
         layout.addSpacing(20)
         delete_label = QLabel("🗑️ Eliminar Drivers")
         delete_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))

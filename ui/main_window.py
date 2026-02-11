@@ -586,11 +586,41 @@ class MainWindow(QMainWindow):
         self.event_handlers.on_download_error(error_msg)
     
     def on_upload_finished(self):
-        """Delegado al event handler"""
+    
+        from ui.dialogs.quick_upload_dialog import UploadSuccessDialog
+    
+        self.progress_bar.setVisible(False)
+        self.statusBar().showMessage("✅ Driver subido exitosamente", 5000)
+    
         upload_info = getattr(self, 'current_upload_info', {})
-        self.event_handlers.on_upload_finished(upload_info)
+    
+    # Mostrar diálogo de éxito
+        success_dialog = UploadSuccessDialog(upload_info, self)
+        success_dialog.exec()
+    
+    # Log de auditoría
+        if self.user_manager and self.user_manager.current_user:
+            self.user_manager._log_access(
+            action="upload_driver_success",
+            username=self.user_manager.current_user.get('username'),
+            success=True,
+            details={
+                'driver_brand': upload_info.get('brand'),
+                'driver_version': upload_info.get('version'),
+                'file_name': Path(upload_info.get('file_path', '')).name if upload_info.get('file_path') else 'N/A'
+            }
+        )
+    
+    # Limpiar upload info
         if hasattr(self, 'current_upload_info'):
             del self.current_upload_info
+    
+    # Refrescar lista de drivers
+        self.refresh_drivers_list()
+    
+    # Actualizar logs de auditoría si están visibles
+        if hasattr(self, 'history_tab') and hasattr(self.history_tab, 'audit_log_list'):
+            self.refresh_audit_logs()
 
     def on_upload_error(self, error_msg):
         """Delegado al event handler"""

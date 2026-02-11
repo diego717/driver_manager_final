@@ -1,7 +1,8 @@
-PyQt6
 boto3
 cryptography
 bcrypt
 openpyxl
 requests
 pyinstaller
+PyQt6>=6.4.0
+PyQt6-Charts>=6.4.0
