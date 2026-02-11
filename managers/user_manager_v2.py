@@ -423,6 +423,14 @@ class UserManagerV2:
                 self.logger.warning("Intento de crear usuario duplicado.", username=username)
                 raise ValidationError("El usuario ya existe.", details={'username': username})
 
+            # Asignar permisos según rol
+            if role == "super_admin":
+                permissions = ["all"]
+            elif role == "admin":
+                permissions = ["read", "write"]
+            else: # viewer y otros
+                permissions = ["read"]
+
             new_user = {
                 "username": username,
                 "password_hash": self._hash_password(password),
@@ -431,7 +439,7 @@ class UserManagerV2:
                 "created_by": created_by or self.current_user.get("username"),
                 "last_login": None,
                 "active": True,
-                "permissions": ["read", "write"] if role == "admin" else ["read"],
+                "permissions": permissions,
                 "email": kwargs.get("email"),
                 "full_name": kwargs.get("full_name")
             }

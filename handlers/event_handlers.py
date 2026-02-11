@@ -257,6 +257,7 @@ class EventHandlers:
         else:
             logger.security_event("admin_logout", "admin", True)
         
+        self.main.is_authenticated = False
         self.main.is_admin = False
         self.main.admin_tab.auth_status.setText("🔒 No autenticado")
         self.main.admin_tab.login_btn.setVisible(True)
@@ -267,6 +268,10 @@ class EventHandlers:
         if hasattr(self.main.admin_tab, 'user_mgmt_btn'):
             self.main.admin_tab.user_mgmt_btn.setVisible(False)
         
+        # Mostrar de nuevo el warning en HistoryTab si existe
+        if hasattr(self.main.history_tab, 'warning'):
+            self.main.history_tab.warning.setVisible(True)
+
         # Ocultar las credenciales de nuevo
         self.main.admin_tab.show_account_btn.setChecked(False)
         self.main.admin_tab.show_access_btn.setChecked(False)
