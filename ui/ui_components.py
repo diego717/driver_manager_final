@@ -239,8 +239,8 @@ class HistoryTab(QWidget):
         title.setStyleSheet("color: #D9534F;")
         management_layout.addWidget(title)
         
-        warning = QLabel("⚠️ Esta sección requiere autenticación de administrador")
-        warning.setStyleSheet("""
+        self.warning = QLabel("⚠️ Esta sección requiere autenticación de administrador")
+        self.warning.setStyleSheet("""
             QLabel {
                 background-color: #FCF8E3;
                 color: #8A6D3B;
@@ -249,10 +249,10 @@ class HistoryTab(QWidget):
                 border-radius: 4px;
             }
         """)
-        # Ocultar warning si está autenticado
+        # Ocultar warning si es admin
         if hasattr(self.parent, 'is_admin') and self.parent.is_admin:
-            warning.setVisible(False)
-        management_layout.addWidget(warning)
+            self.warning.setVisible(False)
+        management_layout.addWidget(self.warning)
         
         # Estadísticas con contraste mejorado
         stats_label = QLabel("📊 Estadísticas Actuales")

@@ -228,6 +228,7 @@ class MainWindow(QMainWindow):
         self.installer = DriverInstaller()
         self.history = InstallationHistory(self.config_manager)
         self.report_gen = ReportGenerator(self.history)
+        self.is_authenticated = False
         self.is_admin = False
         self.installation_start_time = None
         
@@ -749,6 +750,10 @@ class MainWindow(QMainWindow):
     
     def show_edit_installation_dialog(self):
         """Mostrar el diálogo para editar un registro de instalación."""
+        if not self.is_admin:
+            QMessageBox.warning(self, "Acceso Denegado", "No tienes permisos para editar registros de instalación.")
+            return
+
         selected_items = self.history_tab.history_list.selectedItems()
         if not selected_items:
             QMessageBox.warning(self, "Atención", "Seleccione un registro de la lista para editar.")
@@ -839,12 +844,18 @@ class MainWindow(QMainWindow):
                 severity='INFO'
             )
             
-            self.is_admin = True
+            self.is_authenticated = True
+            self.is_admin = user_role in ["admin", "super_admin"]
+
             self.admin_tab.auth_status.setText(f"🔓 {username} ({user_role})")
             self.admin_tab.login_btn.setVisible(False)
             self.admin_tab.logout_btn.setVisible(True)
             self.admin_tab.admin_content.setVisible(True)
             
+            # Actualizar visibilidad del warning en HistoryTab si existe
+            if hasattr(self.history_tab, 'warning'):
+                self.history_tab.warning.setVisible(not self.is_admin)
+
             # ========================================
             # LÓGICA DE PERMISOS POR ROL - CORREGIDA
             # ========================================
@@ -866,17 +877,17 @@ class MainWindow(QMainWindow):
                 # 3. Mostrar TODOS los botones de admin (subir, eliminar, etc)
                 for widget in self.admin_tab.findChildren(QPushButton):
                     # Mostrar botones de operaciones
-                    if widget.text() in ["📁 Seleccionar Archivo", "☁️ Subir a la Nube", "❌ Eliminar Seleccionado"]:
+                    if any(text in widget.text() for text in ["Seleccionar Archivo", "Subir a la Nube", "Eliminar Seleccionado"]):
                         widget.setVisible(True)
                         logger.debug(f"Botón visible para super_admin: {widget.text()}")
                     # También botones de R2
-                    if widget.text() in ["💾 Guardar Configuración R2", "🔌 Probar Conexión"]:
+                    if any(text in widget.text() for text in ["Guardar Configuración R2", "Probar Conexión"]):
                         widget.setVisible(True)
                         logger.debug(f"Botón R2 visible para super_admin: {widget.text()}")
                 
                 # 4. Mostrar campos de entrada para subir drivers
                 for widget in self.admin_tab.findChildren(QLineEdit):
-                    if widget.placeholderText() and "driver" in widget.placeholderText().lower():
+                    if widget.placeholderText() and any(text in widget.placeholderText().lower() for text in ["driver", "account", "key", "bucket"]):
                         widget.setVisible(True)
                         logger.debug(f"Campo visible: {widget.placeholderText()}")
                 
@@ -906,17 +917,19 @@ class MainWindow(QMainWindow):
                 
                 # 2. Mostrar botones de subir/eliminar drivers
                 for widget in self.admin_tab.findChildren(QPushButton):
-                    if widget.text() in ["📁 Seleccionar Archivo", "☁️ Subir a la Nube", "❌ Eliminar Seleccionado"]:
+                    if any(text in widget.text() for text in ["Seleccionar Archivo", "Subir a la Nube", "Eliminar Seleccionado"]):
                         widget.setVisible(True)
                         logger.debug(f"Botón visible para admin: {widget.text()}")
                     # OCULTAR botones de configurar R2
-                    if widget.text() in ["💾 Guardar Configuración R2", "🔌 Probar Conexión"]:
+                    if any(text in widget.text() for text in ["Guardar Configuración R2", "Probar Conexión"]):
                         widget.setVisible(False)
                 
                 # 3. Mostrar campos para subir drivers
                 for widget in self.admin_tab.findChildren(QLineEdit):
                     if widget.placeholderText() and "driver" in widget.placeholderText().lower():
                         widget.setVisible(True)
+                    if widget.placeholderText() and any(text in widget.placeholderText().lower() for text in ["account", "key", "bucket"]):
+                        widget.setVisible(False)
                 
                 # 4. NO cargar credenciales R2
                 logger.info("Admin NO tiene acceso a credenciales R2")
@@ -925,16 +938,18 @@ class MainWindow(QMainWindow):
                 logger.info(f"Configurando panel para viewer: {username}")
                 
                 # ❌ VIEWER: Solo lectura
-                # Ocultar TODO
+                # Ocultar secciones sensibles
                 for widget in self.admin_tab.findChildren(QGroupBox):
                     widget.setVisible(False)
                 
+                # Ocultar botones de edición de drivers y config R2
                 for widget in self.admin_tab.findChildren(QPushButton):
-                    if widget.text() in ["📁 Seleccionar Archivo", "☁️ Subir a la Nube", "❌ Eliminar Seleccionado"]:
+                    if any(text in widget.text() for text in ["Seleccionar Archivo", "Subir a la Nube", "Eliminar Seleccionado", "Guardar Configuración", "Probar Conexión"]):
                         widget.setVisible(False)
                 
+                # Ocultar campos de entrada sensibles
                 for widget in self.admin_tab.findChildren(QLineEdit):
-                    if widget.placeholderText() and "driver" in widget.placeholderText().lower():
+                    if widget.placeholderText() and any(text in widget.placeholderText().lower() for text in ["driver", "account", "key", "bucket"]):
                         widget.setVisible(False)
                 
                 logger.info("Viewer: solo lectura, sin acceso a panel admin")
