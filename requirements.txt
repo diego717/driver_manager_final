@@ -1,0 +1,7 @@
+PyQt6
+boto3
+cryptography
+bcrypt
+openpyxl
+requests
+pyinstaller

@@ -1,0 +1,229 @@
+"""
+Gestor de configuración para Driver Manager con Seguridad Avanzada y Soporte USB
+"""
+import sys
+import os
+import shutil
+import json
+from pathlib import Path
+from PyQt6.QtWidgets import QMessageBox, QGroupBox, QPushButton, QLineEdit, QLabel
+
+# --- IMPORTACIONES ACTUALIZADAS PARA LA NUEVA ESTRUCTURA ---
+# Ahora buscamos los managers en la carpeta 'managers'
+from managers.cloud_manager import CloudflareR2Manager
+# Security manager está en la misma carpeta 'core', usamos import relativo o directo
+from core.security_manager import SecurityManager
+# Los diálogos ahora están en ui.dialogs
+from ui.dialogs.master_password_dialog import show_master_password_dialog
+# Logger y exceptions están en 'core'
+from core.logger import get_logger
+from core.exceptions import (
+    handle_errors,
+    returns_result_tuple,
+    ConfigurationError,
+    SecurityError,
+    validate_not_empty
+)
+
+logger = get_logger()
+
+class ConfigManager:
+    def __init__(self, main_window):
+        self.main = main_window
+        
+        # --- 1. DETECCIÓN DE RUTA UNIFICADA (CRÍTICO PARA USB) ---
+        if getattr(sys, 'frozen', False):
+            # Si es .exe, usar la ruta del ejecutable
+            self.base_path = Path(sys.executable).parent
+        else:
+            # Si es script .py, subir un nivel porque estamos dentro de 'core/'
+            # self.base_path = Path(__file__).parent.parent 
+            # O mejor, usamos sys.argv[0] para asegurar la raíz del proyecto
+            self.base_path = Path(sys.argv[0]).parent
+            
+        # Definir rutas
+        self.config_dir = self.base_path / "config"
+        self.config_dir.mkdir(parents=True, exist_ok=True) 
+        
+        self.config_file = self.config_dir / "config.json"       
+        self.encrypted_config_file = self.config_dir / "config.enc" 
+        self.portable_json_path = self.base_path / "portable_config.json"
+        
+        # Componentes
+        self.security = SecurityManager() 
+        self.master_password = None
+        self._config_loaded = False
+        self._applying_portable = False
+
+    @handle_errors("load_config_data", reraise=False, default_return=None)
+    def load_config_data(self):
+        """Carga la configuración."""
+        logger.operation_start("load_config_data")
+        
+        # ESCENARIO A: PRIMERA VEZ (Con JSON Portable)
+        if self.portable_json_path.exists():
+            try:
+                with open(self.portable_json_path, 'r', encoding='utf-8') as f:
+                    portable_data = json.load(f)
+                
+                if portable_data.get('account_id'):
+                    logger.info("📂 Configuración portable detectada en USB.")
+                    self.master_password = "portable_auto_password_2024"
+                    self._config_loaded = True
+                    return portable_data
+            except Exception as e:
+                logger.error(f"Error leyendo JSON portable: {e}")
+
+        # ESCENARIO B: USO DIARIO (Desde Archivo Cifrado en USB)
+        if self.encrypted_config_file.exists():
+            passwords_to_try = ["portable_auto_password_2024"]
+            if self.master_password and self.master_password != "portable_auto_password_2024":
+                passwords_to_try.insert(0, self.master_password)
+            
+            for pwd in passwords_to_try:
+                try:
+                    config = self.security.decrypt_config_file(pwd, self.encrypted_config_file)
+                    if config:
+                        self.master_password = pwd
+                        self._config_loaded = True
+                        logger.info("✅ Configuración cargada desde 'config.enc' en USB.")
+                        return config
+                except Exception:
+                    continue
+            
+            logger.warning("No se pudo descifrar el archivo config.enc.")
+        return None
+
+    @handle_errors("save_config_data", reraise=False, default_return=False)
+    def save_config_data(self, config):
+        """Guarda la configuración cifrada en el USB."""
+        logger.operation_start("save_config_data")
+        
+        if not config: return False
+
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        
+        # DETERMINAR CONTRASEÑA DE CIFRADO
+        if getattr(self, '_applying_portable', False):
+            self.master_password = "portable_auto_password_2024"
+        else:
+            if not self.master_password:
+                password = show_master_password_dialog(self.main, is_first_time=True)
+                if not password: return False
+                self.master_password = password
+        
+        success = self.security.encrypt_config_file(config, self.master_password, self.encrypted_config_file)
+        
+        if success:
+            self._config_loaded = True
+            logger.info(f"✅ Guardado exitoso en: {self.encrypted_config_file}")
+            if self.config_file.exists():
+                try: self.config_file.unlink()
+                except: pass
+            return True
+        return False
+
+    @handle_errors("apply_portable_config", reraise=False)
+    def apply_portable_config(self, portable_config):
+        """Aplica la configuración, guarda y PROTEGE LA UI."""
+        logger.operation_start("apply_portable_config")
+        
+        self._applying_portable = True
+        success = self.save_config_data(portable_config)
+        self._applying_portable = False
+        
+        if not success:
+            logger.error("Fallo al guardar config portable.")
+        
+        self.init_cloud_connection()
+        
+        # ACTUALIZAR UI Y OCULTAR CREDENCIALES
+        if hasattr(self.main, 'admin_tab'):
+            self.main.is_admin = True
+            
+            try:
+                self.main.admin_tab.admin_account_id_input.setText(portable_config.get('account_id', ''))
+                self.main.admin_tab.admin_access_key_input.setText(portable_config.get('access_key_id', ''))
+                self.main.admin_tab.admin_secret_key_input.setText(portable_config.get('secret_access_key', ''))
+                self.main.admin_tab.admin_bucket_name_input.setText(portable_config.get('bucket_name', ''))
+                api = portable_config.get('api_url') or portable_config.get('history_api_url', '')
+                self.main.admin_tab.admin_history_api_url_input.setText(api)
+            except:
+                pass
+
+            # OCULTAR EL PANEL DE CREDENCIALES
+            for widget in self.main.admin_tab.findChildren(QGroupBox):
+                title = widget.title().lower()
+                if "cloudflare" in title or "credenciales" in title or "conexión" in title:
+                    widget.setVisible(False)
+                else:
+                    widget.setVisible(True)
+
+            # GESTIONAR BOTONES
+            for widget in self.main.admin_tab.findChildren(QPushButton):
+                text = widget.text().lower()
+                if "guardar" in text or "probar" in text or "conectar" in text:
+                    widget.setVisible(False)
+                elif any(k in text for k in ["seleccionar", "subir", "eliminar", "crear", "usuario"]):
+                    widget.setVisible(True)
+
+            self.main.admin_tab.auth_status.setText("🔓 Modo Portable (Seguro)")
+            self.main.admin_tab.login_btn.setVisible(False)
+            self.main.admin_tab.admin_content.setVisible(True)
+
+            # REACTIVAR GESTIÓN DE USUARIOS
+            if hasattr(self.main, 'user_manager') and self.main.user_manager:
+                self.main.user_manager.cloud_manager = self.main.cloud_manager
+                if hasattr(self.main.user_manager, 'sync_users'):
+                    self.main.user_manager.sync_users()
+                elif hasattr(self.main.admin_tab, 'refresh_users_list'):
+                    self.main.admin_tab.refresh_users_list()
+
+        self.main.statusBar().showMessage("✅ Configuración portable aplicada y protegida")
+        logger.operation_end("apply_portable_config", success=True)
+        return True
+    
+    @handle_errors("init_cloud_connection", reraise=False)
+    def init_cloud_connection(self):
+        """Inicializar conexión con Cloudflare R2"""
+        logger.operation_start("init_cloud_connection")
+        config = self.load_config_data()
+        
+        if config:
+            try:
+                self.main.cloud_manager = CloudflareR2Manager(
+                    account_id=config.get('account_id'),
+                    access_key_id=config.get('access_key_id'),
+                    secret_access_key=config.get('secret_access_key'),
+                    bucket_name=config.get('bucket_name')
+                )
+                
+                if hasattr(self.main, 'refresh_drivers_list'):
+                    self.main.refresh_drivers_list()
+                
+                if hasattr(self.main, 'user_manager') and self.main.user_manager:
+                    self.main.user_manager.cloud_manager = self.main.cloud_manager
+
+                self.main.statusBar().showMessage("✅ Conectado a Cloudflare R2")
+                logger.info("Conexión a Cloudflare R2 establecida.")
+                
+            except Exception as e:
+                logger.error(f"Error de conexión R2: {e}", exc_info=True)
+                self.main.statusBar().showMessage("❌ Error conectando a la nube")
+
+    # Mantenemos el método test_cloud_connection tal cual estaba
+    @returns_result_tuple("test_cloud_connection")
+    def test_cloud_connection(self, account_id, access_key_id, secret_access_key, bucket_name):
+        logger.operation_start("test_cloud_connection", bucket=bucket_name)
+        try:
+            test_manager = CloudflareR2Manager(
+                account_id=account_id,
+                access_key_id=access_key_id,
+                secret_access_key=secret_access_key,
+                bucket_name=bucket_name
+            )
+            test_manager.list_drivers()
+            logger.operation_end("test_cloud_connection", success=True)
+            return True, "✅ Conexión exitosa a Cloudflare R2"
+        except Exception as e:
+            return False, str(e)

@@ -1,0 +1,41 @@
+# Archivos de configuración sensibles y artefactos de la aplicación
+# ¡NUNCA subas estos archivos a un repositorio público!
+portable_config.json
+config/
+*.enc
+
+# Entornos virtuales de Python
+venv/
+.venv/
+env/
+ENV/
+
+# Archivos de caché y compilados de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Artefactos de empaquetado y distribución (PyInstaller, etc.)
+build/
+dist/
+*.egg-info/
+*.spec
+
+# Archivos de configuración de IDEs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Archivos de log
+*.log
+logs/
+
+# Reportes de cobertura de código
+htmlcov/
+.coverage
+.coverage.*
