@@ -2,6 +2,8 @@
 Módulo de Historial de Instalaciones - Versión Cloud
 Gestiona el historial de instalaciones a través de una API de Cloudflare Worker.
 """
+import os
+import sys
 import platform
 from datetime import datetime
 
@@ -33,6 +35,14 @@ class InstallationHistory:
         Obtiene la URL de la API. 
         Si falla el ConfigManager, usa la URL directa por seguridad.
         """
+        # --- MEJORA DE SEGURIDAD ---
+        # Detectar si estamos en un entorno de testing para evitar el fallback a producción.
+        # Si se está ejecutando un test, solo se devolverá una URL si está explícitamente
+        # configurada, de lo contrario, devolverá una cadena vacía para que la petición falle.
+        if "PYTEST_CURRENT_TEST" in os.environ or "unittest" in sys.modules:
+            config = self.config_manager.load_config_data()
+            return config.get('api_url', '').rstrip('/') if config else ''
+
         # 1. Intentar por ConfigManager
         try:
             config = self.config_manager.load_config_data()
