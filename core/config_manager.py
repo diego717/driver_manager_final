@@ -68,6 +68,10 @@ class ConfigManager:
                 
                 if portable_data.get('account_id'):
                     logger.info("📂 Configuración portable detectada en USB.")
+                    # 🛡️ Sentinel: ADVERTENCIA - Contraseña maestra estática para modo portable.
+                    # Esto permite la portabilidad entre dispositivos pero utiliza una clave conocida
+                    # si el código fuente es accesible. Se recomienda implementar un sistema de
+                    # contraseña única por dispositivo o solicitada al usuario en futuras versiones.
                     self.master_password = "portable_auto_password_2024"
                     self._config_loaded = True
                     return portable_data
@@ -76,6 +80,7 @@ class ConfigManager:
 
         # ESCENARIO B: USO DIARIO (Desde Archivo Cifrado en USB)
         if self.encrypted_config_file.exists():
+            # 🛡️ Sentinel: Ver comentario en ESCENARIO A sobre esta contraseña estática.
             passwords_to_try = ["portable_auto_password_2024"]
             if self.master_password and self.master_password != "portable_auto_password_2024":
                 passwords_to_try.insert(0, self.master_password)

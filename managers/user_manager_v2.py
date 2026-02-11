@@ -5,6 +5,7 @@ Incluye migración automática del sistema legacy
 
 import json
 import hashlib
+import hmac
 import secrets
 import bcrypt
 import re
@@ -227,7 +228,8 @@ class UserManagerV2:
                                      password.encode('utf-8'),
                                      salt.encode('utf-8'),
                                      100000)
-            return key.hex() == stored_key
+            # 🛡️ Sentinel: Usar hmac.compare_digest para evitar ataques de tiempo
+            return hmac.compare_digest(key.hex(), stored_key)
         except:
             return False
     
