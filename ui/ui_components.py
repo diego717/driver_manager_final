@@ -36,10 +36,13 @@ class DriversTab(QWidget):
         filter_layout.addWidget(QLabel("Marca:"))
         self.brand_filter = QComboBox()
         self.brand_filter.addItems(["Todas", "Magicard", "Zebra", "Entrust Sigma"])
+        self.brand_filter.setToolTip("Filtrar la lista de controladores por fabricante")
+        self.brand_filter.setAccessibleName("Filtro de marca")
         filter_layout.addWidget(self.brand_filter)
         filter_layout.addStretch()
         
         refresh_btn = QPushButton("🔄 Actualizar Lista")
+        refresh_btn.setToolTip("Actualizar la lista de controladores desde la nube")
         filter_layout.addWidget(refresh_btn)
         layout.addLayout(filter_layout)
         
@@ -61,10 +64,12 @@ class DriversTab(QWidget):
         buttons_layout = QHBoxLayout()
         self.download_btn = QPushButton("⬇️ Descargar")
         self.download_btn.setEnabled(False)
+        self.download_btn.setToolTip("Descargar el controlador seleccionado a la caché local")
         buttons_layout.addWidget(self.download_btn)
         
         self.install_btn = QPushButton("🚀 Descargar e Instalar")
         self.install_btn.setEnabled(False)
+        self.install_btn.setToolTip("Descargar y ejecutar el instalador del controlador seleccionado")
         buttons_layout.addWidget(self.install_btn)
         
         buttons_layout.addStretch()
@@ -97,6 +102,7 @@ class HistoryTab(QWidget):
         view_layout.addStretch()
         
         refresh_btn = QPushButton("🔄 Actualizar")
+        refresh_btn.setToolTip("Sincronizar el historial con la base de datos en la nube")
         view_layout.addWidget(refresh_btn)
         layout.addLayout(view_layout)
         
