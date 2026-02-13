@@ -288,6 +288,8 @@ class MainWindow(QMainWindow):
         """Configurar conexiones de señales"""
         # Drivers tab
         self.drivers_tab.brand_filter.currentTextChanged.connect(self.filter_drivers)
+        self.drivers_tab.search_input.textChanged.connect(self.filter_drivers)
+        self.drivers_tab.refresh_btn.clicked.connect(self.refresh_drivers_list)
         self.drivers_tab.drivers_list.itemDoubleClicked.connect(self.event_handlers.on_driver_double_click)
         self.drivers_tab.drivers_list.itemSelectionChanged.connect(self.event_handlers.on_driver_selected)
         self.drivers_tab.download_btn.clicked.connect(self.event_handlers.download_driver)
@@ -454,15 +456,22 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error al cargar drivers:\n{str(e)}")
     
     def filter_drivers(self):
-        """Filtrar drivers por marca"""
+        """Filtrar drivers por marca y búsqueda"""
         self.drivers_tab.drivers_list.clear()
         brand_filter = self.drivers_tab.brand_filter.currentText()
+        search_text = self.drivers_tab.search_input.text().lower()
         
         if not hasattr(self, 'all_drivers'):
             return
         
         for driver in self.all_drivers:
-            if brand_filter == "Todas" or driver['brand'] == brand_filter:
+            brand_match = brand_filter == "Todas" or driver['brand'] == brand_filter
+
+            # Buscar en marca, versión y descripción
+            search_content = f"{driver['brand']} {driver['version']} {driver.get('description', '')}".lower()
+            search_match = search_text in search_content
+
+            if brand_match and search_match:
                 item = QListWidgetItem(f"{driver['brand']} - v{driver['version']}")
                 item.setData(Qt.ItemDataRole.UserRole, driver)
                 self.drivers_tab.drivers_list.addItem(item)

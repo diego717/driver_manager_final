@@ -31,19 +31,29 @@ class DriversTab(QWidget):
     def init_ui(self):
         layout = QVBoxLayout(self)
         
-        # Filtro por marca
+        # Filtro por marca y búsqueda
         filter_layout = QHBoxLayout()
+
+        # Búsqueda
+        filter_layout.addWidget(QLabel("🔍 Buscar:"))
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Nombre o versión...")
+        self.search_input.setToolTip("Buscar por nombre del controlador o versión")
+        self.search_input.setAccessibleName("Campo de búsqueda de controladores")
+        self.search_input.setClearButtonEnabled(True)
+        filter_layout.addWidget(self.search_input)
+
         filter_layout.addWidget(QLabel("Marca:"))
         self.brand_filter = QComboBox()
         self.brand_filter.addItems(["Todas", "Magicard", "Zebra", "Entrust Sigma"])
         self.brand_filter.setToolTip("Filtrar la lista de controladores por fabricante")
         self.brand_filter.setAccessibleName("Filtro de marca")
         filter_layout.addWidget(self.brand_filter)
-        filter_layout.addStretch()
         
-        refresh_btn = QPushButton("🔄 Actualizar Lista")
-        refresh_btn.setToolTip("Actualizar la lista de controladores desde la nube")
-        filter_layout.addWidget(refresh_btn)
+        self.refresh_btn = QPushButton("🔄 Actualizar Lista")
+        self.refresh_btn.setToolTip("Actualizar la lista de controladores desde la nube")
+        self.refresh_btn.setAccessibleName("Botón actualizar lista")
+        filter_layout.addWidget(self.refresh_btn)
         layout.addLayout(filter_layout)
         
         # Lista de drivers
@@ -730,6 +740,7 @@ class AdminTab(QWidget):
         show_btn = QPushButton("👁️")
         show_btn.setMaximumWidth(40)
         show_btn.setCheckable(True)
+        show_btn.setAccessibleName(f"Mostrar {label_text}")
         setattr(self, button_attr, show_btn)
         field_layout.addWidget(show_btn)
         
