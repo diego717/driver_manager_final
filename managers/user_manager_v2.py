@@ -371,20 +371,24 @@ class UserManagerV2:
         users_data = self._load_users()
         if not users_data or not users_data.get("users"):
             self.logger.security_event("login_failed", username, False, {'reason': 'No users database'})
+            self._log_access("login_failed", username, False, {'reason': 'No users database'})
             raise ConfigurationError("No hay base de datos de usuarios.")
         
         if username not in users_data["users"]:
             self.logger.security_event("login_failed", username, False, {'reason': 'User not found'})
+            self._log_access("login_failed", username, False, {'reason': 'User not found'})
             raise AuthenticationError("Usuario no encontrado.", details={'username': username})
         
         user = users_data["users"][username]
         
         if not user.get("active", True):
             self.logger.security_event("login_failed", username, False, {'reason': 'User inactive'})
+            self._log_access("login_failed", username, False, {'reason': 'User inactive'})
             raise AuthenticationError("Usuario inactivo.", details={'username': username})
         
         if not self._verify_password(password, user["password_hash"]):
             self.logger.security_event("login_failed", username, False, {'reason': 'Wrong password'})
+            self._log_access("login_failed", username, False, {'reason': 'Wrong password'})
             raise AuthenticationError("Contraseña incorrecta.", details={'username': username})
         
         # Actualizar último login
@@ -394,6 +398,7 @@ class UserManagerV2:
         
         self.current_user = user
         self.logger.security_event("login_success", username, True, {'role': user.get('role')})
+        self._log_access("login_success", username, True, {'role': user.get('role')})
         self.logger.operation_end("authenticate", success=True)
         return True, "Login exitoso."
     
@@ -449,6 +454,8 @@ class UserManagerV2:
 
             self.logger.security_event("user_created", self.current_user.get("username"),
                                        True, {'new_user': username, 'role': role})
+            self._log_access("user_created", self.current_user.get("username"),
+                                       True, {'new_user': username, 'role': role})
             self.logger.operation_end("create_user", success=True)
             return True, "Usuario creado exitosamente."
 
@@ -489,6 +496,7 @@ class UserManagerV2:
         self._save_users(users_data)
         
         self.logger.security_event("password_changed", username, True)
+        self._log_access("password_changed", username, True)
         self.logger.operation_end("change_password", success=True)
         return True, "Contraseña cambiada exitosamente."
             
@@ -542,6 +550,8 @@ class UserManagerV2:
         self._save_users(users_data)
         
         self.logger.security_event("user_deactivated", self.current_user.get("username"),
+                                   True, {'deactivated_user': username})
+        self._log_access("user_deactivated", self.current_user.get("username"),
                                    True, {'deactivated_user': username})
         self.logger.operation_end("deactivate_user", success=True)
         return True, "Usuario desactivado."

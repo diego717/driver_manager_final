@@ -190,6 +190,21 @@ class InstallationHistory:
             logger.error(f"Fallo al actualizar la instalación {record_id} en la nube: {e}")
             return False
 
+    def delete_installation(self, record_id):
+        """
+        Eliminar un registro de instalación por su ID vía API.
+        """
+        logger.operation_start("delete_installation_cloud", record_id=record_id)
+        
+        try:
+            # Enviamos la petición DELETE al Worker
+            self._make_request('delete', f'installations/{record_id}')
+            logger.operation_end("delete_installation_cloud", success=True)
+            return True
+        except ConnectionError as e:
+            logger.error(f"Fallo al eliminar la instalación {record_id} en la nube: {e}")
+            return False
+
     # --- Métodos que ya no aplican o necesitan un endpoint específico en el Worker ---
 
     def get_client_history(self, client_name):

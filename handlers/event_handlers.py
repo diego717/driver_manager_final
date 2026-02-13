@@ -312,6 +312,12 @@ class EventHandlers:
                     details={'role': current_role},
                     severity='WARNING'
                 )
+                self.main.user_manager._log_access(
+                    action="r2_config_modification_denied",
+                    username=current_username,
+                    success=False,
+                    details={'role': current_role}
+                )
                 QMessageBox.warning(
                     self.main,
                     "Permisos Insuficientes",
@@ -354,6 +360,15 @@ class EventHandlers:
                         'account_id_last4': config.get('account_id', '')[-4:]
                     },
                     severity='WARNING'
+                )
+                self.main.user_manager._log_access(
+                    action="r2_config_modified",
+                    username=self.main.user_manager.current_user.get('username'),
+                    success=True,
+                    details={
+                        'bucket': config.get('bucket_name'),
+                        'account_id_last4': config.get('account_id', '')[-4:]
+                    }
                 )
             
             QMessageBox.information(
@@ -546,9 +561,22 @@ class EventHandlers:
                 shutil.rmtree(self.main.cache_dir)
                 self.main.cache_dir.mkdir(parents=True, exist_ok=True)
                 QMessageBox.information(self.main, "Éxito", "Caché limpiado correctamente")
+                if self.main.user_manager and self.main.user_manager.current_user:
+                    self.main.user_manager._log_access(
+                        action="clear_cache_success",
+                        username=self.main.user_manager.current_user.get('username'),
+                        success=True
+                    )
             except Exception as e:
                 logger.error(f"Error limpiando caché: {e}", exc_info=True)
                 QMessageBox.critical(self.main, "Error", f"Error al limpiar caché:\n{str(e)}")
+                if self.main.user_manager and self.main.user_manager.current_user:
+                    self.main.user_manager._log_access(
+                        action="clear_cache_failed",
+                        username=self.main.user_manager.current_user.get('username'),
+                        success=False,
+                        details={'error': str(e)}
+                    )
     
     def on_upload_finished(self, upload_info):
         """Callback cuando termina la subida"""

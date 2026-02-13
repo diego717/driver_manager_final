@@ -1,5 +1,7 @@
 # 🖨️ Driver Manager - Gestor de Controladores para Impresoras de Tarjetas
 
+[![Tests](https://github.com/diego717/driver_manager_final/actions/workflows/tests.yml/badge.svg)](https://github.com/diego717/driver_manager_final/actions/workflows/tests.yml)
+
 **Driver Manager** es una aplicación de escritorio desarrollada en Python y PyQt6, diseñada para centralizar, gestionar y auditar la instalación de controladores para impresoras de tarjetas de identificación (como Magicard, Zebra, Entrust, etc.).
 
 La aplicación utiliza la infraestructura de **Cloudflare (R2 y D1)** para ofrecer una solución portable, segura y multi-usuario, ideal para técnicos de soporte que trabajan en diferentes equipos.

@@ -1,0 +1,19 @@
+﻿{
+  "name": "driver-manager-db",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker API for Driver Manager with D1 database",
+  "main": "worker.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "test:worker": "node --test tests_js/*.test.mjs",
+    "d1:migrate": "wrangler d1 migrations apply driver-manager-db",
+    "d1:studio": "wrangler d1 execute driver-manager-db --local --command=\"SELECT 1;\""
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

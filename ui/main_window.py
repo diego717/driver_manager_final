@@ -296,9 +296,17 @@ class MainWindow(QMainWindow):
         # History tab
         self.history_tab.history_view_combo.currentTextChanged.connect(self.on_history_view_changed)
         self.history_tab.history_list.currentItemChanged.connect(
-            lambda item: self.history_tab.edit_button.setEnabled(item is not None)
+            lambda item: self.history_tab.edit_button.setEnabled(item is not None and self.is_admin)
         )
         self.history_tab.edit_button.clicked.connect(self.show_edit_installation_dialog)
+
+        # Conexiones para la pestaña de gestion de registros
+        self.history_tab.management_history_list.currentItemChanged.connect(
+            lambda item: self.history_tab.delete_selected_btn.setEnabled(
+                item is not None and self.user_manager and self.user_manager.is_super_admin()
+            )
+        )
+        self.history_tab.delete_selected_btn.clicked.connect(self.delete_selected_history_record)
         
         # Conectar botón actualizar del historial
         for widget in self.history_tab.findChildren(QPushButton):
@@ -307,7 +315,7 @@ class MainWindow(QMainWindow):
         
         # Admin tab
         self.admin_tab.login_btn.clicked.connect(self.show_login_dialog)
-        self.admin_tab.logout_btn.clicked.connect(self.event_handlers.admin_logout)
+        self.admin_tab.logout_btn.clicked.connect(self.on_admin_logout)
         
         # Conectar botones de visibilidad en admin tab
         self.admin_tab.show_account_btn.clicked.connect(
@@ -336,10 +344,6 @@ class MainWindow(QMainWindow):
                 widget.clicked.connect(self.event_handlers.save_r2_config)
             elif "Probar Conexión" in widget.text():
                 widget.clicked.connect(self.test_r2_connection)
-            elif "📁 Seleccionar Archivo" in widget.text():
-                widget.clicked.connect(self.select_driver_file)
-            elif "☁️ Subir a la Nube" in widget.text():
-                widget.clicked.connect(self.upload_driver)
             elif "❌ Eliminar Seleccionado" in widget.text():
                 widget.clicked.connect(self.delete_driver)
             elif "Gestionar Usuarios" in widget.text():
@@ -348,6 +352,13 @@ class MainWindow(QMainWindow):
                 widget.clicked.connect(self.event_handlers.change_admin_password)
             elif "Limpiar Caché" in widget.text():
                 widget.clicked.connect(self.event_handlers.clear_cache)
+        
+        # Conectar botones de subida en DriversTab
+        for widget in self.drivers_tab.findChildren(QPushButton):
+            if "📁 Seleccionar Archivo" in widget.text():
+                widget.clicked.connect(self.select_driver_file)
+            elif "☁️ Subir a la Nube" in widget.text():
+                widget.clicked.connect(self.upload_driver)
         
         # Conectar selector de tema
         if hasattr(self.admin_tab, 'theme_combo'):
@@ -373,7 +384,6 @@ class MainWindow(QMainWindow):
         """Inicializar conexión con Cloudflare R2 y D1 History"""
         config = self.load_config_data()
         
-        # EL ERROR ESTABA AQUÍ: 'if config' debe estar dentro de la función (con 8 espacios)
         if config:
             # 1. Conexión a R2 (Drivers y Usuarios)
             self.cloud_manager = CloudflareR2Manager(
@@ -460,9 +470,10 @@ class MainWindow(QMainWindow):
         }
         self.history_tab.history_stack.setCurrentIndex(views.get(view_name, 0))
         
-        # Actualizar estadísticas si se cambia a gestión de registros
+        # Actualizar vistas si se cambia a gestión de registros
         if view_name == "🗑️ Gestión de Registros":
             self._update_management_stats()
+            self.refresh_history_view()
     
     def refresh_history_view(self):
         """Actualizar vista actual del historial"""
@@ -523,6 +534,21 @@ class MainWindow(QMainWindow):
 • Última actualización: {datetime.now().strftime('%d/%m/%Y %H:%M')}"""
             
             self.history_tab.mgmt_stats_display.setText(stats_text)
+
+            # Actualizar la lista de registros en la pestaña de gestión
+            self.history_tab.management_history_list.clear()
+            for inst in all_installations:
+                timestamp = datetime.fromisoformat(inst['timestamp'])
+                date_str = timestamp.strftime('%d/%m/%Y %H:%M')
+                status_icon = "✓" if inst['status'] == 'success' else "✗"
+                
+                text = f"{status_icon} {date_str} - {inst['driver_brand']} v{inst['driver_version']}"
+                if inst.get('client_name'):
+                    text += f" ({inst['client_name']})"
+                
+                item = QListWidgetItem(text)
+                item.setData(Qt.ItemDataRole.UserRole, inst['id']) # Guardamos el ID
+                self.history_tab.management_history_list.addItem(item)
             
             # Actualizar logs de auditoría
             self.refresh_audit_logs()
@@ -530,7 +556,59 @@ class MainWindow(QMainWindow):
         except Exception as e:
             error_text = f"❌ Error al cargar estadísticas: {str(e)}"
             self.history_tab.mgmt_stats_display.setText(error_text)
-    
+
+    def delete_selected_history_record(self):
+        """Eliminar un registro de historial seleccionado."""
+        if not self.user_manager or not self.user_manager.is_super_admin():
+            QMessageBox.warning(self, "Acceso Denegado", "Solo un Super Administrador puede eliminar registros.")
+            return
+
+        selected_items = self.history_tab.management_history_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "Atención", "Seleccione un registro de la lista para eliminar.")
+            return
+
+        item = selected_items[0]
+        record_id = item.data(Qt.ItemDataRole.UserRole)
+        record_text = item.text()
+
+        reply = QMessageBox.question(
+            self,
+            "Confirmar Eliminación",
+            f"¿Está seguro que desea eliminar el siguiente registro?\n\n{record_text}\n\n<b>Esta acción es irreversible.</b>",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                success = self.history.delete_installation(record_id)
+                if success:
+                    QMessageBox.information(self, "Éxito", "El registro ha sido eliminado.")
+                    
+                    # Log de auditoría
+                    self.user_manager._log_access(
+                        action="delete_history_record_success",
+                        username=self.user_manager.current_user.get('username'),
+                        success=True,
+                        details={'record_id': record_id, 'record_text': record_text}
+                    )
+                    # Actualizar vistas
+                    self._update_management_stats()
+                    self.refresh_history_view()
+                else:
+                    raise Exception("La API no confirmó la eliminación.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"No se pudo eliminar el registro:\n{e}")
+                logger.error(f"Error deleting history record {record_id}: {e}", exc_info=True)
+                # Log de auditoría de fallo
+                self.user_manager._log_access(
+                    action="delete_history_record_failed",
+                    username=self.user_manager.current_user.get('username'),
+                    success=False,
+                    details={'record_id': record_id, 'error': str(e)}
+                )
+
     def refresh_audit_logs(self):
         """Actualizar la lista de logs de auditoría"""
         self.history_tab.audit_log_list.clear()
@@ -639,6 +717,14 @@ class MainWindow(QMainWindow):
             self.admin_tab.admin_bucket_name_input.text()
         )
         
+        if self.user_manager and self.user_manager.current_user:
+            self.user_manager._log_access(
+                action="test_r2_connection",
+                username=self.user_manager.current_user.get('username'),
+                success=success,
+                details={'message': message}
+            )
+        
         if success:
             QMessageBox.information(self, "Conexión", message)
         else:
@@ -658,7 +744,7 @@ class MainWindow(QMainWindow):
         
         if file_path:
             self.selected_file_path = file_path
-            self.admin_tab.selected_file_label.setText(Path(file_path).name)
+            self.drivers_tab.selected_file_label.setText(Path(file_path).name)
     
     def upload_driver(self):
         """Subir driver"""
@@ -670,9 +756,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "Seleccione un archivo primero")
             return
         
-        brand = self.admin_tab.upload_brand.currentText()
-        version = self.admin_tab.upload_version.text()
-        description = self.admin_tab.upload_description.text()
+        brand = self.drivers_tab.upload_brand.currentText()
+        version = self.drivers_tab.upload_version.text()
+        description = self.drivers_tab.upload_description.text()
         
         if not version:
             QMessageBox.warning(self, "Error", "Ingrese la versión del driver")
@@ -847,6 +933,9 @@ class MainWindow(QMainWindow):
             self.is_authenticated = True
             self.is_admin = user_role in ["admin", "super_admin"]
 
+            # Mostrar sección de subida en DriversTab si es admin
+            self.drivers_tab.toggle_upload_section(self.is_admin)
+
             self.admin_tab.auth_status.setText(f"🔓 {username} ({user_role})")
             self.admin_tab.login_btn.setVisible(False)
             self.admin_tab.logout_btn.setVisible(True)
@@ -915,11 +1004,10 @@ class MainWindow(QMainWindow):
                     else:
                         widget.setVisible(True)
                 
-                # 2. Mostrar botones de subir/eliminar drivers
+                # 2. Mostrar botones de eliminar drivers
                 for widget in self.admin_tab.findChildren(QPushButton):
-                    if any(text in widget.text() for text in ["Seleccionar Archivo", "Subir a la Nube", "Eliminar Seleccionado"]):
+                    if "Eliminar Seleccionado" in widget.text():
                         widget.setVisible(True)
-                        logger.debug(f"Botón visible para admin: {widget.text()}")
                     # OCULTAR botones de configurar R2
                     if any(text in widget.text() for text in ["Guardar Configuración R2", "Probar Conexión"]):
                         widget.setVisible(False)
@@ -944,7 +1032,7 @@ class MainWindow(QMainWindow):
                 
                 # Ocultar botones de edición de drivers y config R2
                 for widget in self.admin_tab.findChildren(QPushButton):
-                    if any(text in widget.text() for text in ["Seleccionar Archivo", "Subir a la Nube", "Eliminar Seleccionado", "Guardar Configuración", "Probar Conexión"]):
+                    if any(text in widget.text() for text in ["Eliminar Seleccionado", "Guardar Configuración", "Probar Conexión"]):
                         widget.setVisible(False)
                 
                 # Ocultar campos de entrada sensibles
@@ -966,6 +1054,11 @@ class MainWindow(QMainWindow):
         else:
             logger.info("Login cancelado por usuario")
             logger.operation_end("show_login_dialog", success=False, reason="cancelled")
+
+    def on_admin_logout(self):
+        """Manejar cierre de sesión y actualizar UI"""
+        self.event_handlers.admin_logout()
+        self.drivers_tab.toggle_upload_section(False)
     
     def show_user_management(self):
         """Mostrar diálogo de gestión de usuarios"""
