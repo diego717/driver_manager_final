@@ -437,6 +437,24 @@ class MainWindow(QMainWindow):
         try:
             drivers = self.cloud_manager.list_drivers()
             self.all_drivers = drivers
+
+            # Actualizar dinámicamente el filtro de marcas
+            current_brand = self.drivers_tab.brand_filter.currentText()
+            brands = sorted(list(set(d['brand'] for d in drivers if 'brand' in d)))
+
+            self.drivers_tab.brand_filter.blockSignals(True)
+            self.drivers_tab.brand_filter.clear()
+            self.drivers_tab.brand_filter.addItem("Todas")
+            self.drivers_tab.brand_filter.addItems(brands)
+
+            # Intentar restaurar la selección previa
+            index = self.drivers_tab.brand_filter.findText(current_brand)
+            if index >= 0:
+                self.drivers_tab.brand_filter.setCurrentIndex(index)
+            else:
+                self.drivers_tab.brand_filter.setCurrentIndex(0)
+            self.drivers_tab.brand_filter.blockSignals(False)
+
             self.filter_drivers()
             self.statusBar().showMessage(f"✅ {len(drivers)} drivers encontrados")
             
