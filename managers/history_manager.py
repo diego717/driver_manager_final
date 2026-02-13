@@ -52,6 +52,8 @@ class InstallationHistory:
             pass
 
         # 2. BYPASS DIRECTO (Si el de arriba falla, este salva el reporte)
+        # 🛡️ Sentinel: ADVERTENCIA - URL de fallback hardcodeada.
+        # Podría filtrar datos de instalación a un servidor externo si no se configura una URL propia.
         return "https://driver-manager-db.diegosasen.workers.dev"
 
     def _make_request(self, method, endpoint, params=None, **kwargs):

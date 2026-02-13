@@ -200,6 +200,8 @@ class DriverInstaller:
             return False
         
         # Buscar en registro de Windows
+        # 🛡️ Sentinel: Aunque subprocess.run con lista es seguro contra shell injection,
+        # driver_name debería ser validado para evitar el paso de flags inesperados a 'reg'.
         result = subprocess.run(
             ['reg', 'query', 'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall', '/s', '/f', driver_name],
             capture_output=True,
