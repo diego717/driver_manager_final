@@ -323,8 +323,9 @@ class DriverInstaller:
             validated_path = self._validate_driver_path(driver_path)
         except ValidationError as e:
             logger.error(f"Driver path validation failed: {e.message}")
+            message = "El archivo del driver no existe o no es válido" if e.message == "Driver file does not exist" else "Validación de seguridad fallida"
             raise InstallationError(
-                "Validación de seguridad fallida",
+                message,
                 details=e.details,
                 original_error=e
             )
@@ -371,8 +372,7 @@ class DriverInstaller:
                     [str(driver_path), flag],
                     capture_output=True,
                     timeout=300,
-                    check=False,
-                    shell=False  # CRITICAL: Nunca usar shell=True
+                    check=False
                 )
                 
                 if result.returncode == 0:
@@ -425,7 +425,7 @@ class DriverInstaller:
             else:
                 logger.info("Executing interactive installer as admin")
                 # SECURITY: Usar lista, no shell
-                subprocess.Popen([str(driver_path)], shell=False)
+                subprocess.Popen([str(driver_path)])
                 logger.info(f"Interactive installer executed: {driver_path}")
                 logger.operation_end("install_windows", success=True, method="interactive_admin")
                 
@@ -445,15 +445,22 @@ class DriverInstaller:
             uninstaller_path: Path del desinstalador
         """
         # Validar path del desinstalador también
-        validated_path = self._validate_driver_path(uninstaller_path)
+        try:
+            validated_path = self._validate_driver_path(uninstaller_path)
+        except ValidationError as e:
+            logger.error(f"Uninstaller path validation failed: {e.message}")
+            raise InstallationError(
+                "El archivo del desinstalador no existe o no es válido",
+                details=e.details,
+                original_error=e
+            )
         
         if self.system == "Windows":
             logger.info(f"Attempting silent uninstall: {validated_path}")
             subprocess.run(
                 [str(validated_path), '/S'],
                 check=True,
-                timeout=300,
-                shell=False  # SECURITY: No shell
+                timeout=300
             )
             logger.info(f"Driver uninstalled using {validated_path}")
     
@@ -482,8 +489,7 @@ class DriverInstaller:
             ],
             capture_output=True,
             text=True,
-            check=False,
-            shell=False  # SECURITY: No shell
+            check=False
         )
         
         return result.returncode == 0 and safe_driver_name.lower() in result.stdout.lower()

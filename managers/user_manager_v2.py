@@ -759,9 +759,10 @@ class UserManagerV2:
             (success: bool, message: str)
         """
         self.logger.operation_start("create_user", username=username, role=role)
+        current_username = self.current_user.get("username", "N/A") if self.current_user else "N/A"
         
         if not self.current_user or self.current_user.get("role") != "super_admin":
-            self.logger.security_event("user_creation_failed", self.current_user.get("username", "N/A"), False, {'reason': 'Insufficient permissions'})
+            self.logger.security_event("user_creation_failed", current_username, False, {'reason': 'Insufficient permissions'})
             raise AuthenticationError("Solo super_admin puede crear usuarios.")
         
         # Validar username
@@ -961,9 +962,10 @@ class UserManagerV2:
     def deactivate_user(self, username):
         """Desactivar usuario"""
         self.logger.operation_start("deactivate_user", target_username=username)
+        current_username = self.current_user.get("username", "N/A") if self.current_user else "N/A"
         
         if not self.current_user or self.current_user.get("role") != "super_admin":
-            self.logger.security_event("user_deactivation_failed", self.current_user.get("username", "N/A"), False, {'reason': 'Insufficient permissions'})
+            self.logger.security_event("user_deactivation_failed", current_username, False, {'reason': 'Insufficient permissions'})
             raise AuthenticationError("Solo super_admin puede desactivar usuarios.")
         
         if username == "admin":
@@ -973,7 +975,7 @@ class UserManagerV2:
         users_data = self._load_users()
         
         if not users_data or username not in users_data["users"]:
-            self.logger.security_event("user_deactivation_failed", self.current_user.get("username", "N/A"), False, {'reason': 'User not found', 'target_username': username})
+            self.logger.security_event("user_deactivation_failed", current_username, False, {'reason': 'User not found', 'target_username': username})
             raise AuthenticationError("Usuario no encontrado.")
         
         users_data["users"][username]["active"] = False
