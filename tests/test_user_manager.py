@@ -1,16 +1,19 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 import json
-import os
 import shutil
 from pathlib import Path
 from managers.user_manager_v2 import UserManagerV2
-from core.exceptions import AuthenticationError, ValidationError
+
 
 class TestUserManagerV2(unittest.TestCase):
     def setUp(self):
         self.test_dir = Path("tests/temp_config")
         self.test_dir.mkdir(parents=True, exist_ok=True)
+        self.superadmin_password = "N7!xTq4#Lm2@Vp9"
+        self.admin_password = "Q4@rZ8!kP1#sM7t"
+        self.viewer_password = "B9!wX3@hN6#yR2c"
+        self.new_superadmin_password = "D5@uK8!pF2#vL9m"
 
         # Mock cloud manager and security manager
         self.mock_cloud = MagicMock()
@@ -27,7 +30,7 @@ class TestUserManagerV2(unittest.TestCase):
             shutil.rmtree(self.test_dir)
 
     def test_initialize_system(self):
-        success, message = self.user_manager.initialize_system("superadmin", "password123")
+        success, message = self.user_manager.initialize_system("superadmin", self.superadmin_password)
         self.assertTrue(success)
         self.assertTrue(self.user_manager.users_file.exists())
 
@@ -38,70 +41,60 @@ class TestUserManagerV2(unittest.TestCase):
             self.assertEqual(data["users"]["superadmin"]["permissions"], ["all"])
 
     def test_authenticate(self):
-        self.user_manager.initialize_system("superadmin", "password123")
+        self.user_manager.initialize_system("superadmin", self.superadmin_password)
 
         # Test successful auth
-        success, message = self.user_manager.authenticate("superadmin", "password123")
+        success, message = self.user_manager.authenticate("superadmin", self.superadmin_password)
         self.assertTrue(success)
         self.assertIsNotNone(self.user_manager.current_user)
         self.assertEqual(self.user_manager.current_user["username"], "superadmin")
 
-        # Test failed auth (wrong password)
         # AuthenticationError is caught by decorator and returns (False, message)
         success, message = self.user_manager.authenticate("superadmin", "wrongpassword")
         self.assertFalse(success)
-        self.assertIn("Contraseña incorrecta", message)
+        self.assertIn("Usuario o contrase", message)
 
-        # Test failed auth (non-existent user)
-        success, message = self.user_manager.authenticate("nonexistent", "password123")
+        success, message = self.user_manager.authenticate("nonexistent", self.superadmin_password)
         self.assertFalse(success)
-        self.assertIn("Usuario no encontrado", message)
+        self.assertIn("Usuario o contrase", message)
 
     def test_create_user_permissions(self):
-        self.user_manager.initialize_system("superadmin", "password123")
-        self.user_manager.authenticate("superadmin", "password123")
+        self.user_manager.initialize_system("superadmin", self.superadmin_password)
+        self.user_manager.authenticate("superadmin", self.superadmin_password)
 
-        # Create admin
-        self.user_manager.create_user("admin_user", "pass12345", role="admin")
-
-        # Create viewer
-        self.user_manager.create_user("viewer_user", "pass12345", role="viewer")
+        self.user_manager.create_user("admin_user", self.admin_password, role="admin")
+        self.user_manager.create_user("viewer_user", self.viewer_password, role="viewer")
 
         users_data = self.user_manager._load_users()
 
-        # Verify admin permissions
         self.assertEqual(users_data["users"]["admin_user"]["permissions"], ["read", "write"])
-
-        # Verify viewer permissions
         self.assertEqual(users_data["users"]["viewer_user"]["permissions"], ["read"])
-
-        # Verify superadmin remains with all permissions
         self.assertEqual(users_data["users"]["superadmin"]["permissions"], ["all"])
 
     def test_create_superadmin_permissions(self):
-        self.user_manager.initialize_system("superadmin", "password123")
-        self.user_manager.authenticate("superadmin", "password123")
+        self.user_manager.initialize_system("superadmin", self.superadmin_password)
+        self.user_manager.authenticate("superadmin", self.superadmin_password)
 
-        # Create another superadmin
-        self.user_manager.create_user("superadmin2", "pass12345", role="super_admin")
+        self.user_manager.create_user("superadmin2", self.new_superadmin_password, role="super_admin")
 
         users_data = self.user_manager._load_users()
         self.assertEqual(users_data["users"]["superadmin2"]["role"], "super_admin")
         self.assertEqual(users_data["users"]["superadmin2"]["permissions"], ["all"])
 
     def test_change_password(self):
-        self.user_manager.initialize_system("superadmin", "password123")
+        self.user_manager.initialize_system("superadmin", self.superadmin_password)
 
-        success, message = self.user_manager.change_password("superadmin", "password123", "newpassword123")
+        success, message = self.user_manager.change_password(
+            "superadmin", self.superadmin_password, self.new_superadmin_password
+        )
         self.assertTrue(success)
 
-        # Verify old password no longer works
-        success, message = self.user_manager.authenticate("superadmin", "password123")
+        success, message = self.user_manager.authenticate("superadmin", self.superadmin_password)
         self.assertFalse(success)
 
-        # Verify new password works
-        success, message = self.user_manager.authenticate("superadmin", "newpassword123")
+        success, message = self.user_manager.authenticate("superadmin", self.new_superadmin_password)
         self.assertTrue(success)
+
 
 if __name__ == "__main__":
     unittest.main()
