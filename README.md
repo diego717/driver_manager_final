@@ -80,6 +80,25 @@ La aplicación está diseñada para ser **portable**. Sigue estos pasos para con
 
 ---
 
+## Distribución Segura del Ejecutable
+
+Si vas a distribuir `DriverManager.exe`, se recomienda este flujo:
+
+1. Distribuye el `.exe` sin incluir `portable_config.json`, `config/` ni `*.enc`.
+2. En la máquina o USB destino, crea `portable_config.json` solo para el primer inicio.
+3. Ejecuta la app una vez para que genere `config/config.enc`.
+4. Verifica que `portable_config.json` haya sido eliminado y no quede en backups.
+5. Para despliegues nuevos, repite el aprovisionamiento inicial en cada destino.
+
+Buenas prácticas:
+
+- No embebas credenciales de Cloudflare dentro del binario.
+- Usa Access Keys de Cloudflare R2 con permisos mínimos necesarios.
+- Rota credenciales periódicamente y revócalas si un dispositivo se pierde.
+- Mantén `portable_config.json`, `config/` y `*.enc` fuera de Git (ya están excluidos por `.gitignore`).
+
+---
+
 ## 📖 Uso de la Aplicación
 
 La interfaz se divide en tres pestañas principales:
