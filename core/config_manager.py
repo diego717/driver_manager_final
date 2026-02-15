@@ -26,6 +26,8 @@ from core.exceptions import (
 )
 
 logger = get_logger()
+MASTER_PASSWORD_ENV = "DRIVER_MANAGER_MASTER_PASSWORD"
+LEGACY_MASTER_PASSWORD_ENV = "DRIVER_MANAGER_LEGACY_MASTER_PASSWORD"
 
 class ConfigManager:
     def __init__(self, main_window):
@@ -51,9 +53,53 @@ class ConfigManager:
         
         # Componentes
         self.security = SecurityManager() 
-        self.master_password = None
+        self.master_password = os.getenv(MASTER_PASSWORD_ENV)
         self._config_loaded = False
         self._applying_portable = False
+
+    def _get_password_candidates(self):
+        """Construir lista de contraseñas candidatas sin duplicados."""
+        candidates = []
+        env_password = os.getenv(MASTER_PASSWORD_ENV)
+        legacy_env_password = os.getenv(LEGACY_MASTER_PASSWORD_ENV)
+
+        for candidate in [self.master_password, env_password, legacy_env_password]:
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        return candidates
+
+    def _migrate_master_password_if_needed(self, decrypted_config, used_password):
+        """
+        Si se abrió con clave legacy y existe una clave nueva, recifrar config.enc
+        automáticamente con la clave nueva.
+        """
+        legacy_password = os.getenv(LEGACY_MASTER_PASSWORD_ENV)
+        target_password = os.getenv(MASTER_PASSWORD_ENV)
+
+        if not (legacy_password and target_password):
+            return
+
+        if used_password != legacy_password or legacy_password == target_password:
+            return
+
+        migrated = self.security.encrypt_config_file(
+            decrypted_config,
+            target_password,
+            self.encrypted_config_file
+        )
+        if migrated:
+            self.master_password = target_password
+            logger.info("Migracion de clave maestra completada usando variable de entorno.")
+        else:
+            logger.warning("No se pudo migrar config.enc a la nueva clave maestra.")
+
+    def _request_master_password(self, is_first_time=False):
+        """Solicitar contraseña maestra al usuario y guardarla en memoria."""
+        password = show_master_password_dialog(self.main, is_first_time=is_first_time)
+        if password:
+            self.master_password = password
+        return password
 
     @handle_errors("load_config_data", reraise=False, default_return=None)
     def load_config_data(self):
@@ -68,7 +114,6 @@ class ConfigManager:
                 
                 if portable_data.get('account_id'):
                     logger.info("📂 Configuración portable detectada en USB.")
-                    self.master_password = "portable_auto_password_2024"
                     self._config_loaded = True
                     return portable_data
             except Exception as e:
@@ -76,20 +121,31 @@ class ConfigManager:
 
         # ESCENARIO B: USO DIARIO (Desde Archivo Cifrado en USB)
         if self.encrypted_config_file.exists():
-            passwords_to_try = ["portable_auto_password_2024"]
-            if self.master_password and self.master_password != "portable_auto_password_2024":
-                passwords_to_try.insert(0, self.master_password)
+            passwords_to_try = self._get_password_candidates()
             
             for pwd in passwords_to_try:
                 try:
                     config = self.security.decrypt_config_file(pwd, self.encrypted_config_file)
                     if config:
-                        self.master_password = pwd
+                        self._migrate_master_password_if_needed(config, pwd)
+                        if not self.master_password:
+                            self.master_password = pwd
                         self._config_loaded = True
                         logger.info("✅ Configuración cargada desde 'config.enc' en USB.")
                         return config
                 except Exception:
                     continue
+
+            prompted_password = self._request_master_password(is_first_time=False)
+            if prompted_password and prompted_password not in passwords_to_try:
+                try:
+                    config = self.security.decrypt_config_file(prompted_password, self.encrypted_config_file)
+                    if config:
+                        self._config_loaded = True
+                        logger.info("Configuracion cargada desde 'config.enc' con contrasena manual.")
+                        return config
+                except Exception:
+                    pass
             
             logger.warning("No se pudo descifrar el archivo config.enc.")
         return None
@@ -104,13 +160,16 @@ class ConfigManager:
         self.config_dir.mkdir(parents=True, exist_ok=True)
         
         # DETERMINAR CONTRASEÑA DE CIFRADO
-        if getattr(self, '_applying_portable', False):
-            self.master_password = "portable_auto_password_2024"
-        else:
-            if not self.master_password:
-                password = show_master_password_dialog(self.main, is_first_time=True)
-                if not password: return False
-                self.master_password = password
+        if not self.master_password:
+            env_password = os.getenv(MASTER_PASSWORD_ENV)
+            if env_password:
+                self.master_password = env_password
+
+        if not self.master_password:
+            password = self._request_master_password(is_first_time=not self.encrypted_config_file.exists())
+            if not password:
+                return False
+            self.master_password = password
         
         success = self.security.encrypt_config_file(config, self.master_password, self.encrypted_config_file)
         

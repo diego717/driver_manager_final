@@ -222,7 +222,9 @@ class MainWindow(QMainWindow):
         """Inicializar todos los managers"""
         
         self.cloud_manager = None
-        self.security_manager = SecurityManager()  # Nuevo gestor de seguridad
+        # Reusar la misma instancia de seguridad del ConfigManager para compartir
+        # clave maestra/fernet ya inicializados al cargar config.enc.
+        self.security_manager = self.config_manager.security
         self.theme_manager = ThemeManager()  # Gestor de temas
         self.user_manager = None  # Se inicializará después de cloud_manager
         self.installer = DriverInstaller()
@@ -231,6 +233,7 @@ class MainWindow(QMainWindow):
         self.is_authenticated = False
         self.is_admin = False
         self.installation_start_time = None
+        self._audit_logs_repair_attempted = False
         
         # Cache local
         if PORTABLE_MODE and PORTABLE_CONFIG:
@@ -637,6 +640,18 @@ class MainWindow(QMainWindow):
         
         try:
             logs = self.user_manager.get_access_logs(limit=100)
+
+            if (not logs and
+                self.user_manager.is_super_admin() and
+                not self._audit_logs_repair_attempted):
+                self._audit_logs_repair_attempted = True
+                repaired, message = self.user_manager.repair_access_logs()
+                if repaired:
+                    logger.warning(f"Logs de auditoría reparados automáticamente: {message}")
+                    logs = self.user_manager.get_access_logs(limit=100)
+                else:
+                    logger.warning(f"No se pudo reparar logs de auditoría: {message}")
+
             if not logs:
                 self.history_tab.audit_log_list.addItem("No hay logs de auditoría.")
                 return

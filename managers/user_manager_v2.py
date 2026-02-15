@@ -566,6 +566,143 @@ class UserManagerV2:
             self.logger.error(f"Error saving users: {e}", exc_info=True)
             self.logger.operation_end("_save_users", success=False, reason=str(e))
             raise CloudStorageError(f"Error saving users: {str(e)}", original_error=e)
+
+    def _normalize_logs_data(self, logs_data):
+        """
+        Asegurar formato válido para logs de auditoría.
+        """
+        if not isinstance(logs_data, dict):
+            self.logger.warning("Formato de logs inválido. Reinicializando estructura de logs.")
+            return {"logs": [], "created_at": datetime.now().isoformat()}
+
+        normalized = dict(logs_data)
+        logs = normalized.get("logs")
+
+        # Compatibilidad con estructuras legacy.
+        if logs is None and isinstance(normalized.get("access_logs"), list):
+            logs = normalized.get("access_logs")
+            normalized["logs"] = logs
+
+        if not isinstance(logs, list):
+            self.logger.warning("Estructura de logs corrupta o incompatible. Se usará lista vacía.")
+            normalized["logs"] = []
+
+        if "created_at" not in normalized:
+            normalized["created_at"] = datetime.now().isoformat()
+
+        return normalized
+
+    def _decode_cloud_logs_payload(self, cloud_payload):
+        """
+        Decodificar payload de logs de nube con estrategia best-effort.
+
+        Returns:
+            tuple(dict, bool): (logs_data_normalizado, recovered_with_fallback)
+        """
+        if not isinstance(cloud_payload, dict):
+            return {"logs": [], "created_at": datetime.now().isoformat()}, False
+
+        fallback_recovered = False
+        payload_copy = dict(cloud_payload)
+
+        if self.cloud_encryption:
+            decrypted = self.cloud_encryption.decrypt_cloud_data(dict(payload_copy))
+            if isinstance(decrypted, dict) and (
+                isinstance(decrypted.get("logs"), list) or
+                isinstance(decrypted.get("access_logs"), list)
+            ):
+                return self._normalize_logs_data(decrypted), fallback_recovered
+
+        # Fallback específico para logs legacy/corruptos:
+        # intentamos rescatar campos útiles aun con HMAC inválido.
+        fallback_recovered = True
+
+        if isinstance(payload_copy.get("logs"), list) or isinstance(payload_copy.get("access_logs"), list):
+            self.logger.warning(
+                "Recuperando logs desde payload legacy sin validación HMAC completa."
+            )
+            return self._normalize_logs_data(payload_copy), fallback_recovered
+
+        encrypted_candidates = []
+        if isinstance(payload_copy.get("access_logs"), str):
+            encrypted_candidates.append(("access_logs", payload_copy.get("access_logs")))
+        if isinstance(payload_copy.get("logs"), str):
+            encrypted_candidates.append(("logs", payload_copy.get("logs")))
+
+        if self.security_manager and self.security_manager.fernet:
+            for field_name, encrypted_blob in encrypted_candidates:
+                try:
+                    decrypted_blob = self.security_manager.decrypt_data(encrypted_blob)
+                    if isinstance(decrypted_blob, list):
+                        self.logger.warning(
+                            f"Recuperación best-effort aplicada para '{field_name}' con HMAC inválido."
+                        )
+                        return self._normalize_logs_data({
+                            "logs": decrypted_blob,
+                            "created_at": payload_copy.get("created_at", datetime.now().isoformat())
+                        }), fallback_recovered
+                    if isinstance(decrypted_blob, dict):
+                        self.logger.warning(
+                            f"Recuperación best-effort aplicada para '{field_name}' en formato dict."
+                        )
+                        return self._normalize_logs_data(decrypted_blob), fallback_recovered
+                except Exception:
+                    continue
+
+        self.logger.warning("No fue posible recuperar contenido histórico de logs; se usará estructura vacía.")
+        return self._normalize_logs_data({}), fallback_recovered
+
+    def _persist_logs_data(self, logs_data):
+        """Persistir logs normalizados en almacenamiento local o nube."""
+        if self.local_mode:
+            with open(self.logs_file, 'w') as f:
+                json.dump(logs_data, f, indent=2)
+            return
+
+        if self.cloud_encryption:
+            encrypted_logs = self.cloud_encryption.encrypt_cloud_data(logs_data)
+            logs_content = json.dumps(encrypted_logs, indent=2)
+        else:
+            logs_content = json.dumps(logs_data, indent=2)
+
+        self.cloud_manager.upload_file_content(self.logs_file, logs_content)
+
+    @returns_result_tuple("repair_access_logs")
+    def repair_access_logs(self):
+        """
+        Reparar archivo de logs de auditoría.
+
+        Solo super_admin puede ejecutar esta operación.
+        """
+        self.logger.operation_start("repair_access_logs")
+
+        if not self.current_user or self.current_user.get("role") != "super_admin":
+            raise AuthenticationError("Solo super_admin puede reparar logs de auditoría.")
+
+        logs_data = {"logs": [], "created_at": datetime.now().isoformat()}
+
+        try:
+            if self.local_mode:
+                if self.logs_file.exists():
+                    with open(self.logs_file, 'r') as f:
+                        logs_data = json.load(f)
+            else:
+                logs_content = self.cloud_manager.download_file_content(self.logs_file)
+                if logs_content:
+                    cloud_payload = json.loads(logs_content)
+                    logs_data, recovered = self._decode_cloud_logs_payload(cloud_payload)
+                    if recovered:
+                        self.logger.warning("Se detectó formato legacy/corrupto en logs; se persistirá versión reparada.")
+                        self._persist_logs_data(logs_data)
+        except Exception as e:
+            self.logger.warning(f"No se pudo leer logs actuales para reparar: {e}. Se recreará archivo limpio.")
+
+        logs_data = self._normalize_logs_data(logs_data)
+        self._persist_logs_data(logs_data)
+
+        total_logs = len(logs_data.get("logs", []))
+        self.logger.operation_end("repair_access_logs", success=True, total_logs=total_logs)
+        return True, f"Logs reparados correctamente. Registros disponibles: {total_logs}"
     
     @handle_errors("_log_access", reraise=False, log_errors=False)
     def _log_access(self, action, username, success, details=None):
@@ -580,12 +717,18 @@ class UserManagerV2:
                         logs_data = {"logs": [], "created_at": datetime.now().isoformat()}
                 else:
                     logs_content = self.cloud_manager.download_file_content(self.logs_file)
-                    logs_data = json.loads(logs_content)
-                    
-                    if self.cloud_encryption:
-                        logs_data = self.cloud_encryption.decrypt_cloud_data(logs_data)
+                    if logs_content:
+                        cloud_payload = json.loads(logs_content)
+                        logs_data, recovered = self._decode_cloud_logs_payload(cloud_payload)
+                        if recovered:
+                            self.logger.warning("Se recuperaron logs históricos con fallback; normalizando archivo.")
+                            self._persist_logs_data(logs_data)
+                    else:
+                        logs_data = {"logs": [], "created_at": datetime.now().isoformat()}
             except:
                 logs_data = {"logs": [], "created_at": datetime.now().isoformat()}
+
+            logs_data = self._normalize_logs_data(logs_data)
             
             system_info = self._get_system_info()
             log_entry = {
@@ -603,17 +746,7 @@ class UserManagerV2:
             if len(logs_data["logs"]) > 1000:
                 logs_data["logs"] = logs_data["logs"][-1000:]
             
-            if self.local_mode:
-                with open(self.logs_file, 'w') as f:
-                    json.dump(logs_data, f, indent=2)
-            else:
-                if self.cloud_encryption:
-                    encrypted_logs = self.cloud_encryption.encrypt_cloud_data(logs_data)
-                    logs_content = json.dumps(encrypted_logs, indent=2)
-                else:
-                    logs_content = json.dumps(logs_data, indent=2)
-                
-                self.cloud_manager.upload_file_content(self.logs_file, logs_content)
+            self._persist_logs_data(logs_data)
             
             self.logger.operation_end("_log_access", success=True)
         except Exception as e:
@@ -1033,17 +1166,24 @@ class UserManagerV2:
                     logs_data = json.load(f)
             else:
                 logs_content = self.cloud_manager.download_file_content(self.logs_file)
-                logs_data = json.loads(logs_content)
-                
-                if self.cloud_encryption:
-                    logs_data = self.cloud_encryption.decrypt_cloud_data(logs_data)
+                if not logs_content:
+                    return []
+
+                cloud_payload = json.loads(logs_content)
+                logs_data, recovered = self._decode_cloud_logs_payload(cloud_payload)
+                if recovered:
+                    self.logger.warning("Se detectó payload legacy/corrupto en get_access_logs; persistiendo reparación.")
+                    self._persist_logs_data(logs_data)
+
+            logs_data = self._normalize_logs_data(logs_data)
+            logs = logs_data["logs"]
             
             self.logger.operation_end("get_access_logs", success=True)
-            return logs_data["logs"][-limit:] if len(logs_data["logs"]) > limit else logs_data["logs"]
+            return logs[-limit:] if len(logs) > limit else logs
             
         except Exception as e:
             self.logger.error(f"Error getting access logs: {e}", exc_info=True)
-            raise CloudStorageError(f"Error getting access logs: {str(e)}", original_error=e)
+            return []
     
     def logout(self):
         """Cerrar sesión"""
