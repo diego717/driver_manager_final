@@ -1,0 +1,97 @@
+openapi: 3.0.3
+info:
+  title: Driver Manager Incidents API (v1)
+  version: 1.0.0
+servers:
+  - url: https://tu-worker.example.workers.dev
+security:
+  - ApiToken: []
+
+paths:
+  /installations/{installationId}/incidents:
+    get:
+      summary: List incidents by installation
+      parameters:
+        - in: path
+          name: installationId
+          required: true
+          schema: { type: integer }
+        - in: header
+          name: X-Request-Timestamp
+          required: true
+          schema: { type: integer }
+        - in: header
+          name: X-Request-Signature
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+    post:
+      summary: Create incident
+      parameters:
+        - in: path
+          name: installationId
+          required: true
+          schema: { type: integer }
+        - in: header
+          name: X-Request-Timestamp
+          required: true
+          schema: { type: integer }
+        - in: header
+          name: X-Request-Signature
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note]
+              properties:
+                note: { type: string, maxLength: 5000 }
+                time_adjustment_seconds: { type: integer, default: 0 }
+                severity: { type: string, enum: [low, medium, high, critical], default: medium }
+                source: { type: string, enum: [desktop, mobile, web], default: mobile }
+                apply_to_installation: { type: boolean, default: false }
+      responses:
+        '201':
+          description: Created
+
+  /incidents/{incidentId}/photos:
+    post:
+      summary: Upload photo
+      parameters:
+        - in: path
+          name: incidentId
+          required: true
+          schema: { type: integer }
+        - in: header
+          name: X-Request-Timestamp
+          required: true
+          schema: { type: integer }
+        - in: header
+          name: X-Request-Signature
+          required: true
+          schema: { type: string }
+        - in: header
+          name: X-File-Name
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          image/jpeg: { schema: { type: string, format: binary } }
+          image/png:  { schema: { type: string, format: binary } }
+          image/webp: { schema: { type: string, format: binary } }
+      responses:
+        '201':
+          description: Created
+
+components:
+  securitySchemes:
+    ApiToken:
+      type: apiKey
+      in: header
+      name: X-API-Token

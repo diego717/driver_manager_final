@@ -39,3 +39,16 @@ logs/
 htmlcov/
 .coverage
 .coverage.*
+# Dependencias de Node.js
+node_modules/
+
+# Cloudflare local state/temp
+.wrangler/
+
+# Mobile app local secrets
+mobile-app/.env
+mobile-app/.env.*
+!mobile-app/.env.example
+
+# Local smoke artifacts
+smoke_download.txt

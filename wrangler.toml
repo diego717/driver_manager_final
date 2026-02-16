@@ -6,3 +6,7 @@ compatibility_date = "2026-02-13"
 binding = "DB" # El nombre que usas en el worker: env.DB
 database_name = "driver-manager-db"
 database_id = "12874e42-670a-49ef-ae13-5d12229b21a3"
+
+[[r2_buckets]]
+binding = "INCIDENTS_BUCKET"
+bucket_name = "driver-manager-incidents"

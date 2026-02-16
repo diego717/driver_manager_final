@@ -1,0 +1,245 @@
+{
+  "info": {
+    "_postman_id": "8f2f26df-0f37-4f73-963a-1a89f6f1f3e0",
+    "name": "Driver Manager - Incidents v1",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Colección mínima para probar endpoints v1 de incidencias y fotos."
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const ts = Math.floor(Date.now() / 1000).toString();",
+          "pm.environment.set('request_timestamp', ts);",
+          "const secret = pm.environment.get('api_secret');",
+          "if (!secret) {",
+          "  pm.environment.set('request_signature', 'dev-signature');",
+          "} else {",
+          "  const method = pm.request.method.toUpperCase();",
+          "  const path = '/' + pm.request.url.path.join('/');",
+          "  let rawBody = '';",
+          "  if (pm.request.body && pm.request.body.mode === 'raw') {",
+          "    rawBody = pm.request.body.raw || '';",
+          "  }",
+          "  const bodyHash = CryptoJS.SHA256(rawBody).toString(CryptoJS.enc.Hex);",
+          "  const canonical = `${method}|${path}|${ts}|${bodyHash}`;",
+          "  const signature = CryptoJS.HmacSHA256(canonical, secret).toString(CryptoJS.enc.Hex);",
+          "  pm.environment.set('request_signature', signature);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Incidents",
+      "item": [
+        {
+          "name": "Create Incident",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Token",
+                "value": "{{api_token}}"
+              },
+              {
+                "key": "X-Request-Timestamp",
+                "value": "{{request_timestamp}}"
+              },
+              {
+                "key": "X-Request-Signature",
+                "value": "{{request_signature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"Falla al ejecutar instalador en paso final\",\n  \"time_adjustment_seconds\": 300,\n  \"severity\": \"high\",\n  \"source\": \"mobile\",\n  \"apply_to_installation\": true,\n  \"reporter_username\": \"admin\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/installations/{{installation_id}}/incidents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "installations",
+                "{{installation_id}}",
+                "incidents"
+              ]
+            },
+            "description": "Crea una incidencia en una instalación."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.test('Tiene incident id', () => pm.expect(json?.incident?.id).to.exist);",
+                  "if (json?.incident?.id) {",
+                  "  pm.environment.set('incident_id', String(json.incident.id));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Incidents by Installation",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Token",
+                "value": "{{api_token}}"
+              },
+              {
+                "key": "X-Request-Timestamp",
+                "value": "{{request_timestamp}}"
+              },
+              {
+                "key": "X-Request-Signature",
+                "value": "{{request_signature}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/installations/{{installation_id}}/incidents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "installations",
+                "{{installation_id}}",
+                "incidents"
+              ]
+            },
+            "description": "Lista incidencias y fotos asociadas a una instalación."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Formato correcto', () => pm.expect(Array.isArray(json.incidents)).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Photos",
+      "item": [
+        {
+          "name": "Upload Incident Photo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/jpeg"
+              },
+              {
+                "key": "X-File-Name",
+                "value": "{{photo_file_name}}"
+              },
+              {
+                "key": "X-API-Token",
+                "value": "{{api_token}}"
+              },
+              {
+                "key": "X-Request-Timestamp",
+                "value": "{{request_timestamp}}"
+              },
+              {
+                "key": "X-Request-Signature",
+                "value": "{{request_signature}}"
+              }
+            ],
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": "{{photo_file_path}}"
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/incidents/{{incident_id}}/photos",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "incidents",
+                "{{incident_id}}",
+                "photos"
+              ]
+            },
+            "description": "Sube una foto de evidencia para una incidencia. Asegúrate de tener incident_id cargado."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.test('Foto creada', () => pm.expect(json?.photo?.id).to.exist);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://tu-worker.example.workers.dev"
+    },
+    {
+      "key": "installation_id",
+      "value": "1"
+    },
+    {
+      "key": "incident_id",
+      "value": ""
+    },
+    {
+      "key": "api_token",
+      "value": ""
+    },
+    {
+      "key": "api_secret",
+      "value": ""
+    },
+    {
+      "key": "request_timestamp",
+      "value": ""
+    },
+    {
+      "key": "request_signature",
+      "value": ""
+    },
+    {
+      "key": "photo_file_path",
+      "value": "C:/ruta/a/tu/evidencia.jpg"
+    },
+    {
+      "key": "photo_file_name",
+      "value": "evidencia.jpg"
+    }
+  ]
+}
