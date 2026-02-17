@@ -63,11 +63,13 @@ class DriversTab(QWidget):
         # Botones de acción
         buttons_layout = QHBoxLayout()
         self.download_btn = QPushButton("⬇️ Descargar")
+        self.download_btn.setProperty("class", "big")
         self.download_btn.setEnabled(False)
         self.download_btn.setToolTip("Descargar el controlador seleccionado a la caché local")
         buttons_layout.addWidget(self.download_btn)
         
         self.install_btn = QPushButton("🚀 Descargar e Instalar")
+        self.install_btn.setProperty("class", "big")
         self.install_btn.setEnabled(False)
         self.install_btn.setToolTip("Descargar y ejecutar el instalador del controlador seleccionado")
         buttons_layout.addWidget(self.install_btn)
@@ -144,11 +146,15 @@ class DriversTab(QWidget):
         upload_layout.addWidget(QLabel("Marca:"))
         self.upload_brand = QComboBox()
         self.upload_brand.addItems(["Magicard", "Zebra", "Entrust Sigma"])
+        self.upload_brand.setToolTip("Marca del fabricante del controlador")
+        self.upload_brand.setAccessibleName("Marca para subir")
         upload_layout.addWidget(self.upload_brand)
         
         upload_layout.addWidget(QLabel("Versión:"))
         self.upload_version = QLineEdit()
         self.upload_version.setPlaceholderText("ej: 1.2.3")
+        self.upload_version.setToolTip("Número de versión del controlador")
+        self.upload_version.setAccessibleName("Versión para subir")
         upload_layout.addWidget(self.upload_version)
         layout.addLayout(upload_layout)
         
@@ -156,6 +162,8 @@ class DriversTab(QWidget):
         desc_layout.addWidget(QLabel("Descripción:"))
         self.upload_description = QLineEdit()
         self.upload_description.setPlaceholderText("Descripción del driver")
+        self.upload_description.setToolTip("Breve descripción o notas adicionales")
+        self.upload_description.setAccessibleName("Descripción para subir")
         desc_layout.addWidget(self.upload_description)
         layout.addLayout(desc_layout)
         
@@ -164,9 +172,13 @@ class DriversTab(QWidget):
         file_layout.addWidget(self.selected_file_label)
         
         select_btn = QPushButton("📁 Seleccionar Archivo")
+        select_btn.setToolTip("Abrir explorador de archivos para seleccionar un driver")
+        select_btn.setAccessibleName("Seleccionar archivo")
         file_layout.addWidget(select_btn)
         
         upload_btn = QPushButton("☁️ Subir a la Nube")
+        upload_btn.setToolTip("Subir el archivo seleccionado a Cloudflare R2")
+        upload_btn.setAccessibleName("Subir a la nube")
         file_layout.addWidget(upload_btn)
         layout.addLayout(file_layout)
 
@@ -282,9 +294,13 @@ class HistoryTab(QWidget):
 
         actions_layout = QHBoxLayout()
         self.create_manual_button = QPushButton("➕ Crear Registro Manual")
+        self.create_manual_button.setToolTip("Crear un registro de instalación manualmente")
+        self.create_manual_button.setAccessibleName("Crear registro manual")
         actions_layout.addWidget(self.create_manual_button)
 
         self.edit_button = QPushButton("📝 Editar Registro")
+        self.edit_button.setToolTip("Editar notas o tiempo del registro seleccionado")
+        self.edit_button.setAccessibleName("Editar registro")
         self.edit_button.setEnabled(False)
         actions_layout.addWidget(self.edit_button)
         actions_layout.addStretch()
@@ -314,18 +330,9 @@ class HistoryTab(QWidget):
         
         # Reporte diario
         self.daily_report_btn = QPushButton("📄 Generar Reporte de Hoy")
-        self.daily_report_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4A90E2;
-                color: white;
-                padding: 10px 20px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #357ABD;
-            }
-        """)
+        self.daily_report_btn.setProperty("class", "big")
+        self.daily_report_btn.setToolTip("Generar un archivo Excel con las instalaciones de hoy")
+        self.daily_report_btn.setAccessibleName("Reporte diario")
         reports_layout.addWidget(self.daily_report_btn)
         
         # Reporte mensual
@@ -350,32 +357,14 @@ class HistoryTab(QWidget):
         reports_layout.addLayout(monthly_layout)
         
         self.monthly_report_btn = QPushButton("Generar Reporte del Mes Seleccionado")
-        self.monthly_report_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #5CB85C;
-                color: white;
-                padding: 10px 20px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #4CAE4C;
-            }
-        """)
+        self.monthly_report_btn.setProperty("class", "success")
+        self.monthly_report_btn.setToolTip("Generar un archivo Excel con las instalaciones del mes seleccionado")
+        self.monthly_report_btn.setAccessibleName("Reporte mensual")
         reports_layout.addWidget(self.monthly_report_btn)
         self.yearly_report_btn = QPushButton("Generar Reporte Anual (Ano Seleccionado)")
-        self.yearly_report_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #F0AD4E;
-                color: white;
-                padding: 10px 20px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #EC971F;
-            }
-        """)
+        self.yearly_report_btn.setProperty("class", "warning")
+        self.yearly_report_btn.setToolTip("Generar un archivo Excel con todas las instalaciones del año seleccionado")
+        self.yearly_report_btn.setAccessibleName("Reporte anual")
         reports_layout.addWidget(self.yearly_report_btn)
 
         preview_title = QLabel("Vista previa del reporte")
@@ -383,6 +372,7 @@ class HistoryTab(QWidget):
         reports_layout.addWidget(preview_title)
 
         self.report_preview = QTextEdit()
+        self.report_preview.setProperty("class", "preview")
         self.report_preview.setReadOnly(True)
         self.report_preview.setMinimumHeight(170)
         self.report_preview.setPlaceholderText(
@@ -530,9 +520,13 @@ class AdminTab(QWidget):
         auth_layout.addStretch()
         
         self.login_btn = QPushButton("Iniciar Sesión")
+        self.login_btn.setToolTip("Acceder al panel de administración")
+        self.login_btn.setAccessibleName("Iniciar sesión")
         auth_layout.addWidget(self.login_btn)
         
         self.logout_btn = QPushButton("Cerrar Sesión")
+        self.logout_btn.setToolTip("Cerrar la sesión actual")
+        self.logout_btn.setAccessibleName("Cerrar sesión")
         self.logout_btn.setVisible(False)
         auth_layout.addWidget(self.logout_btn)
         
@@ -540,15 +534,7 @@ class AdminTab(QWidget):
         
         # Botón de gestión de usuarios (solo para super_admin)
         self.user_mgmt_btn = QPushButton("👥 Gestionar Usuarios")
-        self.user_mgmt_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #9B59B6;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-        """)
+        self.user_mgmt_btn.setProperty("class", "big")
         self.user_mgmt_btn.setVisible(False)
         layout.addWidget(self.user_mgmt_btn)
         
@@ -582,27 +568,15 @@ class AdminTab(QWidget):
         config_buttons = QHBoxLayout()
         
         change_pass_btn = QPushButton("🔑 Cambiar Contraseña")
-        change_pass_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #F0AD4E;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-        """)
+        change_pass_btn.setProperty("class", "warning")
+        change_pass_btn.setToolTip("Cambiar tu contraseña actual")
+        change_pass_btn.setAccessibleName("Cambiar contraseña")
         config_buttons.addWidget(change_pass_btn)
         
         clear_cache_btn = QPushButton("🧹 Limpiar Caché")
-        clear_cache_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #D9534F;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-        """)
+        clear_cache_btn.setProperty("class", "danger")
+        clear_cache_btn.setToolTip("Eliminar todos los drivers descargados localmente")
+        clear_cache_btn.setAccessibleName("Limpiar caché")
         config_buttons.addWidget(clear_cache_btn)
         
         config_buttons.addStretch()
@@ -669,27 +643,15 @@ class AdminTab(QWidget):
         # Botones R2
         r2_buttons = QHBoxLayout()
         save_btn = QPushButton("💾 Guardar Configuración R2")
-        save_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #5CB85C;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-        """)
+        save_btn.setProperty("class", "success")
+        save_btn.setToolTip("Guardar las credenciales de Cloudflare en el archivo cifrado")
+        save_btn.setAccessibleName("Guardar configuración R2")
         r2_buttons.addWidget(save_btn)
         
         test_btn = QPushButton("🔌 Probar Conexión")
-        test_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4A90E2;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-        """)
+        test_btn.setProperty("class", "big")
+        test_btn.setToolTip("Verificar la conexión con Cloudflare R2")
+        test_btn.setAccessibleName("Probar conexión")
         r2_buttons.addWidget(test_btn)
         r2_buttons.addStretch()
         r2_layout.addLayout(r2_buttons)

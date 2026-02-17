@@ -10,6 +10,9 @@ class DummyPreview:
     def setPlainText(self, value):
         self.text = value
 
+    def setHtml(self, value):
+        self.text = value
+
 
 class DummyCombo:
     def __init__(self, index=0, text="Enero"):
@@ -45,10 +48,16 @@ class DummyHistory:
         }
 
 
+class DummyThemeManager:
+    def get_current_theme(self):
+        return "light"
+
+
 class DummyMain:
     def __init__(self):
         self.history_tab = DummyHistoryTab()
         self.history = DummyHistory()
+        self.theme_manager = DummyThemeManager()
 
 
 class TestReportHandlers(unittest.TestCase):
@@ -62,10 +71,10 @@ class TestReportHandlers(unittest.TestCase):
         )
 
         text = main.history_tab.report_preview.text
-        self.assertIn("Resumen rapido para reportes", text)
+        self.assertIn("Resumen rápido para reportes", text)
         self.assertIn("Hoy", text)
         self.assertIn("Febrero 2026", text)
-        self.assertIn("Ano 2026", text)
+        self.assertIn("Año 2026", text)
         self.assertIn("C:/tmp/reporte.xlsx", text)
 
 

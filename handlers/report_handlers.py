@@ -54,38 +54,64 @@ class ReportHandlers:
             ) or {}
 
             month_name = history_tab.report_month_combo.currentText()
-            lines = [
-                "Resumen rapido para reportes",
-                "",
-                f"Hoy ({now.strftime('%d/%m/%Y')}):",
-                f"- Registros: {day_stats.get('total_installations', 0)}",
-                f"- Exitosas: {day_stats.get('successful_installations', 0)}",
-                f"- Fallidas: {day_stats.get('failed_installations', 0)}",
-                "",
-                f"{month_name} {year} (mes seleccionado):",
-                f"- Registros: {month_stats.get('total_installations', 0)}",
-                f"- Exitosas: {month_stats.get('successful_installations', 0)}",
-                f"- Fallidas: {month_stats.get('failed_installations', 0)}",
-                "",
-                f"Ano {year}:",
-                f"- Registros: {year_stats.get('total_installations', 0)}",
-                f"- Exitosas: {year_stats.get('successful_installations', 0)}",
-                f"- Fallidas: {year_stats.get('failed_installations', 0)}",
-                "",
-                "Los reportes se guardan en la carpeta Descargas.",
-            ]
+
+            # Colores según el tema
+            is_dark = self.main.theme_manager.get_current_theme() == "dark"
+            text_color = "#E8E8E8" if is_dark else "#2C3E50"
+            border_color = "#404040" if is_dark else "#CCCCCC"
+            accent_color = "#4FC3F7" if is_dark else "#3498DB"
+            bg_last = "#0D47A1" if is_dark else "#EBF5FF"
+
+            html = f"""
+            <div style="font-family: Arial, sans-serif; color: {text_color};">
+                <h3 style="margin: 0; color: {accent_color};">Resumen rápido para reportes</h3>
+                <hr style="border: 0; border-top: 1px solid {border_color}; margin: 10px 0;">
+
+                <table width="100%" style="border-collapse: collapse;">
+                    <tr style="border-bottom: 1px solid {border_color};">
+                        <th align="left" style="padding: 4px;">Período</th>
+                        <th align="center" style="padding: 4px;">Total</th>
+                        <th align="center" style="padding: 4px; color: #4CAF50;">✓</th>
+                        <th align="center" style="padding: 4px; color: #F44336;">✗</th>
+                    </tr>
+                    <tr style="border-bottom: 1px solid {border_color};">
+                        <td style="padding: 4px;"><b>Hoy</b></td>
+                        <td align="center">{day_stats.get('total_installations', 0)}</td>
+                        <td align="center">{day_stats.get('successful_installations', 0)}</td>
+                        <td align="center">{day_stats.get('failed_installations', 0)}</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid {border_color};">
+                        <td style="padding: 4px;"><b>{month_name} {year}</b></td>
+                        <td align="center">{month_stats.get('total_installations', 0)}</td>
+                        <td align="center">{month_stats.get('successful_installations', 0)}</td>
+                        <td align="center">{month_stats.get('failed_installations', 0)}</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid {border_color};">
+                        <td style="padding: 4px;"><b>Año {year}</b></td>
+                        <td align="center">{year_stats.get('total_installations', 0)}</td>
+                        <td align="center">{year_stats.get('successful_installations', 0)}</td>
+                        <td align="center">{year_stats.get('failed_installations', 0)}</td>
+                    </tr>
+                </table>
+
+                <p style="margin-top: 15px; color: gray; font-size: 11px;">
+                    💡 <i>Los reportes se guardan en la carpeta Descargas.</i>
+                </p>
+            """
 
             if last_report_path:
                 label = (report_kind or "Reporte").lower()
-                lines.extend([
-                    "",
-                    f"Ultimo {label} generado:",
-                    str(last_report_path),
-                ])
+                html += f"""
+                <div style="margin-top: 10px; padding: 8px; background-color: {bg_last}; border-left: 4px solid {accent_color}; border-radius: 4px;">
+                    <b style="color: {accent_color};">Último {label} generado:</b><br>
+                    <small style="word-break: break-all;">{last_report_path}</small>
+                </div>
+                """
 
-            preview.setPlainText("\n".join(lines))
+            html += "</div>"
+            preview.setHtml(html)
         except Exception as e:
-            preview.setPlainText(f"No se pudo cargar la vista previa de reportes.\n\nDetalle: {e}")
+            preview.setHtml(f"<p style='color: red;'>No se pudo cargar la vista previa de reportes.<br><br>Detalle: {e}</p>")
 
     def generate_daily_report_simple(self):
         """Generar reporte del dia actual."""

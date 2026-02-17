@@ -33,6 +33,8 @@ class TestEventHandlers(unittest.TestCase):
         main.load_config_data = MagicMock()
         main.admin_tab = MagicMock()
         main.user_manager = MagicMock()
+        main.theme_manager = MagicMock()
+        main.theme_manager.get_current_theme.return_value = "light"
         return main
 
     def test_on_driver_selected_sets_details_and_enables_buttons(self):
@@ -52,9 +54,10 @@ class TestEventHandlers(unittest.TestCase):
 
         handler.on_driver_selected()
 
-        main.drivers_tab.driver_details.setText.assert_called_once()
-        text = main.drivers_tab.driver_details.setText.call_args.args[0]
-        self.assertIn("Marca: Zebra", text)
+        main.drivers_tab.driver_details.setHtml.assert_called_once()
+        text = main.drivers_tab.driver_details.setHtml.call_args.args[0]
+        self.assertIn("Zebra", text)
+        self.assertIn("1.2.3", text)
         main.drivers_tab.download_btn.setEnabled.assert_called_with(True)
         main.drivers_tab.install_btn.setEnabled.assert_called_with(True)
         item.data.assert_called_once_with(Qt.ItemDataRole.UserRole)

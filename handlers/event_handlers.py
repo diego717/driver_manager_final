@@ -31,13 +31,26 @@ class EventHandlers:
         selected_items = self.main.drivers_tab.drivers_list.selectedItems()
         if selected_items:
             driver = selected_items[0].data(Qt.ItemDataRole.UserRole)
-            details = f"Marca: {driver['brand']}\n"
-            details += f"Versión: {driver['version']}\n"
-            details += f"Descripción: {driver.get('description', 'N/A')}\n"
-            details += f"Fecha: {driver.get('last_modified', 'N/A')}\n"
-            details += f"Tamaño: {driver.get('size_mb', 'N/A')} MB"
             
-            self.main.drivers_tab.driver_details.setText(details)
+            # Colores según el tema
+            is_dark = self.main.theme_manager.get_current_theme() == "dark"
+            text_color = "#E8E8E8" if is_dark else "#2C3E50"
+            sub_color = "#AAAAAA" if is_dark else "#666666"
+            accent_color = "#4FC3F7" if is_dark else "#3498DB"
+
+            html = f"""
+            <div style="font-family: Arial, sans-serif; color: {text_color};">
+                <h3 style="margin: 0; color: {accent_color};">{driver['brand']}</h3>
+                <p style="margin: 5px 0;"><b>Versión:</b> {driver['version']}</p>
+                <p style="margin: 5px 0;"><b>Descripción:</b> {driver.get('description', 'N/A')}</p>
+                <p style="margin: 5px 0; color: {sub_color};">
+                    <small><b>Fecha:</b> {driver.get('last_modified', 'N/A')} |
+                    <b>Tamaño:</b> {driver.get('size_mb', 'N/A')} MB</small>
+                </p>
+            </div>
+            """
+
+            self.main.drivers_tab.driver_details.setHtml(html)
             self.main.drivers_tab.download_btn.setEnabled(True)
             self.main.drivers_tab.install_btn.setEnabled(True)
         else:
