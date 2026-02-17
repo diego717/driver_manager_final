@@ -169,6 +169,29 @@ class TestReportGenerator(unittest.TestCase):
         finally:
             self._cleanup_file(output)
 
+    def test_generate_yearly_report_creates_output_file(self):
+        history = MagicMock()
+        history.get_installations.return_value = self._sample_installations()
+        history.get_statistics.return_value = self._sample_stats()
+        generator = ReportGenerator(history)
+
+        output = self._temp_xlsx_path("yearly")
+        try:
+            result = generator.generate_yearly_report(2026, output_path=output)
+
+            self.assertEqual(result, str(output))
+            self.assertTrue(output.exists())
+
+            wb = openpyxl.load_workbook(output, read_only=True, data_only=True)
+            try:
+                ws = wb["Resumen"]
+                self.assertIn("Anual 2026", ws["A1"].value)
+                self.assertEqual(ws["B3"].value, 2)
+            finally:
+                wb.close()
+        finally:
+            self._cleanup_file(output)
+
 
 if __name__ == "__main__":
     unittest.main()

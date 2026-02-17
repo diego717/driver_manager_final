@@ -46,6 +46,18 @@ export interface InstallationRecord {
   notes?: string;
 }
 
+export interface CreateRecordInput {
+  timestamp?: string;
+  driver_brand?: string;
+  driver_version?: string;
+  status?: string;
+  client_name?: string;
+  driver_description?: string;
+  installation_time_seconds?: number;
+  os_info?: string;
+  notes?: string;
+}
+
 export interface ApiErrorResponse {
   success?: false;
   error?: {
@@ -63,6 +75,11 @@ export interface ListIncidentsResponse {
   success: boolean;
   installation_id: number;
   incidents: Incident[];
+}
+
+export interface CreateRecordResponse {
+  success: boolean;
+  record: InstallationRecord;
 }
 
 export interface UploadPhotoResponse {

@@ -199,6 +199,45 @@ test("GET /installations returns DB rows as JSON", async () => {
   assert.ok(db.calls[0].sql.startsWith("SELECT * FROM installations"));
 });
 
+test("GET /installations applies filters from query params", async () => {
+  const db = createMockDB({
+    installations: [
+      {
+        id: 1,
+        timestamp: "2026-07-10T10:00:00.000Z",
+        driver_brand: "Zebra",
+        status: "success",
+        client_name: "ACME Norte",
+      },
+      {
+        id: 2,
+        timestamp: "2026-07-12T09:00:00.000Z",
+        driver_brand: "Magicard",
+        status: "failed",
+        client_name: "Beta",
+      },
+      {
+        id: 3,
+        timestamp: "2026-08-01T00:00:00.000Z",
+        driver_brand: "Zebra",
+        status: "success",
+        client_name: "ACME Sur",
+      },
+    ],
+  });
+  const request = new Request(
+    "https://worker.example/installations?brand=zebra&status=success&client_name=acme&start_date=2026-07-01T00:00:00.000Z&end_date=2026-08-01T00:00:00.000Z&limit=5",
+    { method: "GET" },
+  );
+
+  const response = await worker.fetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.length, 1);
+  assert.equal(body[0].id, 1);
+});
+
 test("POST /installations inserts record with defaults and returns 201", async () => {
   const db = createMockDB();
   const request = new Request("https://worker.example/installations", {
@@ -251,6 +290,57 @@ test("POST /installations with empty payload uses fallback defaults", async () =
   assert.equal(insertCall.bound[6], 0);
   assert.equal(insertCall.bound[7], "");
   assert.equal(insertCall.bound[8], "");
+});
+
+test("POST /records creates manual record with explicit defaults", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/records", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ notes: "Registro manual desde app" }),
+  });
+
+  const response = await worker.fetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 201);
+  assert.equal(body.success, true);
+  assert.equal(typeof body.record.id, "number");
+  assert.equal(body.record.status, "manual");
+  assert.equal(body.record.driver_brand, "N/A");
+  assert.equal(body.record.driver_version, "N/A");
+  assert.equal(body.record.client_name, "Sin cliente");
+  assert.equal(body.record.notes, "Registro manual desde app");
+});
+
+test("POST /records respects provided fields", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/records", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_name: "Cliente ACME",
+      driver_brand: "Zebra",
+      driver_version: "7.4.1",
+      status: "success",
+      installation_time_seconds: 120,
+      notes: "Creado sin instalacion previa",
+      os_info: "Windows 11",
+    }),
+  });
+
+  const response = await worker.fetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 201);
+  assert.equal(body.success, true);
+  assert.equal(body.record.client_name, "Cliente ACME");
+  assert.equal(body.record.driver_brand, "Zebra");
+  assert.equal(body.record.driver_version, "7.4.1");
+  assert.equal(body.record.status, "success");
+  assert.equal(body.record.installation_time_seconds, 120);
+  assert.equal(body.record.notes, "Creado sin instalacion previa");
+  assert.equal(body.record.os_info, "Windows 11");
 });
 
 test("PUT /installations/:id updates notes and installation time", async () => {
@@ -365,6 +455,69 @@ test("POST /installations/:id/incidents rejects payload without note", async () 
   assert.match(body.error.message, /note/i);
 });
 
+test("POST /installations/:id/incidents rejects invalid severity", async () => {
+  const db = createMockDB({
+    installations: [{ id: 45, notes: "", installation_time_seconds: 0 }],
+  });
+  const request = new Request("https://worker.example/installations/45/incidents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      note: "detalle",
+      severity: "urgent",
+    }),
+  });
+
+  const response = await worker.fetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /severity/i);
+});
+
+test("POST /installations/:id/incidents rejects invalid source", async () => {
+  const db = createMockDB({
+    installations: [{ id: 45, notes: "", installation_time_seconds: 0 }],
+  });
+  const request = new Request("https://worker.example/installations/45/incidents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      note: "detalle",
+      source: "desktop_app",
+    }),
+  });
+
+  const response = await worker.fetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /source/i);
+});
+
+test("POST /installations/:id/incidents rejects invalid time adjustment", async () => {
+  const db = createMockDB({
+    installations: [{ id: 45, notes: "", installation_time_seconds: 0 }],
+  });
+  const request = new Request("https://worker.example/installations/45/incidents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      note: "detalle",
+      time_adjustment_seconds: 86401,
+    }),
+  });
+
+  const response = await worker.fetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /time_adjustment_seconds/i);
+});
+
 test("GET /installations/:id/incidents returns incidents with nested photos", async () => {
   const db = createMockDB({
     incidents: [
@@ -471,26 +624,158 @@ test("POST /incidents/:id/photos rejects oversized files", async () => {
   assert.equal(body.success, false);
 });
 
-test("GET /statistics returns grouped brands map", async () => {
+test("POST /incidents/:id/photos rejects unsupported content type", async () => {
   const db = createMockDB({
-    byBrand: [
-      { driver_brand: "Zebra", count: 2 },
-      { driver_brand: "Magicard", count: 1 },
-      { driver_brand: "", count: 4 },
+    incidents: [{ id: 11, installation_id: 45 }],
+  });
+  const request = new Request("https://worker.example/incidents/11/photos", {
+    method: "POST",
+    headers: { "Content-Type": "application/gif" },
+    body: new Uint8Array([1, 2, 3]),
+  });
+
+  const response = await worker.fetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /imagen/i);
+});
+
+test("POST /incidents/:id/photos rejects empty body", async () => {
+  const db = createMockDB({
+    incidents: [{ id: 11, installation_id: 45 }],
+  });
+  let uploaded = false;
+  const bucket = {
+    async put() {
+      uploaded = true;
+    },
+  };
+  const request = new Request("https://worker.example/incidents/11/photos", {
+    method: "POST",
+    headers: { "Content-Type": "image/jpeg" },
+    body: new Uint8Array(0),
+  });
+
+  const response = await worker.fetch(request, {
+    DB: db,
+    INCIDENTS_BUCKET: bucket,
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.equal(uploaded, false);
+});
+
+test("POST /incidents/:id/photos returns 404 when incident does not exist", async () => {
+  const db = createMockDB({
+    incidents: [],
+  });
+  const bucket = {
+    async put() {
+      throw new Error("should not upload");
+    },
+  };
+  const request = new Request("https://worker.example/incidents/999/photos", {
+    method: "POST",
+    headers: { "Content-Type": "image/jpeg" },
+    body: new Uint8Array([1, 2, 3]),
+  });
+
+  const response = await worker.fetch(request, {
+    DB: db,
+    INCIDENTS_BUCKET: bucket,
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 404);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /incidencia/i);
+});
+
+test("POST /incidents/:id/photos returns 500 when R2 bucket binding is missing", async () => {
+  const db = createMockDB({
+    incidents: [{ id: 11, installation_id: 45 }],
+  });
+  const request = new Request("https://worker.example/incidents/11/photos", {
+    method: "POST",
+    headers: { "Content-Type": "image/jpeg" },
+    body: new Uint8Array([1, 2, 3]),
+  });
+
+  const response = await worker.fetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 500);
+  assert.match(body.error, /INCIDENTS_BUCKET/);
+});
+
+test("POST /incidents/:id/photos rejects invalid incident id", async () => {
+  const db = createMockDB({
+    incidents: [{ id: 11, installation_id: 45 }],
+  });
+  const request = new Request("https://worker.example/incidents/not-a-number/photos", {
+    method: "POST",
+    headers: { "Content-Type": "image/jpeg" },
+    body: new Uint8Array([1, 2, 3]),
+  });
+
+  const response = await worker.fetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /incident_id/i);
+});
+
+test("GET /statistics returns full stats with brand grouping", async () => {
+  const db = createMockDB({
+    installations: [
+      {
+        id: 1,
+        timestamp: "2026-07-10T10:00:00.000Z",
+        driver_brand: "Zebra",
+        driver_version: "1.0",
+        status: "success",
+        client_name: "ACME",
+        installation_time_seconds: 120,
+      },
+      {
+        id: 2,
+        timestamp: "2026-07-11T10:00:00.000Z",
+        driver_brand: "Magicard",
+        driver_version: "2.0",
+        status: "failed",
+        client_name: "BETA",
+        installation_time_seconds: 60,
+      },
+      {
+        id: 3,
+        timestamp: "2026-08-01T00:00:00.000Z",
+        driver_brand: "Zebra",
+        driver_version: "1.0",
+        status: "success",
+        client_name: "ACME",
+        installation_time_seconds: 180,
+      },
     ],
   });
-  const request = new Request("https://worker.example/statistics", { method: "GET" });
+  const request = new Request(
+    "https://worker.example/statistics?start_date=2026-07-01T00:00:00.000Z&end_date=2026-08-01T00:00:00.000Z",
+    { method: "GET" },
+  );
 
   const response = await worker.fetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.deepEqual(body, {
-    by_brand: {
-      Zebra: 2,
-      Magicard: 1,
-    },
-  });
+  assert.equal(body.total_installations, 2);
+  assert.equal(body.successful_installations, 1);
+  assert.equal(body.failed_installations, 1);
+  assert.equal(body.unique_clients, 2);
+  assert.deepEqual(body.by_brand, { Zebra: 1, Magicard: 1 });
 });
 
 test("unsupported method on /installations returns 404", async () => {
@@ -570,6 +855,94 @@ test("returns 401 when auth secrets are configured but headers are missing", asy
   assert.equal(response.status, 401);
   assert.equal(body.success, false);
   assert.equal(body.error.code, "UNAUTHORIZED");
+});
+
+test("returns 401 when auth token is invalid", async () => {
+  const db = createMockDB();
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = signRequest({
+    method: "GET",
+    path: "/installations",
+    timestamp,
+    bodyBuffer: Buffer.alloc(0),
+    secret: "secret-abc",
+  });
+
+  const request = new Request("https://worker.example/installations", {
+    method: "GET",
+    headers: {
+      "X-API-Token": "wrong-token",
+      "X-Request-Timestamp": timestamp,
+      "X-Request-Signature": signature,
+    },
+  });
+
+  const response = await worker.fetch(request, {
+    DB: db,
+    API_TOKEN: "token-123",
+    API_SECRET: "secret-abc",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 401);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /token/i);
+});
+
+test("returns 401 when auth timestamp is outside allowed window", async () => {
+  const db = createMockDB();
+  const timestamp = (Math.floor(Date.now() / 1000) - 301).toString();
+  const signature = signRequest({
+    method: "GET",
+    path: "/installations",
+    timestamp,
+    bodyBuffer: Buffer.alloc(0),
+    secret: "secret-abc",
+  });
+
+  const request = new Request("https://worker.example/installations", {
+    method: "GET",
+    headers: {
+      "X-API-Token": "token-123",
+      "X-Request-Timestamp": timestamp,
+      "X-Request-Signature": signature,
+    },
+  });
+
+  const response = await worker.fetch(request, {
+    DB: db,
+    API_TOKEN: "token-123",
+    API_SECRET: "secret-abc",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 401);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /timestamp/i);
+});
+
+test("returns 401 when auth signature is invalid", async () => {
+  const db = createMockDB();
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const request = new Request("https://worker.example/installations", {
+    method: "GET",
+    headers: {
+      "X-API-Token": "token-123",
+      "X-Request-Timestamp": timestamp,
+      "X-Request-Signature": "not-a-valid-signature",
+    },
+  });
+
+  const response = await worker.fetch(request, {
+    DB: db,
+    API_TOKEN: "token-123",
+    API_SECRET: "secret-abc",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 401);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /firma/i);
 });
 
 test("accepts signed requests when auth secrets are configured", async () => {

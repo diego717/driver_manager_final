@@ -10,7 +10,11 @@ import {
   View,
 } from "react-native";
 
-import { createIncident, listInstallations } from "@/src/api/incidents";
+import {
+  createIncident,
+  createInstallationRecord,
+  listInstallations,
+} from "@/src/api/incidents";
 import { extractApiError } from "@/src/api/client";
 import { type InstallationRecord } from "@/src/types/api";
 
@@ -19,9 +23,12 @@ export default function CreateIncidentScreen() {
   const [reporterUsername, setReporterUsername] = useState("admin");
   const [note, setNote] = useState("");
   const [timeAdjustment, setTimeAdjustment] = useState("0");
+  const [manualClientName, setManualClientName] = useState("");
+  const [manualNotes, setManualNotes] = useState("");
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
   const [loadingInstallations, setLoadingInstallations] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [creatingManualRecord, setCreatingManualRecord] = useState(false);
 
   const loadInstallations = async () => {
     try {
@@ -44,6 +51,38 @@ export default function CreateIncidentScreen() {
   useEffect(() => {
     void loadInstallations();
   }, []);
+
+  const onCreateManualRecord = async () => {
+    try {
+      setCreatingManualRecord(true);
+      const response = await createInstallationRecord({
+        client_name: manualClientName.trim() || "Sin cliente",
+        notes: manualNotes.trim(),
+        status: "manual",
+        driver_brand: "N/A",
+        driver_version: "N/A",
+        driver_description: "Registro manual creado desde app móvil",
+        os_info: "mobile",
+        installation_time_seconds: 0,
+      });
+
+      const createdId = response.record?.id;
+      if (createdId) {
+        setInstallationId(String(createdId));
+      }
+      Alert.alert(
+        "Registro creado",
+        `ID: ${createdId ?? "N/A"}\nAhora puedes adjuntar incidencia sin instalación previa.`,
+      );
+      setManualClientName("");
+      setManualNotes("");
+      await loadInstallations();
+    } catch (error) {
+      Alert.alert("Error", extractApiError(error));
+    } finally {
+      setCreatingManualRecord(false);
+    }
+  };
 
   const onSubmit = async () => {
     const parsedInstallationId = Number.parseInt(installationId, 10);
@@ -92,6 +131,44 @@ export default function CreateIncidentScreen() {
       <Text style={styles.subtitle}>
         Usa esta pantalla para validar el flujo desde Android hacia tu Worker.
       </Text>
+
+      <Text style={styles.sectionTitle}>1) Crear registro manual base</Text>
+      <Text style={styles.hint}>
+        Esto crea un registro en historial sin depender de instalación previa.
+      </Text>
+
+      <Text style={styles.label}>Cliente (opcional)</Text>
+      <TextInput
+        value={manualClientName}
+        onChangeText={setManualClientName}
+        style={styles.input}
+        placeholder="Cliente ACME"
+        placeholderTextColor="#808080"
+      />
+
+      <Text style={styles.label}>Notas del registro base (opcional)</Text>
+      <TextInput
+        value={manualNotes}
+        onChangeText={setManualNotes}
+        style={[styles.input, styles.manualNoteInput]}
+        multiline
+        placeholder="Contexto inicial del caso"
+        placeholderTextColor="#808080"
+      />
+
+      <TouchableOpacity
+        style={[styles.secondaryButton, creatingManualRecord && styles.buttonDisabled]}
+        onPress={onCreateManualRecord}
+        disabled={creatingManualRecord}
+      >
+        {creatingManualRecord ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.buttonText}>Crear registro manual</Text>
+        )}
+      </TouchableOpacity>
+
+      <Text style={styles.sectionTitle}>2) Crear incidencia sobre un registro</Text>
 
       <View style={styles.rowBetween}>
         <Text style={styles.label}>Instalaciones disponibles</Text>
@@ -203,6 +280,12 @@ const styles = StyleSheet.create({
     color: "#475569",
     marginBottom: 8,
   },
+  sectionTitle: {
+    marginTop: 10,
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
   label: {
     fontSize: 13,
     fontWeight: "600",
@@ -262,6 +345,18 @@ const styles = StyleSheet.create({
   noteInput: {
     minHeight: 110,
     textAlignVertical: "top",
+  },
+  manualNoteInput: {
+    minHeight: 80,
+    textAlignVertical: "top",
+  },
+  secondaryButton: {
+    marginTop: 6,
+    backgroundColor: "#2563eb",
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
   },
   button: {
     marginTop: 10,

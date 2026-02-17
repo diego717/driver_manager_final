@@ -1,4 +1,6 @@
 import {
+  type CreateRecordInput,
+  type CreateRecordResponse,
   type CreateIncidentInput,
   type CreateIncidentResponse,
   type InstallationRecord,
@@ -33,5 +35,15 @@ export async function listInstallations(): Promise<InstallationRecord[]> {
   return signedJsonRequest<InstallationRecord[]>({
     method: "GET",
     path: "/installations",
+  });
+}
+
+export async function createInstallationRecord(
+  payload: CreateRecordInput,
+): Promise<CreateRecordResponse> {
+  return signedJsonRequest<CreateRecordResponse>({
+    method: "POST",
+    path: "/records",
+    data: payload,
   });
 }

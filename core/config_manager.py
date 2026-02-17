@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QMessageBox, QGroupBox, QPushButton, QLineEdit, QLab
 from managers.cloud_manager import CloudflareR2Manager
 # Security manager está en la misma carpeta 'core', usamos import relativo o directo
 from core.security_manager import SecurityManager
+from core.master_password_vault import MasterPasswordVault
 # Los diálogos ahora están en ui.dialogs
 from ui.dialogs.master_password_dialog import show_master_password_dialog
 # Logger y exceptions están en 'core'
@@ -54,6 +55,9 @@ class ConfigManager:
         # Componentes
         self.security = SecurityManager() 
         self.master_password = os.getenv(MASTER_PASSWORD_ENV)
+        self.password_vault = MasterPasswordVault()
+        self._vault_password_cache = None
+        self._vault_password_loaded = False
         self._config_loaded = False
         self._applying_portable = False
 
@@ -62,12 +66,48 @@ class ConfigManager:
         candidates = []
         env_password = os.getenv(MASTER_PASSWORD_ENV)
         legacy_env_password = os.getenv(LEGACY_MASTER_PASSWORD_ENV)
+        vault_password = self._get_vault_password()
 
-        for candidate in [self.master_password, env_password, legacy_env_password]:
+        for candidate in [self.master_password, env_password, legacy_env_password, vault_password]:
             if candidate and candidate not in candidates:
                 candidates.append(candidate)
 
         return candidates
+
+    def _get_vault_password(self):
+        """Obtener contraseña guardada localmente (si existe)."""
+        if self._vault_password_loaded:
+            return self._vault_password_cache
+
+        self._vault_password_cache = self.password_vault.load_password()
+        self._vault_password_loaded = True
+        return self._vault_password_cache
+
+    def _save_vault_password(self, password):
+        """Guardar contraseña maestra en almacenamiento seguro local."""
+        if not password:
+            return
+        if self.password_vault.save_password(password):
+            self._vault_password_cache = password
+            self._vault_password_loaded = True
+
+    def _clear_vault_password(self):
+        """Eliminar contraseña maestra local guardada en vault."""
+        self.password_vault.clear_password()
+        self._vault_password_cache = None
+        self._vault_password_loaded = True
+
+    def _apply_vault_preference(self, password, remember_choice):
+        """
+        Aplicar preferencia de guardado local:
+        - True: guardar en vault
+        - False: limpiar vault
+        - None: no cambiar
+        """
+        if remember_choice is True:
+            self._save_vault_password(password)
+        elif remember_choice is False:
+            self._clear_vault_password()
 
     def _migrate_master_password_if_needed(self, decrypted_config, used_password):
         """
@@ -95,11 +135,16 @@ class ConfigManager:
             logger.warning("No se pudo migrar config.enc a la nueva clave maestra.")
 
     def _request_master_password(self, is_first_time=False):
-        """Solicitar contraseña maestra al usuario y guardarla en memoria."""
-        password = show_master_password_dialog(self.main, is_first_time=is_first_time)
+        """Solicitar contraseña maestra y preferencia de guardado local."""
+        password, remember_choice = show_master_password_dialog(
+            self.main,
+            is_first_time=is_first_time,
+            allow_remember_option=self.password_vault.is_supported(),
+            return_metadata=True,
+        )
         if password:
             self.master_password = password
-        return password
+        return password, remember_choice
 
     @handle_errors("load_config_data", reraise=False, default_return=None)
     def load_config_data(self):
@@ -109,7 +154,8 @@ class ConfigManager:
         # ESCENARIO A: PRIMERA VEZ (Con JSON Portable)
         if self.portable_json_path.exists():
             try:
-                with open(self.portable_json_path, 'r', encoding='utf-8') as f:
+                # Accept JSON files saved with or without UTF-8 BOM.
+                with open(self.portable_json_path, 'r', encoding='utf-8-sig') as f:
                     portable_data = json.load(f)
                 
                 if portable_data.get('account_id'):
@@ -122,6 +168,8 @@ class ConfigManager:
         # ESCENARIO B: USO DIARIO (Desde Archivo Cifrado en USB)
         if self.encrypted_config_file.exists():
             passwords_to_try = self._get_password_candidates()
+            vault_password = self._get_vault_password()
+            vault_password_failed = False
             
             for pwd in passwords_to_try:
                 try:
@@ -134,18 +182,27 @@ class ConfigManager:
                         logger.info("✅ Configuración cargada desde 'config.enc' en USB.")
                         return config
                 except Exception:
+                    if vault_password and pwd == vault_password:
+                        vault_password_failed = True
                     continue
 
-            prompted_password = self._request_master_password(is_first_time=False)
+            if vault_password_failed:
+                logger.warning("La contraseña maestra guardada en este equipo es inválida. Se eliminará.")
+                self._clear_vault_password()
+
+            prompted_password, remember_choice = self._request_master_password(is_first_time=False)
             if prompted_password and prompted_password not in passwords_to_try:
                 try:
                     config = self.security.decrypt_config_file(prompted_password, self.encrypted_config_file)
                     if config:
+                        self._apply_vault_preference(prompted_password, remember_choice)
                         self._config_loaded = True
                         logger.info("Configuracion cargada desde 'config.enc' con contrasena manual.")
                         return config
                 except Exception:
                     pass
+            elif prompted_password:
+                self._apply_vault_preference(prompted_password, remember_choice)
             
             logger.warning("No se pudo descifrar el archivo config.enc.")
         return None
@@ -155,9 +212,11 @@ class ConfigManager:
         """Guarda la configuración cifrada en el USB."""
         logger.operation_start("save_config_data")
         
-        if not config: return False
+        if not config:
+            return False
 
         self.config_dir.mkdir(parents=True, exist_ok=True)
+        remember_choice = None
         
         # DETERMINAR CONTRASEÑA DE CIFRADO
         if not self.master_password:
@@ -166,7 +225,9 @@ class ConfigManager:
                 self.master_password = env_password
 
         if not self.master_password:
-            password = self._request_master_password(is_first_time=not self.encrypted_config_file.exists())
+            password, remember_choice = self._request_master_password(
+                is_first_time=not self.encrypted_config_file.exists()
+            )
             if not password:
                 return False
             self.master_password = password
@@ -174,11 +235,14 @@ class ConfigManager:
         success = self.security.encrypt_config_file(config, self.master_password, self.encrypted_config_file)
         
         if success:
+            self._apply_vault_preference(self.master_password, remember_choice)
             self._config_loaded = True
             logger.info(f"✅ Guardado exitoso en: {self.encrypted_config_file}")
             if self.config_file.exists():
-                try: self.config_file.unlink()
-                except: pass
+                try:
+                    self.config_file.unlink()
+                except Exception:
+                    pass
             return True
         return False
 

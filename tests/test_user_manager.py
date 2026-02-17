@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import MagicMock
+from unittest.mock import patch
 import json
 import shutil
 from pathlib import Path
@@ -40,6 +41,11 @@ class TestUserManagerV2(unittest.TestCase):
             self.assertEqual(data["users"]["superadmin"]["role"], "super_admin")
             self.assertEqual(data["users"]["superadmin"]["permissions"], ["all"])
 
+    def test_initialize_system_rejects_weak_password(self):
+        success, message = self.user_manager.initialize_system("superadmin", "weak123")
+        self.assertFalse(success)
+        self.assertIn("seguridad", message.lower())
+
     def test_authenticate(self):
         self.user_manager.initialize_system("superadmin", self.superadmin_password)
 
@@ -57,6 +63,34 @@ class TestUserManagerV2(unittest.TestCase):
         success, message = self.user_manager.authenticate("nonexistent", self.superadmin_password)
         self.assertFalse(success)
         self.assertIn("Usuario o contrase", message)
+
+    def test_authenticate_locks_account_after_repeated_failures(self):
+        self.user_manager.initialize_system("superadmin", self.superadmin_password)
+        max_attempts = self.user_manager.lockout_manager.MAX_FAILED_ATTEMPTS
+
+        for _ in range(max_attempts):
+            success, _ = self.user_manager.authenticate("superadmin", "WrongPassword123!")
+            self.assertFalse(success)
+
+        success, message = self.user_manager.authenticate("superadmin", self.superadmin_password)
+        self.assertFalse(success)
+        self.assertIn("Cuenta bloqueada", message)
+
+    def test_unlock_user_account_allows_login_again(self):
+        self.user_manager.initialize_system("superadmin", self.superadmin_password)
+        max_attempts = self.user_manager.lockout_manager.MAX_FAILED_ATTEMPTS
+
+        for _ in range(max_attempts):
+            self.user_manager.authenticate("superadmin", "WrongPassword123!")
+
+        self.user_manager.current_user = {"username": "superadmin", "role": "super_admin"}
+        success, message = self.user_manager.unlock_user_account("superadmin")
+
+        self.assertTrue(success)
+        self.assertIn("desbloqueada", message.lower())
+
+        success, _ = self.user_manager.authenticate("superadmin", self.superadmin_password)
+        self.assertTrue(success)
 
     def test_create_user_permissions(self):
         self.user_manager.initialize_system("superadmin", self.superadmin_password)
@@ -94,6 +128,111 @@ class TestUserManagerV2(unittest.TestCase):
 
         success, message = self.user_manager.authenticate("superadmin", self.new_superadmin_password)
         self.assertTrue(success)
+
+    def test_change_password_rejects_recent_password_reuse(self):
+        self.user_manager.initialize_system("superadmin", self.superadmin_password)
+
+        success, _ = self.user_manager.change_password(
+            "superadmin", self.superadmin_password, self.new_superadmin_password
+        )
+        self.assertTrue(success)
+
+        success, message = self.user_manager.change_password(
+            "superadmin", self.new_superadmin_password, self.superadmin_password
+        )
+        self.assertFalse(success)
+        self.assertIn("No puedes reutilizar", message)
+
+    def test_decode_cloud_users_payload_recovers_legacy_users_dict(self):
+        cloud = MagicMock()
+        security = MagicMock()
+        manager = UserManagerV2(cloud_manager=cloud, security_manager=security, local_mode=False)
+        manager.cloud_encryption = MagicMock()
+        manager.cloud_encryption.decrypt_cloud_data.return_value = {}
+
+        payload = {
+            "_encrypted": True,
+            "_hmac": "invalid",
+            "users": {
+                "administrador": {
+                    "username": "administrador",
+                    "role": "super_admin",
+                }
+            },
+        }
+
+        decoded, recovered = manager._decode_cloud_users_payload(payload)
+
+        self.assertTrue(recovered)
+        self.assertIn("administrador", decoded["users"])
+
+    def test_load_users_recovers_from_local_backup_when_cloud_payload_is_invalid(self):
+        local_backup = {
+            "users": {
+                "administrador": {
+                    "username": "administrador",
+                    "password_hash": "hash",
+                    "role": "super_admin",
+                    "active": True,
+                }
+            },
+            "created_at": "2026-02-17T00:00:00",
+            "version": "2.1",
+        }
+        fallback_file = self.test_dir / "users.json"
+        fallback_file.write_text(json.dumps(local_backup), encoding="utf-8")
+
+        cloud = MagicMock()
+        cloud.download_file_content.return_value = json.dumps(
+            {
+                "_encrypted": True,
+                "_hmac": "invalid",
+                "users": "tampered",
+            }
+        )
+        security = MagicMock()
+        manager = UserManagerV2(cloud_manager=cloud, security_manager=security, local_mode=False)
+        manager.config_dir = self.test_dir
+        manager.cloud_encryption = MagicMock()
+        manager.cloud_encryption.decrypt_cloud_data.return_value = {}
+
+        with patch.object(manager, "_save_users") as mock_save:
+            users_data = manager._load_users()
+
+        self.assertIn("administrador", users_data["users"])
+        mock_save.assert_called_once()
+
+    def test_load_users_recovers_from_local_backup_with_utf8_bom(self):
+        local_backup = {
+            "users": {
+                "administrador": {
+                    "username": "administrador",
+                    "password_hash": "hash",
+                    "role": "super_admin",
+                    "active": True,
+                }
+            }
+        }
+        fallback_file = self.test_dir / "users.json"
+        fallback_file.write_text(json.dumps(local_backup), encoding="utf-8-sig")
+
+        cloud = MagicMock()
+        cloud.download_file_content.return_value = json.dumps(
+            {
+                "_encrypted": True,
+                "_hmac": "invalid",
+                "users": "tampered",
+            }
+        )
+        security = MagicMock()
+        manager = UserManagerV2(cloud_manager=cloud, security_manager=security, local_mode=False)
+        manager.config_dir = self.test_dir
+        manager.cloud_encryption = MagicMock()
+        manager.cloud_encryption.decrypt_cloud_data.return_value = {}
+
+        users_data = manager._load_users()
+
+        self.assertIn("administrador", users_data["users"])
 
 
 if __name__ == "__main__":

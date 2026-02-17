@@ -6,7 +6,7 @@ from pathlib import Path
 from datetime import datetime
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QTabWidget, QProgressBar, QMessageBox, QListWidgetItem, QLabel, QPushButton, QDialog, QGroupBox, QLineEdit)
+                             QTabWidget, QProgressBar, QMessageBox, QListWidgetItem, QLabel, QPushButton, QDialog, QGroupBox, QLineEdit, QInputDialog)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
@@ -95,7 +95,8 @@ class MainWindow(QMainWindow):
         if portable_path.exists():
             try:
                 # 1. Leer y cerrar el archivo inmediatamente para liberar el bloqueo de Windows
-                with open(portable_path, 'r', encoding='utf-8') as f:
+                # Accept JSON files saved with or without UTF-8 BOM.
+                with open(portable_path, 'r', encoding='utf-8-sig') as f:
                     config_data = json.load(f)
                 
                 # 2. Validar datos mínimos
@@ -189,7 +190,7 @@ class MainWindow(QMainWindow):
         else:
             self._show_setup_wizard(user_manager)
 
-    def _show_setup_wizard(self, user_manager):
+    def _show_setup_wizard(self, user_manager, exit_on_cancel=True):
         """Mostrar wizard de configuración inicial"""
         from ui.dialogs.user_setup_wizard import show_user_setup_wizard
         
@@ -215,8 +216,10 @@ class MainWindow(QMainWindow):
                     f"❌ {message}"
                 )
         else:
-            # Usuario canceló, cerrar aplicación
-            sys.exit(0)
+            # Usuario canceló el wizard
+            if exit_on_cancel:
+                sys.exit(0)
+            logger.info("Wizard de configuración inicial cancelado por el usuario.")
 
     def _init_managers(self):
         """Inicializar todos los managers"""
@@ -301,6 +304,7 @@ class MainWindow(QMainWindow):
         self.history_tab.history_list.currentItemChanged.connect(
             lambda item: self.history_tab.edit_button.setEnabled(item is not None and self.is_admin)
         )
+        self.history_tab.create_manual_button.clicked.connect(self.create_manual_history_record)
         self.history_tab.edit_button.clicked.connect(self.show_edit_installation_dialog)
 
         # Conexiones para la pestaña de gestion de registros
@@ -371,13 +375,26 @@ class MainWindow(QMainWindow):
             self.admin_tab.theme_combo.setCurrentText(current_theme)
         
         # History tab - reportes
-        for widget in self.history_tab.findChildren(QPushButton):
-            if "Generar Reporte de Hoy" in widget.text():
-                widget.clicked.connect(self.report_handlers.generate_daily_report_simple)
-            elif "Generar Reporte Mensual" in widget.text():
-                widget.clicked.connect(self.report_handlers.generate_monthly_report_simple)
-            elif "Exportar Todo a JSON" in widget.text():
-                widget.clicked.connect(self.report_handlers.export_history_json)
+        if hasattr(self.history_tab, "daily_report_btn"):
+            self.history_tab.daily_report_btn.clicked.connect(
+                self.report_handlers.generate_daily_report_simple
+            )
+        if hasattr(self.history_tab, "monthly_report_btn"):
+            self.history_tab.monthly_report_btn.clicked.connect(
+                self.report_handlers.generate_monthly_report_simple
+            )
+        if hasattr(self.history_tab, "yearly_report_btn"):
+            self.history_tab.yearly_report_btn.clicked.connect(
+                self.report_handlers.generate_yearly_report_simple
+            )
+        if hasattr(self.history_tab, "report_month_combo"):
+            self.history_tab.report_month_combo.currentIndexChanged.connect(
+                lambda _idx: self.report_handlers.refresh_reports_preview()
+            )
+        if hasattr(self.history_tab, "report_year_combo"):
+            self.history_tab.report_year_combo.currentIndexChanged.connect(
+                lambda _idx: self.report_handlers.refresh_reports_preview()
+            )
     
     def load_config_data(self):
         """Cargar configuración desde archivo"""
@@ -495,6 +512,8 @@ class MainWindow(QMainWindow):
         if view_name == "🗑️ Gestión de Registros":
             self._update_management_stats()
             self.refresh_history_view()
+        elif view_name == "Generar Reportes":
+            self.report_handlers.refresh_reports_preview()
     
     def refresh_history_view(self):
         """Actualizar vista actual del historial"""
@@ -505,9 +524,17 @@ class MainWindow(QMainWindow):
             for inst in installations:
                 timestamp = datetime.fromisoformat(inst['timestamp'])
                 date_str = timestamp.strftime('%d/%m/%Y %H:%M')
-                status_icon = "✓" if inst['status'] == 'success' else "✗"
+                status = (inst.get('status') or '').lower()
+                if status == 'success':
+                    status_icon = "✓"
+                elif status == 'failed':
+                    status_icon = "✗"
+                else:
+                    status_icon = "•"
                 
-                text = f"{status_icon} {date_str} - {inst['driver_brand']} v{inst['driver_version']}"
+                brand = inst.get('driver_brand') or "N/A"
+                version = inst.get('driver_version') or "N/A"
+                text = f"{status_icon} {date_str} - {brand} v{version}"
                 if inst['client_name']:
                     text += f" ({inst['client_name']})"
                 
@@ -561,9 +588,17 @@ class MainWindow(QMainWindow):
             for inst in all_installations:
                 timestamp = datetime.fromisoformat(inst['timestamp'])
                 date_str = timestamp.strftime('%d/%m/%Y %H:%M')
-                status_icon = "✓" if inst['status'] == 'success' else "✗"
+                status = (inst.get('status') or '').lower()
+                if status == 'success':
+                    status_icon = "✓"
+                elif status == 'failed':
+                    status_icon = "✗"
+                else:
+                    status_icon = "•"
                 
-                text = f"{status_icon} {date_str} - {inst['driver_brand']} v{inst['driver_version']}"
+                brand = inst.get('driver_brand') or "N/A"
+                version = inst.get('driver_version') or "N/A"
+                text = f"{status_icon} {date_str} - {brand} v{version}"
                 if inst.get('client_name'):
                     text += f" ({inst['client_name']})"
                 
@@ -628,6 +663,104 @@ class MainWindow(QMainWindow):
                     username=self.user_manager.current_user.get('username'),
                     success=False,
                     details={'record_id': record_id, 'error': str(e)}
+                )
+
+    def create_manual_history_record(self):
+        """Crear registro manual sin depender de instalación de driver previa."""
+        default_client = ""
+        if self.user_manager and self.user_manager.current_user:
+            default_client = self.user_manager.current_user.get("username", "")
+
+        client_name, ok = QInputDialog.getText(
+            self,
+            "Nuevo Registro Manual",
+            "Cliente (opcional):",
+            text=default_client,
+        )
+        if not ok:
+            return
+
+        brand, ok = QInputDialog.getText(
+            self,
+            "Nuevo Registro Manual",
+            "Marca/Equipo (opcional):",
+            text="N/A",
+        )
+        if not ok:
+            return
+
+        version, ok = QInputDialog.getText(
+            self,
+            "Nuevo Registro Manual",
+            "Versión/Referencia (opcional):",
+            text="N/A",
+        )
+        if not ok:
+            return
+
+        status, ok = QInputDialog.getItem(
+            self,
+            "Nuevo Registro Manual",
+            "Estado del registro:",
+            ["manual", "success", "failed", "unknown"],
+            0,
+            False,
+        )
+        if not ok:
+            return
+
+        notes, ok = QInputDialog.getMultiLineText(
+            self,
+            "Nuevo Registro Manual",
+            "Notas:",
+            "",
+        )
+        if not ok:
+            return
+
+        success, record = self.history.create_manual_record(
+            client_name=(client_name or "").strip() or "Sin cliente",
+            driver_brand=(brand or "").strip() or "N/A",
+            driver_version=(version or "").strip() or "N/A",
+            status=status,
+            notes=(notes or "").strip(),
+            driver_description="Registro manual desde .exe",
+        )
+
+        if success:
+            record_id = record.get("id") if isinstance(record, dict) else None
+            message = "Registro manual creado correctamente."
+            if record_id:
+                message += f"\nID: {record_id}"
+            QMessageBox.information(self, "Éxito", message)
+
+            if self.user_manager and self.user_manager.current_user:
+                self.user_manager._log_access(
+                    action="create_manual_record_success",
+                    username=self.user_manager.current_user.get('username'),
+                    success=True,
+                    details={
+                        "record_id": record_id,
+                        "status": status,
+                        "client_name": (client_name or "").strip() or "Sin cliente",
+                    },
+                )
+
+            self.refresh_history_view()
+            self._update_management_stats()
+        else:
+            QMessageBox.critical(
+                self,
+                "Error",
+                "No se pudo crear el registro manual (problema de conexión o API).",
+            )
+
+            if self.user_manager and self.user_manager.current_user:
+                self.user_manager._log_access(
+                    action="create_manual_record_failed",
+                    username=self.user_manager.current_user.get('username'),
+                    success=False,
+                    details={"status": status},
                 )
 
     def refresh_audit_logs(self):
@@ -947,6 +1080,29 @@ class MainWindow(QMainWindow):
                 logger.operation_end("show_login_dialog", success=False, reason=str(e))
                 QMessageBox.warning(self, "Error", f"Error inicializando sistema de usuarios: {str(e)}")
                 return
+
+        try:
+            if self.user_manager.needs_initialization():
+                logger.warning("No hay base de usuarios disponible. Iniciando configuración inicial.")
+                QMessageBox.information(
+                    self,
+                    "Configuración inicial requerida",
+                    "No se encontró una base de usuarios válida.\n\n"
+                    "Se abrirá el asistente para crear el primer super administrador."
+                )
+                self._show_setup_wizard(self.user_manager, exit_on_cancel=False)
+
+                if self.user_manager.needs_initialization():
+                    logger.warning("Login cancelado: el sistema sigue sin base de usuarios.")
+                    return
+        except Exception as e:
+            logger.error(f"No se pudo evaluar inicialización de usuarios: {e}", exc_info=True)
+            QMessageBox.warning(
+                self,
+                "Error de inicialización",
+                f"No se pudo validar la base de usuarios: {e}"
+            )
+            return
         
         # Mostrar diálogo de login
         dialog = LoginDialog(self.user_manager, self)

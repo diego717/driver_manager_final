@@ -1,4 +1,4 @@
-"""
+﻿"""
 Componentes de UI para Driver Manager
 """
 
@@ -280,9 +280,15 @@ class HistoryTab(QWidget):
         self.history_list = QListWidget()
         inst_layout.addWidget(self.history_list)
 
+        actions_layout = QHBoxLayout()
+        self.create_manual_button = QPushButton("➕ Crear Registro Manual")
+        actions_layout.addWidget(self.create_manual_button)
+
         self.edit_button = QPushButton("📝 Editar Registro")
         self.edit_button.setEnabled(False)
-        inst_layout.addWidget(self.edit_button)
+        actions_layout.addWidget(self.edit_button)
+        actions_layout.addStretch()
+        inst_layout.addLayout(actions_layout)
         
         self.history_stack.addWidget(inst_widget)
         
@@ -307,8 +313,8 @@ class HistoryTab(QWidget):
         reports_layout.addWidget(title)
         
         # Reporte diario
-        daily_btn = QPushButton("📄 Generar Reporte de Hoy")
-        daily_btn.setStyleSheet("""
+        self.daily_report_btn = QPushButton("📄 Generar Reporte de Hoy")
+        self.daily_report_btn.setStyleSheet("""
             QPushButton {
                 background-color: #4A90E2;
                 color: white;
@@ -320,7 +326,7 @@ class HistoryTab(QWidget):
                 background-color: #357ABD;
             }
         """)
-        reports_layout.addWidget(daily_btn)
+        reports_layout.addWidget(self.daily_report_btn)
         
         # Reporte mensual
         monthly_layout = QHBoxLayout()
@@ -343,8 +349,8 @@ class HistoryTab(QWidget):
         monthly_layout.addStretch()
         reports_layout.addLayout(monthly_layout)
         
-        monthly_btn = QPushButton("📄 Generar Reporte Mensual")
-        monthly_btn.setStyleSheet("""
+        self.monthly_report_btn = QPushButton("Generar Reporte del Mes Seleccionado")
+        self.monthly_report_btn.setStyleSheet("""
             QPushButton {
                 background-color: #5CB85C;
                 color: white;
@@ -356,11 +362,9 @@ class HistoryTab(QWidget):
                 background-color: #4CAE4C;
             }
         """)
-        reports_layout.addWidget(monthly_btn)
-        
-        # Exportar JSON
-        export_btn = QPushButton("📦 Exportar Todo a JSON")
-        export_btn.setStyleSheet("""
+        reports_layout.addWidget(self.monthly_report_btn)
+        self.yearly_report_btn = QPushButton("Generar Reporte Anual (Ano Seleccionado)")
+        self.yearly_report_btn.setStyleSheet("""
             QPushButton {
                 background-color: #F0AD4E;
                 color: white;
@@ -372,7 +376,19 @@ class HistoryTab(QWidget):
                 background-color: #EC971F;
             }
         """)
-        reports_layout.addWidget(export_btn)
+        reports_layout.addWidget(self.yearly_report_btn)
+
+        preview_title = QLabel("Vista previa del reporte")
+        preview_title.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        reports_layout.addWidget(preview_title)
+
+        self.report_preview = QTextEdit()
+        self.report_preview.setReadOnly(True)
+        self.report_preview.setMinimumHeight(170)
+        self.report_preview.setPlaceholderText(
+            "Aquí se mostrará un resumen rápido del reporte diario, mensual y anual."
+        )
+        reports_layout.addWidget(self.report_preview)
         
         reports_layout.addStretch()
         self.history_stack.addWidget(reports_widget)
@@ -846,3 +862,5 @@ class EditInstallationDialog(QDialog):
             'notes': self.notes_edit.toPlainText(),
             'time_seconds': self.time_spinbox.value()
         }
+
+

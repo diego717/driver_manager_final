@@ -68,6 +68,149 @@ function nowUnixSeconds() {
   return Math.floor(Date.now() / 1000);
 }
 
+function normalizeOptionalString(value, fallback = "") {
+  if (value === null || value === undefined) return fallback;
+  return String(value).trim();
+}
+
+function normalizeNonNegativeInteger(value, fallback = 0) {
+  if (value === null || value === undefined || value === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.trunc(parsed));
+}
+
+function normalizeInstallationPayload(data, defaultStatus = "unknown") {
+  const source = data && typeof data === "object" ? data : {};
+
+  return {
+    timestamp: normalizeOptionalString(source.timestamp, nowIso()),
+    driver_brand: normalizeOptionalString(source.driver_brand || source.brand, ""),
+    driver_version: normalizeOptionalString(source.driver_version || source.version, ""),
+    status: normalizeOptionalString(source.status, defaultStatus) || defaultStatus,
+    client_name: normalizeOptionalString(source.client_name || source.client, ""),
+    driver_description: normalizeOptionalString(
+      source.driver_description || source.description,
+      "",
+    ),
+    installation_time_seconds: normalizeNonNegativeInteger(
+      source.installation_time_seconds ?? source.installation_time ?? source.time_seconds,
+      0,
+    ),
+    os_info: normalizeOptionalString(source.os_info, ""),
+    notes: normalizeOptionalString(source.notes || source.error_message, ""),
+  };
+}
+
+function parseDateOrNull(value) {
+  if (!value) return null;
+  const parsed = new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) {
+    throw new HttpError(400, "Fecha invalida en filtros.");
+  }
+  return parsed;
+}
+
+function parseOptionalPositiveInt(value, label) {
+  if (value === null || value === undefined || value === "") return null;
+  return parsePositiveInt(value, label);
+}
+
+function applyInstallationFilters(installations, searchParams) {
+  const clientName = normalizeOptionalString(searchParams.get("client_name"), "").toLowerCase();
+  const brand = normalizeOptionalString(searchParams.get("brand"), "").toLowerCase();
+  const status = normalizeOptionalString(searchParams.get("status"), "").toLowerCase();
+  const startDate = parseDateOrNull(searchParams.get("start_date"));
+  const endDate = parseDateOrNull(searchParams.get("end_date"));
+  const limit = parseOptionalPositiveInt(searchParams.get("limit"), "limit");
+
+  const filtered = (installations || []).filter((row) => {
+    if (clientName) {
+      const currentClient = normalizeOptionalString(row.client_name, "").toLowerCase();
+      if (!currentClient.includes(clientName)) return false;
+    }
+
+    if (brand) {
+      const currentBrand = normalizeOptionalString(row.driver_brand, "").toLowerCase();
+      if (currentBrand !== brand) return false;
+    }
+
+    if (status) {
+      const currentStatus = normalizeOptionalString(row.status, "").toLowerCase();
+      if (currentStatus !== status) return false;
+    }
+
+    if (startDate || endDate) {
+      const rawTimestamp = normalizeOptionalString(row.timestamp, "");
+      const rowDate = rawTimestamp ? new Date(rawTimestamp) : null;
+      if (!rowDate || Number.isNaN(rowDate.getTime())) return false;
+
+      if (startDate && rowDate < startDate) return false;
+      // Rango semiclosed [start_date, end_date)
+      if (endDate && rowDate >= endDate) return false;
+    }
+
+    return true;
+  });
+
+  if (limit) {
+    return filtered.slice(0, limit);
+  }
+
+  return filtered;
+}
+
+function computeStatistics(installations) {
+  const rows = installations || [];
+  const total = rows.length;
+
+  let success = 0;
+  let failed = 0;
+  let totalSeconds = 0;
+  let timedRows = 0;
+  const uniqueClients = new Set();
+  const topDrivers = {};
+  const byBrand = {};
+
+  for (const row of rows) {
+    const rowStatus = normalizeOptionalString(row.status, "").toLowerCase();
+    if (rowStatus === "success") success += 1;
+    if (rowStatus === "failed") failed += 1;
+
+    const seconds = Number(row.installation_time_seconds);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      totalSeconds += seconds;
+      timedRows += 1;
+    }
+
+    const client = normalizeOptionalString(row.client_name, "");
+    if (client) uniqueClients.add(client);
+
+    const brand = normalizeOptionalString(row.driver_brand, "");
+    const version = normalizeOptionalString(row.driver_version, "");
+
+    if (brand) {
+      byBrand[brand] = (byBrand[brand] || 0) + 1;
+    }
+
+    const driverKey = `${brand} ${version}`.trim();
+    if (driverKey) {
+      topDrivers[driverKey] = (topDrivers[driverKey] || 0) + 1;
+    }
+  }
+
+  return {
+    total_installations: total,
+    successful_installations: success,
+    failed_installations: failed,
+    success_rate: total > 0 ? Number(((success / total) * 100).toFixed(2)) : 0,
+    average_time_minutes: timedRows > 0 ? Number(((totalSeconds / timedRows) / 60).toFixed(2)) : 0,
+    unique_clients: uniqueClients.size,
+    top_drivers: topDrivers,
+    by_brand: byBrand,
+  };
+}
+
 async function sha256Hex(bytes) {
   if (!globalThis.crypto?.subtle) {
     return null;
@@ -208,30 +351,72 @@ export default {
           const { results } = await env.DB.prepare(
             "SELECT * FROM installations ORDER BY timestamp DESC",
           ).all();
-          return jsonResponse(results);
+          const filtered = applyInstallationFilters(results, url.searchParams);
+          return jsonResponse(filtered);
         }
 
         if (request.method === "POST") {
           const data = await request.json();
+          const payload = normalizeInstallationPayload(data, "unknown");
+
           await env.DB.prepare(`
             INSERT INTO installations (timestamp, driver_brand, driver_version, status, client_name, driver_description, installation_time_seconds, os_info, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           `)
             .bind(
-              data.timestamp || nowIso(),
-              data.driver_brand || "",
-              data.driver_version || "",
-              data.status || "unknown",
-              data.client_name || "",
-              data.driver_description || "",
-              data.installation_time_seconds || 0,
-              data.os_info || "",
-              data.notes || "",
+              payload.timestamp,
+              payload.driver_brand,
+              payload.driver_version,
+              payload.status,
+              payload.client_name,
+              payload.driver_description,
+              payload.installation_time_seconds,
+              payload.os_info,
+              payload.notes,
             )
             .run();
 
           return jsonResponse({ success: true }, 201);
         }
+      }
+
+      if (pathParts.length === 1 && pathParts[0] === "records" && request.method === "POST") {
+        const data = await request.json();
+        const payload = normalizeInstallationPayload(data, "manual");
+
+        if (!payload.driver_brand) payload.driver_brand = "N/A";
+        if (!payload.driver_version) payload.driver_version = "N/A";
+        if (!payload.driver_description) payload.driver_description = "Registro manual";
+        if (!payload.client_name) payload.client_name = "Sin cliente";
+        if (!payload.os_info) payload.os_info = "manual";
+
+        const insertResult = await env.DB.prepare(`
+          INSERT INTO installations (timestamp, driver_brand, driver_version, status, client_name, driver_description, installation_time_seconds, os_info, notes)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+          .bind(
+            payload.timestamp,
+            payload.driver_brand,
+            payload.driver_version,
+            payload.status,
+            payload.client_name,
+            payload.driver_description,
+            payload.installation_time_seconds,
+            payload.os_info,
+            payload.notes,
+          )
+          .run();
+
+        return jsonResponse(
+          {
+            success: true,
+            record: {
+              id: insertResult?.meta?.last_row_id || null,
+              ...payload,
+            },
+          },
+          201,
+        );
       }
 
       if (
@@ -456,16 +641,11 @@ export default {
       }
 
       if (url.pathname === "/statistics") {
-        const { results: byBrand } = await env.DB.prepare(
-          "SELECT driver_brand, COUNT(*) as count FROM installations GROUP BY driver_brand",
+        const { results } = await env.DB.prepare(
+          "SELECT * FROM installations ORDER BY timestamp DESC",
         ).all();
-
-        const brandStats = {};
-        byBrand.forEach((row) => {
-          if (row.driver_brand) brandStats[row.driver_brand] = row.count;
-        });
-
-        return jsonResponse({ by_brand: brandStats });
+        const filtered = applyInstallationFilters(results, url.searchParams);
+        return jsonResponse(computeStatistics(filtered));
       }
 
       return textResponse("Ruta no encontrada.", 404);

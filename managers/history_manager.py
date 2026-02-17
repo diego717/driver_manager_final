@@ -12,7 +12,10 @@ import platform
 import hmac
 import hashlib
 import time
-from datetime import datetime
+import json
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
 
@@ -47,6 +50,217 @@ class InstallationHistory:
         
         # Inicializar configuración de API
         self._initialize_api_config()
+
+    def _default_statistics(self):
+        """Estructura estándar de estadísticas para mantener compatibilidad."""
+        return {
+            'total_installations': 0,
+            'successful_installations': 0,
+            'failed_installations': 0,
+            'success_rate': 0,
+            'average_time_minutes': 0,
+            'unique_clients': 0,
+            'top_drivers': {},
+            'by_brand': {}
+        }
+
+    def _compute_statistics_from_installations(self, installations):
+        """Calcular estadísticas base a partir de la lista de instalaciones."""
+        normalized_installations = installations or []
+        total = len(normalized_installations)
+        success = len(
+            [inst for inst in normalized_installations if str(inst.get('status', '')).lower() == 'success']
+        )
+        failed = len(
+            [inst for inst in normalized_installations if str(inst.get('status', '')).lower() == 'failed']
+        )
+        success_rate = round((success / total) * 100, 2) if total else 0
+
+        valid_seconds = []
+        for inst in normalized_installations:
+            raw_value = inst.get('installation_time_seconds')
+            if raw_value in (None, ''):
+                continue
+            try:
+                valid_seconds.append(float(raw_value))
+            except (TypeError, ValueError):
+                continue
+
+        average_time_minutes = round((sum(valid_seconds) / len(valid_seconds)) / 60, 2) if valid_seconds else 0
+
+        unique_clients = len(
+            {
+                str(inst.get('client_name')).strip()
+                for inst in normalized_installations
+                if inst.get('client_name')
+            }
+        )
+
+        top_drivers_counter = Counter()
+        by_brand_counter = Counter()
+        for inst in normalized_installations:
+            brand = (inst.get('driver_brand') or '').strip()
+            version = (inst.get('driver_version') or '').strip()
+
+            if brand:
+                by_brand_counter[brand] += 1
+
+            driver_key = f"{brand} {version}".strip()
+            if driver_key:
+                top_drivers_counter[driver_key] += 1
+
+        return {
+            'total_installations': total,
+            'successful_installations': success,
+            'failed_installations': failed,
+            'success_rate': success_rate,
+            'average_time_minutes': average_time_minutes,
+            'unique_clients': unique_clients,
+            'top_drivers': dict(top_drivers_counter),
+            'by_brand': dict(by_brand_counter),
+        }
+
+    def _normalize_statistics(self, stats, start_date=None, end_date=None):
+        """
+        Normalizar estadísticas para garantizar todas las claves esperadas.
+        Si llegan parciales desde la API, completa desde instalaciones.
+        """
+        normalized = self._default_statistics()
+        if isinstance(stats, dict):
+            for key in normalized.keys():
+                value = stats.get(key)
+                if value is not None:
+                    normalized[key] = value
+
+        missing_main_keys = any(
+            normalized.get(key) in (None, 0)
+            for key in ['total_installations', 'successful_installations', 'failed_installations']
+        )
+
+        if missing_main_keys:
+            installations = self.get_installations(start_date=start_date, end_date=end_date)
+            computed = self._compute_statistics_from_installations(installations)
+
+            for key in ['total_installations', 'successful_installations', 'failed_installations']:
+                if not normalized.get(key):
+                    normalized[key] = computed[key]
+
+            if not normalized.get('success_rate'):
+                normalized['success_rate'] = computed['success_rate']
+            if not normalized.get('average_time_minutes'):
+                normalized['average_time_minutes'] = computed['average_time_minutes']
+            if not normalized.get('unique_clients'):
+                normalized['unique_clients'] = computed['unique_clients']
+            if not normalized.get('top_drivers'):
+                normalized['top_drivers'] = computed['top_drivers']
+            if not normalized.get('by_brand'):
+                normalized['by_brand'] = computed['by_brand']
+
+        return normalized
+
+    def _parse_iso_datetime(self, value):
+        """Parsear datetime ISO de forma tolerante y normalizarlo a UTC naive."""
+        if not value:
+            return None
+
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            raw = str(value).strip()
+            if raw.endswith('Z'):
+                raw = f"{raw[:-1]}+00:00"
+            try:
+                parsed = datetime.fromisoformat(raw)
+            except ValueError:
+                return None
+
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+
+    def _apply_local_filters(
+        self,
+        installations,
+        limit=None,
+        client_name=None,
+        brand=None,
+        status=None,
+        start_date=None,
+        end_date=None,
+    ):
+        """
+        Aplicar filtros localmente como fallback cuando el Worker no soporta
+        parámetros de consulta (o los ignora).
+        """
+        items = installations or []
+        filtered = []
+
+        start_dt = self._parse_iso_datetime(start_date)
+        end_dt = self._parse_iso_datetime(end_date)
+
+        client_filter = str(client_name).strip().casefold() if client_name else None
+        brand_filter = str(brand).strip().casefold() if brand else None
+        status_filter = str(status).strip().casefold() if status else None
+
+        for inst in items:
+            if client_filter:
+                current_client = str(inst.get('client_name') or '').strip().casefold()
+                if client_filter not in current_client:
+                    continue
+
+            if brand_filter:
+                current_brand = str(inst.get('driver_brand') or '').strip().casefold()
+                if current_brand != brand_filter:
+                    continue
+
+            if status_filter:
+                current_status = str(inst.get('status') or '').strip().casefold()
+                if current_status != status_filter:
+                    continue
+
+            if start_dt or end_dt:
+                ts = self._parse_iso_datetime(inst.get('timestamp'))
+                if ts is None:
+                    continue
+                if start_dt and ts < start_dt:
+                    continue
+                # Rango semiclosed [start, end) para evitar incluir el primer instante del mes siguiente.
+                if end_dt and ts >= end_dt:
+                    continue
+
+            filtered.append(inst)
+
+        if limit:
+            try:
+                limit_val = int(limit)
+                if limit_val > 0:
+                    return filtered[:limit_val]
+            except (TypeError, ValueError):
+                pass
+
+        return filtered
+
+    def _read_env_file(self, env_path: Path):
+        """Leer variables clave=valor desde archivo .env (sin dependencias externas)."""
+        data = {}
+        if not env_path.exists():
+            return data
+
+        try:
+            for raw in env_path.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                data[key.strip()] = value.strip().strip('"').strip("'")
+        except Exception as error:
+            logger.warning(f"No se pudo leer .env en {env_path}: {error}")
+
+        return data
+
+    def _is_test_environment(self):
+        """Detectar ejecución de tests para mantener comportamiento determinista."""
+        return "PYTEST_CURRENT_TEST" in os.environ or "unittest" in sys.modules
     
     def _initialize_api_config(self):
         """
@@ -59,17 +273,31 @@ class InstallationHistory:
             
             if not config:
                 logger.warning("No configuration found for API initialization")
-                return
+                config = {}
             
             # Validar y cargar URL
-            api_url = config.get('api_url') or config.get('history_api_url', '')
+            local_env = {} if self._is_test_environment() else self._read_env_file(Path("mobile-app/.env"))
+            api_url = (
+                config.get('api_url')
+                or config.get('history_api_url', '')
+                or os.getenv("DRIVER_MANAGER_HISTORY_API_URL", "")
+                or local_env.get("EXPO_PUBLIC_API_BASE_URL", "")
+            )
             if api_url:
                 self.api_url = api_url.rstrip('/')
                 logger.info(f"API URL configured: {self.api_url[:30]}...")
             
-            # Cargar credenciales de autenticación (si existen)
-            self.api_token = config.get('api_token')
-            self.api_secret = config.get('api_secret')
+            # Cargar credenciales de autenticación (config cifrada o variables de entorno)
+            self.api_token = (
+                config.get('api_token')
+                or os.getenv("DRIVER_MANAGER_API_TOKEN")
+                or local_env.get("EXPO_PUBLIC_API_TOKEN")
+            )
+            self.api_secret = (
+                config.get('api_secret')
+                or os.getenv("DRIVER_MANAGER_API_SECRET")
+                or local_env.get("EXPO_PUBLIC_API_SECRET")
+            )
             
             if self.api_token and self.api_secret:
                 logger.info("API authentication configured successfully")
@@ -129,7 +357,7 @@ class InstallationHistory:
             "Campo 'URL de API de Historial'"
         )
     
-    def _generate_request_signature(self, method, endpoint, timestamp, body=None):
+    def _generate_request_signature(self, method, path, timestamp, body_hash):
         """
         Generar firma HMAC para la solicitud.
         
@@ -147,18 +375,9 @@ class InstallationHistory:
         if not self.api_secret:
             return None
         
-        # Crear string a firmar
-        message_parts = [
-            method.upper(),
-            endpoint,
-            str(timestamp)
-        ]
-        
-        if body:
-            import json
-            message_parts.append(json.dumps(body, separators=(',', ':')))
-        
-        message = '|'.join(message_parts)
+        # Canonical string (alineado con worker.js):
+        # METHOD|/path|timestamp|sha256(body_bytes)
+        message = f"{method.upper()}|{path}|{timestamp}|{body_hash}"
         
         # Generar HMAC-SHA256
         signature = hmac.new(
@@ -169,7 +388,7 @@ class InstallationHistory:
         
         return signature
     
-    def _get_headers(self, method='GET', endpoint='', body=None):
+    def _get_headers(self, method='GET', path='/', body_hash=''):
         """
         Generar headers con autenticación.
         
@@ -188,7 +407,7 @@ class InstallationHistory:
         # Si hay autenticación configurada, agregar headers
         if self.api_token and self.api_secret:
             timestamp = int(time.time())
-            signature = self._generate_request_signature(method, endpoint, timestamp, body)
+            signature = self._generate_request_signature(method, path, timestamp, body_hash)
             
             headers.update({
                 'X-API-Token': self.api_token,
@@ -197,6 +416,22 @@ class InstallationHistory:
             })
         
         return headers
+
+    def _serialize_json_body(self, body):
+        """Serializar body JSON de forma determinista para hash/firma/envío."""
+        if body is None:
+            return ""
+        return json.dumps(body, separators=(',', ':'), ensure_ascii=False)
+
+    def _sha256_hex(self, raw_text):
+        """Hash SHA-256 hexadecimal de texto UTF-8."""
+        if raw_text is None:
+            raw_text = ""
+        if isinstance(raw_text, bytes):
+            payload = raw_text
+        else:
+            payload = str(raw_text).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
     
     def _make_request(self, method, endpoint, params=None, **kwargs):
         """
@@ -228,11 +463,28 @@ class InstallationHistory:
         
         url = f"{worker_url}/{endpoint}"
         
-        # Obtener body si existe
-        body = kwargs.get('json')
-        
+        path = f"/{endpoint.lstrip('/')}"
+
+        # Si llega JSON, serializarlo manualmente para asegurar hash/firma idénticos al payload enviado.
+        body_bytes = b""
+        if 'json' in kwargs:
+            json_payload = kwargs.pop('json')
+            serialized_body = self._serialize_json_body(json_payload)
+            body_bytes = serialized_body.encode("utf-8")
+            kwargs['data'] = body_bytes
+        elif isinstance(kwargs.get('data'), bytes):
+            body_bytes = kwargs.get('data')
+        elif isinstance(kwargs.get('data'), str):
+            body_bytes = kwargs.get('data').encode("utf-8")
+            kwargs['data'] = body_bytes
+        elif kwargs.get('data') is not None:
+            body_bytes = str(kwargs.get('data')).encode("utf-8")
+            kwargs['data'] = body_bytes
+
+        body_hash = self._sha256_hex(body_bytes)
+
         # Generar headers con autenticación
-        headers = self._get_headers(method, endpoint, body)
+        headers = self._get_headers(method, path, body_hash)
         
         try:
             response = requests.request(
@@ -257,11 +509,24 @@ class InstallationHistory:
         except requests.exceptions.HTTPError as e:
             # Manejar errores de autenticación específicamente
             if e.response.status_code == 401:
-                logger.error("API authentication failed (401 Unauthorized)")
+                api_detail = ""
+                try:
+                    payload = e.response.json()
+                    api_detail = payload.get("error", {}).get("message", "")
+                except Exception:
+                    api_detail = (e.response.text or "").strip()[:200]
+
+                logger.error(
+                    "API authentication failed (401 Unauthorized)",
+                    api_detail=api_detail or "N/A"
+                )
+
+                detail_line = f"\nDetalle API: {api_detail}" if api_detail else ""
                 raise ConnectionError(
                     "❌ Autenticación fallida con la API.\n\n"
                     "Las credenciales de API pueden estar incorrectas o expiradas.\n"
                     "Contacta al super_admin para verificar la configuración."
+                    f"{detail_line}"
                 )
             elif e.response.status_code == 403:
                 logger.error("API access forbidden (403 Forbidden)")
@@ -314,6 +579,44 @@ class InstallationHistory:
         except ConnectionError as e:
             logger.warning(f"Could not sync to cloud: {e}")
             return False
+
+    def create_manual_record(self, **kwargs):
+        """
+        Crear registro manual (sin requerir instalación previa de driver).
+
+        Args:
+            **kwargs: Datos opcionales del registro.
+
+        Returns:
+            tuple: (success: bool, record: dict | None)
+        """
+        record_data = kwargs
+
+        payload = {
+            "timestamp": record_data.get("timestamp") or datetime.now().isoformat(),
+            "driver_brand": record_data.get("driver_brand") or record_data.get("brand") or "N/A",
+            "driver_version": record_data.get("driver_version") or record_data.get("version") or "N/A",
+            "status": record_data.get("status") or "manual",
+            "client_name": record_data.get("client_name") or record_data.get("client") or "Sin cliente",
+            "driver_description": record_data.get("driver_description") or record_data.get("description") or "Registro manual",
+            "installation_time_seconds": record_data.get("installation_time_seconds")
+            or record_data.get("installation_time")
+            or record_data.get("time_seconds")
+            or 0,
+            "os_info": record_data.get("os_info") or platform.system(),
+            "notes": record_data.get("notes") or "",
+        }
+
+        self._save_local(payload)
+
+        try:
+            response = self._make_request("post", "records", json=payload)
+            if isinstance(response, dict):
+                return True, response.get("record")
+            return True, None
+        except ConnectionError as e:
+            logger.warning(f"Could not create manual record in cloud: {e}")
+            return False, None
     
     def _save_local(self, installation_data):
         """Guardar instalación localmente (placeholder)"""
@@ -350,7 +653,16 @@ class InstallationHistory:
             params['end_date'] = end_date
         
         try:
-            return self._make_request('get', 'installations', params=params) or []
+            installations = self._make_request('get', 'installations', params=params) or []
+            return self._apply_local_filters(
+                installations,
+                limit=limit,
+                client_name=client_name,
+                brand=brand,
+                status=status,
+                start_date=start_date,
+                end_date=end_date,
+            )
         except ConnectionError as e:
             logger.error(f"Could not retrieve installation history: {e}")
             return []
@@ -366,19 +678,16 @@ class InstallationHistory:
             dict or None: Registro de instalación
         """
         try:
-            return self._make_request('get', f'installations/{record_id}')
-        except ConnectionError as e:
-            # Fallback: buscar en lista general
-            if "404" in str(e):
-                try:
-                    logger.warning(f"Installation {record_id} not found directly, searching in list...")
-                    installations = self.get_installations(limit=50)
-                    for inst in installations:
-                        if str(inst.get('id')) == str(record_id):
-                            return inst
-                except Exception:
-                    pass
-            
+            # El Worker actual no implementa GET /installations/{id}.
+            # Buscar por ID en la lista evita errores 404 ruidosos.
+            installations = self.get_installations(limit=200)
+            for inst in installations:
+                if str(inst.get('id')) == str(record_id):
+                    return inst
+
+            logger.warning(f"Installation {record_id} not found in fetched installations list.")
+            return None
+        except Exception as e:
             logger.error(f"Could not retrieve installation {record_id}: {e}")
             return None
     
@@ -445,30 +754,22 @@ class InstallationHistory:
         Returns:
             dict: Estadísticas de instalaciones
         """
+        # Para periodos de fecha, calcular siempre desde instalaciones filtradas
+        # (el Worker actual puede devolver estadísticas globales).
+        if start_date or end_date:
+            installations = self.get_installations(start_date=start_date, end_date=end_date)
+            return self._compute_statistics_from_installations(installations)
+
         params = {}
-        if start_date:
-            params['start_date'] = start_date
-        if end_date:
-            params['end_date'] = end_date
         
         try:
             stats = self._make_request('get', 'statistics', params=params)
-            if stats:
-                return stats
+            return self._normalize_statistics(stats, start_date=start_date, end_date=end_date)
         except Exception as e:
             logger.error(f"Error retrieving statistics: {e}")
         
         # Fallback: devolver estructura vacía
-        return {
-            'total_installations': 0,
-            'successful_installations': 0,
-            'failed_installations': 0,
-            'success_rate': 0,
-            'average_time_minutes': 0,
-            'unique_clients': 0,
-            'top_drivers': {},
-            'by_brand': {}
-        }
+        return self._default_statistics()
     
     def get_client_history(self, client_name):
         """

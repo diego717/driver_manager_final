@@ -1,7 +1,9 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from core.exceptions import InstallationError
+from core.exceptions import InstallationError, ValidationError
 from managers.installer import DriverInstaller
 
 
@@ -14,6 +16,49 @@ class TestDriverInstaller(unittest.TestCase):
     def test_install_driver_raises_if_file_not_found(self, _mock_exists):
         with self.assertRaises(InstallationError):
             self.installer.install_driver("C:/missing/driver.exe")
+
+    def test_validate_driver_path_rejects_disallowed_extension(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "driver.txt"
+            candidate.write_bytes(b"a" * 2048)
+
+            with self.assertRaises(ValidationError):
+                self.installer._validate_driver_path(candidate)
+
+    def test_validate_driver_path_rejects_dangerous_filename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "driver&evil.exe"
+            candidate.write_bytes(b"a" * 2048)
+
+            with self.assertRaises(ValidationError):
+                self.installer._validate_driver_path(candidate)
+
+    def test_validate_driver_path_rejects_suspiciously_small_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "driver.exe"
+            candidate.write_bytes(b"a" * 128)
+
+            with self.assertRaises(ValidationError):
+                self.installer._validate_driver_path(candidate)
+
+    def test_verify_file_integrity_raises_on_hash_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "driver.exe"
+            candidate.write_bytes(b"a" * 2048)
+
+            with self.assertRaises(ValidationError):
+                self.installer.verify_file_integrity(candidate, expected_hash="0" * 64)
+
+    def test_install_driver_raises_when_integrity_verification_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "driver.exe"
+            candidate.write_bytes(b"a" * 2048)
+
+            with patch.object(self.installer, "_install_windows") as mock_install:
+                with self.assertRaises(InstallationError):
+                    self.installer.install_driver(str(candidate), expected_hash="f" * 64)
+
+                mock_install.assert_not_called()
 
     @patch("managers.installer.subprocess.run")
     def test_install_windows_silent_success(self, mock_run):

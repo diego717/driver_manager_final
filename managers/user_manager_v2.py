@@ -14,6 +14,7 @@ import hashlib
 import secrets
 import bcrypt
 import re
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 import socket
@@ -524,19 +525,51 @@ class UserManagerV2:
                 if not self.users_file.exists():
                     return None
                 
-                with open(self.users_file, 'r') as f:
+                with open(self.users_file, 'r', encoding='utf-8-sig') as f:
                     data = json.load(f)
                 
-                return data
+                return self._normalize_users_data(data)
             else:
                 content = self.cloud_manager.download_file_content(self.users_file)
                 if not content:
                     self.logger.warning("No content found for users file in cloud.", file=self.users_file)
+                    fallback_users = self._load_users_disk_fallback()
+                    if fallback_users:
+                        self.logger.warning("Usando copia local de usuarios por ausencia de archivo en nube.")
+                        return fallback_users
                     return None
-                data = json.loads(content)
-                
-                if self.cloud_encryption:
-                    data = self.cloud_encryption.decrypt_cloud_data(data)
+
+                if isinstance(content, bytes):
+                    content = content.decode('utf-8-sig')
+                elif isinstance(content, str):
+                    content = content.lstrip('\ufeff')
+                cloud_payload = json.loads(content)
+                data, recovered = self._decode_cloud_users_payload(cloud_payload)
+
+                if recovered and data:
+                    self.logger.warning(
+                        "Se recuperaron usuarios con estrategia best-effort; normalizando y resincronizando."
+                    )
+                    try:
+                        self._save_users(data)
+                    except Exception as sync_error:
+                        self.logger.warning(
+                            f"No se pudo resincronizar usuarios recuperados a la nube: {sync_error}"
+                        )
+
+                if not data or not data.get("users"):
+                    fallback_users = self._load_users_disk_fallback()
+                    if fallback_users and fallback_users.get("users"):
+                        self.logger.warning(
+                            "Recuperando base de usuarios desde copia local y subiendo a la nube."
+                        )
+                        try:
+                            self._save_users(fallback_users)
+                        except Exception as sync_error:
+                            self.logger.warning(
+                                f"No se pudo subir copia local de usuarios a la nube: {sync_error}"
+                            )
+                        data = fallback_users
             
             self.logger.operation_end("_load_users", success=True)
             return data
@@ -544,6 +577,136 @@ class UserManagerV2:
             self.logger.error(f"Error loading users: {e}", exc_info=True)
             self.logger.operation_end("_load_users", success=False, reason=str(e))
             raise CloudStorageError(f"Error loading users: {str(e)}", original_error=e)
+
+    def _normalize_users_data(self, users_data):
+        """Asegurar formato válido para base de usuarios."""
+        if not isinstance(users_data, dict):
+            return {"users": {}, "created_at": datetime.now().isoformat(), "version": "2.1"}
+
+        normalized = dict(users_data)
+        users = normalized.get("users")
+
+        # Compatibilidad con estructuras legacy basadas en listas.
+        if isinstance(users, list):
+            rebuilt_users = {}
+            for entry in users:
+                if isinstance(entry, dict):
+                    username = entry.get("username")
+                    if username:
+                        rebuilt_users[username] = entry
+            users = rebuilt_users
+
+        if not isinstance(users, dict):
+            users = {}
+
+        normalized["users"] = users
+        normalized.setdefault("created_at", datetime.now().isoformat())
+        normalized.setdefault("version", "2.1")
+        return normalized
+
+    def _decode_cloud_users_payload(self, cloud_payload):
+        """
+        Decodificar payload de usuarios desde nube con estrategia best-effort.
+
+        Returns:
+            tuple(dict | None, bool): (users_data_normalizado, recovered_with_fallback)
+        """
+        if not isinstance(cloud_payload, dict):
+            return None, False
+
+        fallback_recovered = False
+        payload_copy = dict(cloud_payload)
+
+        if self.cloud_encryption:
+            decrypted = self.cloud_encryption.decrypt_cloud_data(dict(payload_copy))
+            if isinstance(decrypted, dict) and isinstance(decrypted.get("users"), dict):
+                return self._normalize_users_data(decrypted), fallback_recovered
+
+        # Fallback para payload legacy o con HMAC inválido.
+        fallback_recovered = True
+
+        if isinstance(payload_copy.get("users"), dict):
+            self.logger.warning(
+                "Recuperando usuarios desde payload legacy sin validación HMAC completa."
+            )
+            payload_copy.pop("_hmac", None)
+            payload_copy.pop("_encrypted", None)
+            return self._normalize_users_data(payload_copy), fallback_recovered
+
+        if (
+            self.security_manager
+            and self.security_manager.fernet
+            and isinstance(payload_copy.get("users"), str)
+        ):
+            try:
+                decrypted_users = self.security_manager.decrypt_data(payload_copy["users"])
+                if isinstance(decrypted_users, dict):
+                    recovered_payload = dict(payload_copy)
+                    recovered_payload["users"] = decrypted_users
+                    recovered_payload.pop("_hmac", None)
+                    recovered_payload.pop("_encrypted", None)
+                    self.logger.warning(
+                        "Recuperación best-effort aplicada para usuarios con HMAC inválido."
+                    )
+                    return self._normalize_users_data(recovered_payload), fallback_recovered
+            except Exception:
+                pass
+
+        self.logger.warning("No fue posible recuperar payload de usuarios desde nube.")
+        return None, fallback_recovered
+
+    def _load_users_disk_fallback(self):
+        """Intentar recuperar usuarios desde copias locales."""
+        fallback_paths = self._candidate_users_fallback_paths()
+
+        for path in fallback_paths:
+            try:
+                if not path.exists():
+                    continue
+                with open(path, 'r', encoding='utf-8-sig') as file:
+                    data = json.load(file)
+                normalized = self._normalize_users_data(data)
+                if normalized.get("users"):
+                    self.logger.warning(f"Copia local de usuarios encontrada en: {path}")
+                    return normalized
+            except Exception as error:
+                self.logger.warning(f"No se pudo leer fallback de usuarios en {path}: {error}")
+
+        self.logger.warning("No se encontraron copias locales de usuarios para recuperación.")
+        return None
+
+    def _candidate_users_fallback_paths(self):
+        """Construir lista de rutas posibles para recuperar users.json."""
+        candidates = []
+
+        def add_candidate(path):
+            if not path:
+                return
+            if path not in candidates:
+                candidates.append(path)
+
+        add_candidate(self.config_dir / "users.json")
+        add_candidate(Path.home() / ".driver_manager" / "users.json")
+        add_candidate(Path.home() / ".driver_manager_backup" / "users.json")
+
+        try:
+            if self.security_manager and hasattr(self.security_manager, "_get_config_dir"):
+                config_dir = self.security_manager._get_config_dir()
+                if config_dir:
+                    add_candidate(Path(config_dir) / "users.json")
+        except Exception:
+            pass
+
+        runtime_roots = [Path.cwd(), Path(__file__).resolve().parents[1]]
+        if getattr(sys, "frozen", False):
+            runtime_roots.append(Path(sys.executable).resolve().parent)
+
+        for root in runtime_roots:
+            add_candidate(root / "users.json")
+            add_candidate(root / "config" / "users.json")
+            add_candidate(root / "data" / "users.json")
+
+        return candidates
     
     @handle_errors("_save_users", reraise=True)
     def _save_users(self, users_data):
@@ -1169,6 +1332,10 @@ class UserManagerV2:
                 if not logs_content:
                     return []
 
+                if isinstance(logs_content, bytes):
+                    logs_content = logs_content.decode('utf-8-sig')
+                elif isinstance(logs_content, str):
+                    logs_content = logs_content.lstrip('\ufeff')
                 cloud_payload = json.loads(logs_content)
                 logs_data, recovered = self._decode_cloud_logs_payload(cloud_payload)
                 if recovered:

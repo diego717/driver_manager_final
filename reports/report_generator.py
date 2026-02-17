@@ -90,6 +90,50 @@ class ReportGenerator:
         wb.save(output_path)
         
         return str(output_path)
+
+    def generate_yearly_report(self, year, output_path=None):
+        """
+        Generar reporte anual.
+
+        Args:
+            year: Año
+            output_path: Ruta de salida (opcional)
+
+        Returns:
+            Ruta del archivo generado
+        """
+        start_date = datetime(year, 1, 1).isoformat()
+        end_date = datetime(year + 1, 1, 1).isoformat()
+
+        if output_path is None:
+            output_path = Path.home() / "Downloads" / f"Reporte_Anual_{year}.xlsx"
+
+        installations = self.history.get_installations(start_date=start_date, end_date=end_date)
+        stats = self.history.get_statistics(start_date=start_date, end_date=end_date)
+
+        if installations is None:
+            installations = []
+
+        if stats is None:
+            stats = {
+                'total_installations': 0,
+                'successful_installations': 0,
+                'failed_installations': 0,
+                'success_rate': 0,
+                'average_time_minutes': 0,
+                'unique_clients': 0,
+                'top_drivers': {},
+                'by_brand': {}
+            }
+
+        wb = openpyxl.Workbook()
+        self._create_summary_sheet(wb, installations, stats, f"Anual {year}")
+        self._create_installations_sheet(wb, installations)
+        self._create_clients_sheet(wb, installations)
+        self._create_charts_sheet(wb, stats)
+
+        wb.save(output_path)
+        return str(output_path)
     
     def generate_daily_report(self, date=None, output_path=None):
         """

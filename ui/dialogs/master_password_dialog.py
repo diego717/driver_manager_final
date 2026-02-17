@@ -1,30 +1,39 @@
 """
-Diálogo de Contraseña Maestra para Seguridad
+Master password dialog.
 """
 
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QLineEdit, QPushButton, QMessageBox, QCheckBox)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QPixmap, QIcon
-import sys
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+)
 
 
 class MasterPasswordDialog(QDialog):
-    """Diálogo para contraseña maestra de seguridad"""
-    
-    def __init__(self, parent=None, is_first_time=False):
+    """Dialog used to unlock/create the master password."""
+
+    def __init__(self, parent=None, is_first_time=False, allow_remember_option=False):
         super().__init__(parent)
         self.is_first_time = is_first_time
+        self.allow_remember_option = allow_remember_option
         self.password = None
+        self.remember_password = None
         self.init_ui()
-    
+
     def init_ui(self):
-        self.setWindowTitle("🔐 Contraseña Maestra - Driver Manager")
+        self.setWindowTitle("Contrasena Maestra - Driver Manager")
         self.setModal(True)
-        self.setFixedSize(450, 350)
-        
-        # Aplicar estilo con contraste mejorado
-        self.setStyleSheet("""
+        self.setFixedSize(450, 360)
+
+        self.setStyleSheet(
+            """
             QDialog {
                 background-color: #FFFFFF;
                 color: #2C3E50;
@@ -55,31 +64,32 @@ class MasterPasswordDialog(QDialog):
             QPushButton:hover {
                 background-color: #229954;
             }
-        """)
-        
+            """
+        )
+
         layout = QVBoxLayout(self)
-        
-        # Título
-        title_text = "🔐 Configurar Contraseña Maestra" if self.is_first_time else "🔐 Contraseña Maestra"
+
+        title_text = (
+            "Configurar Contrasena Maestra" if self.is_first_time else "Contrasena Maestra"
+        )
         title = QLabel(title_text)
         title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("color: #2C3E50; margin: 10px; font-weight: bold;")
         layout.addWidget(title)
-        
-        # Descripción con contraste mejorado
+
         if self.is_first_time:
-            desc_text = ("🛡️ Para mayor seguridad, Driver Manager cifrará todas las credenciales\n"
-                        "y datos sensibles con una contraseña maestra.\n\n"
-                        "⚠️ IMPORTANTE: Si olvidas esta contraseña, perderás acceso\n"
-                        "a todas las configuraciones guardadas.")
+            desc_text = (
+                "Driver Manager cifra la configuracion sensible con una contrasena maestra.\n\n"
+                "Importante: si la olvidas, puedes perder acceso a la configuracion cifrada."
+            )
         else:
-            desc_text = ("🔑 Ingresa tu contraseña maestra para acceder\n"
-                        "a las configuraciones cifradas de Driver Manager.")
-        
+            desc_text = "Ingresa la contrasena maestra para desbloquear la configuracion cifrada."
+
         desc = QLabel(desc_text)
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        desc.setStyleSheet("""
+        desc.setStyleSheet(
+            """
             QLabel {
                 background-color: #F8F9FA;
                 color: #2C3E50;
@@ -87,53 +97,57 @@ class MasterPasswordDialog(QDialog):
                 border-radius: 8px;
                 border: 2px solid #BDC3C7;
                 font-size: 11px;
-                font-weight: normal;
             }
-        """)
+            """
+        )
         layout.addWidget(desc)
-        
+
         layout.addSpacing(20)
-        
-        # Campo de contraseña
-        password_label = QLabel("Contraseña Maestra:")
+
+        password_label = QLabel("Contrasena maestra:")
         password_label.setFont(QFont("Arial", 11, QFont.Weight.Bold))
         password_label.setStyleSheet("color: #2C3E50; font-weight: bold;")
         layout.addWidget(password_label)
-        
+
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setPlaceholderText("Mínimo 8 caracteres...")
+        self.password_input.setPlaceholderText("Minimo 8 caracteres...")
         self.password_input.returnPressed.connect(self.accept_password)
         layout.addWidget(self.password_input)
-        
-        # Confirmar contraseña (solo primera vez)
+
         if self.is_first_time:
-            confirm_label = QLabel("Confirmar Contraseña:")
+            confirm_label = QLabel("Confirmar contrasena:")
             confirm_label.setFont(QFont("Arial", 11, QFont.Weight.Bold))
             confirm_label.setStyleSheet("color: #2C3E50; font-weight: bold;")
             layout.addWidget(confirm_label)
-            
+
             self.confirm_input = QLineEdit()
             self.confirm_input.setEchoMode(QLineEdit.EchoMode.Password)
-            self.confirm_input.setPlaceholderText("Repite la contraseña...")
+            self.confirm_input.setPlaceholderText("Repite la contrasena...")
             self.confirm_input.returnPressed.connect(self.accept_password)
             layout.addWidget(self.confirm_input)
-        
-        # Mostrar contraseña
-        self.show_password_cb = QCheckBox("👁️ Mostrar contraseña")
+
+        self.show_password_cb = QCheckBox("Mostrar contrasena")
         self.show_password_cb.setStyleSheet("color: #2C3E50; font-weight: normal;")
         self.show_password_cb.toggled.connect(self.toggle_password_visibility)
         layout.addWidget(self.show_password_cb)
-        
+
+        if self.allow_remember_option:
+            self.remember_password_cb = QCheckBox(
+                "Recordar en este equipo (almacenamiento local seguro)"
+            )
+            self.remember_password_cb.setStyleSheet("color: #2C3E50; font-weight: normal;")
+            self.remember_password_cb.setChecked(False)
+            layout.addWidget(self.remember_password_cb)
+
         layout.addSpacing(20)
-        
-        # Botones
+
         buttons_layout = QHBoxLayout()
-        
         if not self.is_first_time:
             cancel_btn = QPushButton("Cancelar")
             cancel_btn.clicked.connect(self.reject)
-            cancel_btn.setStyleSheet("""
+            cancel_btn.setStyleSheet(
+                """
                 QPushButton {
                     background-color: #95A5A6;
                     color: white;
@@ -144,70 +158,73 @@ class MasterPasswordDialog(QDialog):
                 QPushButton:hover {
                     background-color: #7F8C8D;
                 }
-            """)
+                """
+            )
             buttons_layout.addWidget(cancel_btn)
-        
-        accept_text = "🔐 Crear Contraseña" if self.is_first_time else "🔓 Desbloquear"
+
+        accept_text = "Crear Contrasena" if self.is_first_time else "Desbloquear"
         accept_btn = QPushButton(accept_text)
         accept_btn.clicked.connect(self.accept_password)
         buttons_layout.addWidget(accept_btn)
-        
         layout.addLayout(buttons_layout)
-        
-        # Focus en contraseña
+
         self.password_input.setFocus()
-    
+
     def toggle_password_visibility(self, checked):
-        """Alternar visibilidad de contraseña"""
         mode = QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
         self.password_input.setEchoMode(mode)
-        if hasattr(self, 'confirm_input'):
+        if hasattr(self, "confirm_input"):
             self.confirm_input.setEchoMode(mode)
-    
+
     def accept_password(self):
-        """Validar y aceptar contraseña"""
         password = self.password_input.text()
-        
-        # Validar longitud mínima
         if len(password) < 8:
-            QMessageBox.warning(
-                self, 
-                "Contraseña Débil", 
-                "La contraseña debe tener al menos 8 caracteres."
-            )
+            QMessageBox.warning(self, "Contrasena debil", "La contrasena debe tener al menos 8 caracteres.")
             return
-        
-        # Validar confirmación (primera vez)
+
         if self.is_first_time:
             confirm = self.confirm_input.text()
             if password != confirm:
-                QMessageBox.warning(
-                    self, 
-                    "Error", 
-                    "Las contraseñas no coinciden."
-                )
+                QMessageBox.warning(self, "Error", "Las contrasenas no coinciden.")
                 return
-        
+
         self.password = password
+        if hasattr(self, "remember_password_cb"):
+            self.remember_password = self.remember_password_cb.isChecked()
         self.accept()
-    
+
     def get_password(self):
-        """Obtener contraseña ingresada"""
         return self.password
 
+    def get_remember_password(self):
+        return self.remember_password
 
-def show_master_password_dialog(parent=None, is_first_time=False):
-    """Mostrar diálogo de contraseña maestra"""
-    dialog = MasterPasswordDialog(parent, is_first_time)
-    
-    # Aplicar tema si el parent tiene theme_manager
-    if parent and hasattr(parent, 'theme_manager'):
+
+def show_master_password_dialog(
+    parent=None,
+    is_first_time=False,
+    allow_remember_option=False,
+    return_metadata=False,
+):
+    """Show master password dialog."""
+    dialog = MasterPasswordDialog(
+        parent,
+        is_first_time,
+        allow_remember_option=allow_remember_option,
+    )
+
+    if parent and hasattr(parent, "theme_manager"):
         try:
             stylesheet = parent.theme_manager.generate_stylesheet()
             dialog.setStyleSheet(stylesheet)
-        except:
+        except Exception:
             pass
-    
+
     if dialog.exec() == QDialog.DialogCode.Accepted:
+        if return_metadata:
+            return dialog.get_password(), dialog.get_remember_password()
         return dialog.get_password()
+
+    if return_metadata:
+        return None, None
     return None

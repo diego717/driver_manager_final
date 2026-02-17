@@ -43,3 +43,25 @@ jobs:
 
       - name: Run Worker Contract Tests
         run: node --test tests_js/*.test.mjs
+
+  mobile-app-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: mobile-app/package-lock.json
+
+      - name: Install Mobile Dependencies
+        run: npm ci
+
+      - name: Run Mobile Unit Tests
+        run: npm test
