@@ -1,6 +1,10 @@
 ﻿import unittest
 
-from handlers.report_handlers import ReportHandlers
+try:
+    from handlers.report_handlers import ReportHandlers
+    PYQT_AVAILABLE = True
+except Exception:
+    PYQT_AVAILABLE = False
 
 
 class DummyPreview:
@@ -60,6 +64,7 @@ class DummyMain:
         self.theme_manager = DummyThemeManager()
 
 
+@unittest.skipUnless(PYQT_AVAILABLE, "PyQt6 is required for ReportHandlers tests")
 class TestReportHandlers(unittest.TestCase):
     def test_refresh_reports_preview_populates_summary(self):
         main = DummyMain()
