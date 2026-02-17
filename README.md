@@ -1,139 +1,211 @@
-# 🖨️ Driver Manager - Gestor de Controladores para Impresoras de Tarjetas
+# Driver Manager
 
 [![Tests](https://github.com/diego717/driver_manager_final/actions/workflows/tests.yml/badge.svg)](https://github.com/diego717/driver_manager_final/actions/workflows/tests.yml)
 
-**Driver Manager** es una aplicación de escritorio desarrollada en Python y PyQt6, diseñada para centralizar, gestionar y auditar la instalación de controladores para impresoras de tarjetas de identificación (como Magicard, Zebra, Entrust, etc.).
+Driver Manager es un monorepo con tres componentes:
 
-La aplicación utiliza la infraestructura de **Cloudflare (R2 y D1)** para ofrecer una solución portable, segura y multi-usuario, ideal para técnicos de soporte que trabajan en diferentes equipos.
+- App de escritorio en Python/PyQt6 para gestion de drivers y historial.
+- API en Cloudflare Workers (D1 + R2) para instalaciones e incidencias.
+- App movil en Expo/React Native para reportar incidencias y subir fotos.
 
-!screenshot
+## Arquitectura
 
----
+- `main.py`: entrada de la app desktop.
+- `worker.js`: API HTTP para instalaciones, estadisticas e incidencias.
+- `mobile-app/`: cliente movil (Expo Router).
+- `migrations/0002_incidents_v1.sql`: migracion de incidencias y fotos.
+- `docs/incidents-v1.openapi.yaml`: contrato OpenAPI.
+- `docs/postman/`: coleccion y entorno de Postman.
 
-## ✨ Características Principales
+## Requisitos
 
-- **Gestión Centralizada de Drivers**: Sube, lista, descarga e instala drivers desde una única interfaz.
-- **Integración con la Nube**: Utiliza **Cloudflare R2** para el almacenamiento de los archivos de drivers y la configuración del sistema de usuarios.
-- **Modo Portable**: Funciona directamente desde una unidad USB sin necesidad de instalación local. La configuración se almacena de forma cifrada en el propio dispositivo.
-- **Seguridad Robusta**:
-- **Configuración Cifrada**: Las credenciales de la nube se guardan en un archivo `config.enc` cifrado con **AES-256**.
-- **Inyección Segura**: Al iniciar por primera vez, consume un archivo `portable_config.json`, lo cifra y lo elimina para no dejar rastros de las credenciales en texto plano.
-- **Verificación de Integridad**: Usa **HMAC** para asegurar que la configuración no ha sido alterada.
-- **Sistema Multi-Usuario con Roles**:
-  - **super_admin**: Control total, incluyendo la gestión de credenciales de la nube y la creación de otros usuarios.
-  - **admin**: Puede gestionar drivers (subir/eliminar) y ver el historial, pero no puede ver ni modificar las credenciales de la nube.
-  - **viewer**: Rol de solo lectura (aún en desarrollo).
-- **Historial y Auditoría de Instalaciones**:
-  - Cada instalación (exitosa o fallida) se registra en una base de datos **Cloudflare D1** a través de una API (Worker).
-  - Permite editar registros para añadir notas o corregir tiempos.
-  - Log de auditoría detallado para acciones críticas (logins, subidas, eliminaciones, etc.).
-- **Generación de Reportes**: Exporta el historial de instalaciones a archivos **Excel (.xlsx)** para reportes diarios o mensuales.
-- **Caché Local**: Guarda los drivers descargados en una caché local para agilizar futuras instalaciones.
-- **Interfaz Moderna**:
-  - Soporte para temas (claro y oscuro).
-  - Interfaz intuitiva organizada en pestañas.
+- Python 3.12+ (recomendado para alinear con CI).
+- Node.js 22+ y npm.
+- Cuenta Cloudflare con D1 y R2.
+- `wrangler` (incluido como devDependency en el proyecto raiz).
 
----
+## Estructura del repo
 
-## 🛠️ Tecnología Utilizada
+```text
+.
+|- core/               # seguridad, config, logging
+|- managers/           # cloud, historial, instalacion, usuarios
+|- handlers/           # eventos y reportes UI
+|- reports/            # generacion de Excel
+|- tests/              # unit tests Python
+|- worker.js           # Cloudflare Worker API
+|- migrations/         # migraciones D1
+|- tests_js/           # contract tests del Worker
+|- mobile-app/         # app Expo
+`- docs/               # OpenAPI + Postman
+```
 
-- **Lenguaje**: Python 3
-- **Interfaz Gráfica**: PyQt6
-- **Almacenamiento en la Nube**: Cloudflare R2 (compatible con S3)
-- **Base de Datos en la Nube**: Cloudflare D1 (a través de un Worker API)
-- **Comunicación Cloud**:
-  - `boto3`: Para interactuar con el almacenamiento R2.
-  - `requests`: Para comunicarse con la API del historial en Cloudflare Workers.
-- **Seguridad**:
-  - `cryptography`: Para el cifrado AES-256.
-  - `bcrypt`: Para el hashing seguro de contraseñas de usuario.
-- **Reportes**: `openpyxl` (para la generación de archivos Excel).
+## Desktop (Python)
 
----
+### Ejecutar en desarrollo (PowerShell)
 
-## 🚀 Configuración y Puesta en Marcha
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python main.py
+```
 
-La aplicación está diseñada para ser **portable**. Sigue estos pasos para configurarla en una unidad USB:
+### Modo portable
 
-1. **Clona o copia los archivos del proyecto** en la raíz de tu unidad USB.
+En la raiz del proyecto (o junto al `.exe`) crea `portable_config.json` con, como minimo:
 
-2. **Crea el archivo de configuración portable**: En la misma carpeta raíz, crea un archivo llamado `portable_config.json` con tus credenciales de Cloudflare.
+```json
+{
+  "account_id": "TU_ACCOUNT_ID",
+  "access_key_id": "TU_R2_ACCESS_KEY_ID",
+  "secret_access_key": "TU_R2_SECRET_ACCESS_KEY",
+  "bucket_name": "TU_BUCKET_DE_DRIVERS",
+  "api_url": "https://tu-worker.workers.dev",
+  "api_token": "TOKEN_OPCIONAL_PARA_AUTH",
+  "api_secret": "SECRET_OPCIONAL_PARA_FIRMAS_HMAC"
+}
+```
 
-    ```json
-    {
-      "account_id": "TU_ACCOUNT_ID_DE_CLOUDFLARE",
-      "access_key_id": "TU_ACCESS_KEY_ID_DE_R2",
-      "secret_access_key": "TU_SECRET_ACCESS_KEY_DE_R2",
-      "bucket_name": "NOMBRE_DE_TU_BUCKET",
-      "api_url": "URL_DE_TU_WORKER_API_PARA_HISTORIAL"
-    }
-    ```
+Notas:
 
-3. **Ejecuta la aplicación**: Inicia `main.py` o el ejecutable `DriverManager.exe`.
+- `history_api_url` tambien es aceptado como fallback para `api_url`.
+- En el primer inicio, la app inyecta esta config en `config/config.enc` y elimina `portable_config.json`.
+- `config/`, `*.enc` y `portable_config.json` ya estan ignorados en `.gitignore`.
 
-    - **En el primer inicio**, la aplicación detectará `portable_config.json`.
-    - Cifrará su contenido y lo guardará en una carpeta `config/` dentro del USB con el nombre `config.enc`.
-    - Por seguridad, **eliminará automáticamente el archivo `portable_config.json`**.
-    - Te guiará para crear el primer usuario **super_admin**.
+### Compilar ejecutable
 
-4. **Inicios Posteriores**: La aplicación leerá directamente del archivo cifrado `config.enc`, manteniendo tus credenciales seguras.
+```powershell
+python build.py
+```
 
----
+El ejecutable queda en `dist/`.
 
-## Distribución Segura del Ejecutable
+## Worker (Cloudflare)
 
-Si vas a distribuir `DriverManager.exe`, se recomienda este flujo:
+### Instalar y correr local
 
-1. Distribuye el `.exe` sin incluir `portable_config.json`, `config/` ni `*.enc`.
-2. En la máquina o USB destino, crea `portable_config.json` solo para el primer inicio.
-3. Ejecuta la app una vez para que genere `config/config.enc`.
-4. Verifica que `portable_config.json` haya sido eliminado y no quede en backups.
-5. Para despliegues nuevos, repite el aprovisionamiento inicial en cada destino.
+```powershell
+npm ci
+npm run dev
+```
 
-Buenas prácticas:
+### Deploy
 
-- No embebas credenciales de Cloudflare dentro del binario.
-- Usa Access Keys de Cloudflare R2 con permisos mínimos necesarios.
-- Rota credenciales periódicamente y revócalas si un dispositivo se pierde.
-- Mantén `portable_config.json`, `config/` y `*.enc` fuera de Git (ya están excluidos por `.gitignore`).
+```powershell
+npm run deploy
+```
 
----
+### Configuracion Cloudflare
 
-## 📖 Uso de la Aplicación
+`wrangler.toml` ya define:
 
-La interfaz se divide en tres pestañas principales:
+- D1 binding: `DB`
+- R2 binding para fotos de incidencias: `INCIDENTS_BUCKET`
 
-1. 📦 Drivers Disponibles
-   - Filtra los drivers por marca.
-- Selecciona un driver para ver sus detalles (versión, tamaño, fecha).
-  - **Descarga** el driver a tu equipo o **Descarga e Instala** directamente. La instalación intentará ejecutarse de forma silenciosa y, si no es posible, solicitará permisos de administrador.
+Para auth firmada, configura secretos del Worker:
 
-2. 📊 Historial y Reportes
-- Visualiza un historial de todas las instalaciones realizadas.
-- Edita registros para añadir notas o corregir el tiempo de instalación.
-  - Genera reportes en formato Excel del día actual o de un mes específico.
-  - Consulta estadísticas de instalaciones.
+```powershell
+wrangler secret put API_TOKEN
+wrangler secret put API_SECRET
+```
 
-3. 🔐 Administración
-- **Inicio de Sesión**: Accede con tu usuario y contraseña. El panel se adaptará a tu rol.
-- **Gestión de Drivers (admin/super_admin)**: Sube nuevos drivers a la nube o elimina los existentes.
-- **Gestión de Usuarios (super_admin)**: Crea nuevos usuarios, desactívalos y gestiona roles.
-- **Configuración de la Nube (super_admin)**: Visualiza y modifica las credenciales de Cloudflare R2.
-- **Configuración General**: Cambia tu contraseña, limpia la caché de drivers descargados y cambia el tema de la aplicación.
+Si `API_TOKEN`/`API_SECRET` no existen, el Worker entra en modo desarrollo y no exige auth.
 
----
+### Migraciones D1
 
-## 🛡️ Modelo de Seguridad
+```powershell
+npm run d1:migrate
+```
 
-La seguridad es un pilar fundamental de este proyecto, especialmente al manejar credenciales de la nube en un entorno portable.
+La migracion incluida (`0002_incidents_v1.sql`) crea tablas de incidencias/fotos.  
+Si partes desde cero, debes tener tambien la tabla `installations` base requerida por `worker.js`.
 
-- **Cifrado en Reposo**: El archivo `config.enc` está protegido con cifrado simétrico AES-256, derivado de una contraseña maestra.
-- **Protección de Credenciales**: El archivo `portable_config.json` es un vector de entrada temporal. Se elimina tras la inyección inicial para minimizar la exposición.
-- **Control de Acceso Basado en Roles (RBAC)**: Los roles `super_admin` y `admin` tienen capacidades distintas, protegiendo las configuraciones más sensibles.
-- **Auditoría**: Todas las acciones importantes quedan registradas, permitiendo trazar quién hizo qué y cuándo.
+## Mobile app (Expo)
 
----
+```powershell
+cd mobile-app
+npm ci
+Copy-Item .env.example .env
+npm start
+```
 
-## 📄 Licencia
+Variables en `mobile-app/.env`:
 
-Este proyecto se distribuye bajo la licencia MIT. Consulta el archivo `LICENSE` para más detalles
+- `EXPO_PUBLIC_API_BASE_URL`
+- `EXPO_PUBLIC_API_TOKEN`
+- `EXPO_PUBLIC_API_SECRET`
+
+## Sincronizar auth Mobile -> Desktop
+
+Script util para copiar token/secret del `.env` movil al `config/config.enc` desktop:
+
+```powershell
+python sync_desktop_api_auth.py
+```
+
+Lee `mobile-app/.env`, pide password maestra del desktop y actualiza:
+
+- `api_token`
+- `api_secret`
+- `api_url` (si `EXPO_PUBLIC_API_BASE_URL` esta presente)
+
+## Endpoints principales del Worker
+
+- `GET /installations`
+- `POST /installations`
+- `POST /records` (alta manual)
+- `PUT /installations/:id`
+- `DELETE /installations/:id`
+- `GET /statistics`
+- `GET /installations/:installationId/incidents`
+- `POST /installations/:installationId/incidents`
+- `POST /incidents/:incidentId/photos`
+
+Notas API:
+
+- Firma HMAC: `METHOD|PATH|TIMESTAMP|SHA256(body)`.
+- Ventana anti-replay: 300 segundos.
+- Fotos permitidas: `image/jpeg`, `image/png`, `image/webp`.
+- Limite por foto: 8 MB.
+
+## Testing
+
+### Python (desktop)
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+### Worker contract tests
+
+```powershell
+node --test tests_js/*.test.mjs
+```
+
+### Mobile tests
+
+```powershell
+cd mobile-app
+npm test
+```
+
+CI (`.github/workflows/tests.yml`) ejecuta estas tres suites.
+
+## Documentacion API
+
+- OpenAPI: `docs/incidents-v1.openapi.yaml`
+- Postman quick start: `docs/postman/README.md`
+- Coleccion: `docs/postman/incidents-v1.postman_collection.json`
+- Environment template: `docs/postman/incidents-v1.postman_environment.json`
+
+## Seguridad
+
+- Config desktop cifrada en `config/config.enc` con cifrado simetrico + validacion HMAC.
+- No commitear secretos ni archivos locales (`.env`, `portable_config.json`, `config/`, `*.enc`).
+- Usa claves de Cloudflare con permisos minimos y rotacion periodica.
+
+## Licencia
+
+MIT.
