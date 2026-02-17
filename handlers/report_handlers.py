@@ -8,7 +8,11 @@ import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+def _qt_widgets():
+    """Import Qt widgets lazily to avoid hard dependency during headless test imports."""
+    from PyQt6.QtWidgets import QFileDialog, QMessageBox
+
+    return QFileDialog, QMessageBox
 
 
 class ReportHandlers:
@@ -90,6 +94,7 @@ class ReportHandlers:
     def generate_daily_report_simple(self):
         """Generar reporte del dia actual."""
         try:
+            _, QMessageBox = _qt_widgets()
             self.main.statusBar().showMessage("Generando reporte diario...")
             report_path = self.main.report_gen.generate_daily_report()
             self.refresh_reports_preview(last_report_path=report_path, report_kind="Reporte diario")
@@ -117,6 +122,7 @@ class ReportHandlers:
     def generate_monthly_report_simple(self):
         """Generar reporte del mes seleccionado."""
         try:
+            _, QMessageBox = _qt_widgets()
             month = self.main.history_tab.report_month_combo.currentIndex() + 1
             year = int(self.main.history_tab.report_year_combo.currentText())
             month_name = self.main.history_tab.report_month_combo.currentText()
@@ -148,6 +154,7 @@ class ReportHandlers:
     def generate_yearly_report_simple(self):
         """Generar reporte anual para el ano seleccionado."""
         try:
+            _, QMessageBox = _qt_widgets()
             year = int(self.main.history_tab.report_year_combo.currentText())
 
             self.main.statusBar().showMessage(f"Generando reporte anual {year}...")
@@ -177,6 +184,7 @@ class ReportHandlers:
     def export_history_json(self):
         """Exportar historial completo a JSON."""
         try:
+            QFileDialog, QMessageBox = _qt_widgets()
             default_path = Path.home() / "Downloads" / f"historial_export_{datetime.now().strftime('%Y%m%d')}.json"
 
             file_path, _ = QFileDialog.getSaveFileName(
@@ -204,6 +212,7 @@ class ReportHandlers:
     def export_audit_log(self):
         """Exportar log de auditoria a archivo."""
         try:
+            QFileDialog, QMessageBox = _qt_widgets()
             logs = self.main.history.get_audit_log(limit=1000)
 
             if not logs:
@@ -258,6 +267,7 @@ class ReportHandlers:
             else:
                 subprocess.run(["xdg-open", file_path], check=False)
         except Exception as e:
+            _, QMessageBox = _qt_widgets()
             QMessageBox.warning(
                 self.main,
                 "Error al abrir archivo",
