@@ -7,10 +7,12 @@
   "main": "worker.js",
   "scripts": {
     "dev": "wrangler dev",
+    "dev:remote": "wrangler dev --remote",
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
     "test:worker": "node --test tests_js/*.test.mjs",
     "d1:migrate": "wrangler d1 migrations apply driver-manager-db",
+    "d1:migrate:remote": "wrangler d1 migrations apply driver-manager-db --remote",
     "d1:studio": "wrangler d1 execute driver-manager-db --local --command=\"SELECT 1;\""
   },
   "devDependencies": {

@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "start": "expo start",
+    "dev:remote": "npm --prefix .. run dev:remote",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",

@@ -1,13 +1,9 @@
 import * as FileSystem from "expo-file-system/legacy";
 import CryptoJS from "crypto-js";
 
-import { buildAuthHeaders, getAuthMaterial, sha256HexFromBytes } from "./auth";
-import { getApiBaseUrl } from "./client";
+import { sha256HexFromBytes } from "./auth";
+import { getResolvedApiBaseUrl, resolveRequestAuth } from "./client";
 import { type UploadPhotoResponse } from "../types/api";
-import {
-  getStoredApiSecret,
-  getStoredApiToken,
-} from "../storage/secure";
 import {
   contentTypeFromFileName,
   ensureNonEmpty,
@@ -31,19 +27,6 @@ function bytesFromBase64(base64: string): Uint8Array {
   return wordArrayToUint8Array(wordArray);
 }
 
-async function resolveAuth() {
-  const envAuth = getAuthMaterial();
-  if (envAuth.token && envAuth.secret) return envAuth;
-  const [storedToken, storedSecret] = await Promise.all([
-    getStoredApiToken(),
-    getStoredApiSecret(),
-  ]);
-  return {
-    token: storedToken ?? envAuth.token,
-    secret: storedSecret ?? envAuth.secret,
-  };
-}
-
 export async function uploadIncidentPhoto({
   incidentId,
   fileUri,
@@ -57,7 +40,8 @@ export async function uploadIncidentPhoto({
 }): Promise<UploadPhotoResponse> {
   ensurePositiveInt(incidentId, "incidentId");
   ensureNonEmpty(fileUri, "fileUri");
-  ensureNonEmpty(getApiBaseUrl(), "EXPO_PUBLIC_API_BASE_URL");
+  const apiBaseUrl = await getResolvedApiBaseUrl();
+  ensureNonEmpty(apiBaseUrl, "EXPO_PUBLIC_API_BASE_URL");
 
   const finalFileName = fileName ?? `incident_${incidentId}.jpg`;
   const finalContentType = contentType ?? contentTypeFromFileName(finalFileName);
@@ -72,21 +56,18 @@ export async function uploadIncidentPhoto({
     bytes.byteOffset + bytes.byteLength,
   );
   const bodyHash = sha256HexFromBytes(bytes);
-  const auth = await resolveAuth();
-  const authHeaders = buildAuthHeaders({
+  const requestAuth = await resolveRequestAuth({
     method: "POST",
     path,
     bodyHash,
-    token: auth.token,
-    secret: auth.secret,
   });
 
-  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+  const response = await fetch(`${apiBaseUrl}${requestAuth.path}`, {
     method: "POST",
     headers: {
       "Content-Type": finalContentType,
       "X-File-Name": finalFileName,
-      ...authHeaders,
+      ...requestAuth.headers,
     },
     body: binaryBody as unknown as BodyInit,
   });

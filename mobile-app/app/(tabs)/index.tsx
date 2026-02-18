@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -29,6 +29,12 @@ export default function CreateIncidentScreen() {
   const [loadingInstallations, setLoadingInstallations] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [creatingManualRecord, setCreatingManualRecord] = useState(false);
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+
+  const notify = (title: string, message: string) => {
+    setFeedbackMessage(`${title}: ${message}`);
+    Alert.alert(title, message);
+  };
 
   const loadInstallations = async () => {
     try {
@@ -42,7 +48,7 @@ export default function CreateIncidentScreen() {
         setInstallationId(String(records[0].id));
       }
     } catch (error) {
-      Alert.alert("Error", `No se pudo cargar instalaciones: ${extractApiError(error)}`);
+      notify("Error", `No se pudo cargar instalaciones: ${extractApiError(error)}`);
     } finally {
       setLoadingInstallations(false);
     }
@@ -61,7 +67,7 @@ export default function CreateIncidentScreen() {
         status: "manual",
         driver_brand: "N/A",
         driver_version: "N/A",
-        driver_description: "Registro manual creado desde app móvil",
+        driver_description: "Registro manual creado desde app movil",
         os_info: "mobile",
         installation_time_seconds: 0,
       });
@@ -70,15 +76,15 @@ export default function CreateIncidentScreen() {
       if (createdId) {
         setInstallationId(String(createdId));
       }
-      Alert.alert(
+      notify(
         "Registro creado",
-        `ID: ${createdId ?? "N/A"}\nAhora puedes adjuntar incidencia sin instalación previa.`,
+        `ID: ${createdId ?? "N/A"}\nAhora puedes adjuntar incidencia sin instalacion previa.`,
       );
       setManualClientName("");
       setManualNotes("");
       await loadInstallations();
     } catch (error) {
-      Alert.alert("Error", extractApiError(error));
+      notify("Error", extractApiError(error));
     } finally {
       setCreatingManualRecord(false);
     }
@@ -89,15 +95,25 @@ export default function CreateIncidentScreen() {
     const parsedTimeAdjustment = Number.parseInt(timeAdjustment, 10);
 
     if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) {
-      Alert.alert("Dato invalido", "installation_id debe ser un numero positivo.");
+      notify("Dato invalido", "installation_id debe ser un numero positivo.");
+      return;
+    }
+    if (
+      installations.length > 0 &&
+      !installations.some((item) => Number(item.id) === parsedInstallationId)
+    ) {
+      notify(
+        "Instalacion no encontrada",
+        "Ese installation_id no existe en la lista cargada. Refresca o crea un registro manual.",
+      );
       return;
     }
     if (!note.trim()) {
-      Alert.alert("Dato invalido", "La nota es obligatoria.");
+      notify("Dato invalido", "La nota es obligatoria.");
       return;
     }
     if (!Number.isInteger(parsedTimeAdjustment)) {
-      Alert.alert("Dato invalido", "time_adjustment_seconds debe ser entero.");
+      notify("Dato invalido", "time_adjustment_seconds debe ser entero.");
       return;
     }
 
@@ -112,14 +128,18 @@ export default function CreateIncidentScreen() {
         apply_to_installation: false,
       });
 
-      Alert.alert(
+      notify(
         "Incidencia creada",
         `ID: ${response.incident.id}\nInstalacion: ${response.incident.installation_id}`,
       );
       setNote("");
       setTimeAdjustment("0");
     } catch (error) {
-      Alert.alert("Error", extractApiError(error));
+      const message = extractApiError(error);
+      if (message.toLowerCase().includes("no encontrada")) {
+        await loadInstallations();
+      }
+      notify("Error", message);
     } finally {
       setSubmitting(false);
     }
@@ -129,12 +149,17 @@ export default function CreateIncidentScreen() {
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Crear incidencia</Text>
       <Text style={styles.subtitle}>
-        Usa esta pantalla para validar el flujo desde Android hacia tu Worker.
+        Usa esta pantalla para crear incidencias y validar el flujo contra el Worker.
       </Text>
+      {feedbackMessage ? (
+        <View style={styles.feedbackBox}>
+          <Text style={styles.feedbackText}>{feedbackMessage}</Text>
+        </View>
+      ) : null}
 
       <Text style={styles.sectionTitle}>1) Crear registro manual base</Text>
       <Text style={styles.hint}>
-        Esto crea un registro en historial sin depender de instalación previa.
+        Esto crea un registro en historial sin depender de instalacion previa.
       </Text>
 
       <Text style={styles.label}>Cliente (opcional)</Text>
@@ -279,6 +304,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#475569",
     marginBottom: 8,
+  },
+  feedbackBox: {
+    borderWidth: 1,
+    borderColor: "#bae6fd",
+    backgroundColor: "#f0f9ff",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 4,
+  },
+  feedbackText: {
+    color: "#0c4a6e",
+    fontSize: 12,
   },
   sectionTitle: {
     marginTop: 10,

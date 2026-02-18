@@ -184,6 +184,16 @@ test("OPTIONS request returns CORS headers", async () => {
   assert.match(response.headers.get("Access-Control-Allow-Methods"), /OPTIONS/);
 });
 
+test("GET / returns service metadata", async () => {
+  const request = new Request("https://worker.example/", { method: "GET" });
+  const response = await worker.fetch(request, {});
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.service, "driver-manager-api");
+  assert.equal(body.status, "ok");
+});
+
 test("GET /installations returns DB rows as JSON", async () => {
   const db = createMockDB({
     installations: [{ id: 1, driver_brand: "Zebra", status: "success" }],
@@ -943,6 +953,97 @@ test("returns 401 when auth signature is invalid", async () => {
   assert.equal(response.status, 401);
   assert.equal(body.success, false);
   assert.match(body.error.message, /firma/i);
+});
+
+test("GET /health returns OK without DB/auth", async () => {
+  const request = new Request("https://worker.example/health", { method: "GET" });
+  const response = await worker.fetch(request, {});
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(typeof body.now, "string");
+});
+
+test("POST /web/auth/login issues access token for web routes", async () => {
+  const db = createMockDB({
+    installations: [{ id: 1, driver_brand: "Zebra", status: "success" }],
+  });
+
+  const loginRequest = new Request("https://worker.example/web/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: "web-pass" }),
+  });
+
+  const loginResponse = await worker.fetch(loginRequest, {
+    DB: db,
+    API_TOKEN: "token-123",
+    API_SECRET: "secret-abc",
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const loginBody = await loginResponse.json();
+
+  assert.equal(loginResponse.status, 200);
+  assert.equal(loginBody.success, true);
+  assert.equal(typeof loginBody.access_token, "string");
+
+  const listRequest = new Request("https://worker.example/web/installations", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${loginBody.access_token}`,
+    },
+  });
+
+  const listResponse = await worker.fetch(listRequest, {
+    DB: db,
+    API_TOKEN: "token-123",
+    API_SECRET: "secret-abc",
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const listBody = await listResponse.json();
+
+  assert.equal(listResponse.status, 200);
+  assert.deepEqual(listBody, [{ id: 1, driver_brand: "Zebra", status: "success" }]);
+});
+
+test("GET /web/installations rejects request without Bearer token", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/web/installations", {
+    method: "GET",
+  });
+
+  const response = await worker.fetch(request, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 401);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /bearer/i);
+});
+
+test("POST /web/auth/login rejects wrong password", async () => {
+  const request = new Request("https://worker.example/web/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: "wrong" }),
+  });
+
+  const response = await worker.fetch(request, {
+    DB: createMockDB(),
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 401);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /credenciales/i);
 });
 
 test("accepts signed requests when auth secrets are configured", async () => {

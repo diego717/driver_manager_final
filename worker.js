@@ -1,6 +1,7 @@
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 const ALLOWED_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const AUTH_WINDOW_SECONDS = 300;
+const WEB_ACCESS_TTL_SECONDS = 8 * 60 * 60;
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -14,7 +15,7 @@ function corsHeaders() {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers":
-      "Content-Type, X-API-Token, X-Request-Timestamp, X-Request-Signature, X-File-Name",
+      "Content-Type, Authorization, X-API-Token, X-Request-Timestamp, X-Request-Signature, X-File-Name",
   };
 }
 
@@ -244,6 +245,158 @@ function timingSafeEqual(a, b) {
   return mismatch === 0;
 }
 
+function bytesToBase64Url(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlToBytes(input) {
+  const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
+  const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4));
+  const decoded = atob(`${normalized}${padding}`);
+  const bytes = new Uint8Array(decoded.length);
+  for (let i = 0; i < decoded.length; i += 1) {
+    bytes[i] = decoded.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function base64UrlEncodeUtf8(text) {
+  return bytesToBase64Url(new TextEncoder().encode(text));
+}
+
+function base64UrlDecodeUtf8(input) {
+  return new TextDecoder().decode(base64UrlToBytes(input));
+}
+
+function getBearerToken(request) {
+  const authorization = request.headers.get("Authorization") || "";
+  const [scheme, token] = authorization.trim().split(/\s+/, 2);
+  if (!scheme || !token) return "";
+  if (scheme.toLowerCase() !== "bearer") return "";
+  return token;
+}
+
+function ensureWebAuthConfig(env) {
+  if (!env.WEB_LOGIN_PASSWORD || !env.WEB_SESSION_SECRET) {
+    throw new HttpError(
+      500,
+      "Autenticacion web no configurada. Define WEB_LOGIN_PASSWORD y WEB_SESSION_SECRET.",
+    );
+  }
+}
+
+async function buildWebAccessToken(env) {
+  ensureWebAuthConfig(env);
+
+  const iat = nowUnixSeconds();
+  const exp = iat + WEB_ACCESS_TTL_SECONDS;
+  const payload = {
+    scope: "web",
+    iat,
+    exp,
+  };
+
+  const encodedPayload = base64UrlEncodeUtf8(JSON.stringify(payload));
+  const signature = await hmacSha256Hex(env.WEB_SESSION_SECRET, encodedPayload);
+
+  return {
+    token: `${encodedPayload}.${signature}`,
+    expires_in: WEB_ACCESS_TTL_SECONDS,
+    expires_at: new Date(exp * 1000).toISOString(),
+  };
+}
+
+async function verifyWebAccessToken(request, env) {
+  ensureWebAuthConfig(env);
+
+  const token = getBearerToken(request);
+  if (!token) {
+    throw new HttpError(401, "Falta token Bearer para autenticacion web.");
+  }
+
+  const [encodedPayload, signature] = token.split(".", 2);
+  if (!encodedPayload || !signature) {
+    throw new HttpError(401, "Token web invalido.");
+  }
+
+  const expectedSignature = await hmacSha256Hex(env.WEB_SESSION_SECRET, encodedPayload);
+  if (!timingSafeEqual(signature.toLowerCase(), expectedSignature.toLowerCase())) {
+    throw new HttpError(401, "Token web invalido.");
+  }
+
+  let payload = null;
+  try {
+    payload = JSON.parse(base64UrlDecodeUtf8(encodedPayload));
+  } catch {
+    throw new HttpError(401, "Token web invalido.");
+  }
+
+  if (!payload || payload.scope !== "web") {
+    throw new HttpError(401, "Token web invalido.");
+  }
+
+  const exp = Number(payload.exp);
+  if (!Number.isInteger(exp) || exp <= nowUnixSeconds()) {
+    throw new HttpError(401, "Sesion web expirada.");
+  }
+
+  return payload;
+}
+
+async function handleWebAuthRoute(request, env, pathParts) {
+  if (pathParts.length !== 2 || pathParts[0] !== "auth") {
+    return null;
+  }
+
+  if (pathParts[1] === "login" && request.method === "POST") {
+    ensureWebAuthConfig(env);
+
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      throw new HttpError(400, "Payload invalido.");
+    }
+
+    const providedPassword = normalizeOptionalString(body?.password, "");
+    if (!providedPassword) {
+      throw new HttpError(400, "Campo 'password' es obligatorio.");
+    }
+
+    if (!timingSafeEqual(providedPassword, String(env.WEB_LOGIN_PASSWORD))) {
+      throw new HttpError(401, "Credenciales web invalidas.");
+    }
+
+    const token = await buildWebAccessToken(env);
+    return jsonResponse(
+      {
+        success: true,
+        access_token: token.token,
+        token_type: "Bearer",
+        expires_in: token.expires_in,
+        expires_at: token.expires_at,
+      },
+      200,
+    );
+  }
+
+  if (pathParts[1] === "me" && request.method === "GET") {
+    const payload = await verifyWebAccessToken(request, env);
+    return jsonResponse({
+      success: true,
+      authenticated: true,
+      scope: payload.scope,
+      expires_at: new Date(Number(payload.exp) * 1000).toISOString(),
+    });
+  }
+
+  return null;
+}
+
 async function verifyAuth(request, env, url) {
   const expectedToken = env.API_TOKEN;
   const expectedSecret = env.API_SECRET;
@@ -338,15 +491,45 @@ export default {
 
     const url = new URL(request.url);
     const pathParts = url.pathname.split("/").filter((part) => part !== "");
+    const isWebRoute = pathParts[0] === "web";
+    const routeParts = isWebRoute ? pathParts.slice(1) : pathParts;
 
     try {
+      if (routeParts.length === 0 && request.method === "GET") {
+        return jsonResponse({
+          service: "driver-manager-api",
+          status: "ok",
+          docs: {
+            health: "/health",
+            web_login: "/web/auth/login",
+            installations: "/installations",
+            web_installations: "/web/installations",
+          },
+        });
+      }
+
+      if (routeParts.length === 1 && routeParts[0] === "health" && request.method === "GET") {
+        return jsonResponse({ ok: true, now: nowIso() });
+      }
+
+      if (isWebRoute) {
+        const webAuthResponse = await handleWebAuthRoute(request, env, routeParts);
+        if (webAuthResponse) {
+          return webAuthResponse;
+        }
+      }
+
       if (!env.DB) {
         throw new Error("La base de datos (D1) no está vinculada a este Worker.");
       }
 
-      await verifyAuth(request, env, url);
+      if (isWebRoute) {
+        await verifyWebAccessToken(request, env);
+      } else {
+        await verifyAuth(request, env, url);
+      }
 
-      if (pathParts.length === 1 && pathParts[0] === "installations") {
+      if (routeParts.length === 1 && routeParts[0] === "installations") {
         if (request.method === "GET") {
           const { results } = await env.DB.prepare(
             "SELECT * FROM installations ORDER BY timestamp DESC",
@@ -380,7 +563,7 @@ export default {
         }
       }
 
-      if (pathParts.length === 1 && pathParts[0] === "records" && request.method === "POST") {
+      if (routeParts.length === 1 && routeParts[0] === "records" && request.method === "POST") {
         const data = await request.json();
         const payload = normalizeInstallationPayload(data, "manual");
 
@@ -420,11 +603,11 @@ export default {
       }
 
       if (
-        pathParts.length === 3 &&
-        pathParts[0] === "installations" &&
-        pathParts[2] === "incidents"
+        routeParts.length === 3 &&
+        routeParts[0] === "installations" &&
+        routeParts[2] === "incidents"
       ) {
-        const installationId = parsePositiveInt(pathParts[1], "installation_id");
+        const installationId = parsePositiveInt(routeParts[1], "installation_id");
 
         if (request.method === "GET") {
           const { results: incidents } = await env.DB.prepare(`
@@ -538,12 +721,12 @@ export default {
       }
 
       if (
-        pathParts.length === 3 &&
-        pathParts[0] === "incidents" &&
-        pathParts[2] === "photos" &&
+        routeParts.length === 3 &&
+        routeParts[0] === "incidents" &&
+        routeParts[2] === "photos" &&
         request.method === "POST"
       ) {
-        const incidentId = parsePositiveInt(pathParts[1], "incident_id");
+        const incidentId = parsePositiveInt(routeParts[1], "incident_id");
         const contentType = normalizeContentType(request.headers.get("content-type"));
 
         if (!ALLOWED_PHOTO_TYPES.has(contentType)) {
@@ -614,8 +797,8 @@ export default {
         );
       }
 
-      if (pathParts.length === 2 && pathParts[0] === "installations") {
-        const recordId = pathParts[1];
+      if (routeParts.length === 2 && routeParts[0] === "installations") {
+        const recordId = routeParts[1];
 
         if (request.method === "PUT") {
           const data = await request.json();
@@ -640,7 +823,7 @@ export default {
         }
       }
 
-      if (url.pathname === "/statistics") {
+      if (routeParts.length === 1 && routeParts[0] === "statistics") {
         const { results } = await env.DB.prepare(
           "SELECT * FROM installations ORDER BY timestamp DESC",
         ).all();

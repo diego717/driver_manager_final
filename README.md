@@ -91,6 +91,13 @@ npm ci
 npm run dev
 ```
 
+`npm run dev` usa la base D1 local (`.wrangler/state/...`).  
+Si quieres ver en `localhost` los mismos datos que Android (D1 remota), usa:
+
+```powershell
+npm run dev:remote
+```
+
 ### Deploy
 
 ```powershell
@@ -113,14 +120,31 @@ wrangler secret put API_SECRET
 
 Si `API_TOKEN`/`API_SECRET` no existen, el Worker entra en modo desarrollo y no exige auth.
 
+Para habilitar acceso web sin exponer `API_SECRET` en frontend:
+
+```powershell
+wrangler secret put WEB_LOGIN_PASSWORD
+wrangler secret put WEB_SESSION_SECRET
+```
+
+Con eso, la web usa login por password y token Bearer corto (`/web/auth/login`).
+
 ### Migraciones D1
 
 ```powershell
 npm run d1:migrate
 ```
 
-La migracion incluida (`0002_incidents_v1.sql`) crea tablas de incidencias/fotos.  
-Si partes desde cero, debes tener tambien la tabla `installations` base requerida por `worker.js`.
+Para aplicar migraciones sobre la D1 remota:
+
+```powershell
+npm run d1:migrate:remote
+```
+
+Las migraciones incluidas crean:
+
+- `0001_installations_base.sql`: tabla `installations` base.
+- `0002_incidents_v1.sql`: tablas de incidencias y fotos.
 
 ## Mobile app (Expo)
 
@@ -153,6 +177,7 @@ Lee `mobile-app/.env`, pide password maestra del desktop y actualiza:
 
 ## Endpoints principales del Worker
 
+- `GET /health`
 - `GET /installations`
 - `POST /installations`
 - `POST /records` (alta manual)
@@ -163,12 +188,40 @@ Lee `mobile-app/.env`, pide password maestra del desktop y actualiza:
 - `POST /installations/:installationId/incidents`
 - `POST /incidents/:incidentId/photos`
 
+Endpoints web (sin HMAC en cliente):
+
+- `POST /web/auth/login`
+- `GET /web/auth/me`
+- `GET /web/installations`
+- `POST /web/installations`
+- `POST /web/records`
+- `PUT /web/installations/:id`
+- `DELETE /web/installations/:id`
+- `GET /web/statistics`
+- `GET /web/installations/:installationId/incidents`
+- `POST /web/installations/:installationId/incidents`
+- `POST /web/incidents/:incidentId/photos`
+
 Notas API:
 
 - Firma HMAC: `METHOD|PATH|TIMESTAMP|SHA256(body)`.
 - Ventana anti-replay: 300 segundos.
+- Web token: `Authorization: Bearer <token>` emitido por `/web/auth/login` (TTL 8 horas).
 - Fotos permitidas: `image/jpeg`, `image/png`, `image/webp`.
 - Limite por foto: 8 MB.
+
+Ejemplo rapido de flujo web:
+
+```powershell
+# 1) Login web
+curl -X POST "$BASE_URL/web/auth/login" `
+  -H "Content-Type: application/json" `
+  -d "{\"password\":\"TU_WEB_LOGIN_PASSWORD\"}"
+
+# 2) Usar token en endpoints /web/*
+curl "$BASE_URL/web/installations" `
+  -H "Authorization: Bearer TU_ACCESS_TOKEN"
+```
 
 ## Testing
 
