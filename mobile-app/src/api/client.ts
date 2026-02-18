@@ -28,7 +28,18 @@ export const apiClient = axios.create({
 });
 
 export function normalizeApiBaseUrl(value: string): string {
-  return value.trim().replace(/\/+$/, "");
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  const withoutTrailingSlash = trimmed.replace(/\/+$/, "");
+  try {
+    const parsed = new URL(withoutTrailingSlash);
+    // Siempre usar la raiz del dominio para evitar base URLs con paths
+    // heredados (ej. /web/installations) que rompen auth/routing.
+    return parsed.origin;
+  } catch {
+    return withoutTrailingSlash;
+  }
 }
 
 function normalizePath(path: string): string {

@@ -123,11 +123,13 @@ Si `API_TOKEN`/`API_SECRET` no existen, el Worker entra en modo desarrollo y no 
 Para habilitar acceso web sin exponer `API_SECRET` en frontend:
 
 ```powershell
-wrangler secret put WEB_LOGIN_PASSWORD
 wrangler secret put WEB_SESSION_SECRET
+wrangler secret put WEB_LOGIN_PASSWORD
 ```
 
-Con eso, la web usa login por password y token Bearer corto (`/web/auth/login`).
+Con eso:
+- `WEB_SESSION_SECRET` firma y valida el Bearer web.
+- `WEB_LOGIN_PASSWORD` se usa para bootstrap inicial de usuarios web.
 
 ### Migraciones D1
 
@@ -145,6 +147,8 @@ Las migraciones incluidas crean:
 
 - `0001_installations_base.sql`: tabla `installations` base.
 - `0002_incidents_v1.sql`: tablas de incidencias y fotos.
+- `0003_web_users_auth.sql`: tabla `web_users` para login web por usuario.
+- `0004_web_users_hash_types.sql`: soporte de hash tipo `pbkdf2/bcrypt/legacy`.
 
 ## Mobile app (Expo)
 
@@ -187,10 +191,17 @@ Lee `mobile-app/.env`, pide password maestra del desktop y actualiza:
 - `GET /installations/:installationId/incidents`
 - `POST /installations/:installationId/incidents`
 - `POST /incidents/:incidentId/photos`
+- `GET /photos/:photoId`
 
 Endpoints web (sin HMAC en cliente):
 
 - `POST /web/auth/login`
+- `POST /web/auth/bootstrap` (crear primer usuario web)
+- `GET /web/auth/users` (listar usuarios, requiere admin)
+- `POST /web/auth/users` (crear usuarios adicionales, requiere admin)
+- `PATCH /web/auth/users/:user_id` (activar/desactivar o cambiar rol, requiere admin)
+- `POST /web/auth/users/:user_id/force-password` (forzar nueva contraseña, requiere admin)
+- `POST /web/auth/import-users` (importar hashes de usuarios legacy, requiere admin)
 - `GET /web/auth/me`
 - `GET /web/installations`
 - `POST /web/installations`
@@ -201,27 +212,49 @@ Endpoints web (sin HMAC en cliente):
 - `GET /web/installations/:installationId/incidents`
 - `POST /web/installations/:installationId/incidents`
 - `POST /web/incidents/:incidentId/photos`
+- `GET /web/photos/:photoId`
 
 Notas API:
 
 - Firma HMAC: `METHOD|PATH|TIMESTAMP|SHA256(body)`.
 - Ventana anti-replay: 300 segundos.
 - Web token: `Authorization: Bearer <token>` emitido por `/web/auth/login` (TTL 8 horas).
+- Login web: `username + password` contra `web_users` (bootstrap inicial con `/web/auth/bootstrap`).
+- Import de usuarios legacy: `/web/auth/import-users` acepta hashes `bcrypt`, `pbkdf2_sha256` y `legacy_pbkdf2_hex`.
 - Fotos permitidas: `image/jpeg`, `image/png`, `image/webp`.
 - Limite por foto: 8 MB.
 
 Ejemplo rapido de flujo web:
 
 ```powershell
-# 1) Login web
+# 1) Bootstrap inicial (solo una vez, si no hay usuarios web)
+curl -X POST "$BASE_URL/web/auth/bootstrap" `
+  -H "Content-Type: application/json" `
+  -d "{\"bootstrap_password\":\"TU_WEB_LOGIN_PASSWORD\",\"username\":\"admin_root\",\"password\":\"TuPass#Segura2026\"}"
+
+# 2) Login web por usuario
 curl -X POST "$BASE_URL/web/auth/login" `
   -H "Content-Type: application/json" `
-  -d "{\"password\":\"TU_WEB_LOGIN_PASSWORD\"}"
+  -d "{\"username\":\"admin_root\",\"password\":\"TuPass#Segura2026\"}"
 
-# 2) Usar token en endpoints /web/*
+# 3) Usar token en endpoints /web/*
 curl "$BASE_URL/web/installations" `
   -H "Authorization: Bearer TU_ACCESS_TOKEN"
 ```
+
+### Migrar usuarios desktop (R2) a D1 web_users
+
+Script incluido:
+
+```powershell
+python sync_r2_users_to_web_d1.py
+```
+
+El script:
+- Descifra `config/config.enc` con tu password maestra desktop.
+- Descarga `system/users.json` desde R2.
+- Hace login web con un admin existente.
+- Importa usuarios hacia D1 (`/web/auth/import-users`) preservando hashes.
 
 ## Testing
 

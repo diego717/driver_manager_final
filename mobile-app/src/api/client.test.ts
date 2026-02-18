@@ -16,7 +16,7 @@ const secureStoreMocks = vi.hoisted(() => ({
 vi.mock("../storage/secure", () => secureStoreMocks);
 
 import { hmacSha256Hex } from "./auth";
-import { apiClient, extractApiError, signedJsonRequest } from "./client";
+import { apiClient, extractApiError, normalizeApiBaseUrl, signedJsonRequest } from "./client";
 
 describe("api client", () => {
   beforeEach(() => {
@@ -125,5 +125,13 @@ describe("api client", () => {
 
   it("extracts message from generic error instances", () => {
     expect(extractApiError(new Error("boom"))).toBe("boom");
+  });
+
+  it("normalizes base URL when /web is included by mistake", () => {
+    expect(normalizeApiBaseUrl("https://worker.example/web")).toBe("https://worker.example");
+    expect(normalizeApiBaseUrl("https://worker.example/web/")).toBe("https://worker.example");
+    expect(normalizeApiBaseUrl("https://worker.example/web/installations")).toBe(
+      "https://worker.example",
+    );
   });
 });

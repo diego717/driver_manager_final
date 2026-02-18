@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import bcrypt from "bcryptjs";
 
 import worker from "../worker.js";
 
@@ -23,6 +24,7 @@ function createMockDB({
   byBrand = [],
   incidents = [],
   incidentPhotos = [],
+  webUsers = [],
 } = {}) {
   const calls = [];
   const state = {
@@ -30,11 +32,17 @@ function createMockDB({
     byBrand: byBrand.map((row) => ({ ...row })),
     incidents: incidents.map((row) => ({ ...row })),
     incidentPhotos: incidentPhotos.map((row) => ({ ...row })),
+    webUsers: webUsers.map((row) => ({
+      password_hash_type: "pbkdf2_sha256",
+      is_active: 1,
+      ...row,
+    })),
   };
 
   let nextInstallationId = 100;
   let nextIncidentId = 1000;
   let nextPhotoId = 2000;
+  let nextWebUserId = 3000;
 
   return {
     calls,
@@ -95,6 +103,61 @@ function createMockDB({
             const id = Number(call.bound?.[0]);
             const row = state.incidents.find((item) => Number(item.id) === id);
             return { results: row ? [row] : [] };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT id, incident_id, r2_key, file_name, content_type, size_bytes, sha256, created_at FROM incident_photos WHERE id = ?",
+            )
+          ) {
+            const id = Number(call.bound?.[0]);
+            const row = state.incidentPhotos.find((item) => Number(item.id) === id);
+            return { results: row ? [row] : [] };
+          }
+
+          if (normalized === "SELECT COUNT(*) AS total FROM web_users") {
+            return { results: [{ total: state.webUsers.length }] };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT id, username, password_hash, password_hash_type, role, is_active, created_at, updated_at, last_login_at FROM web_users WHERE username = ? LIMIT 1",
+            )
+          ) {
+            const username = String(call.bound?.[0] ?? "");
+            const row = state.webUsers.find((item) => item.username === username);
+            return { results: row ? [row] : [] };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT id, username, password_hash, password_hash_type, role, is_active, created_at, updated_at, last_login_at FROM web_users WHERE id = ? LIMIT 1",
+            )
+          ) {
+            const userId = Number(call.bound?.[0]);
+            const row = state.webUsers.find((item) => Number(item.id) === userId);
+            return { results: row ? [row] : [] };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT id, username, role, is_active, created_at, updated_at, last_login_at FROM web_users ORDER BY username ASC",
+            )
+          ) {
+            const rows = [...state.webUsers].sort((a, b) =>
+              String(a.username).localeCompare(String(b.username)),
+            );
+            return {
+              results: rows.map((row) => ({
+                id: row.id,
+                username: row.username,
+                role: row.role,
+                is_active: row.is_active,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                last_login_at: row.last_login_at ?? null,
+              })),
+            };
           }
 
           throw new Error(`Unexpected query for .all(): ${normalized}`);
@@ -166,6 +229,101 @@ function createMockDB({
               created_at: createdAt,
             });
             return { success: true, meta: { last_row_id: id } };
+          }
+
+          if (
+            normalized.startsWith(
+              "INSERT INTO web_users (username, password_hash, password_hash_type, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
+            )
+          ) {
+            const id = nextWebUserId++;
+            const [username, passwordHash, passwordHashType, role, createdAt, updatedAt] = call.bound;
+            state.webUsers.push({
+              id,
+              username,
+              password_hash: passwordHash,
+              password_hash_type: passwordHashType,
+              role,
+              is_active: 1,
+              created_at: createdAt,
+              updated_at: updatedAt,
+              last_login_at: null,
+            });
+            return { success: true, meta: { last_row_id: id } };
+          }
+
+          if (
+            normalized.startsWith(
+              "INSERT INTO web_users (username, password_hash, password_hash_type, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+          ) {
+            const id = nextWebUserId++;
+            const [username, passwordHash, passwordHashType, role, isActive, createdAt, updatedAt] = call.bound;
+            state.webUsers.push({
+              id,
+              username,
+              password_hash: passwordHash,
+              password_hash_type: passwordHashType,
+              role,
+              is_active: isActive,
+              created_at: createdAt,
+              updated_at: updatedAt,
+              last_login_at: null,
+            });
+            return { success: true, meta: { last_row_id: id } };
+          }
+
+          if (
+            normalized.startsWith(
+              "UPDATE web_users SET password_hash = ?, password_hash_type = ?, role = ?, is_active = ?, updated_at = ? WHERE id = ?",
+            )
+          ) {
+            const [passwordHash, passwordHashType, role, isActive, updatedAt, id] = call.bound;
+            const row = state.webUsers.find((item) => Number(item.id) === Number(id));
+            if (row) {
+              row.password_hash = passwordHash;
+              row.password_hash_type = passwordHashType;
+              row.role = role;
+              row.is_active = isActive;
+              row.updated_at = updatedAt;
+            }
+            return { success: true };
+          }
+
+          if (normalized.startsWith("UPDATE web_users SET last_login_at = ?, updated_at = ? WHERE id = ?")) {
+            const [lastLoginAt, updatedAt, id] = call.bound;
+            const row = state.webUsers.find((item) => Number(item.id) === Number(id));
+            if (row) {
+              row.last_login_at = lastLoginAt;
+              row.updated_at = updatedAt;
+            }
+            return { success: true };
+          }
+
+          if (normalized.startsWith("UPDATE web_users SET role = ?, is_active = ?, updated_at = ? WHERE id = ?")) {
+            const [role, isActive, updatedAt, id] = call.bound;
+            const row = state.webUsers.find((item) => Number(item.id) === Number(id));
+            if (row) {
+              row.role = role;
+              row.is_active = isActive;
+              row.updated_at = updatedAt;
+            }
+            return { success: true };
+          }
+
+          if (
+            normalized.startsWith(
+              "UPDATE web_users SET password_hash = ?, password_hash_type = ?, updated_at = ? WHERE id = ?",
+            )
+          ) {
+            const [passwordHash, passwordHashType, updatedAt, id] = call.bound;
+            const row = state.webUsers.find((item) => Number(item.id) === Number(id));
+            if (row) {
+              row.password_hash = passwordHash;
+              row.password_hash_type = passwordHashType;
+              row.updated_at = updatedAt;
+            }
+            return { success: true };
           }
 
           return { success: true };
@@ -607,6 +765,47 @@ test("POST /incidents/:id/photos uploads to R2 and persists metadata", async () 
   assert.equal(uploaded[0].options.httpMetadata.contentType, "image/png");
 });
 
+test("GET /photos/:id returns binary content from R2", async () => {
+  const db = createMockDB({
+    incidentPhotos: [
+      {
+        id: 21,
+        incident_id: 11,
+        r2_key: "incidents/45/11/photo1.jpg",
+        file_name: "photo1.jpg",
+        content_type: "image/jpeg",
+        size_bytes: 4,
+        sha256: "abc",
+        created_at: "2026-02-15T10:05:00Z",
+      },
+    ],
+  });
+
+  const bucket = {
+    async get(key) {
+      if (key !== "incidents/45/11/photo1.jpg") return null;
+      return {
+        body: new Uint8Array([1, 2, 3, 4]),
+        httpMetadata: { contentType: "image/jpeg" },
+      };
+    },
+  };
+
+  const request = new Request("https://worker.example/photos/21", {
+    method: "GET",
+  });
+
+  const response = await worker.fetch(request, {
+    DB: db,
+    INCIDENTS_BUCKET: bucket,
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Content-Type"), "image/jpeg");
+  const body = new Uint8Array(await response.arrayBuffer());
+  assert.equal(body.length, 4);
+});
+
 test("POST /incidents/:id/photos rejects oversized files", async () => {
   const db = createMockDB({
     incidents: [{ id: 11, installation_id: 45 }],
@@ -970,10 +1169,29 @@ test("POST /web/auth/login issues access token for web routes", async () => {
     installations: [{ id: 1, driver_brand: "Zebra", status: "success" }],
   });
 
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  assert.equal(bootstrapResponse.status, 201);
+
   const loginRequest = new Request("https://worker.example/web/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: "web-pass" }),
+    body: JSON.stringify({
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
   });
 
   const loginResponse = await worker.fetch(loginRequest, {
@@ -1009,6 +1227,490 @@ test("POST /web/auth/login issues access token for web routes", async () => {
   assert.deepEqual(listBody, [{ id: 1, driver_brand: "Zebra", status: "success" }]);
 });
 
+test("POST /web/auth/bootstrap creates first web user with hashed password", async () => {
+  const db = createMockDB();
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+      role: "admin",
+    }),
+  });
+
+  const response = await worker.fetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 201);
+  assert.equal(body.success, true);
+  assert.equal(body.bootstrapped, true);
+  assert.equal(body.user.username, "admin_root");
+  assert.equal(db.state.webUsers.length, 1);
+  assert.notEqual(db.state.webUsers[0].password_hash, "StrongPass#2026");
+  assert.match(db.state.webUsers[0].password_hash, /^pbkdf2_sha256\$/);
+});
+
+test("POST /web/auth/login accepts username/password after bootstrap", async () => {
+  const db = createMockDB({
+    installations: [{ id: 1, driver_brand: "Zebra", status: "success" }],
+  });
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  assert.equal(bootstrapResponse.status, 201);
+
+  const loginRequest = new Request("https://worker.example/web/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const loginResponse = await worker.fetch(loginRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const loginBody = await loginResponse.json();
+
+  assert.equal(loginResponse.status, 200);
+  assert.equal(loginBody.success, true);
+  assert.equal(loginBody.user.username, "admin_root");
+  assert.equal(typeof loginBody.access_token, "string");
+
+  const meRequest = new Request("https://worker.example/web/auth/me", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${loginBody.access_token}`,
+    },
+  });
+  const meResponse = await worker.fetch(meRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const meBody = await meResponse.json();
+
+  assert.equal(meResponse.status, 200);
+  assert.equal(meBody.username, "admin_root");
+  assert.equal(meBody.role, "admin");
+});
+
+test("POST /web/installations/:id/incidents uses web session user as reporter by default", async () => {
+  const db = createMockDB({
+    installations: [{ id: 45, notes: "", installation_time_seconds: 0 }],
+  });
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const bootstrapBody = await bootstrapResponse.json();
+  assert.equal(bootstrapResponse.status, 201);
+
+  const createIncidentRequest = new Request("https://worker.example/web/installations/45/incidents", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bootstrapBody.access_token}`,
+    },
+    body: JSON.stringify({
+      note: "Incidencia creada desde web",
+    }),
+  });
+
+  const createIncidentResponse = await worker.fetch(createIncidentRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const createIncidentBody = await createIncidentResponse.json();
+
+  assert.equal(createIncidentResponse.status, 201);
+  assert.equal(createIncidentBody.success, true);
+  assert.equal(createIncidentBody.incident.reporter_username, "admin_root");
+  assert.equal(createIncidentBody.incident.source, "web");
+});
+
+test("POST /web/auth/users creates additional users when caller is admin", async () => {
+  const db = createMockDB();
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const bootstrapBody = await bootstrapResponse.json();
+  assert.equal(bootstrapResponse.status, 201);
+
+  const createUserRequest = new Request("https://worker.example/web/auth/users", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bootstrapBody.access_token}`,
+    },
+    body: JSON.stringify({
+      username: "viewer_1",
+      password: "ViewerPass#2026",
+      role: "viewer",
+    }),
+  });
+  const createUserResponse = await worker.fetch(createUserRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const createUserBody = await createUserResponse.json();
+
+  assert.equal(createUserResponse.status, 201);
+  assert.equal(createUserBody.success, true);
+  assert.equal(createUserBody.user.username, "viewer_1");
+  assert.equal(createUserBody.user.role, "viewer");
+  assert.equal(db.state.webUsers.length, 2);
+});
+
+test("GET /web/auth/users lists users with active status and last login", async () => {
+  const db = createMockDB();
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const bootstrapBody = await bootstrapResponse.json();
+  assert.equal(bootstrapResponse.status, 201);
+
+  const createUserRequest = new Request("https://worker.example/web/auth/users", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bootstrapBody.access_token}`,
+    },
+    body: JSON.stringify({
+      username: "viewer_1",
+      password: "ViewerPass#2026",
+      role: "viewer",
+    }),
+  });
+  const createUserResponse = await worker.fetch(createUserRequest, {
+    DB: db,
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  assert.equal(createUserResponse.status, 201);
+
+  const listUsersRequest = new Request("https://worker.example/web/auth/users", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${bootstrapBody.access_token}`,
+    },
+  });
+  const listUsersResponse = await worker.fetch(listUsersRequest, {
+    DB: db,
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const listUsersBody = await listUsersResponse.json();
+
+  assert.equal(listUsersResponse.status, 200);
+  assert.equal(listUsersBody.success, true);
+  assert.equal(Array.isArray(listUsersBody.users), true);
+  assert.equal(listUsersBody.users.length, 2);
+  assert.deepEqual(
+    listUsersBody.users.map((item) => item.username),
+    ["admin_root", "viewer_1"],
+  );
+  assert.equal(typeof listUsersBody.users[0].is_active, "boolean");
+});
+
+test("PATCH /web/auth/users/:id updates role and active status", async () => {
+  const db = createMockDB();
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const bootstrapBody = await bootstrapResponse.json();
+  assert.equal(bootstrapResponse.status, 201);
+
+  const createUserRequest = new Request("https://worker.example/web/auth/users", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bootstrapBody.access_token}`,
+    },
+    body: JSON.stringify({
+      username: "viewer_1",
+      password: "ViewerPass#2026",
+      role: "viewer",
+    }),
+  });
+  const createUserResponse = await worker.fetch(createUserRequest, {
+    DB: db,
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const createUserBody = await createUserResponse.json();
+  assert.equal(createUserResponse.status, 201);
+
+  const patchUserRequest = new Request(
+    `https://worker.example/web/auth/users/${createUserBody.user.id}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bootstrapBody.access_token}`,
+      },
+      body: JSON.stringify({
+        role: "admin",
+        is_active: false,
+      }),
+    },
+  );
+  const patchUserResponse = await worker.fetch(patchUserRequest, {
+    DB: db,
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const patchUserBody = await patchUserResponse.json();
+
+  assert.equal(patchUserResponse.status, 200);
+  assert.equal(patchUserBody.success, true);
+  assert.equal(patchUserBody.user.role, "admin");
+  assert.equal(patchUserBody.user.is_active, false);
+});
+
+test("POST /web/auth/users/:id/force-password resets password and allows login", async () => {
+  const db = createMockDB();
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const bootstrapBody = await bootstrapResponse.json();
+  assert.equal(bootstrapResponse.status, 201);
+
+  const createUserRequest = new Request("https://worker.example/web/auth/users", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bootstrapBody.access_token}`,
+    },
+    body: JSON.stringify({
+      username: "viewer_1",
+      password: "ViewerPass#2026",
+      role: "viewer",
+    }),
+  });
+  const createUserResponse = await worker.fetch(createUserRequest, {
+    DB: db,
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const createUserBody = await createUserResponse.json();
+  assert.equal(createUserResponse.status, 201);
+
+  const resetPasswordRequest = new Request(
+    `https://worker.example/web/auth/users/${createUserBody.user.id}/force-password`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bootstrapBody.access_token}`,
+      },
+      body: JSON.stringify({
+        new_password: "ViewerPass#2027",
+      }),
+    },
+  );
+  const resetPasswordResponse = await worker.fetch(resetPasswordRequest, {
+    DB: db,
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const resetPasswordBody = await resetPasswordResponse.json();
+  assert.equal(resetPasswordResponse.status, 200);
+  assert.equal(resetPasswordBody.success, true);
+
+  const oldLoginRequest = new Request("https://worker.example/web/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "viewer_1",
+      password: "ViewerPass#2026",
+    }),
+  });
+  const oldLoginResponse = await worker.fetch(oldLoginRequest, {
+    DB: db,
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  assert.equal(oldLoginResponse.status, 401);
+
+  const newLoginRequest = new Request("https://worker.example/web/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "viewer_1",
+      password: "ViewerPass#2027",
+    }),
+  });
+  const newLoginResponse = await worker.fetch(newLoginRequest, {
+    DB: db,
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const newLoginBody = await newLoginResponse.json();
+
+  assert.equal(newLoginResponse.status, 200);
+  assert.equal(newLoginBody.success, true);
+});
+
+test("POST /web/auth/import-users imports bcrypt users and login works", async () => {
+  const db = createMockDB();
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const bootstrapBody = await bootstrapResponse.json();
+  assert.equal(bootstrapResponse.status, 201);
+
+  const importedHash = bcrypt.hashSync("DesktopUser#2026", 10);
+  const importRequest = new Request("https://worker.example/web/auth/import-users", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bootstrapBody.access_token}`,
+    },
+    body: JSON.stringify({
+      users: [
+        {
+          username: "desktop_admin",
+          password_hash: importedHash,
+          password_hash_type: "bcrypt",
+          role: "admin",
+          is_active: true,
+        },
+      ],
+    }),
+  });
+  const importResponse = await worker.fetch(importRequest, {
+    DB: db,
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const importBody = await importResponse.json();
+  assert.equal(importResponse.status, 200);
+  assert.equal(importBody.success, true);
+  assert.equal(importBody.imported, 1);
+  assert.equal(importBody.created, 1);
+
+  const loginRequest = new Request("https://worker.example/web/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "desktop_admin",
+      password: "DesktopUser#2026",
+    }),
+  });
+  const loginResponse = await worker.fetch(loginRequest, {
+    DB: db,
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const loginBody = await loginResponse.json();
+
+  assert.equal(loginResponse.status, 200);
+  assert.equal(loginBody.success, true);
+  assert.equal(loginBody.user.username, "desktop_admin");
+});
+
+test("POST /web/auth/login requires username in payload", async () => {
+  const request = new Request("https://worker.example/web/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: "no-legacy-mode" }),
+  });
+
+  const response = await worker.fetch(request, {
+    DB: createMockDB(),
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /username/i);
+});
+
 test("GET /web/installations rejects request without Bearer token", async () => {
   const db = createMockDB();
   const request = new Request("https://worker.example/web/installations", {
@@ -1028,14 +1730,35 @@ test("GET /web/installations rejects request without Bearer token", async () => 
 });
 
 test("POST /web/auth/login rejects wrong password", async () => {
+  const db = createMockDB();
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  assert.equal(bootstrapResponse.status, 201);
+
   const request = new Request("https://worker.example/web/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: "wrong" }),
+    body: JSON.stringify({
+      username: "admin_root",
+      password: "wrong",
+    }),
   });
 
   const response = await worker.fetch(request, {
-    DB: createMockDB(),
+    DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
   });

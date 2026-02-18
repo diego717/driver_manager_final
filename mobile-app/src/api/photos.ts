@@ -1,7 +1,7 @@
 import * as FileSystem from "expo-file-system/legacy";
 import CryptoJS from "crypto-js";
 
-import { sha256HexFromBytes } from "./auth";
+import { sha256HexFromBytes, sha256HexFromString } from "./auth";
 import { getResolvedApiBaseUrl, resolveRequestAuth } from "./client";
 import { type UploadPhotoResponse } from "../types/api";
 import {
@@ -25,6 +25,59 @@ function wordArrayToUint8Array(wordArray: CryptoJS.lib.WordArray): Uint8Array {
 function bytesFromBase64(base64: string): Uint8Array {
   const wordArray = CryptoJS.enc.Base64.parse(base64);
   return wordArrayToUint8Array(wordArray);
+}
+
+function joinUrl(baseUrl: string, path: string): string {
+  const cleanBase = baseUrl.replace(/\/+$/, "");
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return `${cleanBase}${cleanPath}`;
+}
+
+export interface IncidentPhotoPreviewTarget {
+  uri: string;
+  headers: Record<string, string>;
+}
+
+function base64FromArrayBuffer(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const wordArray = CryptoJS.lib.WordArray.create(bytes as unknown as number[]);
+  return CryptoJS.enc.Base64.stringify(wordArray);
+}
+
+export async function resolveIncidentPhotoPreviewTarget(
+  photoId: number,
+): Promise<IncidentPhotoPreviewTarget> {
+  ensurePositiveInt(photoId, "photoId");
+  const apiBaseUrl = await getResolvedApiBaseUrl();
+  ensureNonEmpty(apiBaseUrl, "EXPO_PUBLIC_API_BASE_URL");
+
+  const requestAuth = await resolveRequestAuth({
+    method: "GET",
+    path: `/photos/${photoId}`,
+    bodyHash: sha256HexFromString(""),
+  });
+
+  return {
+    uri: joinUrl(apiBaseUrl, requestAuth.path),
+    headers: requestAuth.headers,
+  };
+}
+
+export async function fetchIncidentPhotoDataUri(photoId: number): Promise<string> {
+  const target = await resolveIncidentPhotoPreviewTarget(photoId);
+  const response = await fetch(target.uri, {
+    method: "GET",
+    headers: target.headers,
+  });
+
+  if (!response.ok) {
+    throw new Error(`No se pudo descargar foto #${photoId} (HTTP ${response.status}).`);
+  }
+
+  const contentType = response.headers.get("Content-Type") || "image/jpeg";
+  const buffer = await response.arrayBuffer();
+  const base64 = base64FromArrayBuffer(buffer);
+  return `data:${contentType};base64,${base64}`;
 }
 
 export async function uploadIncidentPhoto({
@@ -62,7 +115,7 @@ export async function uploadIncidentPhoto({
     bodyHash,
   });
 
-  const response = await fetch(`${apiBaseUrl}${requestAuth.path}`, {
+  const response = await fetch(joinUrl(apiBaseUrl, requestAuth.path), {
     method: "POST",
     headers: {
       "Content-Type": finalContentType,

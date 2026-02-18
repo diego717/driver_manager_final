@@ -1,7 +1,22 @@
+import bcrypt from "bcryptjs";
+
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 const ALLOWED_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const AUTH_WINDOW_SECONDS = 300;
 const WEB_ACCESS_TTL_SECONDS = 8 * 60 * 60;
+const WEB_PASSWORD_MIN_LENGTH = 10;
+const WEB_PASSWORD_PBKDF2_ITERATIONS = 100000;
+const WEB_PASSWORD_KEY_LENGTH_BYTES = 32;
+const WEB_USERNAME_PATTERN = /^[a-z0-9._-]{3,64}$/;
+const WEB_DEFAULT_ROLE = "admin";
+const WEB_HASH_TYPE_PBKDF2 = "pbkdf2_sha256";
+const WEB_HASH_TYPE_BCRYPT = "bcrypt";
+const WEB_HASH_TYPE_LEGACY_PBKDF2 = "legacy_pbkdf2_hex";
+const WEB_ALLOWED_HASH_TYPES = new Set([
+  WEB_HASH_TYPE_PBKDF2,
+  WEB_HASH_TYPE_BCRYPT,
+  WEB_HASH_TYPE_LEGACY_PBKDF2,
+]);
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -72,6 +87,10 @@ function nowUnixSeconds() {
 function normalizeOptionalString(value, fallback = "") {
   if (value === null || value === undefined) return fallback;
   return String(value).trim();
+}
+
+function normalizeWebUsername(value) {
+  return normalizeOptionalString(value, "").toLowerCase();
 }
 
 function normalizeNonNegativeInteger(value, fallback = 0) {
@@ -272,6 +291,31 @@ function base64UrlDecodeUtf8(input) {
   return new TextDecoder().decode(base64UrlToBytes(input));
 }
 
+function bytesToHex(bytes) {
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function isLikelyLegacyPbkdf2Hex(hash) {
+  return /^[a-f0-9]{128,}$/i.test(normalizeOptionalString(hash, ""));
+}
+
+function detectWebPasswordHashType(storedHashRaw) {
+  const storedHash = normalizeOptionalString(storedHashRaw, "");
+  if (!storedHash) return WEB_HASH_TYPE_PBKDF2;
+  if (storedHash.startsWith(`${WEB_HASH_TYPE_PBKDF2}$`)) return WEB_HASH_TYPE_PBKDF2;
+  if (storedHash.startsWith("$2a$") || storedHash.startsWith("$2b$") || storedHash.startsWith("$2y$")) {
+    return WEB_HASH_TYPE_BCRYPT;
+  }
+  if (isLikelyLegacyPbkdf2Hex(storedHash)) return WEB_HASH_TYPE_LEGACY_PBKDF2;
+  return WEB_HASH_TYPE_PBKDF2;
+}
+
+function normalizeWebHashType(input, storedHashRaw = "") {
+  const requested = normalizeOptionalString(input, "").toLowerCase();
+  if (WEB_ALLOWED_HASH_TYPES.has(requested)) return requested;
+  return detectWebPasswordHashType(storedHashRaw);
+}
+
 function getBearerToken(request) {
   const authorization = request.headers.get("Authorization") || "";
   const [scheme, token] = authorization.trim().split(/\s+/, 2);
@@ -280,25 +324,431 @@ function getBearerToken(request) {
   return token;
 }
 
-function ensureWebAuthConfig(env) {
-  if (!env.WEB_LOGIN_PASSWORD || !env.WEB_SESSION_SECRET) {
-    throw new HttpError(
-      500,
-      "Autenticacion web no configurada. Define WEB_LOGIN_PASSWORD y WEB_SESSION_SECRET.",
-    );
+function ensureWebSessionSecret(env) {
+  if (!env.WEB_SESSION_SECRET) {
+    throw new HttpError(500, "Autenticacion web no configurada. Define WEB_SESSION_SECRET.");
   }
 }
 
-async function buildWebAccessToken(env) {
-  ensureWebAuthConfig(env);
+function ensureDbBinding(env) {
+  if (!env.DB) {
+    throw new Error("La base de datos (D1) no esta vinculada a este Worker.");
+  }
+}
+
+function ensureWebUsersTableAvailable(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  if (
+    (message.includes("no such table") && message.includes("web_users")) ||
+    (message.includes("no such column") && message.includes("password_hash_type"))
+  ) {
+    throw new HttpError(
+      500,
+      "Falta esquema de usuarios web en D1. Ejecuta las migraciones (npm run d1:migrate o d1:migrate:remote).",
+    );
+  }
+  throw error;
+}
+
+function validateWebUsername(usernameRaw) {
+  const username = normalizeWebUsername(usernameRaw);
+  if (!WEB_USERNAME_PATTERN.test(username)) {
+    throw new HttpError(
+      400,
+      "Username invalido. Usa 3-64 caracteres: letras, numeros, punto, guion o guion bajo.",
+    );
+  }
+  return username;
+}
+
+function validateWebPassword(passwordRaw, fieldName = "password") {
+  const password = normalizeOptionalString(passwordRaw, "");
+  if (password.length < WEB_PASSWORD_MIN_LENGTH) {
+    throw new HttpError(
+      400,
+      `Campo '${fieldName}' invalido. Debe tener al menos ${WEB_PASSWORD_MIN_LENGTH} caracteres.`,
+    );
+  }
+  return password;
+}
+
+function parseWebPasswordHash(storedHash) {
+  const [algorithm, iterationsRaw, saltEncoded, keyEncoded] = normalizeOptionalString(
+    storedHash,
+    "",
+  ).split("$", 4);
+
+  const iterations = Number.parseInt(iterationsRaw, 10);
+  if (
+    algorithm !== WEB_HASH_TYPE_PBKDF2 ||
+    !Number.isInteger(iterations) ||
+    iterations < 10000 ||
+    !saltEncoded ||
+    !keyEncoded
+  ) {
+    return null;
+  }
+
+  try {
+    return {
+      iterations,
+      saltBytes: base64UrlToBytes(saltEncoded),
+      keyEncoded,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function deriveWebPasswordKey(password, saltBytes, iterations, keyLengthBytes = WEB_PASSWORD_KEY_LENGTH_BYTES) {
+  if (!globalThis.crypto?.subtle) {
+    throw new HttpError(500, "No hay soporte crypto para autenticacion web.");
+  }
+
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    { name: "PBKDF2" },
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      hash: "SHA-256",
+      salt: saltBytes,
+      iterations,
+    },
+    keyMaterial,
+    keyLengthBytes * 8,
+  );
+  return new Uint8Array(bits);
+}
+
+async function hashWebPassword(password) {
+  if (!globalThis.crypto?.getRandomValues) {
+    throw new HttpError(500, "No hay soporte crypto para autenticacion web.");
+  }
+
+  const saltBytes = crypto.getRandomValues(new Uint8Array(16));
+  const derivedBytes = await deriveWebPasswordKey(
+    password,
+    saltBytes,
+    WEB_PASSWORD_PBKDF2_ITERATIONS,
+  );
+  return `${WEB_HASH_TYPE_PBKDF2}$${WEB_PASSWORD_PBKDF2_ITERATIONS}$${bytesToBase64Url(saltBytes)}$${bytesToBase64Url(derivedBytes)}`;
+}
+
+async function verifyLegacyPbkdf2HexPassword(password, storedHashRaw) {
+  const storedHash = normalizeOptionalString(storedHashRaw, "").toLowerCase();
+  if (!isLikelyLegacyPbkdf2Hex(storedHash) || storedHash.length < 128) return false;
+
+  const saltText = storedHash.slice(0, 64);
+  const expectedKeyHex = storedHash.slice(64);
+  const keyLengthBytes = Math.max(1, Math.floor(expectedKeyHex.length / 2));
+  const derivedBytes = await deriveWebPasswordKey(
+    password,
+    new TextEncoder().encode(saltText),
+    100000,
+    keyLengthBytes,
+  );
+  const candidateHex = bytesToHex(derivedBytes);
+  return timingSafeEqual(candidateHex, expectedKeyHex);
+}
+
+function verifyBcryptPassword(password, storedHashRaw) {
+  const storedHash = normalizeOptionalString(storedHashRaw, "");
+  if (!storedHash) return false;
+  try {
+    return bcrypt.compareSync(password, storedHash);
+  } catch {
+    return false;
+  }
+}
+
+async function verifyWebPassword(password, storedHash, hashTypeRaw = "") {
+  const hashType = normalizeWebHashType(hashTypeRaw, storedHash);
+  if (hashType === WEB_HASH_TYPE_BCRYPT) {
+    return verifyBcryptPassword(password, storedHash);
+  }
+  if (hashType === WEB_HASH_TYPE_LEGACY_PBKDF2) {
+    return verifyLegacyPbkdf2HexPassword(password, storedHash);
+  }
+
+  const parsed = parseWebPasswordHash(storedHash);
+  if (!parsed) return false;
+
+  const derivedBytes = await deriveWebPasswordKey(password, parsed.saltBytes, parsed.iterations);
+  const candidateKey = bytesToBase64Url(derivedBytes);
+  return timingSafeEqual(candidateKey, parsed.keyEncoded);
+}
+
+function normalizeWebRole(roleRaw) {
+  const role = normalizeOptionalString(roleRaw, WEB_DEFAULT_ROLE).toLowerCase();
+  if (!["admin", "viewer", "super_admin"].includes(role)) {
+    throw new HttpError(400, "Rol web invalido.");
+  }
+  return role;
+}
+
+function parseBooleanOrNull(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  const normalized = normalizeOptionalString(value, "").toLowerCase();
+  if (!normalized) return null;
+  if (["1", "true", "yes", "active", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "inactive", "off"].includes(normalized)) return false;
+  return null;
+}
+
+function requireAdminRole(role) {
+  if (!["admin", "super_admin"].includes(normalizeOptionalString(role, "").toLowerCase())) {
+    throw new HttpError(403, "No tienes permisos para administrar usuarios web.");
+  }
+}
+
+async function countWebUsers(env) {
+  try {
+    const { results } = await env.DB.prepare("SELECT COUNT(*) AS total FROM web_users").all();
+    return Number(results?.[0]?.total || 0);
+  } catch (error) {
+    ensureWebUsersTableAvailable(error);
+  }
+}
+
+async function getWebUserByUsername(env, username) {
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT id, username, password_hash, password_hash_type, role, is_active, created_at, updated_at, last_login_at
+      FROM web_users
+      WHERE username = ?
+      LIMIT 1
+    `)
+      .bind(username)
+      .all();
+    return results?.[0] || null;
+  } catch (error) {
+    ensureWebUsersTableAvailable(error);
+  }
+}
+
+async function getWebUserById(env, userId) {
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT id, username, password_hash, password_hash_type, role, is_active, created_at, updated_at, last_login_at
+      FROM web_users
+      WHERE id = ?
+      LIMIT 1
+    `)
+      .bind(userId)
+      .all();
+    return results?.[0] || null;
+  } catch (error) {
+    ensureWebUsersTableAvailable(error);
+  }
+}
+
+function serializeWebUser(rawUser) {
+  if (!rawUser) return null;
+  return {
+    id: Number(rawUser.id),
+    username: rawUser.username,
+    role: normalizeWebRole(rawUser.role || WEB_DEFAULT_ROLE),
+    is_active: normalizeActiveFlag(rawUser.is_active, 1) === 1,
+    created_at: normalizeOptionalString(rawUser.created_at, ""),
+    updated_at: normalizeOptionalString(rawUser.updated_at, ""),
+    last_login_at: rawUser.last_login_at || null,
+  };
+}
+
+async function listWebUsers(env) {
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT id, username, role, is_active, created_at, updated_at, last_login_at
+      FROM web_users
+      ORDER BY username ASC
+    `).all();
+    return (results || []).map((row) => serializeWebUser(row));
+  } catch (error) {
+    ensureWebUsersTableAvailable(error);
+  }
+}
+
+async function createWebUser(env, { username, password, role }) {
+  const createdAt = nowIso();
+  const passwordHash = await hashWebPassword(password);
+  const passwordHashType = WEB_HASH_TYPE_PBKDF2;
+
+  try {
+    const existing = await getWebUserByUsername(env, username);
+    if (existing) {
+      throw new HttpError(409, "El usuario web ya existe.");
+    }
+
+    const insertResult = await env.DB.prepare(`
+      INSERT INTO web_users (username, password_hash, password_hash_type, role, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 1, ?, ?)
+    `)
+      .bind(username, passwordHash, passwordHashType, role, createdAt, createdAt)
+      .run();
+
+    return {
+      id: Number(insertResult?.meta?.last_row_id || 0),
+      username,
+      password_hash_type: passwordHashType,
+      role,
+      is_active: 1,
+      created_at: createdAt,
+      updated_at: createdAt,
+      last_login_at: null,
+    };
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    ensureWebUsersTableAvailable(error);
+  }
+}
+
+function normalizeActiveFlag(value, fallback = 1) {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  const normalized = normalizeOptionalString(value, "").toLowerCase();
+  if (["1", "true", "yes", "active"].includes(normalized)) return 1;
+  if (["0", "false", "no", "inactive"].includes(normalized)) return 0;
+  return fallback;
+}
+
+function normalizeImportedWebUser(rawUser) {
+  if (!rawUser || typeof rawUser !== "object") {
+    throw new HttpError(400, "Usuario importado invalido.");
+  }
+
+  const username = validateWebUsername(rawUser.username);
+  const passwordHash = normalizeOptionalString(rawUser.password_hash, "");
+  if (!passwordHash) {
+    throw new HttpError(400, `Usuario '${username}' sin password_hash.`);
+  }
+
+  const passwordHashType = normalizeWebHashType(rawUser.password_hash_type, passwordHash);
+  if (!WEB_ALLOWED_HASH_TYPES.has(passwordHashType)) {
+    throw new HttpError(400, `Tipo de hash invalido para '${username}'.`);
+  }
+
+  return {
+    username,
+    passwordHash,
+    passwordHashType,
+    role: normalizeWebRole(rawUser.role || WEB_DEFAULT_ROLE),
+    isActive: normalizeActiveFlag(rawUser.is_active, 1),
+  };
+}
+
+async function upsertWebUserFromImport(env, importedUser) {
+  const existing = await getWebUserByUsername(env, importedUser.username);
+  const now = nowIso();
+
+  if (existing) {
+    await env.DB.prepare(`
+      UPDATE web_users
+      SET password_hash = ?, password_hash_type = ?, role = ?, is_active = ?, updated_at = ?
+      WHERE id = ?
+    `)
+      .bind(
+        importedUser.passwordHash,
+        importedUser.passwordHashType,
+        importedUser.role,
+        importedUser.isActive,
+        now,
+        Number(existing.id),
+      )
+      .run();
+
+    return "updated";
+  }
+
+  await env.DB.prepare(`
+    INSERT INTO web_users (username, password_hash, password_hash_type, role, is_active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `)
+    .bind(
+      importedUser.username,
+      importedUser.passwordHash,
+      importedUser.passwordHashType,
+      importedUser.role,
+      importedUser.isActive,
+      now,
+      now,
+    )
+    .run();
+  return "created";
+}
+
+async function touchWebUserLastLogin(env, userId) {
+  const now = nowIso();
+  try {
+    await env.DB.prepare(`
+      UPDATE web_users
+      SET last_login_at = ?, updated_at = ?
+      WHERE id = ?
+    `)
+      .bind(now, now, userId)
+      .run();
+  } catch (error) {
+    ensureWebUsersTableAvailable(error);
+  }
+}
+
+async function updateWebUserRoleAndStatus(env, { userId, role, isActive }) {
+  const now = nowIso();
+  try {
+    await env.DB.prepare(`
+      UPDATE web_users
+      SET role = ?, is_active = ?, updated_at = ?
+      WHERE id = ?
+    `)
+      .bind(role, isActive, now, userId)
+      .run();
+  } catch (error) {
+    ensureWebUsersTableAvailable(error);
+  }
+}
+
+async function forceResetWebUserPassword(env, { userId, newPassword }) {
+  const now = nowIso();
+  const passwordHash = await hashWebPassword(newPassword);
+  const passwordHashType = WEB_HASH_TYPE_PBKDF2;
+
+  try {
+    await env.DB.prepare(`
+      UPDATE web_users
+      SET password_hash = ?, password_hash_type = ?, updated_at = ?
+      WHERE id = ?
+    `)
+      .bind(passwordHash, passwordHashType, now, userId)
+      .run();
+  } catch (error) {
+    ensureWebUsersTableAvailable(error);
+  }
+}
+
+async function buildWebAccessToken(env, sessionUser = {}) {
+  ensureWebSessionSecret(env);
 
   const iat = nowUnixSeconds();
   const exp = iat + WEB_ACCESS_TTL_SECONDS;
+  const sub = normalizeWebUsername(sessionUser.username || "web-user") || "web-user";
+  const role = normalizeOptionalString(sessionUser.role, WEB_DEFAULT_ROLE) || WEB_DEFAULT_ROLE;
   const payload = {
     scope: "web",
+    sub,
+    role,
     iat,
     exp,
   };
+
+  if (Number.isInteger(sessionUser.user_id) && sessionUser.user_id > 0) {
+    payload.user_id = sessionUser.user_id;
+  }
 
   const encodedPayload = base64UrlEncodeUtf8(JSON.stringify(payload));
   const signature = await hmacSha256Hex(env.WEB_SESSION_SECRET, encodedPayload);
@@ -307,11 +757,13 @@ async function buildWebAccessToken(env) {
     token: `${encodedPayload}.${signature}`,
     expires_in: WEB_ACCESS_TTL_SECONDS,
     expires_at: new Date(exp * 1000).toISOString(),
+    sub,
+    role,
   };
 }
 
 async function verifyWebAccessToken(request, env) {
-  ensureWebAuthConfig(env);
+  ensureWebSessionSecret(env);
 
   const token = getBearerToken(request);
   if (!token) {
@@ -344,16 +796,45 @@ async function verifyWebAccessToken(request, env) {
     throw new HttpError(401, "Sesion web expirada.");
   }
 
-  return payload;
+  return {
+    scope: "web",
+    sub: normalizeWebUsername(payload.sub || payload.username || "web-user") || "web-user",
+    role: normalizeOptionalString(payload.role, WEB_DEFAULT_ROLE) || WEB_DEFAULT_ROLE,
+    user_id: Number.isInteger(payload.user_id) ? payload.user_id : null,
+    iat: Number(payload.iat || 0),
+    exp,
+  };
+}
+
+async function authenticateWebUserByCredentials(env, { username, password }) {
+  const user = await getWebUserByUsername(env, username);
+  if (!user) {
+    throw new HttpError(401, "Credenciales web invalidas.");
+  }
+  if (!user.is_active) {
+    throw new HttpError(403, "Usuario web inactivo.");
+  }
+
+  const validPassword = await verifyWebPassword(
+    password,
+    user.password_hash,
+    user.password_hash_type,
+  );
+  if (!validPassword) {
+    throw new HttpError(401, "Credenciales web invalidas.");
+  }
+
+  await touchWebUserLastLogin(env, Number(user.id));
+  return user;
 }
 
 async function handleWebAuthRoute(request, env, pathParts) {
-  if (pathParts.length !== 2 || pathParts[0] !== "auth") {
+  if (pathParts.length < 2 || pathParts[0] !== "auth") {
     return null;
   }
 
   if (pathParts[1] === "login" && request.method === "POST") {
-    ensureWebAuthConfig(env);
+    ensureWebSessionSecret(env);
 
     let body = {};
     try {
@@ -367,11 +848,22 @@ async function handleWebAuthRoute(request, env, pathParts) {
       throw new HttpError(400, "Campo 'password' es obligatorio.");
     }
 
-    if (!timingSafeEqual(providedPassword, String(env.WEB_LOGIN_PASSWORD))) {
-      throw new HttpError(401, "Credenciales web invalidas.");
+    const providedUsername = normalizeWebUsername(body?.username);
+    if (!providedUsername) {
+      throw new HttpError(400, "Campo 'username' es obligatorio.");
     }
 
-    const token = await buildWebAccessToken(env);
+    ensureDbBinding(env);
+    const user = await authenticateWebUserByCredentials(env, {
+      username: validateWebUsername(providedUsername),
+      password: providedPassword,
+    });
+    const token = await buildWebAccessToken(env, {
+      username: user.username,
+      role: user.role,
+      user_id: Number(user.id),
+    });
+
     return jsonResponse(
       {
         success: true,
@@ -379,6 +871,261 @@ async function handleWebAuthRoute(request, env, pathParts) {
         token_type: "Bearer",
         expires_in: token.expires_in,
         expires_at: token.expires_at,
+        user: {
+          id: Number(user.id),
+          username: user.username,
+          role: user.role,
+        },
+      },
+      200,
+    );
+  }
+
+  if (pathParts[1] === "bootstrap" && request.method === "POST") {
+    ensureDbBinding(env);
+
+    if (!env.WEB_LOGIN_PASSWORD) {
+      throw new HttpError(
+        500,
+        "Bootstrap no configurado. Define WEB_LOGIN_PASSWORD para inicializar el primer usuario web.",
+      );
+    }
+
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      throw new HttpError(400, "Payload invalido.");
+    }
+
+    const bootstrapPassword = normalizeOptionalString(body?.bootstrap_password, "");
+    if (!bootstrapPassword) {
+      throw new HttpError(400, "Campo 'bootstrap_password' es obligatorio.");
+    }
+    if (!timingSafeEqual(bootstrapPassword, String(env.WEB_LOGIN_PASSWORD))) {
+      throw new HttpError(401, "Bootstrap password invalido.");
+    }
+
+    const userCount = await countWebUsers(env);
+    if (userCount > 0) {
+      throw new HttpError(409, "Bootstrap ya ejecutado. La tabla web_users ya tiene usuarios.");
+    }
+
+    const username = validateWebUsername(body?.username);
+    const password = validateWebPassword(body?.password);
+    const role = normalizeWebRole(body?.role || WEB_DEFAULT_ROLE);
+    const createdUser = await createWebUser(env, { username, password, role });
+
+    const token = await buildWebAccessToken(env, {
+      username: createdUser.username,
+      role: createdUser.role,
+      user_id: Number(createdUser.id),
+    });
+
+    return jsonResponse(
+      {
+        success: true,
+        bootstrapped: true,
+        user: {
+          id: createdUser.id,
+          username: createdUser.username,
+          role: createdUser.role,
+        },
+        access_token: token.token,
+        token_type: "Bearer",
+        expires_in: token.expires_in,
+        expires_at: token.expires_at,
+      },
+      201,
+    );
+  }
+
+  if (pathParts[1] === "users" && pathParts.length === 2 && request.method === "GET") {
+    ensureDbBinding(env);
+
+    const session = await verifyWebAccessToken(request, env);
+    requireAdminRole(session.role);
+
+    const users = await listWebUsers(env);
+    return jsonResponse(
+      {
+        success: true,
+        users,
+      },
+      200,
+    );
+  }
+
+  if (pathParts[1] === "users" && pathParts.length === 2 && request.method === "POST") {
+    ensureDbBinding(env);
+
+    const session = await verifyWebAccessToken(request, env);
+    requireAdminRole(session.role);
+
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      throw new HttpError(400, "Payload invalido.");
+    }
+
+    const username = validateWebUsername(body?.username);
+    const password = validateWebPassword(body?.password);
+    const role = normalizeWebRole(body?.role || "viewer");
+    const createdUser = await createWebUser(env, { username, password, role });
+
+    return jsonResponse(
+      {
+        success: true,
+        user: {
+          id: createdUser.id,
+          username: createdUser.username,
+          role: createdUser.role,
+        },
+      },
+      201,
+    );
+  }
+
+  if (pathParts[1] === "users" && pathParts.length === 3 && request.method === "PATCH") {
+    ensureDbBinding(env);
+
+    const session = await verifyWebAccessToken(request, env);
+    requireAdminRole(session.role);
+
+    const userId = parsePositiveInt(pathParts[2], "user_id");
+    const existingUser = await getWebUserById(env, userId);
+    if (!existingUser) {
+      throw new HttpError(404, "Usuario web no encontrado.");
+    }
+
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      throw new HttpError(400, "Payload invalido.");
+    }
+
+    const requestedRole = body?.role === undefined ? null : normalizeWebRole(body.role);
+    const requestedActive = parseBooleanOrNull(body?.is_active);
+    if (requestedRole === null && requestedActive === null) {
+      throw new HttpError(400, "Debes enviar al menos uno de: role, is_active.");
+    }
+
+    const nextRole = requestedRole === null ? existingUser.role : requestedRole;
+    const nextIsActive =
+      requestedActive === null ? normalizeActiveFlag(existingUser.is_active, 1) : requestedActive ? 1 : 0;
+
+    if (session.user_id && Number(session.user_id) === userId && nextIsActive === 0) {
+      throw new HttpError(400, "No puedes desactivar tu propio usuario.");
+    }
+    if (
+      session.user_id &&
+      Number(session.user_id) === userId &&
+      !["admin", "super_admin"].includes(nextRole)
+    ) {
+      throw new HttpError(400, "No puedes quitarte permisos de administrador.");
+    }
+
+    await updateWebUserRoleAndStatus(env, {
+      userId,
+      role: nextRole,
+      isActive: nextIsActive,
+    });
+
+    const updatedUser = await getWebUserById(env, userId);
+    return jsonResponse(
+      {
+        success: true,
+        user: serializeWebUser(updatedUser),
+      },
+      200,
+    );
+  }
+
+  if (
+    pathParts[1] === "users" &&
+    pathParts.length === 4 &&
+    pathParts[3] === "force-password" &&
+    request.method === "POST"
+  ) {
+    ensureDbBinding(env);
+
+    const session = await verifyWebAccessToken(request, env);
+    requireAdminRole(session.role);
+
+    const userId = parsePositiveInt(pathParts[2], "user_id");
+    const existingUser = await getWebUserById(env, userId);
+    if (!existingUser) {
+      throw new HttpError(404, "Usuario web no encontrado.");
+    }
+
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      throw new HttpError(400, "Payload invalido.");
+    }
+
+    const newPassword = validateWebPassword(body?.new_password, "new_password");
+    await forceResetWebUserPassword(env, { userId, newPassword });
+
+    const updatedUser = await getWebUserById(env, userId);
+    return jsonResponse(
+      {
+        success: true,
+        user: serializeWebUser(updatedUser),
+      },
+      200,
+    );
+  }
+
+  if (pathParts[1] === "import-users" && request.method === "POST") {
+    ensureDbBinding(env);
+
+    const session = await verifyWebAccessToken(request, env);
+    if (!["admin", "super_admin"].includes(session.role)) {
+      throw new HttpError(403, "No tienes permisos para importar usuarios web.");
+    }
+
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      throw new HttpError(400, "Payload invalido.");
+    }
+
+    const users = Array.isArray(body?.users) ? body.users : [];
+    if (!users.length) {
+      throw new HttpError(400, "Debes enviar al menos un usuario en 'users'.");
+    }
+    if (users.length > 1000) {
+      throw new HttpError(400, "El lote supera el maximo permitido (1000 usuarios).");
+    }
+
+    let created = 0;
+    let updated = 0;
+    const processedUsers = [];
+    for (const rawUser of users) {
+      const imported = normalizeImportedWebUser(rawUser);
+      const result = await upsertWebUserFromImport(env, imported);
+      if (result === "created") created += 1;
+      if (result === "updated") updated += 1;
+      processedUsers.push({
+        username: imported.username,
+        role: imported.role,
+        is_active: imported.isActive,
+        password_hash_type: imported.passwordHashType,
+      });
+    }
+
+    return jsonResponse(
+      {
+        success: true,
+        imported: processedUsers.length,
+        created,
+        updated,
+        users: processedUsers,
       },
       200,
     );
@@ -390,6 +1137,8 @@ async function handleWebAuthRoute(request, env, pathParts) {
       success: true,
       authenticated: true,
       scope: payload.scope,
+      username: payload.sub,
+      role: payload.role,
       expires_at: new Date(Number(payload.exp) * 1000).toISOString(),
     });
   }
@@ -444,7 +1193,7 @@ function buildIncidentR2Key(installationId, incidentId, extension) {
   return `incidents/${installationId}/${incidentId}/${timestamp}_${randomPart}.${extension}`;
 }
 
-function validateIncidentPayload(data) {
+function validateIncidentPayload(data, options = {}) {
   if (!data || typeof data !== "object") {
     throw new HttpError(400, "Payload inválido.");
   }
@@ -468,7 +1217,7 @@ function validateIncidentPayload(data) {
     throw new HttpError(400, "Campo 'severity' inválido.");
   }
 
-  const source = data.source || "mobile";
+  const source = data.source || options.defaultSource || "mobile";
   if (!["desktop", "mobile", "web"].includes(source)) {
     throw new HttpError(400, "Campo 'source' inválido.");
   }
@@ -479,7 +1228,10 @@ function validateIncidentPayload(data) {
     severity,
     source,
     applyToInstallation: Boolean(data.apply_to_installation),
-    reporterUsername: (data.reporter_username || data.username || "unknown").toString(),
+    reporterUsername: normalizeOptionalString(
+      data.reporter_username || data.username,
+      normalizeOptionalString(options.defaultReporterUsername, "unknown"),
+    ),
   };
 }
 
@@ -502,6 +1254,11 @@ export default {
           docs: {
             health: "/health",
             web_login: "/web/auth/login",
+            web_bootstrap: "/web/auth/bootstrap",
+            web_users: "/web/auth/users",
+            web_user_update: "/web/auth/users/:user_id",
+            web_user_force_password: "/web/auth/users/:user_id/force-password",
+            web_import_users: "/web/auth/import-users",
             installations: "/installations",
             web_installations: "/web/installations",
           },
@@ -520,11 +1277,12 @@ export default {
       }
 
       if (!env.DB) {
-        throw new Error("La base de datos (D1) no está vinculada a este Worker.");
+        throw new Error("La base de datos (D1) no esta vinculada a este Worker.");
       }
 
+      let webSession = null;
       if (isWebRoute) {
-        await verifyWebAccessToken(request, env);
+        webSession = await verifyWebAccessToken(request, env);
       } else {
         await verifyAuth(request, env, url);
       }
@@ -651,7 +1409,10 @@ export default {
 
         if (request.method === "POST") {
           const data = await request.json();
-          const payload = validateIncidentPayload(data);
+          const payload = validateIncidentPayload(data, {
+            defaultSource: isWebRoute ? "web" : "mobile",
+            defaultReporterUsername: webSession?.sub || "unknown",
+          });
           const createdAt = nowIso();
 
           const { results: installationRows } = await env.DB.prepare(`
@@ -797,6 +1558,45 @@ export default {
         );
       }
 
+      if (routeParts.length === 2 && routeParts[0] === "photos" && request.method === "GET") {
+        const photoId = parsePositiveInt(routeParts[1], "photo_id");
+
+        if (!env.INCIDENTS_BUCKET || typeof env.INCIDENTS_BUCKET.get !== "function") {
+          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no está configurado.");
+        }
+
+        const { results: photoRows } = await env.DB.prepare(`
+          SELECT id, incident_id, r2_key, file_name, content_type, size_bytes, sha256, created_at
+          FROM incident_photos
+          WHERE id = ?
+        `)
+          .bind(photoId)
+          .all();
+
+        const photo = photoRows?.[0];
+        if (!photo) {
+          throw new HttpError(404, "Foto no encontrada.");
+        }
+
+        const object = await env.INCIDENTS_BUCKET.get(photo.r2_key);
+        if (!object || !object.body) {
+          throw new HttpError(404, "Archivo de foto no encontrado en almacenamiento.");
+        }
+
+        const safeName = sanitizeFileName(photo.file_name, `photo_${photoId}`);
+
+        return new Response(object.body, {
+          status: 200,
+          headers: {
+            ...corsHeaders(),
+            "Content-Type":
+              photo.content_type || object.httpMetadata?.contentType || "application/octet-stream",
+            "Content-Disposition": `inline; filename=\"${safeName}\"`,
+            "Cache-Control": "private, max-age=300",
+          },
+        });
+      }
+
       if (routeParts.length === 2 && routeParts[0] === "installations") {
         const recordId = routeParts[1];
 
@@ -850,3 +1650,4 @@ export default {
     }
   },
 };
+

@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "driver-manager-db",
   "version": "1.0.0",
   "private": true,
@@ -13,9 +13,13 @@
     "test:worker": "node --test tests_js/*.test.mjs",
     "d1:migrate": "wrangler d1 migrations apply driver-manager-db",
     "d1:migrate:remote": "wrangler d1 migrations apply driver-manager-db --remote",
-    "d1:studio": "wrangler d1 execute driver-manager-db --local --command=\"SELECT 1;\""
+    "d1:studio": "wrangler d1 execute driver-manager-db --local --command=\"SELECT 1;\"",
+    "users:sync:r2-to-d1": "python sync_r2_users_to_web_d1.py"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3"
   }
 }

@@ -148,16 +148,28 @@ export default function IncidentListScreen() {
                 Usuario: {incident.reporter_username} | Fotos: {incident.photos?.length ?? 0}
               </Text>
               <Text style={styles.cardMeta}>{incident.created_at}</Text>
-              <TouchableOpacity
-                style={styles.uploadButton}
-                onPress={() =>
-                  router.push(
-                    `/incident/upload?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
-                  )
-                }
-              >
-                <Text style={styles.uploadButtonText}>Adjuntar foto</Text>
-              </TouchableOpacity>
+              <View style={styles.actionsRow}>
+                <TouchableOpacity
+                  style={styles.detailButton}
+                  onPress={() =>
+                    router.push(
+                      `/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
+                    )
+                  }
+                >
+                  <Text style={styles.detailButtonText}>Ver detalle</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.uploadButton}
+                  onPress={() =>
+                    router.push(
+                      `/incident/upload?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
+                    )
+                  }
+                >
+                  <Text style={styles.uploadButtonText}>Adjuntar foto</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ))
         )}
@@ -170,6 +182,7 @@ const styles = StyleSheet.create({
   container: {
     padding: 20,
     gap: 10,
+    backgroundColor: "#f8fafc",
   },
   rowBetween: {
     flexDirection: "row",
@@ -276,8 +289,26 @@ const styles = StyleSheet.create({
     color: "#64748b",
     fontSize: 12,
   },
-  uploadButton: {
+  actionsRow: {
     marginTop: 4,
+    flexDirection: "row",
+    gap: 8,
+  },
+  detailButton: {
+    alignSelf: "flex-start",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  detailButtonText: {
+    color: "#0f172a",
+    fontWeight: "700",
+    fontSize: 12,
+  },
+  uploadButton: {
     alignSelf: "flex-start",
     borderRadius: 8,
     backgroundColor: "#0b7a75",

@@ -5,8 +5,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
-
-import { useColorScheme } from '@/components/useColorScheme';
+import { ThemePreferenceProvider, useThemePreference } from '@/src/theme/theme-preference';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -42,17 +41,23 @@ export default function RootLayout() {
     return null;
   }
 
-  return <RootLayoutNav />;
+  return (
+    <ThemePreferenceProvider>
+      <RootLayoutNav />
+    </ThemePreferenceProvider>
+  );
 }
 
 function RootLayoutNav() {
-  const colorScheme = useColorScheme();
+  const { resolvedScheme } = useThemePreference();
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <ThemeProvider value={resolvedScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="incident/detail" options={{ title: "Detalle incidencia" }} />
         <Stack.Screen name="incident/upload" options={{ title: "Subir foto" }} />
+        <Stack.Screen name="incident/photo-viewer" options={{ title: "Foto" }} />
         <Stack.Screen name="modal" options={{ title: "Configuracion API", presentation: 'modal' }} />
       </Stack>
     </ThemeProvider>

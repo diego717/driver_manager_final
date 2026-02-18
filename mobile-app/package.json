@@ -5,6 +5,13 @@
   "scripts": {
     "start": "expo start",
     "dev:remote": "npm --prefix .. run dev:remote",
+    "deploy:worker": "npm --prefix .. run deploy",
+    "d1:migrate": "npm --prefix .. run d1:migrate",
+    "d1:migrate:remote": "npm --prefix .. run d1:migrate:remote",
+    "users:sync:r2-to-d1": "npm --prefix .. run users:sync:r2-to-d1 --",
+    "d1:check:web-users": "npx --prefix .. wrangler --cwd=.. d1 execute driver-manager-db --remote --command \"SELECT name FROM sqlite_master WHERE type='table' AND name='web_users';\"",
+    "d1:check:web-users-schema": "npx --prefix .. wrangler --cwd=.. d1 execute driver-manager-db --remote --command \"PRAGMA table_info(web_users);\"",
+    "d1:check:web-users-count": "npx --prefix .. wrangler --cwd=.. d1 execute driver-manager-db --remote --command \"SELECT COUNT(*) AS total_users FROM web_users;\"",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",

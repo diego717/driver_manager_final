@@ -5,6 +5,11 @@ const API_SECRET_KEY = "dm_api_secret";
 const API_BASE_URL_KEY = "dm_api_base_url";
 const WEB_ACCESS_TOKEN_KEY = "dm_web_access_token";
 const WEB_ACCESS_EXPIRES_AT_KEY = "dm_web_access_expires_at";
+const WEB_ACCESS_USERNAME_KEY = "dm_web_access_username";
+const WEB_ACCESS_ROLE_KEY = "dm_web_access_role";
+const THEME_MODE_KEY = "dm_theme_mode";
+
+export type ThemeMode = "system" | "light" | "dark";
 
 function cleanValue(value: string): string {
   return value.trim();
@@ -95,7 +100,36 @@ export async function getStoredWebAccessExpiresAt(): Promise<string | null> {
   return getItem(WEB_ACCESS_EXPIRES_AT_KEY);
 }
 
+export async function setStoredWebAccessUsername(username: string): Promise<void> {
+  await setOrDelete(WEB_ACCESS_USERNAME_KEY, username);
+}
+
+export async function getStoredWebAccessUsername(): Promise<string | null> {
+  return getItem(WEB_ACCESS_USERNAME_KEY);
+}
+
+export async function setStoredWebAccessRole(role: string): Promise<void> {
+  await setOrDelete(WEB_ACCESS_ROLE_KEY, role);
+}
+
+export async function getStoredWebAccessRole(): Promise<string | null> {
+  return getItem(WEB_ACCESS_ROLE_KEY);
+}
+
 export async function clearStoredWebSession(): Promise<void> {
   await deleteItem(WEB_ACCESS_TOKEN_KEY);
   await deleteItem(WEB_ACCESS_EXPIRES_AT_KEY);
+  await deleteItem(WEB_ACCESS_USERNAME_KEY);
+  await deleteItem(WEB_ACCESS_ROLE_KEY);
+}
+
+export async function setStoredThemeMode(mode: ThemeMode): Promise<void> {
+  await setOrDelete(THEME_MODE_KEY, mode);
+}
+
+export async function getStoredThemeMode(): Promise<ThemeMode | null> {
+  const raw = await getItem(THEME_MODE_KEY);
+  if (!raw) return null;
+  if (raw === "system" || raw === "light" || raw === "dark") return raw;
+  return null;
 }

@@ -16,13 +16,42 @@ import {
   listInstallations,
 } from "@/src/api/incidents";
 import { extractApiError } from "@/src/api/client";
-import { type InstallationRecord } from "@/src/types/api";
+import { getStoredWebAccessUsername } from "@/src/storage/secure";
+import { type IncidentSeverity, type InstallationRecord } from "@/src/types/api";
+
+const SEVERITY_OPTIONS: Array<{
+  value: IncidentSeverity;
+  label: string;
+  criteria: string;
+}> = [
+  {
+    value: "low",
+    label: "Baja",
+    criteria: "No bloquea operacion y hay workaround.",
+  },
+  {
+    value: "medium",
+    label: "Media",
+    criteria: "Afecta operacion parcial, requiere atencion hoy.",
+  },
+  {
+    value: "high",
+    label: "Alta",
+    criteria: "Bloquea proceso principal o multiples usuarios.",
+  },
+  {
+    value: "critical",
+    label: "Critica",
+    criteria: "Caida total, riesgo de datos o cliente detenido.",
+  },
+];
 
 export default function CreateIncidentScreen() {
   const [installationId, setInstallationId] = useState("1");
   const [reporterUsername, setReporterUsername] = useState("admin");
   const [note, setNote] = useState("");
   const [timeAdjustment, setTimeAdjustment] = useState("0");
+  const [severity, setSeverity] = useState<IncidentSeverity>("medium");
   const [manualClientName, setManualClientName] = useState("");
   const [manualNotes, setManualNotes] = useState("");
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
@@ -56,6 +85,22 @@ export default function CreateIncidentScreen() {
 
   useEffect(() => {
     void loadInstallations();
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void getStoredWebAccessUsername().then((storedUsername) => {
+      if (!mounted || !storedUsername) return;
+      setReporterUsername((current) => {
+        if (current.trim() && current.trim().toLowerCase() !== "admin") {
+          return current;
+        }
+        return storedUsername;
+      });
+    });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const onCreateManualRecord = async () => {
@@ -123,7 +168,7 @@ export default function CreateIncidentScreen() {
         note: note.trim(),
         reporter_username: reporterUsername.trim() || "mobile_user",
         time_adjustment_seconds: parsedTimeAdjustment,
-        severity: "medium",
+        severity,
         source: "mobile",
         apply_to_installation: false,
       });
@@ -259,6 +304,27 @@ export default function CreateIncidentScreen() {
         placeholderTextColor="#808080"
       />
 
+      <Text style={styles.label}>Urgencia (severidad)</Text>
+      <View style={styles.severityWrap}>
+        {SEVERITY_OPTIONS.map((option) => {
+          const selected = severity === option.value;
+          return (
+            <TouchableOpacity
+              key={option.value}
+              style={[styles.severityChip, selected && styles.severityChipSelected]}
+              onPress={() => setSeverity(option.value)}
+            >
+              <Text style={[styles.severityChipLabel, selected && styles.severityChipLabelSelected]}>
+                {option.label}
+              </Text>
+              <Text style={[styles.severityChipCriteria, selected && styles.severityChipCriteriaSelected]}>
+                {option.criteria}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
       <Text style={styles.label}>Ajuste de tiempo (segundos)</Text>
       <TextInput
         value={timeAdjustment}
@@ -288,6 +354,7 @@ const styles = StyleSheet.create({
   container: {
     padding: 20,
     gap: 10,
+    backgroundColor: "#f8fafc",
   },
   rowBetween: {
     flexDirection: "row",
@@ -346,6 +413,37 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 8,
     marginBottom: 4,
+  },
+  severityWrap: {
+    gap: 8,
+  },
+  severityChip: {
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 10,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    gap: 2,
+  },
+  severityChipSelected: {
+    borderColor: "#0b7a75",
+    backgroundColor: "#ecfeff",
+  },
+  severityChipLabel: {
+    color: "#0f172a",
+    fontWeight: "700",
+    fontSize: 12,
+  },
+  severityChipLabelSelected: {
+    color: "#0f766e",
+  },
+  severityChipCriteria: {
+    color: "#475569",
+    fontSize: 12,
+  },
+  severityChipCriteriaSelected: {
+    color: "#155e75",
   },
   chip: {
     borderWidth: 1,

@@ -23,6 +23,8 @@ type SelectedImage = {
   contentType: string;
 };
 
+const IMAGE_PICK_QUALITY = 0.6;
+
 function normalizeParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
   return value ?? "";
@@ -79,7 +81,7 @@ export default function UploadIncidentPhotoScreen() {
 
     const result = await ImagePicker.launchImageLibraryAsync({
       allowsEditing: false,
-      quality: 0.9,
+      quality: IMAGE_PICK_QUALITY,
     });
     if (result.canceled || !result.assets?.length) return;
     setImageFromAsset(result.assets[0]);
@@ -94,7 +96,7 @@ export default function UploadIncidentPhotoScreen() {
 
     const result = await ImagePicker.launchCameraAsync({
       allowsEditing: false,
-      quality: 0.9,
+      quality: IMAGE_PICK_QUALITY,
     });
     if (result.canceled || !result.assets?.length) return;
     setImageFromAsset(result.assets[0]);
@@ -185,6 +187,7 @@ const styles = StyleSheet.create({
   container: {
     padding: 20,
     gap: 12,
+    backgroundColor: "#f8fafc",
   },
   title: {
     fontSize: 24,
@@ -265,4 +268,3 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
 });
-
