@@ -256,12 +256,21 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
+        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(15, 15, 15, 15)
         
         # Header
+        header_container = QWidget()
+        header_layout = QHBoxLayout(header_container)
+        header_layout.setContentsMargins(0, 0, 0, 10)
+
         header = QLabel("🖨️ Gestor de Drivers - Impresoras de Tarjetas")
-        header.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        main_layout.addWidget(header)
+        header.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+        header.setStyleSheet("color: #2C3E50;" if self.theme_manager.get_current_theme() == "light" else "color: #E8E8E8;")
+        header_layout.addWidget(header)
+        header_layout.addStretch()
+
+        main_layout.addWidget(header_container)
         
         # Tabs
         self.tabs = QTabWidget()

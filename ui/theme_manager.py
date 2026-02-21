@@ -188,15 +188,18 @@ class ThemeManager:
         QTabWidget::pane {{
             border: 1px solid {colors['border']};
             background-color: {colors['surface']};
+            border-radius: 4px;
         }}
         
         QTabBar::tab {{
             background-color: {colors['surface']};
             color: {colors['text_secondary']};
-            padding: 8px 16px;
-            margin-right: 2px;
+            padding: 10px 20px;
+            margin-right: 4px;
             border: 1px solid {colors['border']};
             border-bottom: none;
+            border-top-left-radius: 6px;
+            border-top-right-radius: 6px;
         }}
         
         QTabBar::tab:selected {{
@@ -215,7 +218,7 @@ class ThemeManager:
             color: {colors['text_inverse']};
             border: none;
             padding: 8px 16px;
-            border-radius: 4px;
+            border-radius: 6px;
             font-weight: bold;
         }}
         
@@ -232,6 +235,13 @@ class ThemeManager:
             color: {colors['text_muted']};
         }}
         
+        /* Botones Grandes */
+        QPushButton[class="big"] {
+            padding: 12px 24px;
+            font-size: 14px;
+            min-height: 40px;
+        }
+
         /* Botones de éxito */
         QPushButton[class="success"] {{
             background-color: {colors['button_success']};
@@ -323,16 +333,21 @@ class ThemeManager:
             color: {colors['text_primary']};
         }}
         
-        /* Estadísticas mejoradas */
-        QTextEdit[class="stats"] {{
+        /* Previews y Estadísticas */
+        QTextEdit[class="preview"], QTextEdit[class="stats"] {
             background-color: {colors['stats_background']};
             color: {colors['stats_text']};
-            border: 2px solid {colors['stats_border']};
-            border-radius: 6px;
+            border: 1px solid {colors['stats_border']};
+            border-radius: 8px;
             padding: 12px;
+            line-height: 1.4;
+        }
+
+        QTextEdit[class="stats"] {
             font-family: 'Consolas', 'Monaco', monospace;
             font-size: 11px;
             font-weight: bold;
+            border-width: 2px;
         }}
         
         /* Paneles de información */

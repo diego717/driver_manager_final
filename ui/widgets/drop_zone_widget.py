@@ -78,38 +78,63 @@ class DropZoneWidget(QWidget):
         Actualizar estilo según estado
         Estados: normal, dragging_valid, dragging_invalid, error
         """
+        # Intentar obtener colores del theme_manager del padre si existe
+        bg_normal = "#F8F9FA"
+        border_normal = "#BDC3C7"
+        bg_hover = "#EBF5FF"
+        accent = "#3498DB"
+        success = "#27AE60"
+        error = "#E74C3C"
+        bg_success = "#E8F8F5"
+        bg_error = "#FDEDEC"
+
+        # Si tenemos acceso al theme_manager de MainWindow
+        try:
+            if hasattr(self.parent(), 'parent') and hasattr(self.parent().parent, 'theme_manager'):
+                tm = self.parent().parent.theme_manager
+                bg_normal = tm.get_color('surface')
+                border_normal = tm.get_color('border')
+                bg_hover = tm.get_color('table_row_hover')
+                accent = tm.get_color('accent')
+                success = tm.get_color('success')
+                error = tm.get_color('error')
+                bg_success = tm.get_color('panel_success')
+                bg_error = tm.get_color('panel_error')
+        except:
+            pass
+
         styles = {
-            "normal": """
-                QWidget {
-                    background-color: #F8F9FA;
-                    border: 2px dashed #BDC3C7;
-                    border-radius: 10px;
-                }
-                QWidget:hover {
-                    background-color: #EBF5FF;
-                    border-color: #3498DB;
-                }
+            "normal": f"""
+                QWidget {{
+                    background-color: {bg_normal};
+                    border: 2px dashed {border_normal};
+                    border-radius: 12px;
+                }}
+                QWidget:hover {{
+                    background-color: {bg_hover};
+                    border-color: {accent};
+                }}
             """,
-            "dragging_valid": """
-                QWidget {
-                    background-color: #E8F8F5;
-                    border: 3px dashed #27AE60;
-                    border-radius: 10px;
-                }
+            "dragging_valid": f"""
+                QWidget {{
+                    background-color: {bg_success};
+                    border: 3px dashed {success};
+                    border-radius: 12px;
+                }}
             """,
-            "dragging_invalid": """
-                QWidget {
-                    background-color: #FDEDEC;
-                    border: 3px dashed #E74C3C;
-                    border-radius: 10px;
-                }
+            "dragging_invalid": f"""
+                QWidget {{
+                    background-color: {bg_error};
+                    border: 3px dashed {error};
+                    border-radius: 12px;
+                }}
             """,
-            "error": """
-                QWidget {
-                    background-color: #FDEDEC;
-                    border: 2px solid #E74C3C;
-                    border-radius: 10px;
-                }
+            "error": f"""
+                QWidget {{
+                    background-color: {bg_error};
+                    border: 2px solid {error};
+                    border-radius: 12px;
+                }}
             """
         }
         
