@@ -21,6 +21,7 @@ import socket
 import platform
 
 from core.logger import get_logger
+from core.password_policy import PasswordPolicy
 from core.exceptions import (
     handle_errors,
     returns_result_tuple,
@@ -40,117 +41,25 @@ class PasswordValidator:
     """
     
     # Configuración de política de contraseñas
-    MIN_LENGTH = 12
-    REQUIRE_UPPERCASE = True
-    REQUIRE_LOWERCASE = True
-    REQUIRE_DIGIT = True
-    REQUIRE_SPECIAL = True
-    SPECIAL_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?"
+    MIN_LENGTH = PasswordPolicy.MIN_LENGTH
+    REQUIRE_UPPERCASE = PasswordPolicy.REQUIRE_UPPER
+    REQUIRE_LOWERCASE = PasswordPolicy.REQUIRE_LOWER
+    REQUIRE_DIGIT = PasswordPolicy.REQUIRE_DIGIT
+    REQUIRE_SPECIAL = PasswordPolicy.REQUIRE_SPECIAL
+    SPECIAL_CHARS = PasswordPolicy.SPECIAL_CHARS
     
     # Password history
     PASSWORD_HISTORY_SIZE = 5
     
     @classmethod
     def validate_password_strength(cls, password, username=None):
-        """
-        Validar fortaleza de contraseña según política.
-        
-        Args:
-            password: Contraseña a validar
-            username: Username (para verificar que no esté contenido)
-            
-        Returns:
-            tuple: (is_valid: bool, message: str, score: int)
-        """
-        errors = []
-        score = 0
-        
-        # 1. Longitud mínima
-        if len(password) < cls.MIN_LENGTH:
-            errors.append(f"Debe tener al menos {cls.MIN_LENGTH} caracteres")
-        else:
-            score += 20
-            
-            # Bonus por longitud adicional
-            if len(password) >= 16:
-                score += 10
-            if len(password) >= 20:
-                score += 10
-        
-        # 2. Mayúsculas
-        if cls.REQUIRE_UPPERCASE:
-            if not re.search(r'[A-Z]', password):
-                errors.append("Debe contener al menos una letra mayúscula")
-            else:
-                score += 15
-        
-        # 3. Minúsculas
-        if cls.REQUIRE_LOWERCASE:
-            if not re.search(r'[a-z]', password):
-                errors.append("Debe contener al menos una letra minúscula")
-            else:
-                score += 15
-        
-        # 4. Dígitos
-        if cls.REQUIRE_DIGIT:
-            if not re.search(r'\d', password):
-                errors.append("Debe contener al menos un número")
-            else:
-                score += 15
-        
-        # 5. Caracteres especiales
-        if cls.REQUIRE_SPECIAL:
-            if not re.search(f'[{re.escape(cls.SPECIAL_CHARS)}]', password):
-                errors.append(f"Debe contener al menos un carácter especial ({cls.SPECIAL_CHARS[:10]}...)")
-            else:
-                score += 15
-        
-        # 6. No debe contener el username
-        if username and username.lower() in password.lower():
-            errors.append("No debe contener el nombre de usuario")
-            score -= 20
-        
-        # 7. Verificar patrones comunes débiles
-        weak_patterns = [
-            (r'(.)\1{2,}', "No debe tener caracteres repetidos consecutivos (AAA, 111)"),
-            (r'(012|123|234|345|456|567|678|789|890)', "No debe contener secuencias numéricas simples"),
-            (r'(abc|bcd|cde|def|efg|fgh|ghi|hij|ijk|jkl|klm|lmn|mno|nop|opq|pqr|qrs|rst|stu|tuv|uvw|vwx|wxy|xyz)', 
-             "No debe contener secuencias alfabéticas simples"),
-            (r'(password|contraseña|admin|user|login|welcome|qwerty|asdfgh)', 
-             "No debe contener palabras comunes")
-        ]
-        
-        for pattern, message in weak_patterns:
-            if re.search(pattern, password.lower()):
-                errors.append(message)
-                score -= 15
-        
-        # 8. Diversidad de caracteres
-        unique_chars = len(set(password))
-        if unique_chars < len(password) * 0.6:  # Menos del 60% de chars únicos
-            errors.append("La contraseña debe tener mayor diversidad de caracteres")
-            score -= 10
-        else:
-            score += 10
-        
-        # Calcular score final (0-100)
-        final_score = max(0, min(100, score))
-        
-        # Determinar si es válida
-        is_valid = len(errors) == 0 and final_score >= 50
-        
-        if errors:
-            message = "Contraseña no cumple con los requisitos:\n• " + "\n• ".join(errors)
-        else:
-            strength = "Débil" if final_score < 60 else "Media" if final_score < 80 else "Fuerte"
-            message = f"Contraseña válida. Fortaleza: {strength} ({final_score}/100)"
-        
-        return is_valid, message, final_score
-    
+        """Validar contraseña con la política compartida."""
+        return PasswordPolicy.validate_with_score(password, username or "")
+
     @classmethod
     def check_password_history(cls, new_password, password_history):
         """
-        Verificar que la contraseña no esté en el historial.
+        Verificar que la contraseña no está en el historial.
         
         Args:
             new_password: Nueva contraseña
@@ -194,7 +103,7 @@ class AccountLockoutManager:
         
         Args:
             username: Usuario que intentó autenticarse
-            ip_address: IP desde donde se intentó (opcional)
+            ip_address: IP desde donde se intenta (opcional)
             
         Returns:
             dict: Estado actual de la cuenta
@@ -223,7 +132,7 @@ class AccountLockoutManager:
         if ip_address and ip_address not in account_info['ip_addresses']:
             account_info['ip_addresses'].append(ip_address)
         
-        # Si alcanzó el máximo, bloquear cuenta
+        # Si alcanza el máximo, bloquear cuenta
         if account_info['count'] >= self.MAX_FAILED_ATTEMPTS:
             lockout_count = account_info['lockout_count']
             duration_minutes = self.LOCKOUT_DURATION_MINUTES * (self.LOCKOUT_INCREASE_FACTOR ** lockout_count)
@@ -278,7 +187,7 @@ class AccountLockoutManager:
         if not lockout_until:
             return False
         
-        # Verificar si el bloqueo ya expiró
+        # Verificar si el bloqueo ya expira
         if datetime.now() > lockout_until:
             account_info['lockout_until'] = None
             return False
@@ -309,7 +218,7 @@ class AccountLockoutManager:
             username: Usuario
             
         Returns:
-            int: Número de intentos fallidos
+            int: Namero de intentos fallidos
         """
         if username not in self.failed_attempts:
             return 0
@@ -348,7 +257,7 @@ class UserManagerV2:
     
     logger = get_logger()
     
-    def __init__(self, cloud_manager=None, security_manager=None, local_mode=False):
+    def __init__(self, cloud_manager=None, security_manager=None, local_mode=False, audit_api_client=None):
         """
         Args:
             cloud_manager: Gestor de nube (opcional)
@@ -358,6 +267,7 @@ class UserManagerV2:
         self.cloud_manager = cloud_manager
         self.security_manager = security_manager
         self.local_mode = local_mode or (cloud_manager is None)
+        self.audit_api_client = audit_api_client
         self.current_user = None
         
         # SECURITY IMPROVEMENT (SEC-005): Account lockout manager
@@ -380,6 +290,61 @@ class UserManagerV2:
             self.cloud_encryption = CloudDataEncryption(security_manager)
         else:
             self.cloud_encryption = None
+
+    def set_audit_api_client(self, audit_api_client):
+        """Asignar cliente API para auditoría remota (D1)."""
+        self.audit_api_client = audit_api_client
+
+    def _can_use_audit_api(self):
+        return (
+            not self.local_mode and
+            self.audit_api_client is not None and
+            hasattr(self.audit_api_client, "_make_request")
+        )
+
+    def _normalize_audit_api_log_entry(self, entry):
+        """Normalizar un registro de auditoría proveniente del endpoint D1."""
+        if not isinstance(entry, dict):
+            return None
+
+        raw_details = entry.get("details")
+        details = {}
+        if isinstance(raw_details, str):
+            raw_value = raw_details.strip()
+            if raw_value:
+                try:
+                    details = json.loads(raw_value)
+                    if not isinstance(details, dict):
+                        details = {"value": details}
+                except json.JSONDecodeError:
+                    details = {"raw": raw_details}
+        elif isinstance(raw_details, dict):
+            details = raw_details
+        elif raw_details is not None:
+            details = {"value": raw_details}
+
+        raw_success = entry.get("success")
+        if isinstance(raw_success, bool):
+            success = raw_success
+        elif isinstance(raw_success, (int, float)):
+            success = int(raw_success) == 1
+        elif isinstance(raw_success, str):
+            success = raw_success.strip().lower() in ("1", "true", "yes", "ok")
+        else:
+            success = bool(raw_success)
+
+        return {
+            "timestámp": entry.get("timestámp"),
+            "action": entry.get("action"),
+            "username": entry.get("username"),
+            "success": success,
+            "details": details,
+            "system_info": {
+                "computer_name": entry.get("computer_name"),
+                "ip": entry.get("ip_address"),
+                "platform": entry.get("platform"),
+            },
+        }
     
     @returns_result_tuple("initialize_system")
     def initialize_system(self, first_user_username, first_user_password):
@@ -390,7 +355,7 @@ class UserManagerV2:
         
         Args:
             first_user_username: Nombre de usuario del primer admin
-            first_user_password: Contraseña del primer admin
+            first_user_password: Contraseaa del primer admin
             
         Returns:
             (success: bool, message: str)
@@ -453,7 +418,7 @@ class UserManagerV2:
             # Guardar
             self._save_users(users_data)
             
-            # Log de creación
+            # Log de creacian
             self.logger.security_event(
                 event_type="system_initialized",
                 username=first_user_username,
@@ -501,7 +466,7 @@ class UserManagerV2:
             return False
     
     def _get_system_info(self):
-        """Obtener información del sistema para auditoría"""
+        """Obtener informacian del sistema para auditoraa"""
         try:
             return {
                 'computer_name': socket.gethostname(),
@@ -579,7 +544,7 @@ class UserManagerV2:
             raise CloudStorageError(f"Error loading users: {str(e)}", original_error=e)
 
     def _normalize_users_data(self, users_data):
-        """Asegurar formato válido para base de usuarios."""
+        """Asegurar formato valido para base de usuarios."""
         if not isinstance(users_data, dict):
             return {"users": {}, "created_at": datetime.now().isoformat(), "version": "2.1"}
 
@@ -672,7 +637,7 @@ class UserManagerV2:
             except Exception as error:
                 self.logger.warning(f"No se pudo leer fallback de usuarios en {path}: {error}")
 
-        self.logger.warning("No se encontraron copias locales de usuarios para recuperación.")
+        self.logger.warning("No se encontraron copias locales de usuarios para recuperacian.")
         return None
 
     def _candidate_users_fallback_paths(self):
@@ -732,7 +697,7 @@ class UserManagerV2:
 
     def _normalize_logs_data(self, logs_data):
         """
-        Asegurar formato válido para logs de auditoría.
+        Asegurar formato valido para logs de auditoraa.
         """
         if not isinstance(logs_data, dict):
             self.logger.warning("Formato de logs inválido. Reinicializando estructura de logs.")
@@ -747,7 +712,7 @@ class UserManagerV2:
             normalized["logs"] = logs
 
         if not isinstance(logs, list):
-            self.logger.warning("Estructura de logs corrupta o incompatible. Se usará lista vacía.")
+            self.logger.warning("Estructura de logs corrupta o incompatible. Se usara lista vacaa.")
             normalized["logs"] = []
 
         if "created_at" not in normalized:
@@ -776,7 +741,7 @@ class UserManagerV2:
             ):
                 return self._normalize_logs_data(decrypted), fallback_recovered
 
-        # Fallback específico para logs legacy/corruptos:
+        # Fallback especafico para logs legacy/corruptos:
         # intentamos rescatar campos útiles aun con HMAC inválido.
         fallback_recovered = True
 
@@ -812,7 +777,7 @@ class UserManagerV2:
                 except Exception:
                     continue
 
-        self.logger.warning("No fue posible recuperar contenido histórico de logs; se usará estructura vacía.")
+        self.logger.warning("No fue posible recuperar contenido histarico de logs; se usara estructura vacaa.")
         return self._normalize_logs_data({}), fallback_recovered
 
     def _persist_logs_data(self, logs_data):
@@ -832,15 +797,15 @@ class UserManagerV2:
 
     @returns_result_tuple("repair_access_logs")
     def repair_access_logs(self):
-        """
-        Reparar archivo de logs de auditoría.
-
-        Solo super_admin puede ejecutar esta operación.
-        """
+        """Reparar archivo de logs de auditoría (solo aplica a modo legacy)."""
         self.logger.operation_start("repair_access_logs")
 
         if not self.current_user or self.current_user.get("role") != "super_admin":
             raise AuthenticationError("Solo super_admin puede reparar logs de auditoría.")
+
+        if self._can_use_audit_api():
+            self.logger.operation_end("repair_access_logs", success=True, mode="audit_api")
+            return True, "Auditoria en D1 activa. No se requiere reparacion de archivo local."
 
         logs_data = {"logs": [], "created_at": datetime.now().isoformat()}
 
@@ -855,10 +820,10 @@ class UserManagerV2:
                     cloud_payload = json.loads(logs_content)
                     logs_data, recovered = self._decode_cloud_logs_payload(cloud_payload)
                     if recovered:
-                        self.logger.warning("Se detectó formato legacy/corrupto en logs; se persistirá versión reparada.")
+                        self.logger.warning("Se detecto formato legacy/corrupto en logs; se persistira version reparada.")
                         self._persist_logs_data(logs_data)
         except Exception as e:
-            self.logger.warning(f"No se pudo leer logs actuales para reparar: {e}. Se recreará archivo limpio.")
+            self.logger.warning(f"No se pudo leer logs actuales para reparar: {e}. Se recreara archivo limpio.")
 
         logs_data = self._normalize_logs_data(logs_data)
         self._persist_logs_data(logs_data)
@@ -866,11 +831,39 @@ class UserManagerV2:
         total_logs = len(logs_data.get("logs", []))
         self.logger.operation_end("repair_access_logs", success=True, total_logs=total_logs)
         return True, f"Logs reparados correctamente. Registros disponibles: {total_logs}"
-    
+
     @handle_errors("_log_access", reraise=False, log_errors=False)
     def _log_access(self, action, username, success, details=None):
-        """Registrar acceso en log de auditoría"""
+        """Registrar acceso en auditoría (API D1 o fallback legacy)."""
         try:
+            system_info = self._get_system_info()
+            log_entry = {
+                "timestámp": datetime.now().isoformat(),
+                "action": action,
+                "username": username,
+                "success": success,
+                "details": details,
+                "system_info": system_info,
+            }
+
+            if self._can_use_audit_api():
+                self.audit_api_client._make_request(
+                    "post",
+                    "audit-logs",
+                    json={
+                        "timestámp": log_entry["timestámp"],
+                        "action": action,
+                        "username": username,
+                        "success": bool(success),
+                        "details": details or {},
+                        "computer_name": system_info.get("computer_name"),
+                        "ip_address": system_info.get("ip"),
+                        "platform": system_info.get("platform"),
+                    },
+                )
+                self.logger.operation_end("_log_access", success=True, mode="audit_api")
+                return
+
             try:
                 if self.local_mode:
                     if self.logs_file.exists():
@@ -884,38 +877,26 @@ class UserManagerV2:
                         cloud_payload = json.loads(logs_content)
                         logs_data, recovered = self._decode_cloud_logs_payload(cloud_payload)
                         if recovered:
-                            self.logger.warning("Se recuperaron logs históricos con fallback; normalizando archivo.")
+                            self.logger.warning("Se recuperaron logs historicos con fallback; normalizando archivo.")
                             self._persist_logs_data(logs_data)
                     else:
                         logs_data = {"logs": [], "created_at": datetime.now().isoformat()}
-            except:
+            except Exception:
                 logs_data = {"logs": [], "created_at": datetime.now().isoformat()}
 
             logs_data = self._normalize_logs_data(logs_data)
-            
-            system_info = self._get_system_info()
-            log_entry = {
-                "timestamp": datetime.now().isoformat(),
-                "action": action,
-                "username": username,
-                "success": success,
-                "details": details,
-                "system_info": system_info
-            }
-            
             logs_data["logs"].append(log_entry)
-            
-            # Mantener solo últimos 1000 logs
+
+            # Mantener solo ultimos 1000 logs.
             if len(logs_data["logs"]) > 1000:
                 logs_data["logs"] = logs_data["logs"][-1000:]
-            
+
             self._persist_logs_data(logs_data)
-            
-            self.logger.operation_end("_log_access", success=True)
+            self.logger.operation_end("_log_access", success=True, mode="legacy_storage")
         except Exception as e:
             self.logger.error(f"Critical failure logging access: {e}", exc_info=True)
             self.logger.operation_end("_log_access", success=False, reason=str(e))
-    
+
     @returns_result_tuple("authenticate")
     def authenticate(self, username, password):
         """
@@ -927,7 +908,7 @@ class UserManagerV2:
         
         Args:
             username: Nombre de usuario
-            password: Contraseña
+            password: Contraseaa
             
         Returns:
             (success: bool, message: str)
@@ -977,7 +958,7 @@ class UserManagerV2:
         
         user = users_data["users"][username]
         
-        # Verificar que el usuario esté activo
+        # Verificar que el usuario está activo
         if not user.get("active", True):
             self.logger.security_event("login_failed", username, False, {'reason': 'User inactive'})
             self._log_access("login_failed", username, False, {'reason': 'User inactive'})
@@ -1026,7 +1007,7 @@ class UserManagerV2:
         # SECURITY FIX (SEC-005): Login exitoso, resetear contador
         self.lockout_manager.record_successful_login(username)
         
-        # Actualizar último login
+        # Actualizar altimo login
         user["last_login"] = datetime.now().isoformat()
         users_data["users"][username] = user
         self._save_users(users_data)
@@ -1046,10 +1027,10 @@ class UserManagerV2:
         
         Args:
             username: Nombre de usuario
-            password: Contraseña
+            password: Contraseaa
             role: Rol del usuario
             created_by: Usuario creador
-            **kwargs: Parámetros adicionales
+            **kwargs: Parametros adicionales
             
         Returns:
             (success: bool, message: str)
@@ -1084,7 +1065,7 @@ class UserManagerV2:
                 self.logger.warning("Attempt to create duplicate user", username=username)
                 raise ValidationError("El usuario ya existe.", details={'username': username})
             
-            # Asignar permisos según rol
+            # Asignar permisos segan rol
             if role == "super_admin":
                 permissions = ["all"]
             elif role == "admin":
@@ -1154,7 +1135,7 @@ class UserManagerV2:
         
         Args:
             username: Usuario
-            old_password: Contraseña actual
+            old_password: Contraseaa actual
             new_password: Nueva contraseña
             
         Returns:
@@ -1173,7 +1154,7 @@ class UserManagerV2:
         # Verificar contraseña actual
         if not self._verify_password(old_password, user["password_hash"]):
             self.logger.security_event("password_change_failed", username, False, {'reason': 'Wrong old password'})
-            raise AuthenticationError("Contraseña actual incorrecta.")
+            raise AuthenticationError("Contraseaa actual incorrecta.")
         
         # SECURITY FIX (SEC-004): Validar nueva contraseña
         is_valid, message, score = PasswordValidator.validate_password_strength(new_password, username)
@@ -1226,7 +1207,7 @@ class UserManagerV2:
             {'password_strength': score}
         )
         self.logger.operation_end("change_password", success=True)
-        return True, f"Contraseña cambiada exitosamente.\nFortaleza: {score}/100"
+        return True, f"Contraseaa cambiada exitosamente.\nFortaleza: {score}/100"
     
     @handle_errors("get_users", reraise=True, default_return=[])
     def get_users(self):
@@ -1321,6 +1302,25 @@ class UserManagerV2:
             raise AuthenticationError("No autenticado.")
         
         try:
+            if self._can_use_audit_api():
+                normalized_limit = max(1, int(limit or 100))
+                rows = self.audit_api_client._make_request(
+                    "get",
+                    "audit-logs",
+                    params={"limit": normalized_limit},
+                ) or []
+
+                normalized_rows = []
+                for row in rows:
+                    normalized = self._normalize_audit_api_log_entry(row)
+                    if normalized:
+                        normalized_rows.append(normalized)
+
+                # El endpoint responde DESC; mantenemos contrato ASC para la UI.
+                normalized_rows.reverse()
+                self.logger.operation_end("get_access_logs", success=True, mode="audit_api")
+                return normalized_rows
+
             if self.local_mode:
                 if not self.logs_file.exists():
                     return []
@@ -1339,7 +1339,7 @@ class UserManagerV2:
                 cloud_payload = json.loads(logs_content)
                 logs_data, recovered = self._decode_cloud_logs_payload(cloud_payload)
                 if recovered:
-                    self.logger.warning("Se detectó payload legacy/corrupto en get_access_logs; persistiendo reparación.")
+                    self.logger.warning("Se detecta payload legacy/corrupto en get_access_logs; persistiendo reparacian.")
                     self._persist_logs_data(logs_data)
 
             logs_data = self._normalize_logs_data(logs_data)
@@ -1371,7 +1371,7 @@ class UserManagerV2:
         return (self.current_user and 
                 self.current_user.get("role") == "super_admin")
     
-    # Métodos de compatibilidad legacy
+    # Matodos de compatibilidad legacy
     def has_users(self):
         """Verificar si existen usuarios"""
         users_data = self._load_users()
@@ -1380,3 +1380,5 @@ class UserManagerV2:
     def needs_initialization(self):
         """Verificar si el sistema necesita inicialización"""
         return not self.has_users()
+
+

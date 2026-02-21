@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QPixmap
 import re
+from core.password_policy import PasswordPolicy
 
 
 class WelcomePage(QWizardPage):
@@ -89,7 +90,9 @@ class AdminAccountPage(QWizardPage):
         
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setPlaceholderText("Mínimo 8 caracteres")
+        self.password_input.setPlaceholderText(
+            f"Minimo {PasswordPolicy.MIN_LENGTH} caracteres"
+        )
         self.password_input.textChanged.connect(self._validate_fields)
         self.registerField("password*", self.password_input)
         layout.addWidget(self.password_input)
@@ -100,7 +103,7 @@ class AdminAccountPage(QWizardPage):
         self.password_strength.setMaximumHeight(10)
         layout.addWidget(self.password_strength)
         
-        self.password_hint = QLabel("La contraseña debe tener al menos 8 caracteres")
+        self.password_hint = QLabel(PasswordPolicy.describe_requirements())
         self.password_hint.setStyleSheet("color: #666; font-size: 9pt;")
         layout.addWidget(self.password_hint)
         
@@ -148,118 +151,100 @@ class AdminAccountPage(QWizardPage):
         username = self.username_input.text()
         password = self.password_input.text()
         confirm = self.confirm_input.text()
-        
-        # Validar usuario
+
         if username:
             if len(username) < 3:
-                self.username_hint.setText("❌ Muy corto (mínimo 3 caracteres)")
+                self.username_hint.setText("Muy corto (minimo 3 caracteres)")
                 self.username_hint.setStyleSheet("color: #D32F2F; font-size: 9pt;")
-            elif not re.match(r'^[a-zA-Z0-9_-]+$', username):
-                self.username_hint.setText("❌ Solo letras, números, guiones y guiones bajos")
+            elif not re.match(r"^[a-zA-Z0-9_-]+$", username):
+                self.username_hint.setText("Solo letras, numeros, guiones y guiones bajos")
                 self.username_hint.setStyleSheet("color: #D32F2F; font-size: 9pt;")
             else:
-                self.username_hint.setText("✅ Nombre de usuario válido")
+                self.username_hint.setText("Nombre de usuario valido")
                 self.username_hint.setStyleSheet("color: #388E3C; font-size: 9pt;")
-        
-        # Validar fortaleza de contraseña
+
         if password:
+            analysis = PasswordPolicy.analyze(password, username=username)
             strength = self._calculate_password_strength(password)
             self.password_strength.setValue(strength)
-            
-            if strength == 0:
-                self.password_strength.setStyleSheet("QProgressBar::chunk { background-color: #D32F2F; }")
-                self.password_hint.setText("❌ Contraseña muy débil")
-                self.password_hint.setStyleSheet("color: #D32F2F; font-size: 9pt;")
-            elif strength == 1:
-                self.password_strength.setStyleSheet("QProgressBar::chunk { background-color: #F57C00; }")
-                self.password_hint.setText("⚠️ Contraseña débil")
-                self.password_hint.setStyleSheet("color: #F57C00; font-size: 9pt;")
-            elif strength == 2:
-                self.password_strength.setStyleSheet("QProgressBar::chunk { background-color: #FBC02D; }")
-                self.password_hint.setText("👍 Contraseña aceptable")
-                self.password_hint.setStyleSheet("color: #F9A825; font-size: 9pt;")
-            elif strength == 3:
-                self.password_strength.setStyleSheet("QProgressBar::chunk { background-color: #7CB342; }")
-                self.password_hint.setText("💪 Contraseña fuerte")
-                self.password_hint.setStyleSheet("color: #558B2F; font-size: 9pt;")
-            else:
-                self.password_strength.setStyleSheet("QProgressBar::chunk { background-color: #388E3C; }")
-                self.password_hint.setText("🔒 Contraseña muy fuerte")
+
+            if analysis["is_valid"]:
+                self.password_strength.setStyleSheet(
+                    "QProgressBar::chunk { background-color: #388E3C; }"
+                )
+                self.password_hint.setText("Contrasena valida")
                 self.password_hint.setStyleSheet("color: #1B5E20; font-size: 9pt;")
-        
-        # Validar confirmación
+            else:
+                first_error = (
+                    analysis["errors"][0]
+                    if analysis["errors"]
+                    else PasswordPolicy.describe_requirements()
+                )
+                self.password_strength.setStyleSheet(
+                    "QProgressBar::chunk { background-color: #D32F2F; }"
+                )
+                self.password_hint.setText(first_error)
+                self.password_hint.setStyleSheet("color: #D32F2F; font-size: 9pt;")
+        else:
+            self.password_strength.setValue(0)
+            self.password_strength.setStyleSheet(
+                "QProgressBar::chunk { background-color: #D32F2F; }"
+            )
+            self.password_hint.setText(PasswordPolicy.describe_requirements())
+            self.password_hint.setStyleSheet("color: #666; font-size: 9pt;")
+
         if confirm:
             if password == confirm:
-                self.confirm_hint.setText("✅ Las contraseñas coinciden")
+                self.confirm_hint.setText("Las contrasenas coinciden")
                 self.confirm_hint.setStyleSheet("color: #388E3C; font-size: 9pt;")
             else:
-                self.confirm_hint.setText("❌ Las contraseñas no coinciden")
+                self.confirm_hint.setText("Las contrasenas no coinciden")
                 self.confirm_hint.setStyleSheet("color: #D32F2F; font-size: 9pt;")
-    
+
     def _calculate_password_strength(self, password):
-        """Calcular fortaleza de contraseña (0-4)"""
-        if len(password) < 8:
-            return 0
-        
-        strength = 1
-        
-        # Longitud
-        if len(password) >= 12:
-            strength += 1
-        
-        # Mayúsculas y minúsculas
-        if re.search(r'[a-z]', password) and re.search(r'[A-Z]', password):
-            strength += 1
-        
-        # Números
-        if re.search(r'\d', password):
-            strength += 1
-        
-        # Caracteres especiales
-        if re.search(r'[!@#$%^&*()_+\-=\[\]{};:\'",.<>?/\\|`~]', password):
-            strength += 1
-        
-        return min(strength, 4)
-    
+        """Calcular fortaleza visual (0-4) usando score de la politica compartida."""
+        _, _, score = PasswordPolicy.validate_with_score(
+            password,
+            username=self.username_input.text(),
+        )
+        if score >= 85:
+            return 4
+        if score >= 70:
+            return 3
+        if score >= 50:
+            return 2
+        if score >= 25:
+            return 1
+        return 0
+
     def validatePage(self):
         """Validar antes de avanzar"""
         username = self.username_input.text()
         password = self.password_input.text()
         confirm = self.confirm_input.text()
-        
-        # Validar usuario
+
         if len(username) < 3:
             QMessageBox.warning(self, "Error", "El nombre de usuario debe tener al menos 3 caracteres")
             return False
-        
-        if not re.match(r'^[a-zA-Z0-9_-]+$', username):
-            QMessageBox.warning(self, "Error", "El nombre de usuario solo puede contener letras, números, guiones y guiones bajos")
-            return False
-        
-        # Validar contraseña
-        if len(password) < 8:
-            QMessageBox.warning(self, "Error", "La contraseña debe tener al menos 8 caracteres")
-            return False
-        
-        if password != confirm:
-            QMessageBox.warning(self, "Error", "Las contraseñas no coinciden")
-            return False
-        
-        # Advertir si la contraseña es débil
-        strength = self._calculate_password_strength(password)
-        if strength < 2:
-            reply = QMessageBox.question(
-                self, 
-                "Contraseña Débil",
-                "Tu contraseña es débil y podría ser fácil de adivinar.\n\n"
-                "¿Deseas continuar de todas formas?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
-            )
-            return reply == QMessageBox.StandardButton.Yes
-        
-        return True
 
+        if not re.match(r"^[a-zA-Z0-9_-]+$", username):
+            QMessageBox.warning(
+                self,
+                "Error",
+                "El nombre de usuario solo puede contener letras, numeros, guiones y guiones bajos",
+            )
+            return False
+
+        if password != confirm:
+            QMessageBox.warning(self, "Error", "Las contrasenas no coinciden")
+            return False
+
+        is_valid, message = PasswordPolicy.validate(password, username=username)
+        if not is_valid:
+            QMessageBox.warning(self, "Contrasena debil", message)
+            return False
+
+        return True
 
 class SecurityPage(QWizardPage):
     """Página de configuración de seguridad"""

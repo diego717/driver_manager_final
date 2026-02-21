@@ -5,6 +5,53 @@ import bcrypt from "bcryptjs";
 
 import worker from "../worker.js";
 
+const DEFAULT_API_TOKEN = "token-123";
+const DEFAULT_API_SECRET = "secret-abc";
+
+async function workerFetch(request, env = {}) {
+  const mergedEnv = {
+    API_TOKEN: DEFAULT_API_TOKEN,
+    API_SECRET: DEFAULT_API_SECRET,
+    ...env,
+  };
+
+  const url = new URL(request.url);
+  const isWebRoute = url.pathname.startsWith("/web/");
+  const isPublicRoot = request.method === "GET" && url.pathname === "/";
+  const isHealth = request.method === "GET" && url.pathname === "/health";
+  const hasHmacHeaders =
+    request.headers.has("X-API-Token") ||
+    request.headers.has("X-Request-Timestamp") ||
+    request.headers.has("X-Request-Signature");
+
+  let signedRequest = request;
+
+  if (!isWebRoute && !isPublicRoot && !isHealth && !hasHmacHeaders) {
+    const bodyBuffer = Buffer.from(await request.clone().arrayBuffer());
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = signRequest({
+      method: request.method,
+      path: url.pathname,
+      timestamp,
+      bodyBuffer,
+      secret: mergedEnv.API_SECRET,
+    });
+
+    const headers = new Headers(request.headers);
+    headers.set("X-API-Token", mergedEnv.API_TOKEN);
+    headers.set("X-Request-Timestamp", timestamp);
+    headers.set("X-Request-Signature", signature);
+
+    signedRequest = new Request(request.url, {
+      method: request.method,
+      headers,
+      body: bodyBuffer.length > 0 ? bodyBuffer : undefined,
+    });
+  }
+
+  return worker.fetch(signedRequest, mergedEnv);
+}
+
 function normalizeSql(sql) {
   return sql.replace(/\s+/g, " ").trim();
 }
@@ -24,6 +71,7 @@ function createMockDB({
   byBrand = [],
   incidents = [],
   incidentPhotos = [],
+  auditLogs = [],
   webUsers = [],
 } = {}) {
   const calls = [];
@@ -32,6 +80,7 @@ function createMockDB({
     byBrand: byBrand.map((row) => ({ ...row })),
     incidents: incidents.map((row) => ({ ...row })),
     incidentPhotos: incidentPhotos.map((row) => ({ ...row })),
+    auditLogs: auditLogs.map((row) => ({ ...row })),
     webUsers: webUsers.map((row) => ({
       password_hash_type: "pbkdf2_sha256",
       is_active: 1,
@@ -42,7 +91,27 @@ function createMockDB({
   let nextInstallationId = 100;
   let nextIncidentId = 1000;
   let nextPhotoId = 2000;
+  let nextAuditLogId = 2500;
   let nextWebUserId = 3000;
+
+  const normalizeStatus = (value) => String(value ?? "").toLowerCase();
+  const parseDate = (value) => {
+    if (!value) return null;
+    const parsed = new Date(String(value));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+  const applyDateRange = (rows, startIso, endIso) => {
+    const start = parseDate(startIso);
+    const end = parseDate(endIso);
+    return rows.filter((row) => {
+      const ts = parseDate(row.timestamp);
+      if (!ts) return false;
+      if (start && ts < start) return false;
+      if (end && ts >= end) return false;
+      return true;
+    });
+  };
+  const round2 = (value) => Math.round(value * 100) / 100;
 
   return {
     calls,
@@ -60,6 +129,88 @@ function createMockDB({
         async all() {
           if (normalized.startsWith("SELECT * FROM installations ORDER BY timestamp DESC")) {
             return { results: state.installations };
+          }
+
+          if (normalized.startsWith("SELECT * FROM installations WHERE id = ? LIMIT 1")) {
+            const id = Number(call.bound?.[0]);
+            const row = state.installations.find((item) => Number(item.id) === id);
+            return { results: row ? [row] : [] };
+          }
+
+          if (normalized.includes("COUNT(*) AS total_installations")) {
+            const start = call.bound?.[1] ?? call.bound?.[0] ?? null;
+            const end = call.bound?.[3] ?? call.bound?.[2] ?? null;
+            const filtered = applyDateRange(state.installations, start, end);
+
+            const total = filtered.length;
+            const successful = filtered.filter((row) => normalizeStatus(row.status) === "success").length;
+            const failed = filtered.filter((row) => normalizeStatus(row.status) === "failed").length;
+            const seconds = filtered
+              .map((row) => Number(row.installation_time_seconds))
+              .filter((value) => Number.isFinite(value) && value > 0);
+            const avgMinutes = seconds.length > 0 ? round2(seconds.reduce((sum, value) => sum + value, 0) / seconds.length / 60) : 0;
+            const uniqueClients = new Set(
+              filtered
+                .map((row) => String(row.client_name ?? "").trim())
+                .filter((value) => value.length > 0),
+            ).size;
+
+            return {
+              results: [
+                {
+                  total_installations: total,
+                  successful_installations: successful,
+                  failed_installations: failed,
+                  success_rate: total > 0 ? round2((successful / total) * 100) : 0,
+                  average_time_minutes: avgMinutes,
+                  unique_clients: uniqueClients,
+                },
+              ],
+            };
+          }
+
+          if (normalized.startsWith("SELECT driver_brand AS brand, COUNT(*) AS count FROM installations")) {
+            const start = call.bound?.[1] ?? call.bound?.[0] ?? null;
+            const end = call.bound?.[3] ?? call.bound?.[2] ?? null;
+            const filtered = applyDateRange(state.installations, start, end);
+            const counts = new Map();
+
+            for (const row of filtered) {
+              const brand = String(row.driver_brand ?? "").trim();
+              if (!brand) continue;
+              counts.set(brand, (counts.get(brand) || 0) + 1);
+            }
+
+            return {
+              results: [...counts.entries()].map(([brand, count]) => ({ brand, count })),
+            };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT TRIM(driver_brand) AS brand, TRIM(driver_version) AS version, COUNT(*) AS count FROM installations",
+            )
+          ) {
+            const start = call.bound?.[1] ?? call.bound?.[0] ?? null;
+            const end = call.bound?.[3] ?? call.bound?.[2] ?? null;
+            const filtered = applyDateRange(state.installations, start, end);
+            const counts = new Map();
+
+            for (const row of filtered) {
+              const brand = String(row.driver_brand ?? "").trim();
+              const version = String(row.driver_version ?? "").trim();
+              const key = `${brand} ${version}`.trim();
+              if (!key) continue;
+              counts.set(key, {
+                brand,
+                version,
+                count: (counts.get(key)?.count || 0) + 1,
+              });
+            }
+
+            return {
+              results: [...counts.values()],
+            };
           }
 
           if (normalized.startsWith("SELECT driver_brand, COUNT(*) as count FROM installations")) {
@@ -115,6 +266,20 @@ function createMockDB({
             return { results: row ? [row] : [] };
           }
 
+          if (
+            normalized.startsWith(
+              "SELECT id, timestamp, action, username, success, details, computer_name, ip_address, platform FROM audit_logs ORDER BY timestamp DESC, id DESC LIMIT ?",
+            )
+          ) {
+            const limit = Math.max(1, Number(call.bound?.[0]) || 100);
+            const rows = [...state.auditLogs].sort((a, b) => {
+              const byTimestamp = String(b.timestamp ?? "").localeCompare(String(a.timestamp ?? ""));
+              if (byTimestamp !== 0) return byTimestamp;
+              return Number(b.id) - Number(a.id);
+            });
+            return { results: rows.slice(0, limit) };
+          }
+
           if (normalized === "SELECT COUNT(*) AS total FROM web_users") {
             return { results: [{ total: state.webUsers.length }] };
           }
@@ -163,6 +328,27 @@ function createMockDB({
           throw new Error(`Unexpected query for .all(): ${normalized}`);
         },
         async run() {
+          if (
+            normalized.startsWith(
+              "INSERT INTO audit_logs (timestamp, action, username, success, details, computer_name, ip_address, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+          ) {
+            const id = nextAuditLogId++;
+            const [timestamp, action, username, success, details, computerName, ipAddress, platform] = call.bound;
+            state.auditLogs.push({
+              id,
+              timestamp,
+              action,
+              username,
+              success,
+              details,
+              computer_name: computerName,
+              ip_address: ipAddress,
+              platform,
+            });
+            return { success: true, meta: { last_row_id: id } };
+          }
+
           if (normalized.startsWith("INSERT INTO installations")) {
             const id = nextInstallationId++;
             const [timestamp, driverBrand, driverVersion, status, clientName, driverDescription, installationTime, osInfo, notes] =
@@ -333,9 +519,36 @@ function createMockDB({
   };
 }
 
+function createMockKV(initialEntries = {}) {
+  const store = new Map(
+    Object.entries(initialEntries).map(([key, value]) => [String(key), String(value)]),
+  );
+  const calls = [];
+
+  return {
+    calls,
+    async get(key) {
+      const normalizedKey = String(key);
+      calls.push({ op: "get", key: normalizedKey });
+      return store.has(normalizedKey) ? store.get(normalizedKey) : null;
+    },
+    async put(key, value, options = {}) {
+      const normalizedKey = String(key);
+      const normalizedValue = String(value);
+      calls.push({ op: "put", key: normalizedKey, value: normalizedValue, options });
+      store.set(normalizedKey, normalizedValue);
+    },
+    async delete(key) {
+      const normalizedKey = String(key);
+      calls.push({ op: "delete", key: normalizedKey });
+      store.delete(normalizedKey);
+    },
+  };
+}
+
 test("OPTIONS request returns CORS headers", async () => {
   const request = new Request("https://worker.example/installations", { method: "OPTIONS" });
-  const response = await worker.fetch(request, {});
+  const response = await workerFetch(request, {});
 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("Access-Control-Allow-Origin"), "*");
@@ -344,7 +557,7 @@ test("OPTIONS request returns CORS headers", async () => {
 
 test("GET / returns service metadata", async () => {
   const request = new Request("https://worker.example/", { method: "GET" });
-  const response = await worker.fetch(request, {});
+  const response = await workerFetch(request, {});
   const body = await response.json();
 
   assert.equal(response.status, 200);
@@ -358,7 +571,7 @@ test("GET /installations returns DB rows as JSON", async () => {
   });
   const request = new Request("https://worker.example/installations", { method: "GET" });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 200);
@@ -398,7 +611,7 @@ test("GET /installations applies filters from query params", async () => {
     { method: "GET" },
   );
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 200);
@@ -417,7 +630,7 @@ test("POST /installations inserts record with defaults and returns 201", async (
     }),
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 201);
@@ -440,7 +653,7 @@ test("POST /installations with empty payload uses fallback defaults", async () =
     body: JSON.stringify({}),
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 201);
@@ -468,7 +681,7 @@ test("POST /records creates manual record with explicit defaults", async () => {
     body: JSON.stringify({ notes: "Registro manual desde app" }),
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 201);
@@ -497,7 +710,7 @@ test("POST /records respects provided fields", async () => {
     }),
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 201);
@@ -522,7 +735,7 @@ test("PUT /installations/:id updates notes and installation time", async () => {
     }),
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 200);
@@ -541,7 +754,7 @@ test("PUT /installations/:id with missing fields binds null values", async () =>
     body: JSON.stringify({}),
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 200);
@@ -558,7 +771,7 @@ test("DELETE /installations/:id deletes record and returns message", async () =>
     method: "DELETE",
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 200);
@@ -586,7 +799,7 @@ test("POST /installations/:id/incidents creates incident and can apply installat
     }),
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 201);
@@ -615,7 +828,7 @@ test("POST /installations/:id/incidents rejects payload without note", async () 
     body: JSON.stringify({ severity: "high" }),
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 400);
@@ -636,7 +849,7 @@ test("POST /installations/:id/incidents rejects invalid severity", async () => {
     }),
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 400);
@@ -657,7 +870,7 @@ test("POST /installations/:id/incidents rejects invalid source", async () => {
     }),
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 400);
@@ -678,7 +891,7 @@ test("POST /installations/:id/incidents rejects invalid time adjustment", async 
     }),
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 400);
@@ -717,7 +930,7 @@ test("GET /installations/:id/incidents returns incidents with nested photos", as
     method: "GET",
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 200);
@@ -750,7 +963,7 @@ test("POST /incidents/:id/photos uploads to R2 and persists metadata", async () 
     body: payload,
   });
 
-  const response = await worker.fetch(request, {
+  const response = await workerFetch(request, {
     DB: db,
     INCIDENTS_BUCKET: bucket,
   });
@@ -795,7 +1008,7 @@ test("GET /photos/:id returns binary content from R2", async () => {
     method: "GET",
   });
 
-  const response = await worker.fetch(request, {
+  const response = await workerFetch(request, {
     DB: db,
     INCIDENTS_BUCKET: bucket,
   });
@@ -823,7 +1036,7 @@ test("POST /incidents/:id/photos rejects oversized files", async () => {
     body: new Uint8Array(8 * 1024 * 1024 + 1),
   });
 
-  const response = await worker.fetch(request, {
+  const response = await workerFetch(request, {
     DB: db,
     INCIDENTS_BUCKET: bucket,
   });
@@ -843,7 +1056,7 @@ test("POST /incidents/:id/photos rejects unsupported content type", async () => 
     body: new Uint8Array([1, 2, 3]),
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 400);
@@ -867,7 +1080,7 @@ test("POST /incidents/:id/photos rejects empty body", async () => {
     body: new Uint8Array(0),
   });
 
-  const response = await worker.fetch(request, {
+  const response = await workerFetch(request, {
     DB: db,
     INCIDENTS_BUCKET: bucket,
   });
@@ -893,7 +1106,7 @@ test("POST /incidents/:id/photos returns 404 when incident does not exist", asyn
     body: new Uint8Array([1, 2, 3]),
   });
 
-  const response = await worker.fetch(request, {
+  const response = await workerFetch(request, {
     DB: db,
     INCIDENTS_BUCKET: bucket,
   });
@@ -914,7 +1127,7 @@ test("POST /incidents/:id/photos returns 500 when R2 bucket binding is missing",
     body: new Uint8Array([1, 2, 3]),
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 500);
@@ -931,7 +1144,7 @@ test("POST /incidents/:id/photos rejects invalid incident id", async () => {
     body: new Uint8Array([1, 2, 3]),
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 400);
@@ -976,7 +1189,7 @@ test("GET /statistics returns full stats with brand grouping", async () => {
     { method: "GET" },
   );
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 200);
@@ -987,30 +1200,105 @@ test("GET /statistics returns full stats with brand grouping", async () => {
   assert.deepEqual(body.by_brand, { Zebra: 1, Magicard: 1 });
 });
 
+test("POST /audit-logs stores audit event in D1", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/audit-logs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "login_success",
+      username: "admin_root",
+      success: true,
+      details: { role: "super_admin" },
+      computer_name: "LAPTOP-01",
+      ip_address: "10.0.0.10",
+      platform: "Windows",
+    }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 201);
+  assert.equal(body.success, true);
+  assert.equal(db.state.auditLogs.length, 1);
+  assert.equal(db.state.auditLogs[0].action, "login_success");
+});
+
+test("GET /audit-logs returns latest rows sorted desc and respects limit", async () => {
+  const db = createMockDB({
+    auditLogs: [
+      {
+        id: 1,
+        timestamp: "2026-08-01T10:00:00.000Z",
+        action: "a",
+        username: "u1",
+        success: 1,
+        details: "{}",
+      },
+      {
+        id: 2,
+        timestamp: "2026-08-02T10:00:00.000Z",
+        action: "b",
+        username: "u2",
+        success: 0,
+        details: "{}",
+      },
+    ],
+  });
+  const request = new Request("https://worker.example/audit-logs?limit=1", {
+    method: "GET",
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.length, 1);
+  assert.equal(body[0].id, 2);
+});
+
 test("unsupported method on /installations returns 404", async () => {
   const db = createMockDB();
   const request = new Request("https://worker.example/installations", {
     method: "PATCH",
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const text = await response.text();
 
   assert.equal(response.status, 404);
   assert.equal(text, "Ruta no encontrada.");
 });
 
-test("GET /installations/:id is currently unsupported and returns 404", async () => {
+test("GET /installations/:id returns installation when it exists", async () => {
+  const db = createMockDB({
+    installations: [{ id: 99, driver_brand: "Zebra", status: "success" }],
+  });
+  const request = new Request("https://worker.example/installations/99", {
+    method: "GET",
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.id, 99);
+  assert.equal(body.driver_brand, "Zebra");
+});
+
+test("GET /installations/:id returns 404 when installation does not exist", async () => {
   const db = createMockDB();
   const request = new Request("https://worker.example/installations/99", {
     method: "GET",
   });
 
-  const response = await worker.fetch(request, { DB: db });
-  const text = await response.text();
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
 
   assert.equal(response.status, 404);
-  assert.equal(text, "Ruta no encontrada.");
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /registro no encontrado/i);
 });
 
 test("invalid JSON payload returns 500 with error body", async () => {
@@ -1021,7 +1309,7 @@ test("invalid JSON payload returns 500 with error body", async () => {
     body: "{invalid json",
   });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
   assert.equal(response.status, 500);
@@ -1033,7 +1321,7 @@ test("unknown route returns 404", async () => {
   const db = createMockDB();
   const request = new Request("https://worker.example/unknown", { method: "GET" });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db });
   const text = await response.text();
 
   assert.equal(response.status, 404);
@@ -1043,11 +1331,24 @@ test("unknown route returns 404", async () => {
 test("returns 500 when DB binding is missing", async () => {
   const request = new Request("https://worker.example/installations", { method: "GET" });
 
-  const response = await worker.fetch(request, {});
+  const response = await workerFetch(request, {});
   const body = await response.json();
 
   assert.equal(response.status, 500);
   assert.match(body.error, /D1/);
+});
+
+test("returns 503 when API auth secrets are missing", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/installations", { method: "GET" });
+
+  const response = await worker.fetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /API_TOKEN/);
+  assert.match(body.error.message, /API_SECRET/);
 });
 
 test("returns 401 when auth secrets are configured but headers are missing", async () => {
@@ -1086,7 +1387,7 @@ test("returns 401 when auth token is invalid", async () => {
     },
   });
 
-  const response = await worker.fetch(request, {
+  const response = await workerFetch(request, {
     DB: db,
     API_TOKEN: "token-123",
     API_SECRET: "secret-abc",
@@ -1118,7 +1419,7 @@ test("returns 401 when auth timestamp is outside allowed window", async () => {
     },
   });
 
-  const response = await worker.fetch(request, {
+  const response = await workerFetch(request, {
     DB: db,
     API_TOKEN: "token-123",
     API_SECRET: "secret-abc",
@@ -1142,7 +1443,7 @@ test("returns 401 when auth signature is invalid", async () => {
     },
   });
 
-  const response = await worker.fetch(request, {
+  const response = await workerFetch(request, {
     DB: db,
     API_TOKEN: "token-123",
     API_SECRET: "secret-abc",
@@ -1156,7 +1457,7 @@ test("returns 401 when auth signature is invalid", async () => {
 
 test("GET /health returns OK without DB/auth", async () => {
   const request = new Request("https://worker.example/health", { method: "GET" });
-  const response = await worker.fetch(request, {});
+  const response = await workerFetch(request, {});
   const body = await response.json();
 
   assert.equal(response.status, 200);
@@ -1178,7 +1479,7 @@ test("POST /web/auth/login issues access token for web routes", async () => {
       password: "StrongPass#2026",
     }),
   });
-  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1194,7 +1495,7 @@ test("POST /web/auth/login issues access token for web routes", async () => {
     }),
   });
 
-  const loginResponse = await worker.fetch(loginRequest, {
+  const loginResponse = await workerFetch(loginRequest, {
     DB: db,
     API_TOKEN: "token-123",
     API_SECRET: "secret-abc",
@@ -1214,7 +1515,7 @@ test("POST /web/auth/login issues access token for web routes", async () => {
     },
   });
 
-  const listResponse = await worker.fetch(listRequest, {
+  const listResponse = await workerFetch(listRequest, {
     DB: db,
     API_TOKEN: "token-123",
     API_SECRET: "secret-abc",
@@ -1240,7 +1541,7 @@ test("POST /web/auth/bootstrap creates first web user with hashed password", asy
     }),
   });
 
-  const response = await worker.fetch(bootstrapRequest, {
+  const response = await workerFetch(bootstrapRequest, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1254,6 +1555,32 @@ test("POST /web/auth/bootstrap creates first web user with hashed password", asy
   assert.equal(db.state.webUsers.length, 1);
   assert.notEqual(db.state.webUsers[0].password_hash, "StrongPass#2026");
   assert.match(db.state.webUsers[0].password_hash, /^pbkdf2_sha256\$/);
+});
+
+test("POST /web/auth/bootstrap rejects weak password without complexity", async () => {
+  const db = createMockDB();
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "weakpassword12",
+      role: "admin",
+    }),
+  });
+
+  const response = await workerFetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /mayuscula/i);
+  assert.match(body.error.message, /especial/i);
 });
 
 test("POST /web/auth/login accepts username/password after bootstrap", async () => {
@@ -1270,7 +1597,7 @@ test("POST /web/auth/login accepts username/password after bootstrap", async () 
       password: "StrongPass#2026",
     }),
   });
-  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1285,7 +1612,7 @@ test("POST /web/auth/login accepts username/password after bootstrap", async () 
       password: "StrongPass#2026",
     }),
   });
-  const loginResponse = await worker.fetch(loginRequest, {
+  const loginResponse = await workerFetch(loginRequest, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1303,7 +1630,7 @@ test("POST /web/auth/login accepts username/password after bootstrap", async () 
       Authorization: `Bearer ${loginBody.access_token}`,
     },
   });
-  const meResponse = await worker.fetch(meRequest, {
+  const meResponse = await workerFetch(meRequest, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1329,7 +1656,7 @@ test("POST /web/installations/:id/incidents uses web session user as reporter by
       password: "StrongPass#2026",
     }),
   });
-  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1348,7 +1675,7 @@ test("POST /web/installations/:id/incidents uses web session user as reporter by
     }),
   });
 
-  const createIncidentResponse = await worker.fetch(createIncidentRequest, {
+  const createIncidentResponse = await workerFetch(createIncidentRequest, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1373,7 +1700,7 @@ test("POST /web/auth/users creates additional users when caller is admin", async
       password: "StrongPass#2026",
     }),
   });
-  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1393,7 +1720,7 @@ test("POST /web/auth/users creates additional users when caller is admin", async
       role: "viewer",
     }),
   });
-  const createUserResponse = await worker.fetch(createUserRequest, {
+  const createUserResponse = await workerFetch(createUserRequest, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1419,7 +1746,7 @@ test("GET /web/auth/users lists users with active status and last login", async 
       password: "StrongPass#2026",
     }),
   });
-  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1439,7 +1766,7 @@ test("GET /web/auth/users lists users with active status and last login", async 
       role: "viewer",
     }),
   });
-  const createUserResponse = await worker.fetch(createUserRequest, {
+  const createUserResponse = await workerFetch(createUserRequest, {
     DB: db,
     WEB_SESSION_SECRET: "web-session-secret",
   });
@@ -1451,7 +1778,7 @@ test("GET /web/auth/users lists users with active status and last login", async 
       Authorization: `Bearer ${bootstrapBody.access_token}`,
     },
   });
-  const listUsersResponse = await worker.fetch(listUsersRequest, {
+  const listUsersResponse = await workerFetch(listUsersRequest, {
     DB: db,
     WEB_SESSION_SECRET: "web-session-secret",
   });
@@ -1480,7 +1807,7 @@ test("PATCH /web/auth/users/:id updates role and active status", async () => {
       password: "StrongPass#2026",
     }),
   });
-  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1500,7 +1827,7 @@ test("PATCH /web/auth/users/:id updates role and active status", async () => {
       role: "viewer",
     }),
   });
-  const createUserResponse = await worker.fetch(createUserRequest, {
+  const createUserResponse = await workerFetch(createUserRequest, {
     DB: db,
     WEB_SESSION_SECRET: "web-session-secret",
   });
@@ -1521,7 +1848,7 @@ test("PATCH /web/auth/users/:id updates role and active status", async () => {
       }),
     },
   );
-  const patchUserResponse = await worker.fetch(patchUserRequest, {
+  const patchUserResponse = await workerFetch(patchUserRequest, {
     DB: db,
     WEB_SESSION_SECRET: "web-session-secret",
   });
@@ -1545,7 +1872,7 @@ test("POST /web/auth/users/:id/force-password resets password and allows login",
       password: "StrongPass#2026",
     }),
   });
-  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1565,7 +1892,7 @@ test("POST /web/auth/users/:id/force-password resets password and allows login",
       role: "viewer",
     }),
   });
-  const createUserResponse = await worker.fetch(createUserRequest, {
+  const createUserResponse = await workerFetch(createUserRequest, {
     DB: db,
     WEB_SESSION_SECRET: "web-session-secret",
   });
@@ -1585,7 +1912,7 @@ test("POST /web/auth/users/:id/force-password resets password and allows login",
       }),
     },
   );
-  const resetPasswordResponse = await worker.fetch(resetPasswordRequest, {
+  const resetPasswordResponse = await workerFetch(resetPasswordRequest, {
     DB: db,
     WEB_SESSION_SECRET: "web-session-secret",
   });
@@ -1601,7 +1928,7 @@ test("POST /web/auth/users/:id/force-password resets password and allows login",
       password: "ViewerPass#2026",
     }),
   });
-  const oldLoginResponse = await worker.fetch(oldLoginRequest, {
+  const oldLoginResponse = await workerFetch(oldLoginRequest, {
     DB: db,
     WEB_SESSION_SECRET: "web-session-secret",
   });
@@ -1615,7 +1942,7 @@ test("POST /web/auth/users/:id/force-password resets password and allows login",
       password: "ViewerPass#2027",
     }),
   });
-  const newLoginResponse = await worker.fetch(newLoginRequest, {
+  const newLoginResponse = await workerFetch(newLoginRequest, {
     DB: db,
     WEB_SESSION_SECRET: "web-session-secret",
   });
@@ -1637,7 +1964,7 @@ test("POST /web/auth/import-users imports bcrypt users and login works", async (
       password: "StrongPass#2026",
     }),
   });
-  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1664,7 +1991,7 @@ test("POST /web/auth/import-users imports bcrypt users and login works", async (
       ],
     }),
   });
-  const importResponse = await worker.fetch(importRequest, {
+  const importResponse = await workerFetch(importRequest, {
     DB: db,
     WEB_SESSION_SECRET: "web-session-secret",
   });
@@ -1682,7 +2009,7 @@ test("POST /web/auth/import-users imports bcrypt users and login works", async (
       password: "DesktopUser#2026",
     }),
   });
-  const loginResponse = await worker.fetch(loginRequest, {
+  const loginResponse = await workerFetch(loginRequest, {
     DB: db,
     WEB_SESSION_SECRET: "web-session-secret",
   });
@@ -1691,6 +2018,10 @@ test("POST /web/auth/import-users imports bcrypt users and login works", async (
   assert.equal(loginResponse.status, 200);
   assert.equal(loginBody.success, true);
   assert.equal(loginBody.user.username, "desktop_admin");
+
+  const migratedUser = db.state.webUsers.find((item) => item.username === "desktop_admin");
+  assert.equal(migratedUser?.password_hash_type, "pbkdf2_sha256");
+  assert.match(String(migratedUser?.password_hash || ""), /^pbkdf2_sha256\$/);
 });
 
 test("POST /web/auth/login requires username in payload", async () => {
@@ -1700,7 +2031,7 @@ test("POST /web/auth/login requires username in payload", async () => {
     body: JSON.stringify({ password: "no-legacy-mode" }),
   });
 
-  const response = await worker.fetch(request, {
+  const response = await workerFetch(request, {
     DB: createMockDB(),
     WEB_SESSION_SECRET: "web-session-secret",
   });
@@ -1717,7 +2048,7 @@ test("GET /web/installations rejects request without Bearer token", async () => 
     method: "GET",
   });
 
-  const response = await worker.fetch(request, {
+  const response = await workerFetch(request, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1741,7 +2072,7 @@ test("POST /web/auth/login rejects wrong password", async () => {
       password: "StrongPass#2026",
     }),
   });
-  const bootstrapResponse = await worker.fetch(bootstrapRequest, {
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1757,7 +2088,7 @@ test("POST /web/auth/login rejects wrong password", async () => {
     }),
   });
 
-  const response = await worker.fetch(request, {
+  const response = await workerFetch(request, {
     DB: db,
     WEB_LOGIN_PASSWORD: "web-pass",
     WEB_SESSION_SECRET: "web-session-secret",
@@ -1767,6 +2098,143 @@ test("POST /web/auth/login rejects wrong password", async () => {
   assert.equal(response.status, 401);
   assert.equal(body.success, false);
   assert.match(body.error.message, /credenciales/i);
+});
+
+test("POST /web/auth/login rate limits repeated failed attempts with RATE_LIMIT_KV", async () => {
+  const db = createMockDB();
+  const rateLimitKv = createMockKV();
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+    RATE_LIMIT_KV: rateLimitKv,
+  });
+  assert.equal(bootstrapResponse.status, 201);
+
+  const requestPayload = JSON.stringify({
+    username: "admin_root",
+    password: "WrongPassword#2026",
+  });
+  const requestHeaders = {
+    "Content-Type": "application/json",
+    "CF-Connecting-IP": "198.51.100.10",
+  };
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const loginRequest = new Request("https://worker.example/web/auth/login", {
+      method: "POST",
+      headers: requestHeaders,
+      body: requestPayload,
+    });
+    const loginResponse = await workerFetch(loginRequest, {
+      DB: db,
+      WEB_LOGIN_PASSWORD: "web-pass",
+      WEB_SESSION_SECRET: "web-session-secret",
+      RATE_LIMIT_KV: rateLimitKv,
+    });
+    assert.equal(loginResponse.status, 401);
+  }
+
+  const blockedRequest = new Request("https://worker.example/web/auth/login", {
+    method: "POST",
+    headers: requestHeaders,
+    body: requestPayload,
+  });
+  const blockedResponse = await workerFetch(blockedRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+    RATE_LIMIT_KV: rateLimitKv,
+  });
+  const blockedBody = await blockedResponse.json();
+
+  assert.equal(blockedResponse.status, 429);
+  assert.equal(blockedBody.success, false);
+  assert.match(blockedBody.error.message, /demasiados intentos/i);
+  assert.equal(
+    await rateLimitKv.get("web_login_attempts:198.51.100.10:admin_root"),
+    "5",
+  );
+
+  const ttlCall = rateLimitKv.calls.find(
+    (entry) => entry.op === "put" && entry.key === "web_login_attempts:198.51.100.10:admin_root",
+  );
+  assert.equal(ttlCall?.options?.expirationTtl, 900);
+});
+
+test("POST /web/auth/login clears RATE_LIMIT_KV counter after successful login", async () => {
+  const db = createMockDB();
+  const rateLimitKv = createMockKV();
+  const env = {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+    RATE_LIMIT_KV: rateLimitKv,
+  };
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await workerFetch(bootstrapRequest, env);
+  assert.equal(bootstrapResponse.status, 201);
+
+  const failedRequest = new Request("https://worker.example/web/auth/login", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "CF-Connecting-IP": "198.51.100.10",
+    },
+    body: JSON.stringify({
+      username: "admin_root",
+      password: "WrongPassword#2026",
+    }),
+  });
+  const failedResponse = await workerFetch(failedRequest, env);
+  assert.equal(failedResponse.status, 401);
+  assert.equal(
+    await rateLimitKv.get("web_login_attempts:198.51.100.10:admin_root"),
+    "1",
+  );
+
+  const successfulRequest = new Request("https://worker.example/web/auth/login", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "CF-Connecting-IP": "198.51.100.10",
+    },
+    body: JSON.stringify({
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const successfulResponse = await workerFetch(successfulRequest, env);
+  assert.equal(successfulResponse.status, 200);
+  assert.equal(
+    await rateLimitKv.get("web_login_attempts:198.51.100.10:admin_root"),
+    null,
+  );
+  assert.equal(
+    rateLimitKv.calls.some(
+      (entry) => entry.op === "delete" && entry.key === "web_login_attempts:198.51.100.10:admin_root",
+    ),
+    true,
+  );
 });
 
 test("accepts signed requests when auth secrets are configured", async () => {
@@ -1791,7 +2259,7 @@ test("accepts signed requests when auth secrets are configured", async () => {
     },
   });
 
-  const response = await worker.fetch(request, {
+  const response = await workerFetch(request, {
     DB: db,
     API_TOKEN: "token-123",
     API_SECRET: "secret-abc",

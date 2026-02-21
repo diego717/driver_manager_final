@@ -1,6 +1,5 @@
 import tempfile
 import unittest
-from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -62,36 +61,34 @@ class TestCloudflareR2Manager(unittest.TestCase):
         self.assertEqual(kwargs["Key"], "manifest.json")
         self.assertIn('"drivers": []', kwargs["Body"])
 
-    def test_list_drivers_adds_metadata_and_keeps_missing_entries(self):
+    def test_list_drivers_reads_metadata_from_manifest_without_head_requests(self):
         manager = self._new_manager()
         manager._get_manifest = MagicMock(
             return_value={
                 "drivers": [
-                    {"brand": "Zebra", "version": "1.2.3", "key": "drivers/z/1/setup.exe"},
-                    {"brand": "Magicard", "version": "2.0.0", "key": "drivers/m/2/setup.exe"},
+                    {
+                        "brand": "Zebra",
+                        "version": "1.2.3",
+                        "key": "drivers/z/1/setup.exe",
+                        "size_bytes": 1048576,
+                    },
+                    {
+                        "brand": "Magicard",
+                        "version": "2.0.0",
+                        "key": "drivers/m/2/setup.exe",
+                        "uploaded": "2026-02-13T10:00:00",
+                    },
                 ]
             }
         )
-
-        def head_object_side_effect(Bucket, Key):
-            if Key == "drivers/z/1/setup.exe":
-                return {
-                    "ContentLength": 1048576,
-                    "LastModified": datetime(2026, 2, 13, 10, 0, 0),
-                }
-            raise ClientError(
-                {"Error": {"Code": "404", "Message": "Not Found"}},
-                "HeadObject",
-            )
-
-        manager.s3_client.head_object.side_effect = head_object_side_effect
 
         drivers = manager.list_drivers()
 
         self.assertEqual(len(drivers), 2)
         self.assertEqual(drivers[0]["size_mb"], 1.0)
-        self.assertIn("last_modified", drivers[0])
+        self.assertEqual(drivers[1]["last_modified"], "2026-02-13 10:00:00")
         self.assertEqual(drivers[1]["brand"], "Magicard")
+        manager.s3_client.head_object.assert_not_called()
 
     @patch("managers.cloud_manager.os.path.getsize", return_value=100)
     def test_upload_driver_updates_manifest_and_reports_progress(self, _mock_getsize):
@@ -130,6 +127,10 @@ class TestCloudflareR2Manager(unittest.TestCase):
         self.assertIn("keep/key.exe", keys)
         self.assertIn("drivers/Zebra/1.2.3/new_driver.exe", keys)
         self.assertNotIn("old/key.exe", keys)
+        uploaded_driver = next(d for d in manifest["drivers"] if d["key"] == "drivers/Zebra/1.2.3/new_driver.exe")
+        self.assertEqual(uploaded_driver["size_bytes"], 100)
+        self.assertAlmostEqual(uploaded_driver["size_mb"], 0.0, places=2)
+        self.assertIn("last_modified", uploaded_driver)
 
     def test_download_driver_downloads_file_and_reports_progress(self):
         manager = self._new_manager()

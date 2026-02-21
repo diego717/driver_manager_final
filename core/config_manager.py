@@ -30,6 +30,38 @@ logger = get_logger()
 MASTER_PASSWORD_ENV = "DRIVER_MANAGER_MASTER_PASSWORD"
 LEGACY_MASTER_PASSWORD_ENV = "DRIVER_MANAGER_LEGACY_MASTER_PASSWORD"
 
+
+class SecureString:
+    """
+    Wrapper mutable para datos sensibles en memoria.
+    """
+
+    def __init__(self, value=""):
+        self._data = bytearray()
+        if value:
+            self.set(value)
+
+    def set(self, value):
+        self.clear()
+        if value:
+            self._data = bytearray(str(value).encode("utf-8"))
+
+    def get(self):
+        if not self._data:
+            return None
+        return self._data.decode("utf-8")
+
+    def clear(self):
+        for i in range(len(self._data)):
+            self._data[i] = 0
+        self._data = bytearray()
+
+    def __bool__(self):
+        return bool(self._data)
+
+    def __del__(self):
+        self.clear()
+
 class ConfigManager:
     def __init__(self, main_window):
         self.main = main_window
@@ -53,22 +85,78 @@ class ConfigManager:
         self.portable_json_path = self.base_path / "portable_config.json"
         
         # Componentes
-        self.security = SecurityManager() 
-        self.master_password = os.getenv(MASTER_PASSWORD_ENV)
+        self.security = SecurityManager()
         self.password_vault = MasterPasswordVault()
-        self._vault_password_cache = None
+        self._secure_master_password = None
+        self._secure_vault_password_cache = None
         self._vault_password_loaded = False
         self._config_loaded = False
         self._applying_portable = False
 
+        env_master_password = os.getenv(MASTER_PASSWORD_ENV)
+        if env_master_password:
+            self._set_master_password(env_master_password)
+
+    def _set_master_password(self, password):
+        """Guardar contraseña maestra en buffer mutable."""
+        if not password:
+            self._clear_master_password()
+            return
+        if self._secure_master_password is None:
+            self._secure_master_password = SecureString(password)
+            return
+        self._secure_master_password.set(password)
+
+    def _get_master_password(self):
+        """Obtener contraseña maestra como string temporal."""
+        if not self._secure_master_password:
+            return None
+        return self._secure_master_password.get()
+
+    def _clear_master_password(self):
+        if self._secure_master_password:
+            self._secure_master_password.clear()
+        self._secure_master_password = None
+
+    def _set_vault_password_cache(self, password):
+        """Guardar cache del vault en buffer mutable."""
+        if not password:
+            self._clear_vault_password_cache()
+            return
+        if self._secure_vault_password_cache is None:
+            self._secure_vault_password_cache = SecureString(password)
+            return
+        self._secure_vault_password_cache.set(password)
+
+    def _get_vault_password_cache(self):
+        if not self._secure_vault_password_cache:
+            return None
+        return self._secure_vault_password_cache.get()
+
+    def _clear_vault_password_cache(self):
+        if self._secure_vault_password_cache:
+            self._secure_vault_password_cache.clear()
+        self._secure_vault_password_cache = None
+
+    def _clear_sensitive_caches(self):
+        self._clear_master_password()
+        self._clear_vault_password_cache()
+
+    def __del__(self):
+        try:
+            self._clear_sensitive_caches()
+        except Exception:
+            pass
+
     def _get_password_candidates(self):
         """Construir lista de contraseñas candidatas sin duplicados."""
         candidates = []
+        master_password = self._get_master_password()
         env_password = os.getenv(MASTER_PASSWORD_ENV)
         legacy_env_password = os.getenv(LEGACY_MASTER_PASSWORD_ENV)
         vault_password = self._get_vault_password()
 
-        for candidate in [self.master_password, env_password, legacy_env_password, vault_password]:
+        for candidate in [master_password, env_password, legacy_env_password, vault_password]:
             if candidate and candidate not in candidates:
                 candidates.append(candidate)
 
@@ -77,24 +165,24 @@ class ConfigManager:
     def _get_vault_password(self):
         """Obtener contraseña guardada localmente (si existe)."""
         if self._vault_password_loaded:
-            return self._vault_password_cache
+            return self._get_vault_password_cache()
 
-        self._vault_password_cache = self.password_vault.load_password()
+        self._set_vault_password_cache(self.password_vault.load_password())
         self._vault_password_loaded = True
-        return self._vault_password_cache
+        return self._get_vault_password_cache()
 
     def _save_vault_password(self, password):
         """Guardar contraseña maestra en almacenamiento seguro local."""
         if not password:
             return
         if self.password_vault.save_password(password):
-            self._vault_password_cache = password
+            self._set_vault_password_cache(password)
             self._vault_password_loaded = True
 
     def _clear_vault_password(self):
         """Eliminar contraseña maestra local guardada en vault."""
         self.password_vault.clear_password()
-        self._vault_password_cache = None
+        self._clear_vault_password_cache()
         self._vault_password_loaded = True
 
     def _apply_vault_preference(self, password, remember_choice):
@@ -129,7 +217,7 @@ class ConfigManager:
             self.encrypted_config_file
         )
         if migrated:
-            self.master_password = target_password
+            self._set_master_password(target_password)
             logger.info("Migracion de clave maestra completada usando variable de entorno.")
         else:
             logger.warning("No se pudo migrar config.enc a la nueva clave maestra.")
@@ -143,7 +231,7 @@ class ConfigManager:
             return_metadata=True,
         )
         if password:
-            self.master_password = password
+            self._set_master_password(password)
         return password, remember_choice
 
     @handle_errors("load_config_data", reraise=False, default_return=None)
@@ -176,8 +264,8 @@ class ConfigManager:
                     config = self.security.decrypt_config_file(pwd, self.encrypted_config_file)
                     if config:
                         self._migrate_master_password_if_needed(config, pwd)
-                        if not self.master_password:
-                            self.master_password = pwd
+                        if not self._get_master_password():
+                            self._set_master_password(pwd)
                         self._config_loaded = True
                         logger.info("✅ Configuración cargada desde 'config.enc' en USB.")
                         return config
@@ -219,23 +307,27 @@ class ConfigManager:
         remember_choice = None
         
         # DETERMINAR CONTRASEÑA DE CIFRADO
-        if not self.master_password:
+        if not self._get_master_password():
             env_password = os.getenv(MASTER_PASSWORD_ENV)
             if env_password:
-                self.master_password = env_password
+                self._set_master_password(env_password)
 
-        if not self.master_password:
+        if not self._get_master_password():
             password, remember_choice = self._request_master_password(
                 is_first_time=not self.encrypted_config_file.exists()
             )
             if not password:
                 return False
-            self.master_password = password
+            self._set_master_password(password)
         
-        success = self.security.encrypt_config_file(config, self.master_password, self.encrypted_config_file)
+        success = self.security.encrypt_config_file(
+            config,
+            self._get_master_password(),
+            self.encrypted_config_file,
+        )
         
         if success:
-            self._apply_vault_preference(self.master_password, remember_choice)
+            self._apply_vault_preference(self._get_master_password(), remember_choice)
             self._config_loaded = True
             logger.info(f"✅ Guardado exitoso en: {self.encrypted_config_file}")
             if self.config_file.exists():

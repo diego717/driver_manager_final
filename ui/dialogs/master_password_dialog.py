@@ -15,6 +15,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from core.password_policy import PasswordPolicy
+
 
 class MasterPasswordDialog(QDialog):
     """Dialog used to unlock/create the master password."""
@@ -111,7 +113,9 @@ class MasterPasswordDialog(QDialog):
 
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setPlaceholderText("Minimo 8 caracteres...")
+        self.password_input.setPlaceholderText(
+            f"Minimo {PasswordPolicy.MIN_LENGTH} caracteres con complejidad..."
+        )
         self.password_input.returnPressed.connect(self.accept_password)
         layout.addWidget(self.password_input)
 
@@ -178,11 +182,16 @@ class MasterPasswordDialog(QDialog):
 
     def accept_password(self):
         password = self.password_input.text()
-        if len(password) < 8:
-            QMessageBox.warning(self, "Contrasena debil", "La contrasena debe tener al menos 8 caracteres.")
+        if not password:
+            QMessageBox.warning(self, "Error", "Ingresa la contrasena maestra.")
             return
 
         if self.is_first_time:
+            is_valid, message = PasswordPolicy.validate(password)
+            if not is_valid:
+                QMessageBox.warning(self, "Contrasena debil", message)
+                return
+
             confirm = self.confirm_input.text()
             if password != confirm:
                 QMessageBox.warning(self, "Error", "Las contrasenas no coinciden.")

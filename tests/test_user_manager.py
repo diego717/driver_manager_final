@@ -234,6 +234,72 @@ class TestUserManagerV2(unittest.TestCase):
 
         self.assertIn("administrador", users_data["users"])
 
+    def test_log_access_uses_audit_api_when_available(self):
+        cloud = MagicMock()
+        security = MagicMock()
+        audit_api = MagicMock()
+        manager = UserManagerV2(
+            cloud_manager=cloud,
+            security_manager=security,
+            local_mode=False,
+            audit_api_client=audit_api,
+        )
+
+        manager._log_access("login_success", "admin_root", True, {"role": "super_admin"})
+
+        audit_api._make_request.assert_called_once()
+        args, kwargs = audit_api._make_request.call_args
+        self.assertEqual(args[0], "post")
+        self.assertEqual(args[1], "audit-logs")
+        self.assertEqual(kwargs["json"]["action"], "login_success")
+        cloud.download_file_content.assert_not_called()
+        cloud.upload_file_content.assert_not_called()
+
+    def test_get_access_logs_reads_from_audit_api_and_normalizes_payload(self):
+        cloud = MagicMock()
+        security = MagicMock()
+        audit_api = MagicMock()
+        audit_api._make_request.return_value = [
+            {
+                "id": 2,
+                "timestamp": "2026-08-02T10:00:00",
+                "action": "login_success",
+                "username": "admin",
+                "success": 1,
+                "details": "{\"ip\":\"10.0.0.10\"}",
+                "computer_name": "PC-02",
+                "ip_address": "10.0.0.10",
+                "platform": "Windows",
+            },
+            {
+                "id": 1,
+                "timestamp": "2026-08-01T10:00:00",
+                "action": "login_failed",
+                "username": "admin",
+                "success": 0,
+                "details": "{}",
+                "computer_name": "PC-02",
+                "ip_address": "10.0.0.10",
+                "platform": "Windows",
+            },
+        ]
+        manager = UserManagerV2(
+            cloud_manager=cloud,
+            security_manager=security,
+            local_mode=False,
+            audit_api_client=audit_api,
+        )
+        manager.current_user = {"username": "admin", "role": "super_admin"}
+
+        logs = manager.get_access_logs(limit=100)
+
+        self.assertEqual(len(logs), 2)
+        # Se devuelve en orden ASC para mantener compatibilidad con la UI.
+        self.assertEqual(logs[0]["action"], "login_failed")
+        self.assertEqual(logs[1]["action"], "login_success")
+        self.assertEqual(logs[1]["details"]["ip"], "10.0.0.10")
+        self.assertTrue(logs[1]["success"])
+
 
 if __name__ == "__main__":
     unittest.main()

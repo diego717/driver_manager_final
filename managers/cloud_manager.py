@@ -131,27 +131,32 @@ class CloudflareR2Manager:
         """
         logger.operation_start("list_drivers")
         manifest = self._get_manifest()
-        
-        # Obtener información adicional de cada driver
+
+        # Leer metadata desde manifest para evitar N+1 requests (head_object por driver).
         drivers = []
         for driver_info in manifest.get('drivers', []):
+            normalized = dict(driver_info or {})
+
+            size_bytes = normalized.get('size_bytes')
             try:
-                # Obtener metadata del archivo
-                response = self.s3_client.head_object(
-                    Bucket=self.bucket_name,
-                    Key=driver_info['key']
-                )
-                
-                driver_info['size_bytes'] = response['ContentLength']
-                driver_info['size_mb'] = round(response['ContentLength'] / (1024 * 1024), 2)
-                driver_info['last_modified'] = response['LastModified'].strftime('%Y-%m-%d %H:%M:%S')
-                
-                drivers.append(driver_info)
-            except ClientError as e:
-                logger.warning(f"No se pudo obtener metadata para {driver_info.get('key')}: {e.response['Error']['Message']}. El driver podría estar corrupto o eliminado.",
-                               details={'key': driver_info.get('key')})
-                # Agregar sin metadata adicional
-                drivers.append(driver_info)
+                if size_bytes is not None:
+                    size_bytes = max(0, int(size_bytes))
+                    normalized['size_bytes'] = size_bytes
+                    if normalized.get('size_mb') in (None, ''):
+                        normalized['size_mb'] = round(size_bytes / (1024 * 1024), 2)
+            except (TypeError, ValueError):
+                normalized.pop('size_bytes', None)
+
+            if not normalized.get('last_modified'):
+                uploaded = normalized.get('uploaded')
+                if uploaded:
+                    try:
+                        parsed = datetime.fromisoformat(str(uploaded).replace('Z', '+00:00'))
+                        normalized['last_modified'] = parsed.strftime('%Y-%m-%d %H:%M:%S')
+                    except ValueError:
+                        normalized['last_modified'] = str(uploaded)
+
+            drivers.append(normalized)
         
         logger.operation_end("list_drivers", success=True, count=len(drivers))
         return drivers
@@ -198,6 +203,8 @@ class CloudflareR2Manager:
             if not (d['brand'] == brand and d['version'] == version)
         ]
         
+        uploaded_at = datetime.now()
+
         # Agregar nuevo driver
         driver_entry = {
             "brand": brand,
@@ -205,7 +212,10 @@ class CloudflareR2Manager:
             "description": description,
             "key": driver_key,
             "filename": file_name,
-            "uploaded": datetime.now().isoformat()
+            "uploaded": uploaded_at.isoformat(),
+            "last_modified": uploaded_at.strftime('%Y-%m-%d %H:%M:%S'),
+            "size_bytes": file_size,
+            "size_mb": round(file_size / (1024 * 1024), 2),
         }
         
         manifest['drivers'].append(driver_entry)

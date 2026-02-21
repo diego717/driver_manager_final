@@ -4,7 +4,10 @@ const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 const ALLOWED_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const AUTH_WINDOW_SECONDS = 300;
 const WEB_ACCESS_TTL_SECONDS = 8 * 60 * 60;
-const WEB_PASSWORD_MIN_LENGTH = 10;
+const WEB_LOGIN_RATE_LIMIT_MAX_ATTEMPTS = 5;
+const WEB_LOGIN_RATE_LIMIT_LOCKOUT_SECONDS = 15 * 60;
+const WEB_PASSWORD_MIN_LENGTH = 12;
+const WEB_PASSWORD_SPECIAL_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?";
 const WEB_PASSWORD_PBKDF2_ITERATIONS = 100000;
 const WEB_PASSWORD_KEY_LENGTH_BYTES = 32;
 const WEB_USERNAME_PATTERN = /^[a-z0-9._-]{3,64}$/;
@@ -91,6 +94,85 @@ function normalizeOptionalString(value, fallback = "") {
 
 function normalizeWebUsername(value) {
   return normalizeOptionalString(value, "").toLowerCase();
+}
+
+function containsAnyChar(input, allowedChars) {
+  for (let i = 0; i < input.length; i += 1) {
+    if (allowedChars.includes(input[i])) return true;
+  }
+  return false;
+}
+
+function normalizeRateLimitCounter(value) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return 0;
+  }
+  return parsed;
+}
+
+function getRateLimitKv(env) {
+  const kv = env.RATE_LIMIT_KV;
+  if (!kv) return null;
+  if (
+    typeof kv.get !== "function" ||
+    typeof kv.put !== "function" ||
+    typeof kv.delete !== "function"
+  ) {
+    return null;
+  }
+  return kv;
+}
+
+function getClientIpForRateLimit(request) {
+  const cfIp = normalizeOptionalString(request.headers.get("CF-Connecting-IP"), "");
+  if (cfIp) return cfIp;
+
+  const forwardedFor = normalizeOptionalString(request.headers.get("X-Forwarded-For"), "");
+  if (forwardedFor) {
+    const first = forwardedFor.split(",", 1)[0]?.trim();
+    if (first) return first;
+  }
+
+  return "unknown";
+}
+
+function buildWebLoginRateLimitKey(identifier) {
+  return `web_login_attempts:${identifier}`;
+}
+
+function buildWebLoginRateLimitIdentifier(request, username) {
+  return `${getClientIpForRateLimit(request)}:${normalizeWebUsername(username)}`;
+}
+
+async function checkWebLoginRateLimit(env, identifier) {
+  const kv = getRateLimitKv(env);
+  if (!kv) return;
+
+  const key = buildWebLoginRateLimitKey(identifier);
+  const attempts = normalizeRateLimitCounter(await kv.get(key));
+  if (attempts >= WEB_LOGIN_RATE_LIMIT_MAX_ATTEMPTS) {
+    throw new HttpError(429, "Demasiados intentos fallidos. Intenta en 15 minutos.");
+  }
+}
+
+async function recordFailedWebLoginAttempt(env, identifier) {
+  const kv = getRateLimitKv(env);
+  if (!kv) return;
+
+  const key = buildWebLoginRateLimitKey(identifier);
+  const currentAttempts = normalizeRateLimitCounter(await kv.get(key));
+  await kv.put(key, String(currentAttempts + 1), {
+    expirationTtl: WEB_LOGIN_RATE_LIMIT_LOCKOUT_SECONDS,
+  });
+}
+
+async function clearWebLoginRateLimit(env, identifier) {
+  const kv = getRateLimitKv(env);
+  if (!kv) return;
+
+  const key = buildWebLoginRateLimitKey(identifier);
+  await kv.delete(key);
 }
 
 function normalizeNonNegativeInteger(value, fallback = 0) {
@@ -255,11 +337,15 @@ async function hmacSha256Hex(secret, message) {
 
 function timingSafeEqual(a, b) {
   if (typeof a !== "string" || typeof b !== "string") return false;
-  if (a.length !== b.length) return false;
 
-  let mismatch = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  // Evitar salida temprana por longitud para reducir leaks por timing.
+  const maxLen = Math.max(a.length, b.length);
+  const paddedA = a.padEnd(maxLen, "\0");
+  const paddedB = b.padEnd(maxLen, "\0");
+
+  let mismatch = a.length !== b.length ? 1 : 0;
+  for (let i = 0; i < maxLen; i += 1) {
+    mismatch |= paddedA.charCodeAt(i) ^ paddedB.charCodeAt(i);
   }
   return mismatch === 0;
 }
@@ -363,12 +449,28 @@ function validateWebUsername(usernameRaw) {
 
 function validateWebPassword(passwordRaw, fieldName = "password") {
   const password = normalizeOptionalString(passwordRaw, "");
+  const errors = [];
+
   if (password.length < WEB_PASSWORD_MIN_LENGTH) {
-    throw new HttpError(
-      400,
-      `Campo '${fieldName}' invalido. Debe tener al menos ${WEB_PASSWORD_MIN_LENGTH} caracteres.`,
-    );
+    errors.push(`Debe tener al menos ${WEB_PASSWORD_MIN_LENGTH} caracteres.`);
   }
+  if (!/[A-Z]/.test(password)) {
+    errors.push("Debe contener al menos una letra mayuscula.");
+  }
+  if (!/[a-z]/.test(password)) {
+    errors.push("Debe contener al menos una letra minuscula.");
+  }
+  if (!/\d/.test(password)) {
+    errors.push("Debe contener al menos un numero.");
+  }
+  if (!containsAnyChar(password, WEB_PASSWORD_SPECIAL_CHARS)) {
+    errors.push("Debe contener al menos un caracter especial.");
+  }
+
+  if (errors.length > 0) {
+    throw new HttpError(400, `Campo '${fieldName}' invalido. ${errors.join(" ")}`);
+  }
+
   return password;
 }
 
@@ -456,11 +558,11 @@ async function verifyLegacyPbkdf2HexPassword(password, storedHashRaw) {
   return timingSafeEqual(candidateHex, expectedKeyHex);
 }
 
-function verifyBcryptPassword(password, storedHashRaw) {
+async function verifyBcryptPassword(password, storedHashRaw) {
   const storedHash = normalizeOptionalString(storedHashRaw, "");
   if (!storedHash) return false;
   try {
-    return bcrypt.compareSync(password, storedHash);
+    return await bcrypt.compare(password, storedHash);
   } catch {
     return false;
   }
@@ -698,6 +800,22 @@ async function touchWebUserLastLogin(env, userId) {
   }
 }
 
+async function migrateWebUserPasswordHashToPbkdf2(env, { userId, password }) {
+  const now = nowIso();
+  const passwordHash = await hashWebPassword(password);
+  try {
+    await env.DB.prepare(`
+      UPDATE web_users
+      SET password_hash = ?, password_hash_type = ?, updated_at = ?
+      WHERE id = ?
+    `)
+      .bind(passwordHash, WEB_HASH_TYPE_PBKDF2, now, userId)
+      .run();
+  } catch (error) {
+    ensureWebUsersTableAvailable(error);
+  }
+}
+
 async function updateWebUserRoleAndStatus(env, { userId, role, isActive }) {
   const now = nowIso();
   try {
@@ -815,13 +933,23 @@ async function authenticateWebUserByCredentials(env, { username, password }) {
     throw new HttpError(403, "Usuario web inactivo.");
   }
 
+  const hashType = normalizeWebHashType(user.password_hash_type, user.password_hash);
   const validPassword = await verifyWebPassword(
     password,
     user.password_hash,
-    user.password_hash_type,
+    hashType,
   );
   if (!validPassword) {
     throw new HttpError(401, "Credenciales web invalidas.");
+  }
+
+  // Migrar hashes legacy bcrypt a PBKDF2 al primer login exitoso.
+  if (hashType === WEB_HASH_TYPE_BCRYPT) {
+    await migrateWebUserPasswordHashToPbkdf2(env, {
+      userId: Number(user.id),
+      password,
+    });
+    user.password_hash_type = WEB_HASH_TYPE_PBKDF2;
   }
 
   await touchWebUserLastLogin(env, Number(user.id));
@@ -853,11 +981,26 @@ async function handleWebAuthRoute(request, env, pathParts) {
       throw new HttpError(400, "Campo 'username' es obligatorio.");
     }
 
+    const username = validateWebUsername(providedUsername);
+    const rateLimitIdentifier = buildWebLoginRateLimitIdentifier(request, username);
+
     ensureDbBinding(env);
-    const user = await authenticateWebUserByCredentials(env, {
-      username: validateWebUsername(providedUsername),
-      password: providedPassword,
-    });
+    await checkWebLoginRateLimit(env, rateLimitIdentifier);
+
+    let user = null;
+    try {
+      user = await authenticateWebUserByCredentials(env, {
+        username,
+        password: providedPassword,
+      });
+    } catch (error) {
+      if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
+        await recordFailedWebLoginAttempt(env, rateLimitIdentifier);
+      }
+      throw error;
+    }
+
+    await clearWebLoginRateLimit(env, rateLimitIdentifier);
     const token = await buildWebAccessToken(env, {
       username: user.username,
       role: user.role,
@@ -1150,9 +1293,12 @@ async function verifyAuth(request, env, url) {
   const expectedToken = env.API_TOKEN;
   const expectedSecret = env.API_SECRET;
 
-  // Modo desarrollo: si no hay secretos configurados, no exigir auth.
+  // Nunca permitir acceso sin credenciales de API configuradas.
   if (!expectedToken || !expectedSecret) {
-    return;
+    throw new HttpError(
+      503,
+      "API no configurada correctamente. Define API_TOKEN y API_SECRET.",
+    );
   }
 
   const token = request.headers.get("X-API-Token");
@@ -1261,6 +1407,8 @@ export default {
             web_import_users: "/web/auth/import-users",
             installations: "/installations",
             web_installations: "/web/installations",
+            audit_logs: "/audit-logs",
+            web_audit_logs: "/web/audit-logs",
           },
         });
       }
@@ -1318,6 +1466,63 @@ export default {
             .run();
 
           return jsonResponse({ success: true }, 201);
+        }
+      }
+
+      if (routeParts.length === 1 && routeParts[0] === "audit-logs") {
+        if (request.method === "POST") {
+          const data = await request.json();
+
+          const action = normalizeOptionalString(data?.action, "");
+          const username = normalizeOptionalString(data?.username, "");
+
+          if (!action) {
+            throw new HttpError(400, "Campo 'action' es obligatorio.");
+          }
+          if (!username) {
+            throw new HttpError(400, "Campo 'username' es obligatorio.");
+          }
+
+          const rawDetails =
+            data && typeof data.details === "object" && data.details !== null ? data.details : {};
+          const detailsJson = JSON.stringify(rawDetails);
+
+          await env.DB.prepare(`
+            INSERT INTO audit_logs
+              (timestamp, action, username, success, details, computer_name, ip_address, platform)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `)
+            .bind(
+              normalizeOptionalString(data.timestamp, nowIso()),
+              action,
+              username,
+              data?.success ? 1 : 0,
+              detailsJson,
+              normalizeOptionalString(data?.computer_name, ""),
+              normalizeOptionalString(data?.ip_address, ""),
+              normalizeOptionalString(data?.platform, ""),
+            )
+            .run();
+
+          return jsonResponse({ success: true }, 201);
+        }
+
+        if (request.method === "GET") {
+          const limit = Math.min(
+            parseOptionalPositiveInt(url.searchParams.get("limit"), "limit") || 100,
+            500,
+          );
+
+          const { results } = await env.DB.prepare(`
+            SELECT id, timestamp, action, username, success, details, computer_name, ip_address, platform
+            FROM audit_logs
+            ORDER BY timestamp DESC, id DESC
+            LIMIT ?
+          `)
+            .bind(limit)
+            .all();
+
+          return jsonResponse(results || []);
         }
       }
 
@@ -1600,6 +1805,21 @@ export default {
       if (routeParts.length === 2 && routeParts[0] === "installations") {
         const recordId = routeParts[1];
 
+        if (request.method === "GET") {
+          const installationId = parsePositiveInt(recordId, "id");
+          const { results } = await env.DB.prepare(
+            "SELECT * FROM installations WHERE id = ? LIMIT 1",
+          )
+            .bind(installationId)
+            .all();
+
+          if (!results?.length) {
+            throw new HttpError(404, "Registro no encontrado.");
+          }
+
+          return jsonResponse(results[0]);
+        }
+
         if (request.method === "PUT") {
           const data = await request.json();
           await env.DB.prepare(`
@@ -1624,11 +1844,87 @@ export default {
       }
 
       if (routeParts.length === 1 && routeParts[0] === "statistics") {
-        const { results } = await env.DB.prepare(
-          "SELECT * FROM installations ORDER BY timestamp DESC",
-        ).all();
-        const filtered = applyInstallationFilters(results, url.searchParams);
-        return jsonResponse(computeStatistics(filtered));
+        const startDate = parseDateOrNull(url.searchParams.get("start_date"));
+        const endDate = parseDateOrNull(url.searchParams.get("end_date"));
+        const startFilter = startDate ? startDate.toISOString() : null;
+        const endFilter = endDate ? endDate.toISOString() : null;
+
+        const { results: totalsRows } = await env.DB.prepare(`
+          SELECT
+            COUNT(*) AS total_installations,
+            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_installations,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_installations,
+            ROUND(
+              100.0 * SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0),
+              2
+            ) AS success_rate,
+            ROUND(
+              AVG(CASE WHEN installation_time_seconds > 0 THEN installation_time_seconds END) / 60.0,
+              2
+            ) AS average_time_minutes,
+            COUNT(DISTINCT NULLIF(TRIM(client_name), '')) AS unique_clients
+          FROM installations
+          WHERE (? IS NULL OR timestamp >= ?)
+            AND (? IS NULL OR timestamp < ?)
+        `)
+          .bind(startFilter, startFilter, endFilter, endFilter)
+          .all();
+
+        const { results: byBrandRows } = await env.DB.prepare(`
+          SELECT driver_brand AS brand, COUNT(*) AS count
+          FROM installations
+          WHERE (? IS NULL OR timestamp >= ?)
+            AND (? IS NULL OR timestamp < ?)
+            AND NULLIF(TRIM(driver_brand), '') IS NOT NULL
+          GROUP BY driver_brand
+          ORDER BY count DESC
+        `)
+          .bind(startFilter, startFilter, endFilter, endFilter)
+          .all();
+
+        const { results: topDriverRows } = await env.DB.prepare(`
+          SELECT TRIM(driver_brand) AS brand, TRIM(driver_version) AS version, COUNT(*) AS count
+          FROM installations
+          WHERE (? IS NULL OR timestamp >= ?)
+            AND (? IS NULL OR timestamp < ?)
+            AND NULLIF(TRIM(driver_brand || ' ' || driver_version), '') IS NOT NULL
+          GROUP BY TRIM(driver_brand), TRIM(driver_version)
+          ORDER BY count DESC
+        `)
+          .bind(startFilter, startFilter, endFilter, endFilter)
+          .all();
+
+        const totals = totalsRows?.[0] || {};
+        const byBrand = {};
+        for (const row of byBrandRows || []) {
+          const brand = normalizeOptionalString(row.brand, "");
+          const count = Number(row.count);
+          if (brand && Number.isFinite(count) && count > 0) {
+            byBrand[brand] = count;
+          }
+        }
+
+        const topDrivers = {};
+        for (const row of topDriverRows || []) {
+          const brand = normalizeOptionalString(row.brand, "");
+          const version = normalizeOptionalString(row.version, "");
+          const count = Number(row.count);
+          const key = `${brand} ${version}`.trim();
+          if (key && Number.isFinite(count) && count > 0) {
+            topDrivers[key] = count;
+          }
+        }
+
+        return jsonResponse({
+          total_installations: Number(totals.total_installations) || 0,
+          successful_installations: Number(totals.successful_installations) || 0,
+          failed_installations: Number(totals.failed_installations) || 0,
+          success_rate: Number(totals.success_rate) || 0,
+          average_time_minutes: Number(totals.average_time_minutes) || 0,
+          unique_clients: Number(totals.unique_clients) || 0,
+          top_drivers: topDrivers,
+          by_brand: byBrand,
+        });
       }
 
       return textResponse("Ruta no encontrada.", 404);

@@ -1,4 +1,5 @@
-﻿import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
   Alert,
@@ -65,27 +66,35 @@ export default function CreateIncidentScreen() {
     Alert.alert(title, message);
   };
 
-  const loadInstallations = async () => {
+  const loadInstallations = useCallback(async () => {
     try {
       setLoadingInstallations(true);
       const records = await listInstallations();
       setInstallations(records);
-
-      const currentId = Number.parseInt(installationId, 10);
-      const exists = records.some((item) => Number(item.id) === currentId);
-      if (!exists && records.length > 0) {
-        setInstallationId(String(records[0].id));
-      }
+      setInstallationId((current) => {
+        const currentId = Number.parseInt(current, 10);
+        const exists = records.some((item) => Number(item.id) === currentId);
+        if (!exists && records.length > 0) {
+          return String(records[0].id);
+        }
+        return current;
+      });
     } catch (error) {
       notify("Error", `No se pudo cargar instalaciones: ${extractApiError(error)}`);
     } finally {
       setLoadingInstallations(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void loadInstallations();
-  }, []);
+  }, [loadInstallations]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadInstallations();
+    }, [loadInstallations]),
+  );
 
   useEffect(() => {
     let mounted = true;

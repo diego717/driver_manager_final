@@ -168,16 +168,16 @@ class TestInstallationHistory(unittest.TestCase):
         self.assertEqual(kwargs["json"]["installation_time_seconds"], 150)
         self.assertEqual(kwargs["json"]["notes"], "nota")
 
-    @patch.object(InstallationHistory, "get_installations")
-    def test_get_installation_by_id_looks_up_from_installations_list(
-        self, mock_get_installations
+    @patch.object(InstallationHistory, "_make_request")
+    def test_get_installation_by_id_requests_direct_endpoint(
+        self, mock_make_request
     ):
-        mock_get_installations.return_value = [{"id": 99, "driver_brand": "Zebra"}]
+        mock_make_request.return_value = {"id": 99, "driver_brand": "Zebra"}
 
         result = self.history.get_installation_by_id(99)
 
         self.assertEqual(result, {"id": 99, "driver_brand": "Zebra"})
-        mock_get_installations.assert_called_once_with(limit=200)
+        mock_make_request.assert_called_once_with("get", "installations/99")
 
     @patch.object(InstallationHistory, "_make_request")
     def test_get_statistics_returns_fallback_on_error(self, mock_make_request):
@@ -277,29 +277,19 @@ class TestInstallationHistory(unittest.TestCase):
         self.assertEqual([item["id"] for item in installations], [1])
 
     @patch.object(InstallationHistory, "_make_request")
-    def test_get_statistics_with_date_filters_is_calculated_from_filtered_installations(
+    def test_get_statistics_with_date_filters_calls_worker_statistics_endpoint(
         self, mock_make_request
     ):
-        mock_make_request.return_value = [
-            {
-                "id": 1,
-                "timestamp": "2026-02-13T10:00:00",
-                "driver_brand": "Zebra",
-                "driver_version": "1.0",
-                "status": "success",
-                "installation_time_seconds": 120,
-                "client_name": "Cliente A",
-            },
-            {
-                "id": 2,
-                "timestamp": "2026-03-01T00:00:00",
-                "driver_brand": "Magicard",
-                "driver_version": "2.0",
-                "status": "failed",
-                "installation_time_seconds": 30,
-                "client_name": "Cliente B",
-            },
-        ]
+        mock_make_request.return_value = {
+            "total_installations": 1,
+            "successful_installations": 1,
+            "failed_installations": 0,
+            "success_rate": 100,
+            "average_time_minutes": 2,
+            "unique_clients": 1,
+            "top_drivers": {"Zebra 1.0": 1},
+            "by_brand": {"Zebra": 1},
+        }
 
         stats = self.history.get_statistics(
             start_date="2026-02-01T00:00:00",
@@ -310,6 +300,14 @@ class TestInstallationHistory(unittest.TestCase):
         self.assertEqual(stats["successful_installations"], 1)
         self.assertEqual(stats["failed_installations"], 0)
         self.assertEqual(stats["by_brand"], {"Zebra": 1})
+        mock_make_request.assert_called_once_with(
+            "get",
+            "statistics",
+            params={
+                "start_date": "2026-02-01T00:00:00",
+                "end_date": "2026-03-01T00:00:00",
+            },
+        )
 
 
 if __name__ == "__main__":

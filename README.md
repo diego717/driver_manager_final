@@ -110,6 +110,19 @@ npm run deploy
 
 - D1 binding: `DB`
 - R2 binding para fotos de incidencias: `INCIDENTS_BUCKET`
+- KV binding para rate limit de login web: `RATE_LIMIT_KV`
+
+Si aun no tienes el KV namespace creado:
+
+```powershell
+wrangler kv namespace create RATE_LIMIT_KV
+wrangler kv namespace create RATE_LIMIT_KV --preview
+```
+
+Luego reemplaza en `wrangler.toml`:
+
+- `REPLACE_WITH_RATE_LIMIT_KV_ID`
+- `REPLACE_WITH_RATE_LIMIT_KV_PREVIEW_ID`
 
 Para auth firmada, configura secretos del Worker:
 
@@ -118,7 +131,7 @@ wrangler secret put API_TOKEN
 wrangler secret put API_SECRET
 ```
 
-Si `API_TOKEN`/`API_SECRET` no existen, el Worker entra en modo desarrollo y no exige auth.
+Si `API_TOKEN`/`API_SECRET` no existen, el Worker responde `503` y rechaza requests protegidas.
 
 Para habilitar acceso web sin exponer `API_SECRET` en frontend:
 
@@ -149,6 +162,7 @@ Las migraciones incluidas crean:
 - `0002_incidents_v1.sql`: tablas de incidencias y fotos.
 - `0003_web_users_auth.sql`: tabla `web_users` para login web por usuario.
 - `0004_web_users_hash_types.sql`: soporte de hash tipo `pbkdf2/bcrypt/legacy`.
+- `0005_audit_logs.sql`: tabla `audit_logs` para auditoria centralizada en D1.
 
 ## Mobile app (Expo)
 
@@ -183,11 +197,14 @@ Lee `mobile-app/.env`, pide password maestra del desktop y actualiza:
 
 - `GET /health`
 - `GET /installations`
+- `GET /installations/:id`
 - `POST /installations`
 - `POST /records` (alta manual)
 - `PUT /installations/:id`
 - `DELETE /installations/:id`
 - `GET /statistics`
+- `GET /audit-logs`
+- `POST /audit-logs`
 - `GET /installations/:installationId/incidents`
 - `POST /installations/:installationId/incidents`
 - `POST /incidents/:incidentId/photos`
@@ -209,6 +226,8 @@ Endpoints web (sin HMAC en cliente):
 - `PUT /web/installations/:id`
 - `DELETE /web/installations/:id`
 - `GET /web/statistics`
+- `GET /web/audit-logs`
+- `POST /web/audit-logs`
 - `GET /web/installations/:installationId/incidents`
 - `POST /web/installations/:installationId/incidents`
 - `POST /web/incidents/:incidentId/photos`
@@ -220,7 +239,10 @@ Notas API:
 - Ventana anti-replay: 300 segundos.
 - Web token: `Authorization: Bearer <token>` emitido por `/web/auth/login` (TTL 8 horas).
 - Login web: `username + password` contra `web_users` (bootstrap inicial con `/web/auth/bootstrap`).
+- Password policy web: minimo 12 caracteres, mayuscula, minuscula, numero y caracter especial.
+- Login web rate limit: maximo 5 intentos fallidos por `IP+username` en 15 minutos (requiere `RATE_LIMIT_KV`).
 - Import de usuarios legacy: `/web/auth/import-users` acepta hashes `bcrypt`, `pbkdf2_sha256` y `legacy_pbkdf2_hex`.
+- Migracion automatica: usuarios con hash `bcrypt` se re-hashean a `pbkdf2_sha256` en login exitoso.
 - Fotos permitidas: `image/jpeg`, `image/png`, `image/webp`.
 - Limite por foto: 8 MB.
 

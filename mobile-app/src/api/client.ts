@@ -147,6 +147,9 @@ export async function signedJsonRequest<T>({
   config?: AxiosRequestConfig;
 }): Promise<T> {
   const baseURL = await resolveApiBaseUrl();
+  if (!baseURL) {
+    throw new Error("API Base URL no configurada. Ve a Configuracion y acceso.");
+  }
   const rawBody =
     data === undefined ? "" : JSON.stringify(data);
   const bodyHash = sha256HexFromString(rawBody);

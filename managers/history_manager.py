@@ -126,14 +126,13 @@ class InstallationHistory:
         Si llegan parciales desde la API, completa desde instalaciones.
         """
         normalized = self._default_statistics()
-        if isinstance(stats, dict):
-            for key in normalized.keys():
-                value = stats.get(key)
-                if value is not None:
-                    normalized[key] = value
+        stats_payload = stats if isinstance(stats, dict) else {}
+        for key in normalized.keys():
+            if key in stats_payload and stats_payload.get(key) is not None:
+                normalized[key] = stats_payload.get(key)
 
         missing_main_keys = any(
-            normalized.get(key) in (None, 0)
+            key not in stats_payload or stats_payload.get(key) is None
             for key in ['total_installations', 'successful_installations', 'failed_installations']
         )
 
@@ -141,20 +140,9 @@ class InstallationHistory:
             installations = self.get_installations(start_date=start_date, end_date=end_date)
             computed = self._compute_statistics_from_installations(installations)
 
-            for key in ['total_installations', 'successful_installations', 'failed_installations']:
-                if not normalized.get(key):
+            for key in normalized.keys():
+                if key not in stats_payload or stats_payload.get(key) is None:
                     normalized[key] = computed[key]
-
-            if not normalized.get('success_rate'):
-                normalized['success_rate'] = computed['success_rate']
-            if not normalized.get('average_time_minutes'):
-                normalized['average_time_minutes'] = computed['average_time_minutes']
-            if not normalized.get('unique_clients'):
-                normalized['unique_clients'] = computed['unique_clients']
-            if not normalized.get('top_drivers'):
-                normalized['top_drivers'] = computed['top_drivers']
-            if not normalized.get('by_brand'):
-                normalized['by_brand'] = computed['by_brand']
 
         return normalized
 
@@ -678,14 +666,12 @@ class InstallationHistory:
             dict or None: Registro de instalación
         """
         try:
-            # El Worker actual no implementa GET /installations/{id}.
-            # Buscar por ID en la lista evita errores 404 ruidosos.
-            installations = self.get_installations(limit=200)
-            for inst in installations:
-                if str(inst.get('id')) == str(record_id):
-                    return inst
-
-            logger.warning(f"Installation {record_id} not found in fetched installations list.")
+            return self._make_request('get', f'installations/{record_id}')
+        except ConnectionError as e:
+            if "HTTP 404" in str(e):
+                logger.warning(f"Installation {record_id} not found.")
+                return None
+            logger.error(f"Could not retrieve installation {record_id}: {e}")
             return None
         except Exception as e:
             logger.error(f"Could not retrieve installation {record_id}: {e}")
@@ -754,21 +740,24 @@ class InstallationHistory:
         Returns:
             dict: Estadísticas de instalaciones
         """
-        # Para periodos de fecha, calcular siempre desde instalaciones filtradas
-        # (el Worker actual puede devolver estadísticas globales).
-        if start_date or end_date:
-            installations = self.get_installations(start_date=start_date, end_date=end_date)
-            return self._compute_statistics_from_installations(installations)
-
         params = {}
+        if start_date:
+            params['start_date'] = start_date
+        if end_date:
+            params['end_date'] = end_date
         
         try:
             stats = self._make_request('get', 'statistics', params=params)
             return self._normalize_statistics(stats, start_date=start_date, end_date=end_date)
         except Exception as e:
             logger.error(f"Error retrieving statistics: {e}")
-        
-        # Fallback: devolver estructura vacía
+            try:
+                installations = self.get_installations(start_date=start_date, end_date=end_date)
+                return self._compute_statistics_from_installations(installations)
+            except Exception as fallback_error:
+                logger.error(f"Error computing fallback statistics: {fallback_error}")
+
+        # Fallback final: devolver estructura vacía
         return self._default_statistics()
     
     def get_client_history(self, client_name):

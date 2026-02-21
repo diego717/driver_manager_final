@@ -225,6 +225,7 @@ class MainWindow(QMainWindow):
         """Inicializar todos los managers"""
         
         self.cloud_manager = None
+        self.history_manager = None
         # Reusar la misma instancia de seguridad del ConfigManager para compartir
         # clave maestra/fernet ya inicializados al cargar config.enc.
         self.security_manager = self.config_manager.security
@@ -429,20 +430,28 @@ class MainWindow(QMainWindow):
                 else:
                     raise Exception("No hay usuarios")
                 logger.info("✅ Usuarios cargados desde la nube.")
-            except Exception:
-                logger.warning("⚠️ No hay usuarios en la nube. Creando administrador inicial...")
-                # FORZAMOS LA CREACIÓN AQUÍ
-                success, msg = self.user_manager.initialize_system("admin", "admin123")
-                if success:
-                    logger.info("✅ Usuario admin/admin123 creado y subido a Cloudflare.")
-                # ✅ Verificar si necesita inicialización
+            except Exception as e:
+                logger.warning(
+                    f"⚠️ No se pudo validar usuarios en la nube: {e}. "
+                    "Se requiere configuración inicial por asistente."
+                )
                 if self.user_manager.needs_initialization():
-                    success, msg = self.user_manager.initialize_system("admin", "admin123")
-                    if success:
-                        logger.info("✅ Sistema de usuarios inicializado con usuario admin/admin123")
+                    self._show_setup_wizard(self.user_manager, exit_on_cancel=False)
+                    if self.user_manager.needs_initialization():
+                        logger.warning(
+                            "Inicialización de usuarios pendiente. "
+                            "No se continuará hasta completar el asistente."
+                        )
+                        self.statusBar().showMessage(
+                            "⚠️ Completa la configuración inicial de usuarios."
+                        )
+                        return
+                    logger.info("✅ Sistema de usuarios inicializado mediante asistente.")
             
             # 3. CONEXIÓN A LA NUBE D1 (Lo que configuramos hoy)
             self.history_manager = InstallationHistory(self.config_manager)
+            if self.user_manager:
+                self.user_manager.set_audit_api_client(self.history_manager)
 
             self.refresh_drivers_list()
             self.statusBar().showMessage("✅ Conectado a Cloudflare (R2 + D1 History)")
@@ -556,19 +565,20 @@ class MainWindow(QMainWindow):
     def _update_management_stats(self):
         """Actualizar estadísticas y logs en la vista de gestión de registros"""
         try:
-            # Obtener estadísticas del historial
-            all_installations = self.history.get_installations()
-            total = len(all_installations)
-            successful = len([i for i in all_installations if i['status'] == 'success'])
-            failed = len([i for i in all_installations if i['status'] == 'failed'])
-            
-            # Calcular porcentajes
-            success_rate = (successful / total * 100) if total > 0 else 0
-            
-            # Obtener fecha del registro más antiguo
+            # Obtener estadísticas agregadas desde el backend (SQL), sin cargar todo el historial.
+            stats = self.history.get_statistics()
+            total = int(stats.get('total_installations') or 0)
+            successful = int(stats.get('successful_installations') or 0)
+            failed = int(stats.get('failed_installations') or 0)
+            success_rate = float(stats.get('success_rate') or 0)
+
+            # Cargar una ventana acotada para la lista visual de gestión.
+            installations_for_list = self.history.get_installations(limit=200)
+
+            # Fecha más antigua dentro de los registros cargados en la vista.
             oldest_date = "N/A"
-            if all_installations:
-                oldest = min(all_installations, key=lambda x: x['timestamp'])
+            if installations_for_list:
+                oldest = min(installations_for_list, key=lambda x: x['timestamp'])
                 oldest_dt = datetime.fromisoformat(oldest['timestamp'])
                 oldest_date = oldest_dt.strftime('%d/%m/%Y')
             
@@ -578,14 +588,14 @@ class MainWindow(QMainWindow):
 • Total de registros: {total}
 • Instalaciones exitosas: {successful} ({success_rate:.1f}%)
 • Instalaciones fallidas: {failed}
-• Registro más antiguo: {oldest_date}
+• Registro más antiguo (últimos 200): {oldest_date}
 • Última actualización: {datetime.now().strftime('%d/%m/%Y %H:%M')}"""
             
             self.history_tab.mgmt_stats_display.setText(stats_text)
 
             # Actualizar la lista de registros en la pestaña de gestión
             self.history_tab.management_history_list.clear()
-            for inst in all_installations:
+            for inst in installations_for_list:
                 timestamp = datetime.fromisoformat(inst['timestamp'])
                 date_str = timestamp.strftime('%d/%m/%Y %H:%M')
                 status = (inst.get('status') or '').lower()
@@ -776,6 +786,7 @@ class MainWindow(QMainWindow):
 
             if (not logs and
                 self.user_manager.is_super_admin() and
+                self.user_manager.local_mode and
                 not self._audit_logs_repair_attempted):
                 self._audit_logs_repair_attempted = True
                 repaired, message = self.user_manager.repair_access_logs()
@@ -1075,6 +1086,9 @@ class MainWindow(QMainWindow):
         if not self.user_manager:
             try:
                 self.user_manager = UserManagerV2(self.cloud_manager, self.security_manager)
+                audit_client = getattr(self, "history_manager", None)
+                if audit_client:
+                    self.user_manager.set_audit_api_client(audit_client)
             except Exception as e:
                 logger.error(f"Error inicializando user_manager: {e}", exc_info=True)
                 logger.operation_end("show_login_dialog", success=False, reason=str(e))
@@ -1283,3 +1297,4 @@ class MainWindow(QMainWindow):
         if self.theme_manager.set_theme(theme_name):
             self.apply_theme()
             self.statusBar().showMessage(f"✨ Tema cambiado a: {theme_text}")
+
