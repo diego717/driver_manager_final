@@ -49,6 +49,11 @@ node_modules/
 mobile-app/.env
 mobile-app/.env.*
 !mobile-app/.env.example
+mobile-app/google-services.json
+mobile-app/GoogleService-Info.plist
+
+# Firebase service account local file (used to set Wrangler secret)
+firebase-service-account.json
 
 # Local smoke artifacts
 smoke_download.txt

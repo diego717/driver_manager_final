@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
   Alert,
@@ -23,6 +24,26 @@ export default function IncidentListScreen() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
 
+  const loadIncidents = useCallback(
+    async (targetInstallationId: number) => {
+      if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
+        Alert.alert("Dato invalido", "installation_id debe ser un numero positivo.");
+        return;
+      }
+
+      try {
+        setLoading(true);
+        const response = await listIncidentsByInstallation(targetInstallationId);
+        setIncidents(response.incidents);
+      } catch (error) {
+        Alert.alert("Error", extractApiError(error));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
+
   const loadInstallations = async () => {
     try {
       setLoadingInstallations(true);
@@ -43,40 +64,28 @@ export default function IncidentListScreen() {
 
   const onLoad = async () => {
     const parsedInstallationId = Number.parseInt(installationId, 10);
-    if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) {
-      Alert.alert("Dato invalido", "installation_id debe ser un numero positivo.");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const response = await listIncidentsByInstallation(parsedInstallationId);
-      setIncidents(response.incidents);
-    } catch (error) {
-      Alert.alert("Error", extractApiError(error));
-    } finally {
-      setLoading(false);
-    }
+    await loadIncidents(parsedInstallationId);
   };
 
   const onSelectInstallation = async (id: number) => {
     const next = String(id);
     setInstallationId(next);
-
-    try {
-      setLoading(true);
-      const response = await listIncidentsByInstallation(id);
-      setIncidents(response.incidents);
-    } catch (error) {
-      Alert.alert("Error", extractApiError(error));
-    } finally {
-      setLoading(false);
-    }
+    await loadIncidents(id);
   };
 
   useEffect(() => {
     void loadInstallations();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      const parsedInstallationId = Number.parseInt(installationId, 10);
+      if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) {
+        return;
+      }
+      void loadIncidents(parsedInstallationId);
+    }, [installationId, loadIncidents]),
+  );
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
