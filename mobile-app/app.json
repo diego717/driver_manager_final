@@ -26,6 +26,7 @@
     },
     "android": {
       "package": "com.diego717.drivermanager",
+      "googleServicesFile": "./google-services.json",
       "versionCode": 1,
       "permissions": [
         "android.permission.POST_NOTIFICATIONS"

@@ -138,11 +138,13 @@ Para habilitar acceso web sin exponer `API_SECRET` en frontend:
 ```powershell
 wrangler secret put WEB_SESSION_SECRET
 wrangler secret put WEB_LOGIN_PASSWORD
+Get-Content .\firebase-service-account.json -Raw | npx wrangler secret put FCM_SERVICE_ACCOUNT_JSON
 ```
 
 Con eso:
 - `WEB_SESSION_SECRET` firma y valida el Bearer web.
 - `WEB_LOGIN_PASSWORD` se usa para bootstrap inicial de usuarios web.
+- `FCM_SERVICE_ACCOUNT_JSON` habilita envio de push FCM HTTP v1 desde el Worker.
 
 ### Migraciones D1
 
@@ -163,6 +165,7 @@ Las migraciones incluidas crean:
 - `0003_web_users_auth.sql`: tabla `web_users` para login web por usuario.
 - `0004_web_users_hash_types.sql`: soporte de hash tipo `pbkdf2/bcrypt/legacy`.
 - `0005_audit_logs.sql`: tabla `audit_logs` para auditoria centralizada en D1.
+- `0006_device_tokens.sql`: tabla `device_tokens` para registro de dispositivos y push.
 
 ## Mobile app (Expo)
 
@@ -228,6 +231,7 @@ Endpoints web (sin HMAC en cliente):
 - `GET /web/statistics`
 - `GET /web/audit-logs`
 - `POST /web/audit-logs`
+- `POST /web/devices`
 - `GET /web/installations/:installationId/incidents`
 - `POST /web/installations/:installationId/incidents`
 - `POST /web/incidents/:incidentId/photos`
@@ -243,6 +247,8 @@ Notas API:
 - Login web rate limit: maximo 5 intentos fallidos por `IP+username` en 15 minutos (requiere `RATE_LIMIT_KV`).
 - Import de usuarios legacy: `/web/auth/import-users` acepta hashes `bcrypt`, `pbkdf2_sha256` y `legacy_pbkdf2_hex`.
 - Migracion automatica: usuarios con hash `bcrypt` se re-hashean a `pbkdf2_sha256` en login exitoso.
+- Registro de push: `/web/devices` vincula `fcm_token` al usuario web autenticado.
+- Push por incidencia critica: en `severity=critical` se notifica a `admin/super_admin` activos (si `FCM_SERVICE_ACCOUNT_JSON` esta configurado).
 - Fotos permitidas: `image/jpeg`, `image/png`, `image/webp`.
 - Validacion de imagen: `Content-Type` + magic bytes (JPEG/PNG/WEBP).
 - Limite por foto: 5 MB (post-compresion recomendada en cliente movil).

@@ -66,6 +66,23 @@ function signRequest({ method, path, timestamp, bodyBuffer, secret }) {
   return crypto.createHmac("sha256", secret).update(canonical).digest("hex");
 }
 
+function createTestFcmServiceAccountJson(projectId = "driver-manager-fcm-test") {
+  const { privateKey } = crypto.generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+  });
+  const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+
+  return JSON.stringify({
+    type: "service_account",
+    project_id: projectId,
+    private_key_id: "test-key-id",
+    private_key: privateKeyPem,
+    client_email: `${projectId}@example.iam.gserviceaccount.com`,
+    client_id: "1234567890",
+    token_uri: "https://oauth2.googleapis.com/token",
+  });
+}
+
 function createMockDB({
   installations = [],
   byBrand = [],
@@ -73,6 +90,7 @@ function createMockDB({
   incidentPhotos = [],
   auditLogs = [],
   webUsers = [],
+  deviceTokens = [],
 } = {}) {
   const calls = [];
   const state = {
@@ -86,6 +104,7 @@ function createMockDB({
       is_active: 1,
       ...row,
     })),
+    deviceTokens: deviceTokens.map((row) => ({ ...row })),
   };
 
   let nextInstallationId = 100;
@@ -93,6 +112,7 @@ function createMockDB({
   let nextPhotoId = 2000;
   let nextAuditLogId = 2500;
   let nextWebUserId = 3000;
+  let nextDeviceTokenId = 3500;
 
   const normalizeStatus = (value) => String(value ?? "").toLowerCase();
   const parseDate = (value) => {
@@ -325,6 +345,36 @@ function createMockDB({
             };
           }
 
+          if (
+            normalized.startsWith(
+              "SELECT DISTINCT dt.fcm_token FROM device_tokens dt INNER JOIN web_users wu ON wu.id = dt.user_id WHERE wu.is_active = 1 AND wu.role IN (",
+            )
+          ) {
+            const roles = (call.bound || []).map((value) => String(value ?? "").toLowerCase());
+            const allowedRoles = new Set(roles);
+            const activeUserIds = new Set(
+              state.webUsers
+                .filter(
+                  (user) =>
+                    Number(user.is_active) === 1 &&
+                    allowedRoles.has(String(user.role ?? "").toLowerCase()),
+                )
+                .map((user) => Number(user.id)),
+            );
+
+            const unique = new Set();
+            for (const row of state.deviceTokens) {
+              const token = String(row.fcm_token ?? "").trim();
+              if (!token) continue;
+              if (!activeUserIds.has(Number(row.user_id))) continue;
+              unique.add(token);
+            }
+
+            return {
+              results: [...unique].map((token) => ({ fcm_token: token })),
+            };
+          }
+
           throw new Error(`Unexpected query for .all(): ${normalized}`);
         },
         async run() {
@@ -510,6 +560,41 @@ function createMockDB({
               row.updated_at = updatedAt;
             }
             return { success: true };
+          }
+
+          if (
+            normalized.startsWith(
+              "INSERT INTO device_tokens (user_id, fcm_token, device_model, app_version, platform, registered_at, updated_at)",
+            )
+          ) {
+            const [userId, fcmToken, deviceModel, appVersion, platform, registeredAt, updatedAt] =
+              call.bound;
+            const existing = state.deviceTokens.find(
+              (item) => String(item.fcm_token) === String(fcmToken),
+            );
+
+            if (existing) {
+              existing.user_id = userId;
+              existing.device_model = deviceModel;
+              existing.app_version = appVersion;
+              existing.platform = platform;
+              existing.registered_at = registeredAt;
+              existing.updated_at = updatedAt;
+              return { success: true, meta: { last_row_id: existing.id } };
+            }
+
+            const id = nextDeviceTokenId++;
+            state.deviceTokens.push({
+              id,
+              user_id: userId,
+              fcm_token: fcmToken,
+              device_model: deviceModel,
+              app_version: appVersion,
+              platform,
+              registered_at: registeredAt,
+              updated_at: updatedAt,
+            });
+            return { success: true, meta: { last_row_id: id } };
           }
 
           return { success: true };
@@ -816,6 +901,101 @@ test("POST /installations/:id/incidents creates incident and can apply installat
   );
   assert.ok(installationUpdate);
   assert.equal(installationUpdate.bound[2], 45);
+});
+
+test("POST /installations/:id/incidents with severity critical sends FCM push to admin devices", async () => {
+  const db = createMockDB({
+    installations: [{ id: 45, notes: "", installation_time_seconds: 0 }],
+    webUsers: [
+      { id: 10, username: "admin_root", role: "admin", is_active: 1 },
+      { id: 11, username: "viewer_1", role: "viewer", is_active: 1 },
+    ],
+    deviceTokens: [
+      {
+        id: 1,
+        user_id: 10,
+        fcm_token: "admin-token-1",
+        device_model: "Pixel 8",
+        app_version: "1.0.0",
+        platform: "android",
+        registered_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: 2,
+        user_id: 11,
+        fcm_token: "viewer-token-1",
+        device_model: "Moto G",
+        app_version: "1.0.0",
+        platform: "android",
+        registered_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+  });
+
+  const originalFetch = globalThis.fetch;
+  const pushCalls = [];
+  const tokenCalls = [];
+  const projectId = "driver-manager-fcm-test";
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url) === "https://oauth2.googleapis.com/token") {
+      tokenCalls.push({ url: String(url), init });
+      return new Response(
+        JSON.stringify({
+          access_token: "test-fcm-access-token",
+          expires_in: 3600,
+          token_type: "Bearer",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+    if (String(url) === `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`) {
+      pushCalls.push({ url: String(url), init });
+      return new Response(JSON.stringify({ success: 1, failure: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return originalFetch(url, init);
+  };
+
+  try {
+    const request = new Request("https://worker.example/installations/45/incidents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        note: "Incidencia critica en campo",
+        severity: "critical",
+      }),
+    });
+
+    const response = await workerFetch(request, {
+      DB: db,
+      FCM_SERVICE_ACCOUNT_JSON: createTestFcmServiceAccountJson(projectId),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 201);
+    assert.equal(body.success, true);
+    assert.equal(tokenCalls.length, 1);
+    assert.equal(pushCalls.length, 1);
+
+    const pushRequest = pushCalls[0];
+    const headers = new Headers(pushRequest.init.headers || {});
+    assert.equal(headers.get("Authorization"), "Bearer test-fcm-access-token");
+
+    const payload = JSON.parse(String(pushRequest.init.body || "{}"));
+    assert.equal(payload.message.token, "admin-token-1");
+    assert.equal(payload.message.notification.title, "Incidencia critica");
+    assert.match(payload.message.notification.body, /#45/);
+    assert.equal(payload.message.android.priority, "HIGH");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("POST /installations/:id/incidents rejects payload without note", async () => {
@@ -1730,6 +1910,55 @@ test("POST /web/installations/:id/incidents uses web session user as reporter by
   assert.equal(createIncidentBody.success, true);
   assert.equal(createIncidentBody.incident.reporter_username, "admin_root");
   assert.equal(createIncidentBody.incident.source, "web");
+});
+
+test("POST /web/devices registers fcm token for authenticated web user", async () => {
+  const db = createMockDB();
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const bootstrapBody = await bootstrapResponse.json();
+  assert.equal(bootstrapResponse.status, 201);
+
+  const registerDeviceRequest = new Request("https://worker.example/web/devices", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bootstrapBody.access_token}`,
+    },
+    body: JSON.stringify({
+      fcm_token: "fcm-device-token-12345",
+      device_model: "Pixel 8",
+      app_version: "1.0.0",
+      platform: "android",
+    }),
+  });
+
+  const registerDeviceResponse = await workerFetch(registerDeviceRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const registerDeviceBody = await registerDeviceResponse.json();
+
+  assert.equal(registerDeviceResponse.status, 200);
+  assert.equal(registerDeviceBody.success, true);
+  assert.equal(registerDeviceBody.registered, true);
+  assert.equal(db.state.deviceTokens.length, 1);
+  assert.equal(db.state.deviceTokens[0].user_id, 3000);
+  assert.equal(db.state.deviceTokens[0].fcm_token, "fcm-device-token-12345");
 });
 
 test("POST /web/auth/users creates additional users when caller is admin", async () => {

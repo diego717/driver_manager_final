@@ -140,8 +140,22 @@ function RootLayoutNav() {
 
   useEffect(() => {
     if (!notifications.expoPushToken) return;
-    console.log(`[notifications] token listo: ${notifications.expoPushToken}`);
+    console.log(`[notifications] expo token listo: ${notifications.expoPushToken}`);
   }, [notifications.expoPushToken]);
+
+  useEffect(() => {
+    if (!notifications.fcmPushToken) return;
+    console.log(`[notifications] fcm token listo: ${notifications.fcmPushToken}`);
+  }, [notifications.fcmPushToken]);
+
+  useEffect(() => {
+    if (notifications.tokenRegisteredInApi === null) return;
+    if (notifications.tokenRegisteredInApi) {
+      console.log("[notifications] token registrado en API.");
+      return;
+    }
+    console.log("[notifications] token no registrado (sin sesion web activa).");
+  }, [notifications.tokenRegisteredInApi]);
 
   useEffect(() => {
     if (!notifications.error) return;

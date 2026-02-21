@@ -60,7 +60,37 @@ export async function requestNotificationPermission(): Promise<Notifications.Per
 
 export interface PushRegistrationResult {
   permissionStatus: Notifications.PermissionStatus;
-  token: string | null;
+  expoPushToken: string | null;
+  fcmToken: string | null;
+}
+
+function toPushTokenString(value: unknown): string | null {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    const joined = value
+      .map((item) => (typeof item === "number" ? item : null))
+      .filter((item): item is number => item !== null)
+      .map((item) => String.fromCharCode(item))
+      .join("");
+    const normalized = joined.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  if (ArrayBuffer.isView(value)) {
+    const view = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    const normalized = String.fromCharCode(...view).trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  return null;
 }
 
 export async function registerForPushNotifications(): Promise<PushRegistrationResult> {
@@ -69,7 +99,8 @@ export async function registerForPushNotifications(): Promise<PushRegistrationRe
   if (Platform.OS === "web") {
     return {
       permissionStatus: Notifications.PermissionStatus.UNDETERMINED,
-      token: null,
+      expoPushToken: null,
+      fcmToken: null,
     };
   }
 
@@ -78,20 +109,28 @@ export async function registerForPushNotifications(): Promise<PushRegistrationRe
   if (permissionStatus !== Notifications.PermissionStatus.GRANTED) {
     return {
       permissionStatus,
-      token: null,
+      expoPushToken: null,
+      fcmToken: null,
     };
   }
 
-  const projectId = resolveProjectId();
-  if (!projectId) {
-    throw new Error("No se encontro eas.projectId para registrar notificaciones push.");
-  }
+  const deviceTokenResponse = await Notifications.getDevicePushTokenAsync();
+  const fcmToken =
+    deviceTokenResponse.type === "fcm"
+      ? toPushTokenString(deviceTokenResponse.data)
+      : null;
 
-  const tokenResponse = await Notifications.getExpoPushTokenAsync({ projectId });
+  let expoPushToken: string | null = null;
+  const projectId = resolveProjectId();
+  if (projectId) {
+    const tokenResponse = await Notifications.getExpoPushTokenAsync({ projectId });
+    expoPushToken = tokenResponse.data || null;
+  }
 
   return {
     permissionStatus,
-    token: tokenResponse.data,
+    expoPushToken,
+    fcmToken,
   };
 }
 

@@ -16,11 +16,18 @@ const WEB_DEFAULT_ROLE = "admin";
 const WEB_HASH_TYPE_PBKDF2 = "pbkdf2_sha256";
 const WEB_HASH_TYPE_BCRYPT = "bcrypt";
 const WEB_HASH_TYPE_LEGACY_PBKDF2 = "legacy_pbkdf2_hex";
+const PUSH_NOTIFICATION_MAX_TOKENS_PER_REQUEST = 500;
+const CRITICAL_INCIDENT_PUSH_ROLES = ["admin", "super_admin"];
+const FCM_OAUTH_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
+const FCM_OAUTH_AUDIENCE = "https://oauth2.googleapis.com/token";
+const FCM_OAUTH_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 const WEB_ALLOWED_HASH_TYPES = new Set([
   WEB_HASH_TYPE_PBKDF2,
   WEB_HASH_TYPE_BCRYPT,
   WEB_HASH_TYPE_LEGACY_PBKDF2,
 ]);
+
+let fcmAccessTokenCache = null;
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -442,6 +449,181 @@ function base64UrlDecodeUtf8(input) {
   return new TextDecoder().decode(base64UrlToBytes(input));
 }
 
+function pemToArrayBuffer(pemText) {
+  const normalizedPem = normalizeOptionalString(pemText, "").replace(/\\n/g, "\n");
+  const base64Body = normalizedPem
+    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
+    .replace(/-----END PRIVATE KEY-----/g, "")
+    .replace(/\s+/g, "");
+
+  if (!base64Body) {
+    throw new HttpError(500, "FCM service account invalido: private_key vacia.");
+  }
+
+  const binary = atob(base64Body);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+function normalizeNotificationData(rawData) {
+  if (!rawData || typeof rawData !== "object") {
+    return {};
+  }
+
+  const normalized = {};
+  for (const [key, value] of Object.entries(rawData)) {
+    const normalizedKey = normalizeOptionalString(key, "");
+    if (!normalizedKey) continue;
+    if (value === null || value === undefined) continue;
+    normalized[normalizedKey] = String(value);
+  }
+  return normalized;
+}
+
+function normalizeFcmServiceAccount(env) {
+  const raw = normalizeOptionalString(env.FCM_SERVICE_ACCOUNT_JSON, "");
+  if (!raw) return null;
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new HttpError(
+      500,
+      "FCM service account invalido: FCM_SERVICE_ACCOUNT_JSON no contiene JSON valido.",
+    );
+  }
+
+  const projectId = normalizeOptionalString(parsed?.project_id, "");
+  const clientEmail = normalizeOptionalString(parsed?.client_email, "");
+  const privateKey = normalizeOptionalString(parsed?.private_key, "");
+  const tokenUri = normalizeOptionalString(parsed?.token_uri, FCM_OAUTH_AUDIENCE) || FCM_OAUTH_AUDIENCE;
+
+  if (!projectId || !clientEmail || !privateKey) {
+    throw new HttpError(
+      500,
+      "FCM service account invalido: faltan project_id, client_email o private_key.",
+    );
+  }
+
+  return {
+    projectId,
+    clientEmail,
+    privateKey,
+    tokenUri,
+  };
+}
+
+async function signFcmAssertion(privateKeyPem, unsignedToken) {
+  if (!globalThis.crypto?.subtle) {
+    throw new HttpError(500, "No hay soporte crypto para firmar push FCM.");
+  }
+
+  const cryptoKey = await crypto.subtle.importKey(
+    "pkcs8",
+    pemToArrayBuffer(privateKeyPem),
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      hash: "SHA-256",
+    },
+    false,
+    ["sign"],
+  );
+
+  const signatureBytes = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    cryptoKey,
+    new TextEncoder().encode(unsignedToken),
+  );
+  return bytesToBase64Url(new Uint8Array(signatureBytes));
+}
+
+async function getFcmAccessToken(env) {
+  const serviceAccount = normalizeFcmServiceAccount(env);
+  if (!serviceAccount) {
+    return null;
+  }
+
+  const nowSeconds = nowUnixSeconds();
+  if (
+    fcmAccessTokenCache &&
+    fcmAccessTokenCache.projectId === serviceAccount.projectId &&
+    normalizeOptionalString(fcmAccessTokenCache.accessToken, "") &&
+    Number.isInteger(fcmAccessTokenCache.expiresAt) &&
+    fcmAccessTokenCache.expiresAt > nowSeconds + 60
+  ) {
+    return {
+      accessToken: fcmAccessTokenCache.accessToken,
+      projectId: serviceAccount.projectId,
+    };
+  }
+
+  const header = {
+    alg: "RS256",
+    typ: "JWT",
+  };
+  const payload = {
+    iss: serviceAccount.clientEmail,
+    scope: FCM_OAUTH_SCOPE,
+    aud: serviceAccount.tokenUri,
+    iat: nowSeconds,
+    exp: nowSeconds + 3600,
+  };
+
+  const encodedHeader = base64UrlEncodeUtf8(JSON.stringify(header));
+  const encodedPayload = base64UrlEncodeUtf8(JSON.stringify(payload));
+  const unsignedToken = `${encodedHeader}.${encodedPayload}`;
+  const signature = await signFcmAssertion(serviceAccount.privateKey, unsignedToken);
+  const assertion = `${unsignedToken}.${signature}`;
+
+  const tokenResponse = await fetch(serviceAccount.tokenUri, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      grant_type: FCM_OAUTH_GRANT_TYPE,
+      assertion,
+    }).toString(),
+  });
+
+  let tokenJson = {};
+  try {
+    tokenJson = await tokenResponse.json();
+  } catch {
+    tokenJson = {};
+  }
+
+  if (!tokenResponse.ok) {
+    const description =
+      normalizeOptionalString(tokenJson?.error_description, "") ||
+      normalizeOptionalString(tokenJson?.error, "") ||
+      `HTTP ${tokenResponse.status}`;
+    throw new HttpError(500, `No se pudo obtener access token FCM: ${description}`);
+  }
+
+  const accessToken = normalizeOptionalString(tokenJson?.access_token, "");
+  const expiresIn = Number.parseInt(String(tokenJson?.expires_in ?? "0"), 10);
+
+  if (!accessToken || !Number.isInteger(expiresIn) || expiresIn <= 0) {
+    throw new HttpError(500, "Respuesta invalida al solicitar access token FCM.");
+  }
+
+  fcmAccessTokenCache = {
+    projectId: serviceAccount.projectId,
+    accessToken,
+    expiresAt: nowSeconds + expiresIn,
+  };
+
+  return {
+    accessToken,
+    projectId: serviceAccount.projectId,
+  };
+}
+
 function bytesToHex(bytes) {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
@@ -499,6 +681,28 @@ function ensureWebUsersTableAvailable(error) {
     );
   }
   throw error;
+}
+
+function ensureDeviceTokensTableAvailable(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  if (message.includes("no such table") && message.includes("device_tokens")) {
+    throw new HttpError(
+      500,
+      "Falta esquema de push notifications en D1. Ejecuta las migraciones (incluyendo 0006_device_tokens.sql).",
+    );
+  }
+  throw error;
+}
+
+function normalizeFcmToken(value) {
+  const token = normalizeOptionalString(value, "");
+  if (!token) {
+    throw new HttpError(400, "Campo 'fcm_token' es obligatorio.");
+  }
+  if (token.length < 20 || token.length > 4096) {
+    throw new HttpError(400, "Campo 'fcm_token' invalido.");
+  }
+  return token;
 }
 
 function validateWebUsername(usernameRaw) {
@@ -1021,6 +1225,137 @@ async function authenticateWebUserByCredentials(env, { username, password }) {
   return user;
 }
 
+async function upsertDeviceTokenForWebUser(
+  env,
+  { userId, fcmToken, deviceModel = "", appVersion = "", platform = "android" },
+) {
+  const registeredAt = nowIso();
+  try {
+    await env.DB.prepare(`
+      INSERT INTO device_tokens (user_id, fcm_token, device_model, app_version, platform, registered_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(fcm_token) DO UPDATE
+      SET user_id = excluded.user_id,
+          device_model = excluded.device_model,
+          app_version = excluded.app_version,
+          platform = excluded.platform,
+          registered_at = excluded.registered_at,
+          updated_at = excluded.updated_at
+    `)
+      .bind(
+        userId,
+        fcmToken,
+        normalizeOptionalString(deviceModel, ""),
+        normalizeOptionalString(appVersion, ""),
+        normalizeOptionalString(platform, "android"),
+        registeredAt,
+        registeredAt,
+      )
+      .run();
+  } catch (error) {
+    ensureDeviceTokensTableAvailable(error);
+  }
+}
+
+async function listDeviceTokensForWebRoles(env, roles = []) {
+  const normalizedRoles = (roles || [])
+    .map((role) => normalizeOptionalString(role, "").toLowerCase())
+    .filter((role) => role);
+  if (!normalizedRoles.length) return [];
+
+  const placeholders = normalizedRoles.map(() => "?").join(", ");
+
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT DISTINCT dt.fcm_token
+      FROM device_tokens dt
+      INNER JOIN web_users wu ON wu.id = dt.user_id
+      WHERE wu.is_active = 1
+        AND wu.role IN (${placeholders})
+        AND NULLIF(TRIM(dt.fcm_token), '') IS NOT NULL
+    `)
+      .bind(...normalizedRoles)
+      .all();
+
+    return (results || [])
+      .map((row) => normalizeOptionalString(row?.fcm_token, ""))
+      .filter((token) => token);
+  } catch (error) {
+    const message = normalizeOptionalString(error?.message, "").toLowerCase();
+    if (message.includes("no such table") && message.includes("web_users")) {
+      ensureWebUsersTableAvailable(error);
+    }
+    ensureDeviceTokensTableAvailable(error);
+  }
+}
+
+async function sendPushNotification(env, fcmTokens, notification) {
+  const access = await getFcmAccessToken(env);
+  if (!access) {
+    return { sent: false, reason: "missing_fcm_service_account_json" };
+  }
+
+  const uniqueTokens = [...new Set(
+    (Array.isArray(fcmTokens) ? fcmTokens : [])
+      .map((token) => normalizeOptionalString(token, ""))
+      .filter((token) => token),
+  )];
+  if (!uniqueTokens.length) {
+    return { sent: false, reason: "no_device_tokens" };
+  }
+
+  const title = normalizeOptionalString(notification?.title, "");
+  const body = normalizeOptionalString(notification?.body, "");
+  if (!title || !body) {
+    return { sent: false, reason: "invalid_notification_payload" };
+  }
+
+  const tokenSubset = uniqueTokens.slice(0, PUSH_NOTIFICATION_MAX_TOKENS_PER_REQUEST);
+  const dataPayload = normalizeNotificationData(notification?.data);
+
+  let successfulRequests = 0;
+  for (const token of tokenSubset) {
+    const response = await fetch(
+      `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(access.projectId)}/messages:send`,
+      {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${access.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: {
+          token,
+          notification: {
+            title,
+            body,
+          },
+          data: dataPayload,
+          android: {
+            priority: "HIGH",
+            notification: {
+              sound: "default",
+              channel_id: "incidents",
+            },
+          },
+        },
+      }),
+    },
+    );
+
+    if (response.ok) {
+      successfulRequests += 1;
+    }
+  }
+
+  return {
+    sent: successfulRequests > 0,
+    request_count: tokenSubset.length,
+    successful_requests: successfulRequests,
+    token_count: tokenSubset.length,
+  };
+}
+
 async function handleWebAuthRoute(request, env, pathParts) {
   if (pathParts.length < 2 || pathParts[0] !== "auth") {
     return null;
@@ -1472,6 +1807,7 @@ export default {
             web_import_users: "/web/auth/import-users",
             installations: "/installations",
             web_installations: "/web/installations",
+            web_devices: "/web/devices",
             audit_logs: "/audit-logs",
             web_audit_logs: "/web/audit-logs",
           },
@@ -1589,6 +1925,36 @@ export default {
 
           return jsonResponse(results || []);
         }
+      }
+
+      if (routeParts.length === 1 && routeParts[0] === "devices" && request.method === "POST") {
+        if (!isWebRoute || !webSession?.user_id) {
+          throw new HttpError(401, "Registro de dispositivos requiere token Bearer web.");
+        }
+
+        let data = {};
+        try {
+          data = await request.json();
+        } catch {
+          throw new HttpError(400, "Payload invalido.");
+        }
+
+        const fcmToken = normalizeFcmToken(data?.fcm_token);
+        await upsertDeviceTokenForWebUser(env, {
+          userId: Number(webSession.user_id),
+          fcmToken,
+          deviceModel: data?.device_model,
+          appVersion: data?.app_version,
+          platform: data?.platform || "android",
+        });
+
+        return jsonResponse(
+          {
+            success: true,
+            registered: true,
+          },
+          200,
+        );
       }
 
       if (routeParts.length === 1 && routeParts[0] === "records" && request.method === "POST") {
@@ -1730,6 +2096,29 @@ export default {
             `)
               .bind(composedNotes, nextTime, installationId)
               .run();
+          }
+
+          if (payload.severity === "critical") {
+            try {
+              const fcmTokens = await listDeviceTokensForWebRoles(
+                env,
+                CRITICAL_INCIDENT_PUSH_ROLES,
+              );
+              if (fcmTokens.length > 0) {
+                await sendPushNotification(env, fcmTokens, {
+                  title: "Incidencia critica",
+                  body: `Nueva incidencia critica en instalacion #${installationId}`,
+                  data: {
+                    installation_id: String(installationId),
+                    incident_id: String(incidentId || ""),
+                    severity: payload.severity,
+                    source: payload.source,
+                  },
+                });
+              }
+            } catch {
+              // Best effort: una falla de push no debe impedir registrar la incidencia.
+            }
           }
 
           return jsonResponse(

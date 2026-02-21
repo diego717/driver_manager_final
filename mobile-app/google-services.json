@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "983158627195",
+    "project_id": "driver-manager-87da0",
+    "storage_bucket": "driver-manager-87da0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:983158627195:android:aaa015b400b1bba26d7bde",
+        "android_client_info": {
+          "package_name": "com.diego717.drivermanager"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCg3TK8ytzlFO5DwTP1EafTWBbRZk6rICY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
