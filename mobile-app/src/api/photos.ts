@@ -10,6 +10,9 @@ import {
   ensurePositiveInt,
 } from "../utils/validation";
 
+const MAX_UPLOAD_PHOTO_BYTES = 5 * 1024 * 1024;
+const MIN_UPLOAD_PHOTO_BYTES = 1024;
+
 function wordArrayToUint8Array(wordArray: CryptoJS.lib.WordArray): Uint8Array {
   const { words, sigBytes } = wordArray;
   const result = new Uint8Array(sigBytes);
@@ -104,6 +107,13 @@ export async function uploadIncidentPhoto({
     encoding: FileSystem.EncodingType.Base64,
   });
   const bytes = bytesFromBase64(base64);
+  if (bytes.byteLength < MIN_UPLOAD_PHOTO_BYTES) {
+    throw new Error("Imagen demasiado pequena o corrupta.");
+  }
+  if (bytes.byteLength > MAX_UPLOAD_PHOTO_BYTES) {
+    const sizeMb = (bytes.byteLength / (1024 * 1024)).toFixed(1);
+    throw new Error(`Imagen demasiado grande (${sizeMb}MB). Maximo: 5MB.`);
+  }
   const binaryBody = bytes.buffer.slice(
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength,

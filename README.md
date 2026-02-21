@@ -244,7 +244,8 @@ Notas API:
 - Import de usuarios legacy: `/web/auth/import-users` acepta hashes `bcrypt`, `pbkdf2_sha256` y `legacy_pbkdf2_hex`.
 - Migracion automatica: usuarios con hash `bcrypt` se re-hashean a `pbkdf2_sha256` en login exitoso.
 - Fotos permitidas: `image/jpeg`, `image/png`, `image/webp`.
-- Limite por foto: 8 MB.
+- Validacion de imagen: `Content-Type` + magic bytes (JPEG/PNG/WEBP).
+- Limite por foto: 5 MB (post-compresion recomendada en cliente movil).
 
 Ejemplo rapido de flujo web:
 

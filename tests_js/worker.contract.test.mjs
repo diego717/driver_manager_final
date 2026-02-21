@@ -953,7 +953,8 @@ test("POST /incidents/:id/photos uploads to R2 and persists metadata", async () 
     },
   };
 
-  const payload = new Uint8Array([1, 2, 3, 4, 5]);
+  const payload = new Uint8Array(1500);
+  payload.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
   const request = new Request("https://worker.example/incidents/11/photos", {
     method: "POST",
     headers: {
@@ -1033,7 +1034,7 @@ test("POST /incidents/:id/photos rejects oversized files", async () => {
   const request = new Request("https://worker.example/incidents/11/photos", {
     method: "POST",
     headers: { "Content-Type": "image/jpeg" },
-    body: new Uint8Array(8 * 1024 * 1024 + 1),
+    body: new Uint8Array(5 * 1024 * 1024 + 1),
   });
 
   const response = await workerFetch(request, {
@@ -1044,6 +1045,45 @@ test("POST /incidents/:id/photos rejects oversized files", async () => {
 
   assert.equal(response.status, 413);
   assert.equal(body.success, false);
+  assert.match(body.error.message, /5MB/i);
+});
+
+test("POST /incidents/:id/photos rejects too-small images", async () => {
+  const db = createMockDB({
+    incidents: [{ id: 11, installation_id: 45 }],
+  });
+  const request = new Request("https://worker.example/incidents/11/photos", {
+    method: "POST",
+    headers: { "Content-Type": "image/jpeg" },
+    body: new Uint8Array(900),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /pequena|corrupta/i);
+});
+
+test("POST /incidents/:id/photos rejects invalid image magic bytes", async () => {
+  const db = createMockDB({
+    incidents: [{ id: 11, installation_id: 45 }],
+  });
+  const payload = new Uint8Array(1400);
+  payload.fill(0x11);
+  const request = new Request("https://worker.example/incidents/11/photos", {
+    method: "POST",
+    headers: { "Content-Type": "image/png" },
+    body: payload,
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /imagen valida/i);
 });
 
 test("POST /incidents/:id/photos rejects unsupported content type", async () => {
@@ -1100,10 +1140,12 @@ test("POST /incidents/:id/photos returns 404 when incident does not exist", asyn
       throw new Error("should not upload");
     },
   };
+  const payload = new Uint8Array(1500);
+  payload.set([0xff, 0xd8, 0xff], 0);
   const request = new Request("https://worker.example/incidents/999/photos", {
     method: "POST",
     headers: { "Content-Type": "image/jpeg" },
-    body: new Uint8Array([1, 2, 3]),
+    body: payload,
   });
 
   const response = await workerFetch(request, {
@@ -1121,10 +1163,12 @@ test("POST /incidents/:id/photos returns 500 when R2 bucket binding is missing",
   const db = createMockDB({
     incidents: [{ id: 11, installation_id: 45 }],
   });
+  const payload = new Uint8Array(1500);
+  payload.set([0xff, 0xd8, 0xff], 0);
   const request = new Request("https://worker.example/incidents/11/photos", {
     method: "POST",
     headers: { "Content-Type": "image/jpeg" },
-    body: new Uint8Array([1, 2, 3]),
+    body: payload,
   });
 
   const response = await workerFetch(request, { DB: db });

@@ -1,6 +1,7 @@
-import bcrypt from "bcryptjs";
+﻿import bcrypt from "bcryptjs";
 
-const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+const MIN_PHOTO_BYTES = 1024;
 const ALLOWED_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const AUTH_WINDOW_SECONDS = 300;
 const WEB_ACCESS_TTL_SECONDS = 8 * 60 * 60;
@@ -57,7 +58,7 @@ function textResponse(text, status = 200) {
 function parsePositiveInt(value, label) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new HttpError(400, `${label} inválido.`);
+    throw new HttpError(400, `${label} invÃ¡lido.`);
   }
   return parsed;
 }
@@ -77,6 +78,70 @@ function extensionFromType(contentType) {
   if (contentType === "image/png") return "png";
   if (contentType === "image/webp") return "webp";
   return "jpg";
+}
+
+function detectPhotoContentTypeFromMagicBytes(bodyBuffer) {
+  const bytes = new Uint8Array(bodyBuffer);
+  if (bytes.length < 12) return "";
+
+  const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
+  const isPng =
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a;
+  const isWebp =
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50;
+
+  if (isJpeg) return "image/jpeg";
+  if (isPng) return "image/png";
+  if (isWebp) return "image/webp";
+  return "";
+}
+
+function validateAndProcessPhoto(bodyBuffer, declaredContentType) {
+  const sizeBytes = bodyBuffer.byteLength;
+  if (!sizeBytes) {
+    throw new HttpError(400, "La imagen esta vacia.");
+  }
+  if (sizeBytes < MIN_PHOTO_BYTES) {
+    throw new HttpError(400, "Imagen demasiado pequena o corrupta.");
+  }
+  if (sizeBytes > MAX_PHOTO_BYTES) {
+    throw new HttpError(
+      413,
+      `Imagen demasiado grande (${(sizeBytes / (1024 * 1024)).toFixed(1)}MB). Maximo: 5MB.`,
+    );
+  }
+
+  const detectedContentType = detectPhotoContentTypeFromMagicBytes(bodyBuffer);
+  if (!detectedContentType) {
+    throw new HttpError(400, "El archivo no es una imagen valida.");
+  }
+
+  if (!ALLOWED_PHOTO_TYPES.has(detectedContentType)) {
+    throw new HttpError(400, "Tipo de imagen no permitido.");
+  }
+
+  if (declaredContentType && declaredContentType !== detectedContentType) {
+    throw new HttpError(400, "El Content-Type no coincide con el archivo de imagen.");
+  }
+
+  return {
+    sizeBytes,
+    contentType: detectedContentType,
+  };
 }
 
 function nowIso() {
@@ -1306,16 +1371,16 @@ async function verifyAuth(request, env, url) {
   const signature = request.headers.get("X-Request-Signature");
 
   if (!token || !timestampRaw || !signature) {
-    throw new HttpError(401, "Faltan headers de autenticación.");
+    throw new HttpError(401, "Faltan headers de autenticaciÃ³n.");
   }
 
   if (!timingSafeEqual(token, expectedToken)) {
-    throw new HttpError(401, "Token inválido.");
+    throw new HttpError(401, "Token invÃ¡lido.");
   }
 
   const timestamp = Number.parseInt(timestampRaw, 10);
   if (!Number.isInteger(timestamp)) {
-    throw new HttpError(401, "Timestamp inválido.");
+    throw new HttpError(401, "Timestamp invÃ¡lido.");
   }
 
   const drift = Math.abs(nowUnixSeconds() - timestamp);
@@ -1329,7 +1394,7 @@ async function verifyAuth(request, env, url) {
   const expectedSignature = await hmacSha256Hex(expectedSecret, canonical);
 
   if (!timingSafeEqual(signature.toLowerCase(), expectedSignature.toLowerCase())) {
-    throw new HttpError(401, "Firma inválida.");
+    throw new HttpError(401, "Firma invÃ¡lida.");
   }
 }
 
@@ -1341,7 +1406,7 @@ function buildIncidentR2Key(installationId, incidentId, extension) {
 
 function validateIncidentPayload(data, options = {}) {
   if (!data || typeof data !== "object") {
-    throw new HttpError(400, "Payload inválido.");
+    throw new HttpError(400, "Payload invÃ¡lido.");
   }
 
   const note = typeof data.note === "string" ? data.note.trim() : "";
@@ -1349,23 +1414,23 @@ function validateIncidentPayload(data, options = {}) {
     throw new HttpError(400, "Campo 'note' es obligatorio.");
   }
   if (note.length > 5000) {
-    throw new HttpError(400, "Campo 'note' supera el límite permitido.");
+    throw new HttpError(400, "Campo 'note' supera el lÃ­mite permitido.");
   }
 
   const timeAdjustment =
     data.time_adjustment_seconds === undefined ? 0 : Number(data.time_adjustment_seconds);
   if (!Number.isInteger(timeAdjustment) || timeAdjustment < -86400 || timeAdjustment > 86400) {
-    throw new HttpError(400, "Campo 'time_adjustment_seconds' inválido.");
+    throw new HttpError(400, "Campo 'time_adjustment_seconds' invÃ¡lido.");
   }
 
   const severity = data.severity || "medium";
   if (!["low", "medium", "high", "critical"].includes(severity)) {
-    throw new HttpError(400, "Campo 'severity' inválido.");
+    throw new HttpError(400, "Campo 'severity' invÃ¡lido.");
   }
 
   const source = data.source || options.defaultSource || "mobile";
   if (!["desktop", "mobile", "web"].includes(source)) {
-    throw new HttpError(400, "Campo 'source' inválido.");
+    throw new HttpError(400, "Campo 'source' invÃ¡lido.");
   }
 
   return {
@@ -1630,7 +1695,7 @@ export default {
 
           const installation = installationRows?.[0];
           if (!installation) {
-            throw new HttpError(404, "Instalación no encontrada.");
+            throw new HttpError(404, "InstalaciÃ³n no encontrada.");
           }
 
           const insertResult = await env.DB.prepare(`
@@ -1693,23 +1758,17 @@ export default {
         request.method === "POST"
       ) {
         const incidentId = parsePositiveInt(routeParts[1], "incident_id");
-        const contentType = normalizeContentType(request.headers.get("content-type"));
+        const declaredContentType = normalizeContentType(request.headers.get("content-type"));
 
-        if (!ALLOWED_PHOTO_TYPES.has(contentType)) {
+        if (!ALLOWED_PHOTO_TYPES.has(declaredContentType)) {
           throw new HttpError(400, "Tipo de imagen no permitido.");
         }
 
         const bodyBuffer = await request.arrayBuffer();
-        const sizeBytes = bodyBuffer.byteLength;
-        if (!sizeBytes) {
-          throw new HttpError(400, "La imagen está vacía.");
-        }
-        if (sizeBytes > MAX_PHOTO_BYTES) {
-          throw new HttpError(413, "La imagen supera el tamaño permitido.");
-        }
+        const { sizeBytes, contentType } = validateAndProcessPhoto(bodyBuffer, declaredContentType);
 
         if (!env.INCIDENTS_BUCKET || typeof env.INCIDENTS_BUCKET.put !== "function") {
-          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no está configurado.");
+          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no estÃ¡ configurado.");
         }
 
         const { results: incidentRows } = await env.DB.prepare(`
@@ -1767,7 +1826,7 @@ export default {
         const photoId = parsePositiveInt(routeParts[1], "photo_id");
 
         if (!env.INCIDENTS_BUCKET || typeof env.INCIDENTS_BUCKET.get !== "function") {
-          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no está configurado.");
+          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no estÃ¡ configurado.");
         }
 
         const { results: photoRows } = await env.DB.prepare(`
@@ -1946,4 +2005,5 @@ export default {
     }
   },
 };
+
 
