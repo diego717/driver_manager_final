@@ -64,6 +64,7 @@ function formatDateTime(value: string | null): string {
 
 export default function ApiSettingsScreen() {
   const { mode, resolvedScheme, setMode } = useThemePreference();
+  const isDark = resolvedScheme === "dark";
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -82,6 +83,23 @@ export default function ApiSettingsScreen() {
 
   const [baseUrlFromStorage, setBaseUrlFromStorage] = useState(false);
   const hasWebSession = Boolean(webSessionExpiresAt && Date.parse(webSessionExpiresAt) > Date.now());
+  const palette = {
+    screenBg: isDark ? "#020617" : "#f8fafc",
+    title: isDark ? "#e2e8f0" : "#0f172a",
+    textSecondary: isDark ? "#94a3b8" : "#475569",
+    textMuted: isDark ? "#94a3b8" : "#64748b",
+    label: isDark ? "#cbd5e1" : "#1e293b",
+    inputBg: isDark ? "#111827" : "#ffffff",
+    inputBorder: isDark ? "#334155" : "#cbd5e1",
+    placeholder: isDark ? "#64748b" : "#808080",
+    cardBg: isDark ? "#082f49" : "#f0f9ff",
+    cardBorder: isDark ? "#0369a1" : "#bae6fd",
+    cardText: isDark ? "#bae6fd" : "#0c4a6e",
+    secondaryBg: isDark ? "#0f172a" : "#ffffff",
+    secondaryText: isDark ? "#cbd5e1" : "#0f172a",
+    themeChipBg: isDark ? "#0f172a" : "#ffffff",
+    themeChipBorder: isDark ? "#334155" : "#cbd5e1",
+  };
 
   const notify = (title: string, message: string) => {
     setFeedbackMessage(`${title}: ${message}`);
@@ -167,12 +185,12 @@ export default function ApiSettingsScreen() {
 
   const onWebSignIn = async () => {
     const username = webLoginUsername.trim().toLowerCase();
-    const password = webLoginPassword.trim();
+    const password = webLoginPassword;
     if (!username) {
       notify("Dato invalido", "Ingresa usuario web.");
       return;
     }
-    if (!password) {
+    if (!password.trim()) {
       notify("Dato invalido", "Ingresa contrasena web.");
       return;
     }
@@ -226,49 +244,53 @@ export default function ApiSettingsScreen() {
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
+      <View style={[styles.loadingContainer, { backgroundColor: palette.screenBg }]}>
         <ActivityIndicator size="large" color="#0b7a75" />
       </View>
     );
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Configuracion y acceso</Text>
-      <Text style={styles.subtitle}>
+    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
+      <Text style={[styles.title, { color: palette.title }]}>Configuracion y acceso</Text>
+      <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
         Modo simple: URL del Worker + login web por usuario y contrasena.
       </Text>
 
-      <Text style={styles.sourceText}>
+      <Text style={[styles.sourceText, { color: palette.textMuted }]}>
         Base URL actual: {baseUrlFromStorage ? "SecureStore" : ".env"}
       </Text>
-      <Text style={styles.sourceText}>
+      <Text style={[styles.sourceText, { color: palette.textMuted }]}>
         Sesion web: {hasWebSession ? `Activa hasta ${webSessionExpiresAt}` : "No activa"}
       </Text>
-      <Text style={styles.sourceText}>
+      <Text style={[styles.sourceText, { color: palette.textMuted }]}>
         Usuario web: {webSessionUsername ? `${webSessionUsername} (${webSessionRole || "n/a"})` : "No autenticado"}
       </Text>
-      <Text style={styles.sourceText}>
+      <Text style={[styles.sourceText, { color: palette.textMuted }]}>
         Tema actual: {mode} ({resolvedScheme})
       </Text>
       {feedbackMessage ? (
-        <View style={styles.feedbackBox}>
-          <Text style={styles.feedbackText}>{feedbackMessage}</Text>
+        <View style={[styles.feedbackBox, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+          <Text style={[styles.feedbackText, { color: palette.cardText }]}>{feedbackMessage}</Text>
         </View>
       ) : null}
 
-      <Text style={styles.sectionLabel}>Apariencia</Text>
+      <Text style={[styles.sectionLabel, { color: palette.title }]}>Apariencia</Text>
       <View style={styles.themeSelectorRow}>
         {(["light", "dark", "system"] as ThemeMode[]).map((themeOption) => {
           const selected = mode === themeOption;
           return (
             <TouchableOpacity
               key={themeOption}
-              style={[styles.themeChip, selected && styles.themeChipSelected]}
+              style={[
+                styles.themeChip,
+                { backgroundColor: palette.themeChipBg, borderColor: palette.themeChipBorder },
+                selected && styles.themeChipSelected,
+              ]}
               onPress={() => onChangeThemeMode(themeOption)}
               disabled={changingTheme || loading || saving || testing}
             >
-              <Text style={[styles.themeChipText, selected && styles.themeChipTextSelected]}>
+              <Text style={[styles.themeChipText, { color: palette.secondaryText }, selected && styles.themeChipTextSelected]}>
                 {themeOption === "light" ? "Claro" : themeOption === "dark" ? "Oscuro" : "Auto"}
               </Text>
             </TouchableOpacity>
@@ -276,19 +298,19 @@ export default function ApiSettingsScreen() {
         })}
       </View>
 
-      <Text style={styles.sectionLabel}>Conexion</Text>
-      <Text style={styles.label}>API Base URL</Text>
+      <Text style={[styles.sectionLabel, { color: palette.title }]}>Conexion</Text>
+      <Text style={[styles.label, { color: palette.label }]}>API Base URL</Text>
       <TextInput
         value={apiBaseUrl}
         onChangeText={setApiBaseUrl}
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType={Platform.OS === "ios" ? "url" : "default"}
-        style={styles.input}
+        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.title }]}
         placeholder="https://tu-worker.workers.dev"
-        placeholderTextColor="#808080"
+        placeholderTextColor={palette.placeholder}
       />
-      <Text style={styles.hintText}>
+      <Text style={[styles.hintText, { color: palette.textMuted }]}>
         Usa https:// para remoto. Debe ser el dominio base del Worker, sin paths.
       </Text>
 
@@ -305,26 +327,37 @@ export default function ApiSettingsScreen() {
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={[styles.secondaryButton, testing && styles.buttonDisabled]}
+        style={[
+          styles.secondaryButton,
+          { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
+          (!hasWebSession || testing) && styles.buttonDisabled,
+        ]}
         onPress={onTestConnection}
-        disabled={testing || saving || webSigningIn || webClearing || changingTheme}
+        disabled={
+          !hasWebSession ||
+          testing ||
+          saving ||
+          webSigningIn ||
+          webClearing ||
+          changingTheme
+        }
       >
         {testing ? (
           <ActivityIndicator color="#0f172a" />
         ) : (
-          <Text style={styles.secondaryButtonText}>Probar conexion</Text>
+          <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Probar conexion</Text>
         )}
       </TouchableOpacity>
 
-      <Text style={styles.sectionLabel}>Login web</Text>
+      <Text style={[styles.sectionLabel, { color: palette.title }]}>Login web</Text>
       <TextInput
         value={webLoginUsername}
         onChangeText={setWebLoginUsername}
         autoCapitalize="none"
         autoCorrect={false}
-        style={styles.input}
+        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.title }]}
         placeholder="Usuario web"
-        placeholderTextColor="#808080"
+        placeholderTextColor={palette.placeholder}
       />
       <TextInput
         value={webLoginPassword}
@@ -332,20 +365,24 @@ export default function ApiSettingsScreen() {
         autoCapitalize="none"
         autoCorrect={false}
         secureTextEntry
-        style={styles.input}
+        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.title }]}
         placeholder="Contrasena"
-        placeholderTextColor="#808080"
+        placeholderTextColor={palette.placeholder}
       />
 
       <TouchableOpacity
-        style={[styles.secondaryButton, webSigningIn && styles.buttonDisabled]}
+        style={[
+          styles.secondaryButton,
+          { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
+          webSigningIn && styles.buttonDisabled,
+        ]}
         onPress={onWebSignIn}
         disabled={webSigningIn || saving || testing || webClearing || changingTheme}
       >
         {webSigningIn ? (
           <ActivityIndicator color="#0f172a" />
         ) : (
-          <Text style={styles.secondaryButtonText}>Iniciar sesion</Text>
+          <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Iniciar sesion</Text>
         )}
       </TouchableOpacity>
 
@@ -369,11 +406,11 @@ export default function ApiSettingsScreen() {
         <Text style={styles.warningButtonText}>Restablecer URL a .env</Text>
       </TouchableOpacity>
 
-      <Text style={styles.hintText}>
+      <Text style={[styles.hintText, { color: palette.textMuted }]}>
         Si es la primera vez y no tienes usuario web creado, inicializa el primer admin con
         /web/auth/bootstrap desde un cliente seguro (curl/Postman).
       </Text>
-      <Text style={styles.hintText}>Expira: {formatDateTime(webSessionExpiresAt)}</Text>
+      <Text style={[styles.hintText, { color: palette.textMuted }]}>Expira: {formatDateTime(webSessionExpiresAt)}</Text>
     </ScrollView>
   );
 }

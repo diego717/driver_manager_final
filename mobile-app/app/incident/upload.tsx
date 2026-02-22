@@ -17,6 +17,7 @@ import {
 
 import { uploadIncidentPhoto } from "@/src/api/photos";
 import { extractApiError } from "@/src/api/client";
+import { useThemePreference } from "@/src/theme/theme-preference";
 
 type SelectedImage = {
   uri: string;
@@ -59,6 +60,8 @@ function formatBytes(bytes: number): string {
 }
 
 export default function UploadIncidentPhotoScreen() {
+  const { resolvedScheme } = useThemePreference();
+  const isDark = resolvedScheme === "dark";
   const router = useRouter();
   const params = useLocalSearchParams<{
     incidentId?: string | string[];
@@ -78,6 +81,24 @@ export default function UploadIncidentPhotoScreen() {
   const [selectedImage, setSelectedImage] = useState<SelectedImage | null>(null);
   const [uploading, setUploading] = useState(false);
   const [processingImage, setProcessingImage] = useState(false);
+  const palette = useMemo(
+    () => ({
+      screenBg: isDark ? "#020617" : "#f8fafc",
+      textPrimary: isDark ? "#e2e8f0" : "#0f172a",
+      textSecondary: isDark ? "#94a3b8" : "#475569",
+      label: isDark ? "#cbd5e1" : "#1e293b",
+      inputBg: isDark ? "#111827" : "#ffffff",
+      inputBorder: isDark ? "#334155" : "#cbd5e1",
+      placeholder: isDark ? "#64748b" : "#808080",
+      cardBg: isDark ? "#0f172a" : "#ffffff",
+      cardBorder: isDark ? "#334155" : "#cbd5e1",
+      subtleBg: isDark ? "#1e293b" : "#e2e8f0",
+      hint: isDark ? "#94a3b8" : "#64748b",
+      secondaryBg: isDark ? "#0f172a" : "#ffffff",
+      secondaryText: isDark ? "#cbd5e1" : "#0f172a",
+    }),
+    [isDark],
+  );
 
   const processAssetForUpload = async (
     asset: ImagePicker.ImagePickerAsset,
@@ -203,7 +224,9 @@ export default function UploadIncidentPhotoScreen() {
         contentType: selectedImage.contentType,
       });
       Alert.alert("Foto subida", `Foto ID: ${response.photo.id}`);
-      router.back();
+      router.replace(
+        `/incident/detail?incidentId=${parsedIncidentId}&installationId=${installationId}` as never,
+      );
     } catch (error) {
       Alert.alert("Error", extractApiError(error));
     } finally {
@@ -212,49 +235,70 @@ export default function UploadIncidentPhotoScreen() {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
       <Stack.Screen options={{ title: "Subir foto" }} />
 
-      <Text style={styles.title}>Subir foto de incidencia</Text>
+      <Text style={[styles.title, { color: palette.textPrimary }]}>Subir foto de incidencia</Text>
       {installationId ? (
-        <Text style={styles.subtitle}>Instalacion #{installationId}</Text>
+        <Text style={[styles.subtitle, { color: palette.textSecondary }]}>Instalacion #{installationId}</Text>
       ) : null}
 
-      <Text style={styles.label}>Incident ID</Text>
+      <Text style={[styles.label, { color: palette.label }]}>Incident ID</Text>
       <TextInput
         value={incidentId}
         onChangeText={setIncidentId}
         keyboardType="numeric"
-        style={styles.input}
+        style={[
+          styles.input,
+          {
+            backgroundColor: palette.inputBg,
+            borderColor: palette.inputBorder,
+            color: palette.textPrimary,
+          },
+        ]}
         placeholder="Ej: 15"
-        placeholderTextColor="#808080"
+        placeholderTextColor={palette.placeholder}
       />
 
       <View style={styles.row}>
-        <TouchableOpacity style={styles.secondaryButton} onPress={pickFromGallery} disabled={uploading || processingImage}>
-          <Text style={styles.secondaryButtonText}>Galeria</Text>
+        <TouchableOpacity
+          style={[
+            styles.secondaryButton,
+            { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
+          ]}
+          onPress={pickFromGallery}
+          disabled={uploading || processingImage}
+        >
+          <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Galeria</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.secondaryButton} onPress={takePhoto} disabled={uploading || processingImage}>
-          <Text style={styles.secondaryButtonText}>Camara</Text>
+        <TouchableOpacity
+          style={[
+            styles.secondaryButton,
+            { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
+          ]}
+          onPress={takePhoto}
+          disabled={uploading || processingImage}
+        >
+          <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Camara</Text>
         </TouchableOpacity>
       </View>
 
       {processingImage ? (
         <View style={styles.processingRow}>
           <ActivityIndicator color="#0b7a75" />
-          <Text style={styles.hintText}>Comprimiendo imagen para subir...</Text>
+          <Text style={[styles.hintText, { color: palette.hint }]}>Comprimiendo imagen para subir...</Text>
         </View>
       ) : null}
 
       {selectedImage ? (
-        <View style={styles.previewCard}>
-          <Image source={{ uri: selectedImage.uri }} style={styles.previewImage} />
-          <Text style={styles.metaText}>Archivo: {selectedImage.fileName}</Text>
-          <Text style={styles.metaText}>Tipo: {selectedImage.contentType}</Text>
-          <Text style={styles.metaText}>Tamano: {formatBytes(selectedImage.sizeBytes)}</Text>
+        <View style={[styles.previewCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+          <Image source={{ uri: selectedImage.uri }} style={[styles.previewImage, { backgroundColor: palette.subtleBg }]} />
+          <Text style={[styles.metaText, { color: palette.label }]}>Archivo: {selectedImage.fileName}</Text>
+          <Text style={[styles.metaText, { color: palette.label }]}>Tipo: {selectedImage.contentType}</Text>
+          <Text style={[styles.metaText, { color: palette.label }]}>Tamano: {formatBytes(selectedImage.sizeBytes)}</Text>
         </View>
       ) : (
-        <Text style={styles.hintText}>Todavia no seleccionaste ninguna foto.</Text>
+        <Text style={[styles.hintText, { color: palette.hint }]}>Todavia no seleccionaste ninguna foto.</Text>
       )}
 
       <TouchableOpacity

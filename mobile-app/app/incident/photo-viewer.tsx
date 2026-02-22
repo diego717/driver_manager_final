@@ -11,8 +11,10 @@ import {
 } from "react-native";
 
 import {
-  fetchIncidentPhotoDataUri,
+  resolveIncidentPhotoPreviewTarget,
+  type IncidentPhotoPreviewTarget,
 } from "@/src/api/photos";
+import { useThemePreference } from "@/src/theme/theme-preference";
 
 function normalizeParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
@@ -20,6 +22,8 @@ function normalizeParam(value: string | string[] | undefined): string {
 }
 
 export default function IncidentPhotoViewerScreen() {
+  const { resolvedScheme } = useThemePreference();
+  const isDark = resolvedScheme === "dark";
   const router = useRouter();
   const params = useLocalSearchParams<{
     photoId?: string | string[];
@@ -31,8 +35,15 @@ export default function IncidentPhotoViewerScreen() {
   const photoId = Number.parseInt(photoIdText, 10);
 
   const [loading, setLoading] = useState(true);
-  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [photoTarget, setPhotoTarget] = useState<IncidentPhotoPreviewTarget | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const palette = {
+    screenBg: isDark ? "#020617" : "#f8fafc",
+    textPrimary: isDark ? "#e2e8f0" : "#0f172a",
+    buttonBg: isDark ? "#0f172a" : "#ffffff",
+    buttonBorder: isDark ? "#334155" : "#cbd5e1",
+    error: isDark ? "#fca5a5" : "#b91c1c",
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -47,12 +58,12 @@ export default function IncidentPhotoViewerScreen() {
       try {
         setLoading(true);
         setErrorMessage("");
-        const resolved = await fetchIncidentPhotoDataUri(photoId);
+        const resolved = await resolveIncidentPhotoPreviewTarget(photoId);
         if (!isMounted) return;
-        setPhotoUri(resolved);
+        setPhotoTarget(resolved);
       } catch {
         if (!isMounted) return;
-        setPhotoUri(null);
+        setPhotoTarget(null);
         setErrorMessage("No se pudo cargar la imagen.");
       } finally {
         if (isMounted) setLoading(false);
@@ -66,11 +77,17 @@ export default function IncidentPhotoViewerScreen() {
   }, [photoId]);
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: palette.screenBg }]}>
       <Stack.Screen options={{ title: fileName || `Foto #${photoIdText || "N/A"}` }} />
-      <View style={styles.container}>
-        <TouchableOpacity style={styles.closeButton} onPress={() => router.back()}>
-          <Text style={styles.closeButtonText}>Cerrar</Text>
+      <View style={[styles.container, { backgroundColor: palette.screenBg }]}>
+        <TouchableOpacity
+          style={[
+            styles.closeButton,
+            { backgroundColor: palette.buttonBg, borderColor: palette.buttonBorder },
+          ]}
+          onPress={() => router.back()}
+        >
+          <Text style={[styles.closeButtonText, { color: palette.textPrimary }]}>Cerrar</Text>
         </TouchableOpacity>
 
         {loading ? (
@@ -79,11 +96,11 @@ export default function IncidentPhotoViewerScreen() {
           </View>
         ) : errorMessage ? (
           <View style={styles.centered}>
-            <Text style={styles.errorText}>{errorMessage}</Text>
+            <Text style={[styles.errorText, { color: palette.error }]}>{errorMessage}</Text>
           </View>
-        ) : photoUri ? (
+        ) : photoTarget ? (
           <Image
-            source={{ uri: photoUri }}
+            source={{ uri: photoTarget.uri, headers: photoTarget.headers }}
             style={styles.image}
             resizeMode="contain"
           />

@@ -7,6 +7,7 @@ const clientMocks = vi.hoisted(() => ({
 vi.mock("./client", () => clientMocks);
 
 import {
+  clearInstallationsCache,
   createIncident,
   createInstallationRecord,
   listIncidentsByInstallation,
@@ -16,6 +17,7 @@ import {
 describe("incidents api", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearInstallationsCache();
   });
 
   it("creates standalone installation record via /records", async () => {
@@ -75,5 +77,29 @@ describe("incidents api", () => {
       method: "GET",
       path: "/installations/10/incidents",
     });
+  });
+
+  it("uses shared installations cache within ttl", async () => {
+    clientMocks.signedJsonRequest.mockResolvedValue([{ id: 10 }]);
+
+    const first = await listInstallations();
+    const second = await listInstallations();
+
+    expect(first).toEqual([{ id: 10 }]);
+    expect(second).toEqual([{ id: 10 }]);
+    expect(clientMocks.signedJsonRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("bypasses cache when forceRefresh is true", async () => {
+    clientMocks.signedJsonRequest
+      .mockResolvedValueOnce([{ id: 10 }])
+      .mockResolvedValueOnce([{ id: 11 }]);
+
+    const first = await listInstallations();
+    const second = await listInstallations({ forceRefresh: true });
+
+    expect(first).toEqual([{ id: 10 }]);
+    expect(second).toEqual([{ id: 11 }]);
+    expect(clientMocks.signedJsonRequest).toHaveBeenCalledTimes(2);
   });
 });

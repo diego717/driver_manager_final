@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import {
@@ -14,15 +14,37 @@ import {
 
 import { extractApiError } from "@/src/api/client";
 import { listIncidentsByInstallation, listInstallations } from "@/src/api/incidents";
+import { useThemePreference } from "@/src/theme/theme-preference";
 import { type Incident, type InstallationRecord } from "@/src/types/api";
 
 export default function IncidentListScreen() {
+  const { resolvedScheme } = useThemePreference();
+  const isDark = resolvedScheme === "dark";
   const router = useRouter();
   const [installationId, setInstallationId] = useState("1");
   const [loading, setLoading] = useState(false);
   const [loadingInstallations, setLoadingInstallations] = useState(false);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
+  const palette = useMemo(
+    () => ({
+      screenBg: isDark ? "#020617" : "#f8fafc",
+      textPrimary: isDark ? "#e2e8f0" : "#0f172a",
+      textSecondary: isDark ? "#cbd5e1" : "#1e293b",
+      textMuted: isDark ? "#94a3b8" : "#64748b",
+      inputBg: isDark ? "#111827" : "#ffffff",
+      inputBorder: isDark ? "#334155" : "#cbd5e1",
+      placeholder: isDark ? "#64748b" : "#808080",
+      chipBg: isDark ? "#111827" : "#f8fafc",
+      chipBorder: isDark ? "#334155" : "#cbd5e1",
+      chipText: isDark ? "#cbd5e1" : "#334155",
+      refreshBg: isDark ? "#0f172a" : "#ffffff",
+      refreshText: isDark ? "#cbd5e1" : "#0f172a",
+      cardBg: isDark ? "#0f172a" : "#ffffff",
+      cardBorder: isDark ? "#334155" : "#cbd5e1",
+    }),
+    [isDark],
+  );
 
   const loadIncidents = useCallback(
     async (targetInstallationId: number) => {
@@ -44,23 +66,25 @@ export default function IncidentListScreen() {
     [],
   );
 
-  const loadInstallations = async () => {
+  const loadInstallations = useCallback(async (options?: { forceRefresh?: boolean }) => {
     try {
       setLoadingInstallations(true);
-      const records = await listInstallations();
+      const records = await listInstallations(options);
       setInstallations(records);
-
-      const currentId = Number.parseInt(installationId, 10);
-      const exists = records.some((item) => Number(item.id) === currentId);
-      if (!exists && records.length > 0) {
-        setInstallationId(String(records[0].id));
-      }
+      setInstallationId((current) => {
+        const currentId = Number.parseInt(current, 10);
+        const exists = records.some((item) => Number(item.id) === currentId);
+        if (!exists && records.length > 0) {
+          return String(records[0].id);
+        }
+        return current;
+      });
     } catch (error) {
       Alert.alert("Error", `No se pudo cargar instalaciones: ${extractApiError(error)}`);
     } finally {
       setLoadingInstallations(false);
     }
-  };
+  }, []);
 
   const onLoad = async () => {
     const parsedInstallationId = Number.parseInt(installationId, 10);
@@ -75,7 +99,7 @@ export default function IncidentListScreen() {
 
   useEffect(() => {
     void loadInstallations();
-  }, []);
+  }, [loadInstallations]);
 
   useFocusEffect(
     useCallback(() => {
@@ -88,53 +112,75 @@ export default function IncidentListScreen() {
   );
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Incidencias</Text>
+    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
+      <Text style={[styles.title, { color: palette.textPrimary }]}>Incidencias</Text>
 
       <View style={styles.rowBetween}>
-        <Text style={styles.label}>Instalaciones disponibles</Text>
+        <Text style={[styles.label, { color: palette.textSecondary }]}>Instalaciones disponibles</Text>
         <TouchableOpacity
-          style={styles.refreshButton}
-          onPress={loadInstallations}
+          style={[
+            styles.refreshButton,
+            { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+          ]}
+          onPress={() => {
+            void loadInstallations({ forceRefresh: true });
+          }}
           disabled={loadingInstallations}
         >
           {loadingInstallations ? (
-            <ActivityIndicator size="small" color="#0f172a" />
+            <ActivityIndicator size="small" color={palette.refreshText} />
           ) : (
-            <Text style={styles.refreshButtonText}>Refrescar</Text>
+            <Text style={[styles.refreshButtonText, { color: palette.refreshText }]}>Refrescar</Text>
           )}
         </TouchableOpacity>
       </View>
       {installations.length === 0 ? (
-        <Text style={styles.emptyText}>No hay instalaciones para seleccionar.</Text>
+        <Text style={[styles.emptyText, { color: palette.textMuted }]}>No hay instalaciones para seleccionar.</Text>
       ) : (
-        <View style={styles.chipsWrap}>
-          {installations.slice(0, 30).map((item) => {
-            const selected = String(item.id) === installationId;
-            return (
-              <TouchableOpacity
-                key={item.id}
-                style={[styles.chip, selected && styles.chipSelected]}
-                onPress={() => onSelectInstallation(item.id)}
-                disabled={loading}
-              >
-                <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-                  #{item.id} {item.client_name ? `- ${item.client_name}` : ""}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+        <>
+          {installations.length > 30 ? (
+            <Text style={[styles.emptyText, { color: palette.textMuted }]}>
+              Mostrando 30 de {installations.length}. Usa Installation ID para buscar otras.
+            </Text>
+          ) : null}
+          <View style={styles.chipsWrap}>
+            {installations.slice(0, 30).map((item) => {
+              const selected = String(item.id) === installationId;
+              return (
+                <TouchableOpacity
+                  key={item.id}
+                  style={[
+                    styles.chip,
+                    { backgroundColor: palette.chipBg, borderColor: palette.chipBorder },
+                    selected && styles.chipSelected,
+                  ]}
+                  onPress={() => onSelectInstallation(item.id)}
+                  disabled={loading}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      { color: palette.chipText },
+                      selected && styles.chipTextSelected,
+                    ]}
+                  >
+                    #{item.id} {item.client_name ? `- ${item.client_name}` : ""}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </>
       )}
 
-      <Text style={styles.label}>Installation ID</Text>
+      <Text style={[styles.label, { color: palette.textSecondary }]}>Installation ID</Text>
       <TextInput
         value={installationId}
         onChangeText={setInstallationId}
         keyboardType="numeric"
-        style={styles.input}
+        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
         placeholder="1"
-        placeholderTextColor="#808080"
+        placeholderTextColor={palette.placeholder}
       />
 
       <TouchableOpacity
@@ -147,26 +193,32 @@ export default function IncidentListScreen() {
 
       <View style={styles.section}>
         {incidents.length === 0 ? (
-          <Text style={styles.emptyText}>Sin datos cargados.</Text>
+          <Text style={[styles.emptyText, { color: palette.textMuted }]}>Sin datos cargados.</Text>
         ) : (
           incidents.map((incident) => (
-            <View key={incident.id} style={styles.card}>
-              <Text style={styles.cardTitle}>#{incident.id} - {incident.severity}</Text>
-              <Text style={styles.cardText}>{incident.note}</Text>
-              <Text style={styles.cardMeta}>
+            <View
+              key={incident.id}
+              style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}
+            >
+              <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>#{incident.id} - {incident.severity}</Text>
+              <Text style={[styles.cardText, { color: palette.textSecondary }]}>{incident.note}</Text>
+              <Text style={[styles.cardMeta, { color: palette.textMuted }]}>
                 Usuario: {incident.reporter_username} | Fotos: {incident.photos?.length ?? 0}
               </Text>
-              <Text style={styles.cardMeta}>{incident.created_at}</Text>
+              <Text style={[styles.cardMeta, { color: palette.textMuted }]}>{incident.created_at}</Text>
               <View style={styles.actionsRow}>
                 <TouchableOpacity
-                  style={styles.detailButton}
+                  style={[
+                    styles.detailButton,
+                    { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+                  ]}
                   onPress={() =>
                     router.push(
                       `/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
                     )
                   }
                 >
-                  <Text style={styles.detailButtonText}>Ver detalle</Text>
+                  <Text style={[styles.detailButtonText, { color: palette.refreshText }]}>Ver detalle</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.uploadButton}

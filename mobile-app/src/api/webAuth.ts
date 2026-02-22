@@ -131,7 +131,7 @@ export async function loginWebSession(
       },
       body: JSON.stringify({
         username: username.trim().toLowerCase(),
-        password: password.trim(),
+        password,
       }),
     });
     const body = (await response.json()) as WebLoginResponse | { error?: { message?: string } };
@@ -168,9 +168,9 @@ export async function bootstrapWebUser(params: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        bootstrap_password: params.bootstrapPassword.trim(),
+        bootstrap_password: params.bootstrapPassword,
         username: params.username.trim().toLowerCase(),
-        password: params.password.trim(),
+        password: params.password,
         role: params.role || "admin",
       }),
     });

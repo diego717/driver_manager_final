@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
@@ -18,6 +18,7 @@ import {
 } from "@/src/api/incidents";
 import { extractApiError } from "@/src/api/client";
 import { getStoredWebAccessUsername } from "@/src/storage/secure";
+import { useThemePreference } from "@/src/theme/theme-preference";
 import { type IncidentSeverity, type InstallationRecord } from "@/src/types/api";
 
 const SEVERITY_OPTIONS: Array<{
@@ -48,6 +49,8 @@ const SEVERITY_OPTIONS: Array<{
 ];
 
 export default function CreateIncidentScreen() {
+  const { resolvedScheme } = useThemePreference();
+  const isDark = resolvedScheme === "dark";
   const [installationId, setInstallationId] = useState("1");
   const [reporterUsername, setReporterUsername] = useState("admin");
   const [note, setNote] = useState("");
@@ -60,16 +63,49 @@ export default function CreateIncidentScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [creatingManualRecord, setCreatingManualRecord] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState("");
+  const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const palette = useMemo(
+    () => ({
+      screenBg: isDark ? "#020617" : "#f8fafc",
+      textPrimary: isDark ? "#e2e8f0" : "#0f172a",
+      textSecondary: isDark ? "#94a3b8" : "#475569",
+      textMuted: isDark ? "#94a3b8" : "#64748b",
+      label: isDark ? "#cbd5e1" : "#1e293b",
+      inputBg: isDark ? "#111827" : "#ffffff",
+      inputBorder: isDark ? "#334155" : "#cbd5e1",
+      placeholder: isDark ? "#64748b" : "#808080",
+      feedbackBg: isDark ? "#082f49" : "#f0f9ff",
+      feedbackBorder: isDark ? "#0369a1" : "#bae6fd",
+      feedbackText: isDark ? "#bae6fd" : "#0c4a6e",
+      chipBg: isDark ? "#111827" : "#f8fafc",
+      chipBorder: isDark ? "#334155" : "#cbd5e1",
+      chipText: isDark ? "#cbd5e1" : "#334155",
+      refreshBg: isDark ? "#0f172a" : "#ffffff",
+      refreshText: isDark ? "#cbd5e1" : "#0f172a",
+      severityBg: isDark ? "#0f172a" : "#ffffff",
+      severityBorder: isDark ? "#334155" : "#cbd5e1",
+      severityLabel: isDark ? "#e2e8f0" : "#0f172a",
+      severityCriteria: isDark ? "#94a3b8" : "#475569",
+    }),
+    [isDark],
+  );
 
   const notify = (title: string, message: string) => {
     setFeedbackMessage(`${title}: ${message}`);
     Alert.alert(title, message);
+    if (feedbackTimeoutRef.current) {
+      clearTimeout(feedbackTimeoutRef.current);
+    }
+    feedbackTimeoutRef.current = setTimeout(() => {
+      setFeedbackMessage("");
+      feedbackTimeoutRef.current = null;
+    }, 5000);
   };
 
-  const loadInstallations = useCallback(async () => {
+  const loadInstallations = useCallback(async (options?: { forceRefresh?: boolean }) => {
     try {
       setLoadingInstallations(true);
-      const records = await listInstallations();
+      const records = await listInstallations(options);
       setInstallations(records);
       setInstallationId((current) => {
         const currentId = Number.parseInt(current, 10);
@@ -86,15 +122,19 @@ export default function CreateIncidentScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    void loadInstallations();
-  }, [loadInstallations]);
-
   useFocusEffect(
     useCallback(() => {
       void loadInstallations();
     }, [loadInstallations]),
   );
+
+  useEffect(() => {
+    return () => {
+      if (feedbackTimeoutRef.current) {
+        clearTimeout(feedbackTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -136,7 +176,7 @@ export default function CreateIncidentScreen() {
       );
       setManualClientName("");
       setManualNotes("");
-      await loadInstallations();
+      await loadInstallations({ forceRefresh: true });
     } catch (error) {
       notify("Error", extractApiError(error));
     } finally {
@@ -191,7 +231,7 @@ export default function CreateIncidentScreen() {
     } catch (error) {
       const message = extractApiError(error);
       if (message.toLowerCase().includes("no encontrada")) {
-        await loadInstallations();
+        await loadInstallations({ forceRefresh: true });
       }
       notify("Error", message);
     } finally {
@@ -200,39 +240,48 @@ export default function CreateIncidentScreen() {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Crear incidencia</Text>
-      <Text style={styles.subtitle}>
+    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
+      <Text style={[styles.title, { color: palette.textPrimary }]}>Crear incidencia</Text>
+      <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
         Usa esta pantalla para crear incidencias y validar el flujo contra el Worker.
       </Text>
       {feedbackMessage ? (
-        <View style={styles.feedbackBox}>
-          <Text style={styles.feedbackText}>{feedbackMessage}</Text>
+        <View
+          style={[
+            styles.feedbackBox,
+            { backgroundColor: palette.feedbackBg, borderColor: palette.feedbackBorder },
+          ]}
+        >
+          <Text style={[styles.feedbackText, { color: palette.feedbackText }]}>{feedbackMessage}</Text>
         </View>
       ) : null}
 
-      <Text style={styles.sectionTitle}>1) Crear registro manual base</Text>
-      <Text style={styles.hint}>
+      <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>1) Crear registro manual base</Text>
+      <Text style={[styles.hint, { color: palette.textMuted }]}>
         Esto crea un registro en historial sin depender de instalacion previa.
       </Text>
 
-      <Text style={styles.label}>Cliente (opcional)</Text>
+      <Text style={[styles.label, { color: palette.label }]}>Cliente (opcional)</Text>
       <TextInput
         value={manualClientName}
         onChangeText={setManualClientName}
-        style={styles.input}
+        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
         placeholder="Cliente ACME"
-        placeholderTextColor="#808080"
+        placeholderTextColor={palette.placeholder}
       />
 
-      <Text style={styles.label}>Notas del registro base (opcional)</Text>
+      <Text style={[styles.label, { color: palette.label }]}>Notas del registro base (opcional)</Text>
       <TextInput
         value={manualNotes}
         onChangeText={setManualNotes}
-        style={[styles.input, styles.manualNoteInput]}
+        style={[
+          styles.input,
+          styles.manualNoteInput,
+          { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary },
+        ]}
         multiline
         placeholder="Contexto inicial del caso"
-        placeholderTextColor="#808080"
+        placeholderTextColor={palette.placeholder}
       />
 
       <TouchableOpacity
@@ -247,86 +296,128 @@ export default function CreateIncidentScreen() {
         )}
       </TouchableOpacity>
 
-      <Text style={styles.sectionTitle}>2) Crear incidencia sobre un registro</Text>
+      <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>2) Crear incidencia sobre un registro</Text>
 
       <View style={styles.rowBetween}>
-        <Text style={styles.label}>Instalaciones disponibles</Text>
+        <Text style={[styles.label, { color: palette.label }]}>Instalaciones disponibles</Text>
         <TouchableOpacity
-          style={styles.refreshButton}
-          onPress={loadInstallations}
+          style={[
+            styles.refreshButton,
+            { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+          ]}
+          onPress={() => {
+            void loadInstallations({ forceRefresh: true });
+          }}
           disabled={loadingInstallations}
         >
           {loadingInstallations ? (
-            <ActivityIndicator size="small" color="#0f172a" />
+            <ActivityIndicator size="small" color={palette.refreshText} />
           ) : (
-            <Text style={styles.refreshButtonText}>Refrescar</Text>
+            <Text style={[styles.refreshButtonText, { color: palette.refreshText }]}>Refrescar</Text>
           )}
         </TouchableOpacity>
       </View>
       {installations.length === 0 ? (
-        <Text style={styles.hint}>No hay instalaciones para seleccionar.</Text>
+        <Text style={[styles.hint, { color: palette.textMuted }]}>No hay instalaciones para seleccionar.</Text>
       ) : (
-        <View style={styles.chipsWrap}>
-          {installations.slice(0, 30).map((item) => {
-            const selected = String(item.id) === installationId;
-            return (
-              <TouchableOpacity
-                key={item.id}
-                style={[styles.chip, selected && styles.chipSelected]}
-                onPress={() => setInstallationId(String(item.id))}
-              >
-                <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-                  #{item.id} {item.client_name ? `- ${item.client_name}` : ""}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+        <>
+          {installations.length > 30 ? (
+            <Text style={[styles.hint, { color: palette.textMuted }]}>
+              Mostrando 30 de {installations.length}. Usa Installation ID para buscar otras.
+            </Text>
+          ) : null}
+          <View style={styles.chipsWrap}>
+            {installations.slice(0, 30).map((item) => {
+              const selected = String(item.id) === installationId;
+              return (
+                <TouchableOpacity
+                  key={item.id}
+                  style={[
+                    styles.chip,
+                    { backgroundColor: palette.chipBg, borderColor: palette.chipBorder },
+                    selected && styles.chipSelected,
+                  ]}
+                  onPress={() => setInstallationId(String(item.id))}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      { color: palette.chipText },
+                      selected && styles.chipTextSelected,
+                    ]}
+                  >
+                    #{item.id} {item.client_name ? `- ${item.client_name}` : ""}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </>
       )}
 
-      <Text style={styles.label}>Installation ID</Text>
+      <Text style={[styles.label, { color: palette.label }]}>Installation ID</Text>
       <TextInput
         value={installationId}
         onChangeText={setInstallationId}
         keyboardType="numeric"
-        style={styles.input}
+        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
         placeholder="1"
-        placeholderTextColor="#808080"
+        placeholderTextColor={palette.placeholder}
       />
 
-      <Text style={styles.label}>Usuario</Text>
+      <Text style={[styles.label, { color: palette.label }]}>Usuario</Text>
       <TextInput
         value={reporterUsername}
         onChangeText={setReporterUsername}
-        style={styles.input}
+        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
         placeholder="admin"
-        placeholderTextColor="#808080"
+        placeholderTextColor={palette.placeholder}
       />
 
-      <Text style={styles.label}>Nota</Text>
+      <Text style={[styles.label, { color: palette.label }]}>Nota</Text>
       <TextInput
         value={note}
         onChangeText={setNote}
-        style={[styles.input, styles.noteInput]}
+        style={[
+          styles.input,
+          styles.noteInput,
+          { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary },
+        ]}
         multiline
         placeholder="Describe la incidencia"
-        placeholderTextColor="#808080"
+        placeholderTextColor={palette.placeholder}
       />
 
-      <Text style={styles.label}>Urgencia (severidad)</Text>
+      <Text style={[styles.label, { color: palette.label }]}>Urgencia (severidad)</Text>
       <View style={styles.severityWrap}>
         {SEVERITY_OPTIONS.map((option) => {
           const selected = severity === option.value;
           return (
             <TouchableOpacity
               key={option.value}
-              style={[styles.severityChip, selected && styles.severityChipSelected]}
+              style={[
+                styles.severityChip,
+                { backgroundColor: palette.severityBg, borderColor: palette.severityBorder },
+                selected && styles.severityChipSelected,
+              ]}
               onPress={() => setSeverity(option.value)}
             >
-              <Text style={[styles.severityChipLabel, selected && styles.severityChipLabelSelected]}>
+              <Text
+                style={[
+                  styles.severityChipLabel,
+                  { color: palette.severityLabel },
+                  selected && styles.severityChipLabelSelected,
+                ]}
+              >
                 {option.label}
               </Text>
-              <Text style={[styles.severityChipCriteria, selected && styles.severityChipCriteriaSelected]}>
+              <Text
+                style={[
+                  styles.severityChipCriteria,
+                  { color: palette.severityCriteria },
+                  selected && styles.severityChipCriteriaSelected,
+                ]}
+              >
                 {option.criteria}
               </Text>
             </TouchableOpacity>
@@ -334,14 +425,14 @@ export default function CreateIncidentScreen() {
         })}
       </View>
 
-      <Text style={styles.label}>Ajuste de tiempo (segundos)</Text>
+      <Text style={[styles.label, { color: palette.label }]}>Ajuste de tiempo (segundos)</Text>
       <TextInput
         value={timeAdjustment}
         onChangeText={setTimeAdjustment}
         keyboardType="numeric"
-        style={styles.input}
+        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
         placeholder="0"
-        placeholderTextColor="#808080"
+        placeholderTextColor={palette.placeholder}
       />
 
       <TouchableOpacity

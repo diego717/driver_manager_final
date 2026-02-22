@@ -16,12 +16,12 @@ function cleanValue(value: string): string {
 }
 
 function hasWebStorage(): boolean {
-  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+  return typeof window !== "undefined" && typeof window.sessionStorage !== "undefined";
 }
 
 async function setItem(key: string, value: string): Promise<void> {
   if (hasWebStorage()) {
-    window.localStorage.setItem(key, value);
+    window.sessionStorage.setItem(key, value);
     return;
   }
   await SecureStore.setItemAsync(key, value);
@@ -29,14 +29,14 @@ async function setItem(key: string, value: string): Promise<void> {
 
 async function getItem(key: string): Promise<string | null> {
   if (hasWebStorage()) {
-    return window.localStorage.getItem(key);
+    return window.sessionStorage.getItem(key);
   }
   return SecureStore.getItemAsync(key);
 }
 
 async function deleteItem(key: string): Promise<void> {
   if (hasWebStorage()) {
-    window.localStorage.removeItem(key);
+    window.sessionStorage.removeItem(key);
     return;
   }
   await SecureStore.deleteItemAsync(key);

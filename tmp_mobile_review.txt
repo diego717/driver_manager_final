@@ -1,0 +1,324 @@
+Driver Manager
+Mobile App — Code Review
+React Native / Expo • TypeScript
+Resumen ejecutivo
+Se revisaron 20 archivos fuente de la app móvil (Expo/React Native/TypeScript). Se encontraron 5 bugs críticos, 3 problemas de seguridad, 3 de performance, 7 mejoras de UI/UX y 6 gaps de cobertura de tests. El código tiene una base sólida con buen manejo de estado y lógica de autenticación biométrica, pero hay puntos que requieren atención inmediata antes de un release de producción.
+5 bugs críticos 3 seguridad 3 performance
+Tabla de hallazgos
+Categoria
+Problema
+Archivo
+Bug crítico
+Doble carga en montaje inicial
+(tabs)/index.tsx
+Bug crítico
+Cierre stale en loadInstallations
+(tabs)/two.tsx
+Bug crítico
+biométrica activada por defecto
+app-preferences.ts
+Bug crítico
+loadIncident sin useCallback
+incident/detail.tsx
+Bug crítico
+feedbackMessage nunca se limpia
+(tabs)/index.tsx
+Seguridad
+Token web en localStorage (web fallback)
+storage/secure.ts
+Seguridad
+password.trim() silencioso en login
+webAuth.ts
+Seguridad
+Todas las fotos cargadas en base64 en memoria
+incident/detail.tsx
+Performance
+listInstallations sin caché compartido
+index.tsx + two.tsx
+Performance
+Promise.all sin throttle para fotos
+incident/detail.tsx
+Performance
+Instalaciones truncadas a 30 sin aviso
+index.tsx + two.tsx
+UI/UX
+Sin soporte dark mode en pantallas
+Todos los screens
+UI/UX
+router.back() tras upload puede navegar mal
+incident/upload.tsx
+UI/UX
+onTestConnection siempre habilitado
+modal.tsx
+UI/UX
+BiometricLockScreen sin accessibilityLabel
+BiometricLockScreen.tsx
+Test
+Sin tests para useNotifications, webAuth
+hooks / api
+Test
+Sin tests para biometric.ts
+services/biometric.ts
+1. Bugs críticos ARREGLAR YA
+Estos errores producen comportamiento incorrecto observable o riesgo de crash en producción.
+1. Doble carga al montar CreateIncidentScreen — (tabs)/index.tsx
+useEffect y useFocusEffect ambos llaman loadInstallations() en el montaje inicial, disparando dos requests simultáneos al backend.
+Síntoma: Dos llamadas a /installations al abrir la pestaña por primera vez
+Causa: useEffect(fn, [loadInstallations]) y useFocusEffect(fn) se disparan juntos en el primer render
+Código actual:
+useEffect(() => {
+void loadInstallations(); // 1er request
+}, [loadInstallations]);
+useFocusEffect(useCallback(() => {
+void loadInstallations(); // 2do request (simultáneo en montaje)
+}, [loadInstallations]));
+Fix:
+// Eliminar useEffect, dejar solo useFocusEffect.
+// useFocusEffect también se dispara en el primer foco.
+useFocusEffect(
+useCallback(() => {
+void loadInstallations();
+}, [loadInstallations])
+);
+2. Stale closure en loadInstallations de IncidentListScreen — (tabs)/two.tsx
+La función loadInstallations no está envuelta en useCallback, pero se usa dentro de useEffect con dependencias vacías. El cierre captura el valor inicial de installationId ("1") y nunca lo actualiza si el usuario cambia la selección antes de que termine la carga.
+Síntoma: Si el usuario selecciona una instalación diferente antes de que cargue, la lista puede revertir al ID inicial
+Fix:
+const loadInstallations = useCallback(async () => {
+try {
+setLoadingInstallations(true);
+const records = await listInstallations();
+setInstallations(records);
+setInstallationId(current => { // Usar setter funcional
+const currentId = Number.parseInt(current, 10);
+const exists = records.some(r => Number(r.id) === currentId);
+return (!exists && records.length > 0) ? String(records[0].id) : current;
+});
+} catch (error) { ... } finally { ... }
+}, []); // Sin dependencias: setter funcional evita el cierre
+3. Biométrica habilitada por defecto en primera instalación — src/storage/app-preferences.ts
+getBiometricEnabled retorna true cuando la clave no existe en el almacenamiento. Esto significa que en la primera instalación la app intenta autenticación biométrica sin que el usuario haya optado activamente por habilitarla, generando un prompt inesperado.
+Síntoma: Usuario nuevo ve pantalla de bloqueo biométrico antes de configurar nada
+Código actual:
+export async function getBiometricEnabled(): Promise<boolean> {
+const raw = await getItem(BIOMETRIC_ENABLED_KEY);
+if (raw === null) return true; // ← Opt-in forzado silencioso
+return raw === '1';
+}
+Fix:
+if (raw === null) return false; // Default OFF, el usuario elige activarla
+4. loadIncident sin useCallback causa recreación en cada render — app/incident/detail.tsx
+loadIncident está definido como función async sin useCallback. El useEffect lo lista en sus deps implícitamente a través de las reglas de lint (o debería). En la implementación actual, el efecto sí tiene [incidentId, installationId] como deps, pero si loadIncident cambia de referencia en cada render (por ser definido inline), React puede re-disparar el efecto en escenarios de StrictMode o durante transiciones.
+Síntoma: Posibles peticiones duplicadas en React StrictMode (desarrollo) o durante re-renders
+Fix:
+const loadIncident = useCallback(async () => {
+if (!Number.isInteger(installationId) || installationId <= 0) { ... }
+// ... resto del código
+}, [incidentId, installationId]);
+useEffect(() => {
+void loadIncident();
+}, [loadIncident]); // Ahora la dep es estable
+5. feedbackMessage nunca se limpia — (tabs)/index.tsx
+El estado feedbackMessage se establece en notify() pero nunca se borra. Mensajes de errores o éxito anteriores persisten visualmente aunque el usuario haya completado nuevas operaciones exitosas, mezclando feedback viejo con el estado actual.
+Síntoma: "Error: No se pudo cargar instalaciones" sigue visible tras una carga exitosa posterior
+Fix (opción A — timeout automático):
+const notify = (title: string, message: string) => {
+const text = `${title}: ${message}`;
+setFeedbackMessage(text);
+Alert.alert(title, message);
+setTimeout(() => setFeedbackMessage(''), 5000);
+};
+Fix (opción B — botón de dismiss):
+Añadir un botón ✕ en el feedbackBox para que el usuario lo cierre manualmente.
+2. Problemas de seguridad ALTA PRIORIDAD
+1. Tokens sensibles en localStorage en el fallback web — src/storage/secure.ts + app-preferences.ts
+Ambos módulos de storage tienen una función hasWebStorage() que, si devuelve true, escribe todas las claves (tokens JWT, secretos de API, sesiones web) en window.localStorage en lugar de expo-secure-store. localStorage es accesible por cualquier JavaScript en la misma página y persistente entre sesiones del navegador.
+Riesgo: Si la app se despliega como PWA o se ejecuta en WebView, los tokens quedan expuestos a XSS
+Datos afectados: WEB_ACCESS_TOKEN, API_SECRET, API_TOKEN, tema, preferencia biométrica
+Fix recomendado:
+// Usar solo SecureStore en producción nativa.
+// Para web, si es necesario, usar sessionStorage en lugar de localStorage
+// (se borra al cerrar el tab) o cifrado adicional antes de escribir.
+async function setItem(key: string, value: string): Promise<void> {
+if (hasWebStorage()) {
+// sessionStorage > localStorage para datos sensibles
+window.sessionStorage.setItem(key, value);
+return;
+}
+await SecureStore.setItemAsync(key, value);
+}
+2. Trim silencioso de contraseña en login — src/api/webAuth.ts
+loginWebSession llama a password.trim() antes de enviar la contraseña al servidor. Si el usuario tiene espacios intencionados al inicio o final de su contraseña (práctica válida según NIST), estos son eliminados silenciosamente, provocando fallos de login inexplicables para el usuario.
+Riesgo: Usuarios con contraseñas con espacios no pueden iniciar sesión; confusión de seguridad
+Código actual:
+body: JSON.stringify({
+username: username.trim().toLowerCase(),
+password: password.trim(), // ← Altera la credencial
+})
+Fix:
+body: JSON.stringify({
+username: username.trim().toLowerCase(),
+password: password, // No modificar la contraseña
+})
+3. Imágenes de fotos acumuladas en memoria como base64 — app/incident/detail.tsx
+fetchIncidentPhotoDataUri descarga cada foto completa como ArrayBuffer y la convierte a una data URI base64 almacenada en el estado photoPreviews. Si una incidencia tiene muchas fotos de alta resolución, esto puede consumir cientos de MB de memoria en el heap de JS, causando OOM en dispositivos con poca RAM.
+Riesgo adicional: Los datos de la imagen permanecen en memoria hasta que el componente se desmonta
+Recomendación: Usar Image con la URL directa + headers de autorización (expo-image soporta headers), o lazy-load solo la foto visible
+Alternativa:
+// En lugar de descargar todo a base64:
+const { uri, headers } = await resolveIncidentPhotoPreviewTarget(photo.id);
+// expo-image/Image acepta headers directamente
+<Image source={{ uri, headers }} ... />
+3. Performance OPTIMIZACIÓN
+1. listInstallations duplicado sin caché compartido — (tabs)/index.tsx y (tabs)/two.tsx
+Cada pantalla llama independientemente a listInstallations() en su propio estado local. Al navegar entre pestañas (combinado con useFocusEffect), se realizan múltiples requests redundantes al mismo endpoint, sin que ninguna pantalla beneficie a la otra.
+Solución recomendada:
+Crear un contexto React InstallationsContext o usar un estado global (Zustand, Jotai)
+O implementar un caché simple en el módulo de API con TTL de 30-60 segundos
+Memoizar la lista para evitar re-renders innecesarios al seleccionar instalaciones
+2. Promise.all sin throttle para carga de fotos — app/incident/detail.tsx
+El efecto de carga de vistas previas usa Promise.all para descargar todas las fotos simultáneamente. Si una incidencia tiene 20 fotos de 3 MB cada una, se lanzan 20 requests en paralelo, saturando la red y la memoria del dispositivo.
+Fix:
+// Implementar carga con concurrencia limitada
+async function loadWithConcurrency<T>(
+tasks: (() => Promise<T>)[],
+limit = 3
+): Promise<T[]> {
+const results: T[] = [];
+for (let i = 0; i < tasks.length; i += limit) {
+const batch = tasks.slice(i, i + limit);
+results.push(...await Promise.all(batch.map(t => t())));
+}
+return results;
+}
+3. Truncado silencioso de instalaciones a 30 — (tabs)/index.tsx y (tabs)/two.tsx
+installations.slice(0, 30) corta la lista sin informar al usuario. Si hay más de 30 instalaciones, el usuario no verá su registro y no entenderá por qué no aparece en los chips.
+Fix:
+// Mostrar indicador cuando hay más de 30
+{installations.length > 30 && (
+<Text style={styles.hint}>
+Mostrando 30 de {installations.length}. Usa el campo ID para buscar otras.
+</Text>
+)}
+{installations.slice(0, 30).map(item => ...)}
+4. UI/UX y accesibilidad MEJORAS
+1. Sin soporte dark mode en pantallas — Todos los screens
+La app tiene un sistema de temas completo (ThemePreferenceProvider, ThemeMode) y respeta el tema en la navegación de React Navigation, pero todas las pantallas usan colores hardcodeados en StyleSheet (#f8fafc, #0f172a, #ffffff, etc.). El selector de tema en modal.tsx no tiene efecto visual en el contenido de las pantallas.
+Impacto: Experiencia de usuario inconsistente; modo oscuro seleccionable pero no funcional
+Patrón de fix (ejemplo para index.tsx):
+import { useThemePreference } from '@/src/theme/theme-preference';
+export default function CreateIncidentScreen() {
+const { resolvedScheme } = useThemePreference();
+const isDark = resolvedScheme === 'dark';
+const bg = isDark ? '#0f172a' : '#f8fafc';
+const textColor = isDark ? '#f1f5f9' : '#0f172a';
+// Pasar como style dinámico al contenedor:
+<ScrollView contentContainerStyle={[styles.container, { backgroundColor: bg }]}>
+2. router.back() tras upload puede navegar incorrectamente — app/incident/upload.tsx
+Después de una subida exitosa se llama router.back(). Si el usuario navegó a la pantalla de upload directamente desde un deep link, una notificación push, o desde una pantalla que ya no está en el stack, back() puede llevar a una pantalla inesperada o incluso fuera de la app en algunos escenarios de Expo Router.
+Fix:
+// En lugar de back(), navegar explícitamente al detalle de la incidencia:
+router.replace(
+`/incident/detail?incidentId=${parsedIncidentId}&installationId=${installationId}`
+);
+3. Botón 'Probar conexión' siempre habilitado sin sesión activa — app/modal.tsx
+onTestConnection verifica internamente si hay sesión web activa y muestra un Alert si no la hay, pero el botón está siempre habilitado visualmente. El usuario puede presionarlo múltiples veces sin entender por qué no funciona.
+Fix:
+// Deshabilitar el botón si no hay sesión activa
+<TouchableOpacity
+style={[styles.secondaryButton,
+(!hasWebSession || testing) && styles.buttonDisabled]}
+onPress={onTestConnection}
+disabled={!hasWebSession || testing || saving || ...}
+>
+4. BiometricLockScreen sin etiquetas de accesibilidad — src/components/BiometricLockScreen.tsx
+Los botones de la pantalla de bloqueo no tienen accessibilityLabel. Para usuarios con VoiceOver/TalkBack activo, los botones serán anunciados con el texto de sus hijos, pero el contexto de la acción (qué hace 'Reintentar' en este contexto) no es suficientemente descriptivo.
+Fix:
+<TouchableOpacity
+accessibilityLabel={`Reintentar autenticación con ${biometricLabel}`}
+accessibilityRole='button'
+...
+>
+<TouchableOpacity
+accessibilityLabel='Usar código PIN o patrón del dispositivo'
+accessibilityRole='button'
+...
+>
+5. Doble sistema de bloqueo biométrico puede confundir — _layout.tsx + (tabs)/_layout.tsx
+La app implementa bloqueo biométrico en dos niveles: _layout.tsx lo activa al iniciar la app, y (tabs)/_layout.tsx lo activa cada vez que la app vuelve de background. En teoría son complementarios, pero si el usuario cancela el bloqueo del root layout y luego va a background, el tab layout vuelve a pedir autenticación sin contexto del estado del root.
+Recomendación: Centralizar el estado de autenticación biométrica en un contexto compartido o en _layout.tsx únicamente, eliminando la duplicación en (tabs)/_layout.tsx
+6. UX confusa en pantalla de creación: dos flujos mezclados — (tabs)/index.tsx
+La pantalla 'Crear incidencia' tiene dos secciones en la misma vista scrollable: (1) crear registro manual base y (2) crear incidencia. La sección 1 es un prerequisito opcional de la sección 2, pero están presentadas como un formulario continuo. Usuarios nuevos pueden no entender la relación entre ambas.
+Mejoras sugeridas:
+Colapsar la sección 1 por defecto con un botón 'No tengo instalación previa →'
+O moverla a un modal separado o a una pantalla propia
+Añadir un separador visual más prominente entre las dos secciones
+5. Cobertura de tests faltante RECOMENDADO
+La app tiene una base de tests sólida para la capa de API (auth, client, devices, incidents, photos, validation). Los gaps están principalmente en servicios con lógica de negocio compleja y en hooks de estado.
+5.1 src/api/webAuth.ts — Sin tests
+Módulo con la lógica más crítica de seguridad de la app: login, gestión de tokens, expiración de sesión.
+Tests a implementar:
+loginWebSession con credenciales correctas persiste token en storage
+loginWebSession con respuesta 401 lanza error con mensaje de la API
+resolveActiveWebToken con sesión expirada llama clearStoredWebSession y lanza error
+authorizedWebFetch inyecta header Authorization: Bearer <token>
+clearWebSession elimina todas las claves del storage
+5.2 src/services/biometric.ts — Sin tests
+Servicio con lógica de mapeo de errores y detección de hardware biométrico.
+Tests a implementar:
+getBiometricAvailability en web retorna isAvailable: false
+resolveBiometricLabel retorna 'Face ID' para FACIAL_RECOGNITION, 'huella' para FINGERPRINT en Android
+mapBiometricError mapea 'lockout' → mensaje correcto, 'user_cancel' → cancelación
+authenticateWithBiometrics con result.success false retorna error mapeado
+5.3 src/storage/app-preferences.ts — Sin tests
+La función getBiometricEnabled tiene un comportamiento por defecto que es un bug (retorna true si no hay clave). Necesita test explícito.
+Tests a implementar:
+getBiometricEnabled retorna false cuando la clave no existe (comportamiento esperado post-fix)
+setBiometricEnabled(true) + getBiometricEnabled() retorna true
+setBiometricEnabled(false) + getBiometricEnabled() retorna false
+5.4 src/hooks/useNotifications.ts — Sin tests
+Hook con lógica de registro de tokens y manejo de errores de permisos.
+Tests a implementar:
+setTokenRegisteredInApi(null) cuando no hay permiso de notificaciones
+registerDeviceToken no se llama si fcmToken es null
+error se establece si registerForPushNotifications lanza excepción
+5.5 src/theme/theme-preference.tsx — Sin tests
+resolvedScheme es 'light' cuando mode='light' independientemente del sistema
+resolvedScheme sigue el esquema del sistema cuando mode='system'
+setMode persiste el valor y actualiza el estado sin re-montar el árbol
+5.6 Tests de integración para flows críticos
+Los flujos de autenticación biométrica y upload de fotos no tienen tests de integración.
+Tests a implementar:
+Flow completo: login web → cargar instalaciones → crear incidencia → verificar en lista
+Flow biométrico: app en background → vuelta a foreground → bloqueo → autenticación exitosa → desbloqueo
+Upload de foto: imagen > 5MB es rechazada con error claro; imagen entre 1KB y 5MB se sube correctamente
+Prioridades recomendadas
+En orden de impacto en producción
+#
+Acción
+Archivo
+Impacto
+1
+Cambiar default biométrica a false
+app-preferences.ts
+Onboarding roto
+2
+Eliminar useEffect duplicado (doble carga)
+(tabs)/index.tsx
+Requests dobles
+3
+Remover password.trim() en login
+webAuth.ts
+Login silencioso falla
+4
+Migrar fotos a URL directa + headers
+incident/detail.tsx
+OOM en dispositivos
+5
+Implementar dark mode en todas las pantallas
+Todos los screens
+Funcionalidad prometida
+6
+Añadir tests para webAuth y biometric.ts
+src/api + src/services
+Regresiones futuras

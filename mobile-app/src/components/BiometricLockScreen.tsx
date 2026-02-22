@@ -33,6 +33,8 @@ export default function BiometricLockScreen({
 
         <TouchableOpacity
           style={[styles.primaryButton, busy && styles.buttonDisabled]}
+          accessibilityRole="button"
+          accessibilityLabel={`Reintentar autenticacion con ${biometricLabel}`}
           onPress={onRetry}
           disabled={busy}
         >
@@ -45,6 +47,8 @@ export default function BiometricLockScreen({
 
         <TouchableOpacity
           style={[styles.secondaryButton, busy && styles.buttonDisabled]}
+          accessibilityRole="button"
+          accessibilityLabel="Usar codigo PIN o patron del dispositivo"
           onPress={onUseFallbackCode}
           disabled={busy}
         >

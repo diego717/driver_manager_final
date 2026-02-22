@@ -3,8 +3,9 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import React from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, AppState, type AppStateStatus, StyleSheet, View } from "react-native";
 import "react-native-reanimated";
 
 import BiometricLockScreen from "@/src/components/BiometricLockScreen";
@@ -57,14 +58,17 @@ export default function RootLayout() {
   );
 }
 
-function RootLayoutNav() {
+export function RootLayoutNav() {
   const { resolvedScheme } = useThemePreference();
   const notifications = useNotifications();
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const [lockInitializing, setLockInitializing] = useState(true);
   const [appLocked, setAppLocked] = useState(false);
   const [authenticating, setAuthenticating] = useState(false);
   const [lockError, setLockError] = useState<string | null>(null);
   const [biometricLabel, setBiometricLabel] = useState("biometria");
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
 
   const triggerBiometricUnlock = useCallback(async (allowDeviceFallback: boolean) => {
     setAuthenticating(true);
@@ -101,9 +105,11 @@ function RootLayoutNav() {
       try {
         const biometricEnabled = await getBiometricEnabled();
         if (!mounted) return;
+        setBiometricEnabled(biometricEnabled);
 
         if (!biometricEnabled) {
           setAppLocked(false);
+          setBiometricAvailable(false);
           return;
         }
 
@@ -111,6 +117,7 @@ function RootLayoutNav() {
         if (!mounted) return;
 
         setBiometricLabel(availability.biometricLabel);
+        setBiometricAvailable(availability.isAvailable);
         if (!availability.isAvailable) {
           setAppLocked(false);
           setLockInitializing(false);
@@ -123,6 +130,7 @@ function RootLayoutNav() {
       } catch (caughtError) {
         if (!mounted) return;
         setAppLocked(false);
+        setBiometricAvailable(false);
         setLockError(
           caughtError instanceof Error
             ? caughtError.message
@@ -137,6 +145,28 @@ function RootLayoutNav() {
       clearTimeout(initGuardTimeout);
     };
   }, [triggerBiometricUnlock]);
+
+  useEffect(() => {
+    if (lockInitializing || !biometricEnabled || !biometricAvailable) return;
+
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      const previousState = appStateRef.current;
+      appStateRef.current = nextState;
+
+      if (
+        (previousState === "inactive" || previousState === "background") &&
+        nextState === "active"
+      ) {
+        setAppLocked(true);
+        setLockError(null);
+        void triggerBiometricUnlock(false);
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [biometricAvailable, biometricEnabled, lockInitializing, triggerBiometricUnlock]);
 
   useEffect(() => {
     if (!notifications.expoPushToken) return;

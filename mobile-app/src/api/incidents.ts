@@ -9,6 +9,10 @@ import {
 import { ensurePositiveInt } from "../utils/validation";
 import { signedJsonRequest } from "./client";
 
+const INSTALLATIONS_CACHE_TTL_MS = 60_000;
+let installationsCache: InstallationRecord[] | null = null;
+let installationsCacheExpiresAt = 0;
+
 export async function createIncident(
   installationId: number,
   payload: CreateIncidentInput,
@@ -31,11 +35,30 @@ export async function listIncidentsByInstallation(
   });
 }
 
-export async function listInstallations(): Promise<InstallationRecord[]> {
-  return signedJsonRequest<InstallationRecord[]>({
+export async function listInstallations(
+  options: { forceRefresh?: boolean } = {},
+): Promise<InstallationRecord[]> {
+  const now = Date.now();
+  if (
+    !options.forceRefresh &&
+    installationsCache &&
+    installationsCacheExpiresAt > now
+  ) {
+    return installationsCache;
+  }
+
+  const records = await signedJsonRequest<InstallationRecord[]>({
     method: "GET",
     path: "/installations",
   });
+  installationsCache = records;
+  installationsCacheExpiresAt = now + INSTALLATIONS_CACHE_TTL_MS;
+  return records;
+}
+
+export function clearInstallationsCache(): void {
+  installationsCache = null;
+  installationsCacheExpiresAt = 0;
 }
 
 export async function createInstallationRecord(

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
@@ -13,7 +13,11 @@ import {
 
 import { extractApiError } from "@/src/api/client";
 import { listIncidentsByInstallation } from "@/src/api/incidents";
-import { fetchIncidentPhotoDataUri } from "@/src/api/photos";
+import {
+  resolveIncidentPhotoPreviewTarget,
+  type IncidentPhotoPreviewTarget,
+} from "@/src/api/photos";
+import { useThemePreference } from "@/src/theme/theme-preference";
 import { type Incident } from "@/src/types/api";
 
 function normalizeParam(value: string | string[] | undefined): string {
@@ -34,7 +38,21 @@ function formatBytes(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+async function loadWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  limit = 3,
+): Promise<T[]> {
+  const results: T[] = [];
+  for (let i = 0; i < tasks.length; i += limit) {
+    const batch = tasks.slice(i, i + limit);
+    results.push(...(await Promise.all(batch.map((task) => task()))));
+  }
+  return results;
+}
+
 export default function IncidentDetailScreen() {
+  const { resolvedScheme } = useThemePreference();
+  const isDark = resolvedScheme === "dark";
   const router = useRouter();
   const params = useLocalSearchParams<{
     incidentId?: string | string[];
@@ -53,11 +71,33 @@ export default function IncidentDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [incident, setIncident] = useState<Incident | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
-  const [photoPreviews, setPhotoPreviews] = useState<Record<number, string>>({});
+  const [photoPreviews, setPhotoPreviews] = useState<Record<number, IncidentPhotoPreviewTarget>>(
+    {},
+  );
   const [failedPhotoIds, setFailedPhotoIds] = useState<Record<number, boolean>>({});
   const [loadingPhotoPreviews, setLoadingPhotoPreviews] = useState(false);
+  const palette = useMemo(
+    () => ({
+      screenBg: isDark ? "#020617" : "#f8fafc",
+      textPrimary: isDark ? "#e2e8f0" : "#0f172a",
+      textSecondary: isDark ? "#cbd5e1" : "#1e293b",
+      textMuted: isDark ? "#94a3b8" : "#64748b",
+      cardBg: isDark ? "#0f172a" : "#ffffff",
+      cardBorder: isDark ? "#334155" : "#cbd5e1",
+      itemBg: isDark ? "#111827" : "#f8fafc",
+      itemBorder: isDark ? "#334155" : "#e2e8f0",
+      buttonBg: isDark ? "#0f172a" : "#ffffff",
+      buttonBorder: isDark ? "#334155" : "#cbd5e1",
+      buttonText: isDark ? "#cbd5e1" : "#0f172a",
+      backBg: isDark ? "#1e293b" : "#e2e8f0",
+      feedbackBg: isDark ? "#450a0a" : "#fef2f2",
+      feedbackBorder: isDark ? "#7f1d1d" : "#fecaca",
+      feedbackText: isDark ? "#fecaca" : "#7f1d1d",
+    }),
+    [isDark],
+  );
 
-  const loadIncident = async () => {
+  const loadIncident = useCallback(async () => {
     if (!Number.isInteger(installationId) || installationId <= 0) {
       setErrorMessage("installation_id invalido.");
       setLoading(false);
@@ -88,11 +128,11 @@ export default function IncidentDetailScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [incidentId, installationId]);
 
   useEffect(() => {
     void loadIncident();
-  }, [incidentId, installationId]);
+  }, [loadIncident]);
 
   useEffect(() => {
     let isMounted = true;
@@ -113,23 +153,24 @@ export default function IncidentDetailScreen() {
         setFailedPhotoIds({});
       }
 
-      const resolvedEntries = await Promise.all(
-        incident.photos.map(async (photo) => {
+      const resolvedEntries = await loadWithConcurrency(
+        incident.photos.map((photo) => async () => {
           try {
-            const dataUri = await fetchIncidentPhotoDataUri(photo.id);
-            return [photo.id, dataUri] as const;
+            const previewTarget = await resolveIncidentPhotoPreviewTarget(photo.id);
+            return [photo.id, previewTarget] as const;
           } catch {
             return [photo.id, null] as const;
           }
         }),
+        3,
       );
 
       if (!isMounted) return;
-      const successMap: Record<number, string> = {};
+      const successMap: Record<number, IncidentPhotoPreviewTarget> = {};
       const failedMap: Record<number, boolean> = {};
-      for (const [id, dataUri] of resolvedEntries) {
-        if (dataUri) {
-          successMap[id] = dataUri;
+      for (const [id, previewTarget] of resolvedEntries) {
+        if (previewTarget) {
+          successMap[id] = previewTarget;
         } else {
           failedMap[id] = true;
         }
@@ -160,17 +201,26 @@ export default function IncidentDetailScreen() {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
       <Stack.Screen options={{ title: "Detalle incidencia" }} />
 
-      <Text style={styles.title}>Incidencia #{incidentIdText || "N/A"}</Text>
+      <Text style={[styles.title, { color: palette.textPrimary }]}>Incidencia #{incidentIdText || "N/A"}</Text>
 
       <View style={styles.topRow}>
-        <TouchableOpacity style={styles.refreshButton} onPress={loadIncident} disabled={loading}>
-          <Text style={styles.refreshButtonText}>{loading ? "Cargando..." : "Refrescar"}</Text>
+        <TouchableOpacity
+          style={[
+            styles.refreshButton,
+            { backgroundColor: palette.buttonBg, borderColor: palette.buttonBorder },
+          ]}
+          onPress={loadIncident}
+          disabled={loading}
+        >
+          <Text style={[styles.refreshButtonText, { color: palette.buttonText }]}>
+            {loading ? "Cargando..." : "Refrescar"}
+          </Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>Volver</Text>
+        <TouchableOpacity style={[styles.backButton, { backgroundColor: palette.backBg }]} onPress={() => router.back()}>
+          <Text style={[styles.backButtonText, { color: palette.textPrimary }]}>Volver</Text>
         </TouchableOpacity>
       </View>
 
@@ -179,52 +229,63 @@ export default function IncidentDetailScreen() {
           <ActivityIndicator size="large" color="#0b7a75" />
         </View>
       ) : errorMessage ? (
-        <View style={styles.feedbackBox}>
-          <Text style={styles.feedbackText}>Error: {errorMessage}</Text>
+        <View
+          style={[
+            styles.feedbackBox,
+            { backgroundColor: palette.feedbackBg, borderColor: palette.feedbackBorder },
+          ]}
+        >
+          <Text style={[styles.feedbackText, { color: palette.feedbackText }]}>Error: {errorMessage}</Text>
         </View>
       ) : incident ? (
         <>
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Datos principales</Text>
-            <Text style={styles.cardText}>Instalacion: #{incident.installation_id}</Text>
-            <Text style={styles.cardText}>Severidad: {incident.severity}</Text>
-            <Text style={styles.cardText}>Fuente: {incident.source}</Text>
-            <Text style={styles.cardText}>Usuario: {incident.reporter_username}</Text>
-            <Text style={styles.cardText}>
+          <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+            <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>Datos principales</Text>
+            <Text style={[styles.cardText, { color: palette.textSecondary }]}>Instalacion: #{incident.installation_id}</Text>
+            <Text style={[styles.cardText, { color: palette.textSecondary }]}>Severidad: {incident.severity}</Text>
+            <Text style={[styles.cardText, { color: palette.textSecondary }]}>Fuente: {incident.source}</Text>
+            <Text style={[styles.cardText, { color: palette.textSecondary }]}>Usuario: {incident.reporter_username}</Text>
+            <Text style={[styles.cardText, { color: palette.textSecondary }]}>
               Ajuste tiempo: {incident.time_adjustment_seconds} s
             </Text>
-            <Text style={styles.cardText}>Fecha: {formatDate(incident.created_at)}</Text>
+            <Text style={[styles.cardText, { color: palette.textSecondary }]}>Fecha: {formatDate(incident.created_at)}</Text>
           </View>
 
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Nota</Text>
-            <Text style={styles.cardText}>{incident.note}</Text>
+          <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+            <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>Nota</Text>
+            <Text style={[styles.cardText, { color: palette.textSecondary }]}>{incident.note}</Text>
           </View>
 
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Fotos ({incident.photos?.length ?? 0})</Text>
+          <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+            <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>Fotos ({incident.photos?.length ?? 0})</Text>
             {!incident.photos?.length ? (
-              <Text style={styles.hintText}>Esta incidencia aun no tiene fotos adjuntas.</Text>
+              <Text style={[styles.hintText, { color: palette.textMuted }]}>Esta incidencia aun no tiene fotos adjuntas.</Text>
             ) : (
               incident.photos.map((photo) => (
-                <View key={photo.id} style={styles.photoItem}>
-                  <Text style={styles.photoTitle}>#{photo.id} - {photo.file_name}</Text>
-                  <Text style={styles.photoMeta}>Tipo: {photo.content_type}</Text>
-                  <Text style={styles.photoMeta}>Tamano: {formatBytes(photo.size_bytes)}</Text>
-                  <Text style={styles.photoMeta}>Fecha: {formatDate(photo.created_at)}</Text>
+                <View
+                  key={photo.id}
+                  style={[styles.photoItem, { backgroundColor: palette.itemBg, borderColor: palette.itemBorder }]}
+                >
+                  <Text style={[styles.photoTitle, { color: palette.textPrimary }]}>#{photo.id} - {photo.file_name}</Text>
+                  <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Tipo: {photo.content_type}</Text>
+                  <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Tamano: {formatBytes(photo.size_bytes)}</Text>
+                  <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Fecha: {formatDate(photo.created_at)}</Text>
                   {photoPreviews[photo.id] ? (
                     <TouchableOpacity onPress={() => onOpenPhoto(photo.id, photo.file_name)}>
                       <Image
-                        source={{ uri: photoPreviews[photo.id] }}
+                        source={{
+                          uri: photoPreviews[photo.id].uri,
+                          headers: photoPreviews[photo.id].headers,
+                        }}
                         style={styles.photoPreview}
                         resizeMode="cover"
                       />
                       <Text style={styles.openPreviewText}>Ver en pantalla completa</Text>
                     </TouchableOpacity>
                   ) : loadingPhotoPreviews && !failedPhotoIds[photo.id] ? (
-                    <Text style={styles.hintText}>Cargando vista previa...</Text>
+                    <Text style={[styles.hintText, { color: palette.textMuted }]}>Cargando vista previa...</Text>
                   ) : (
-                    <Text style={styles.hintText}>No se pudo cargar la vista previa.</Text>
+                    <Text style={[styles.hintText, { color: palette.textMuted }]}>No se pudo cargar la vista previa.</Text>
                   )}
                 </View>
               ))
