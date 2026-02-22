@@ -58,6 +58,7 @@ export default function CreateIncidentScreen() {
   const [severity, setSeverity] = useState<IncidentSeverity>("medium");
   const [manualClientName, setManualClientName] = useState("");
   const [manualNotes, setManualNotes] = useState("");
+  const [showManualRecordForm, setShowManualRecordForm] = useState(false);
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
   const [loadingInstallations, setLoadingInstallations] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -86,6 +87,24 @@ export default function CreateIncidentScreen() {
       severityBorder: isDark ? "#334155" : "#cbd5e1",
       severityLabel: isDark ? "#e2e8f0" : "#0f172a",
       severityCriteria: isDark ? "#94a3b8" : "#475569",
+      optionalCardBg: isDark ? "#0f172a" : "#f8fafc",
+      optionalCardBorder: isDark ? "#334155" : "#cbd5e1",
+      optionalCardTitle: isDark ? "#e2e8f0" : "#0f172a",
+      optionalCardBody: isDark ? "#94a3b8" : "#475569",
+      optionalToggleBg: isDark ? "#1e293b" : "#ffffff",
+      optionalToggleBorder: isDark ? "#334155" : "#cbd5e1",
+      optionalToggleText: isDark ? "#cbd5e1" : "#0f172a",
+      secondaryButtonBg: isDark ? "#2563eb" : "#2563eb",
+      secondaryButtonText: "#ffffff",
+      primaryButtonBg: isDark ? "#0b7a75" : "#0b7a75",
+      primaryButtonText: "#ffffff",
+      chipSelectedBg: isDark ? "#0b7a75" : "#0b7a75",
+      chipSelectedBorder: isDark ? "#0b7a75" : "#0b7a75",
+      chipSelectedText: "#ffffff",
+      severitySelectedBg: isDark ? "#0c4a4a" : "#ecfeff",
+      severitySelectedBorder: isDark ? "#0ea5a4" : "#0b7a75",
+      severitySelectedLabel: isDark ? "#99f6e4" : "#0f766e",
+      severitySelectedCriteria: isDark ? "#67e8f9" : "#155e75",
     }),
     [isDark],
   );
@@ -176,6 +195,7 @@ export default function CreateIncidentScreen() {
       );
       setManualClientName("");
       setManualNotes("");
+      setShowManualRecordForm(false);
       await loadInstallations({ forceRefresh: true });
     } catch (error) {
       notify("Error", extractApiError(error));
@@ -256,45 +276,92 @@ export default function CreateIncidentScreen() {
         </View>
       ) : null}
 
-      <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>1) Crear registro manual base</Text>
-      <Text style={[styles.hint, { color: palette.textMuted }]}>
-        Esto crea un registro en historial sin depender de instalacion previa.
-      </Text>
-
-      <Text style={[styles.label, { color: palette.label }]}>Cliente (opcional)</Text>
-      <TextInput
-        value={manualClientName}
-        onChangeText={setManualClientName}
-        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
-        placeholder="Cliente ACME"
-        placeholderTextColor={palette.placeholder}
-      />
-
-      <Text style={[styles.label, { color: palette.label }]}>Notas del registro base (opcional)</Text>
-      <TextInput
-        value={manualNotes}
-        onChangeText={setManualNotes}
+      <View
         style={[
-          styles.input,
-          styles.manualNoteInput,
-          { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary },
+          styles.optionalSectionCard,
+          { backgroundColor: palette.optionalCardBg, borderColor: palette.optionalCardBorder },
         ]}
-        multiline
-        placeholder="Contexto inicial del caso"
-        placeholderTextColor={palette.placeholder}
-      />
-
-      <TouchableOpacity
-        style={[styles.secondaryButton, creatingManualRecord && styles.buttonDisabled]}
-        onPress={onCreateManualRecord}
-        disabled={creatingManualRecord}
       >
-        {creatingManualRecord ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.buttonText}>Crear registro manual</Text>
-        )}
-      </TouchableOpacity>
+        <Text style={[styles.optionalSectionTitle, { color: palette.optionalCardTitle }]}>
+          No tengo instalacion previa
+        </Text>
+        <Text style={[styles.optionalSectionDescription, { color: palette.optionalCardBody }]}>
+          Crea primero un registro base solo si no aparece tu instalacion en la lista.
+        </Text>
+        <TouchableOpacity
+          style={[
+            styles.optionalSectionToggle,
+            {
+              backgroundColor: palette.optionalToggleBg,
+              borderColor: palette.optionalToggleBorder,
+            },
+          ]}
+          onPress={() => setShowManualRecordForm((current) => !current)}
+          disabled={creatingManualRecord}
+        >
+          <Text style={[styles.optionalSectionToggleText, { color: palette.optionalToggleText }]}>
+            {showManualRecordForm ? "Ocultar registro manual" : "Crear registro manual"}
+          </Text>
+        </TouchableOpacity>
+
+        {showManualRecordForm ? (
+          <View style={styles.optionalSectionForm}>
+            <Text style={[styles.label, { color: palette.label }]}>Cliente (opcional)</Text>
+            <TextInput
+              value={manualClientName}
+              onChangeText={setManualClientName}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.inputBorder,
+                  color: palette.textPrimary,
+                },
+              ]}
+              placeholder="Cliente ACME"
+              placeholderTextColor={palette.placeholder}
+            />
+
+            <Text style={[styles.label, { color: palette.label }]}>Notas del registro base (opcional)</Text>
+            <TextInput
+              value={manualNotes}
+              onChangeText={setManualNotes}
+              style={[
+                styles.input,
+                styles.manualNoteInput,
+                {
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.inputBorder,
+                  color: palette.textPrimary,
+                },
+              ]}
+              multiline
+              placeholder="Contexto inicial del caso"
+              placeholderTextColor={palette.placeholder}
+            />
+
+            <TouchableOpacity
+              style={[
+                styles.secondaryButton,
+                { backgroundColor: palette.secondaryButtonBg },
+                creatingManualRecord && styles.buttonDisabled,
+              ]}
+              onPress={onCreateManualRecord}
+              disabled={creatingManualRecord}
+            >
+              {creatingManualRecord ? (
+                <ActivityIndicator color={palette.secondaryButtonText} />
+              ) : (
+                <Text style={[styles.buttonText, { color: palette.secondaryButtonText }]}>
+                  Crear registro manual
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : null}
+      </View>
+
+      <View style={[styles.sectionDivider, { borderColor: palette.inputBorder }]} />
 
       <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>2) Crear incidencia sobre un registro</Text>
 
@@ -335,7 +402,10 @@ export default function CreateIncidentScreen() {
                   style={[
                     styles.chip,
                     { backgroundColor: palette.chipBg, borderColor: palette.chipBorder },
-                    selected && styles.chipSelected,
+                    selected && {
+                      backgroundColor: palette.chipSelectedBg,
+                      borderColor: palette.chipSelectedBorder,
+                    },
                   ]}
                   onPress={() => setInstallationId(String(item.id))}
                 >
@@ -343,7 +413,7 @@ export default function CreateIncidentScreen() {
                     style={[
                       styles.chipText,
                       { color: palette.chipText },
-                      selected && styles.chipTextSelected,
+                      selected && { color: palette.chipSelectedText },
                     ]}
                   >
                     #{item.id} {item.client_name ? `- ${item.client_name}` : ""}
@@ -398,7 +468,10 @@ export default function CreateIncidentScreen() {
               style={[
                 styles.severityChip,
                 { backgroundColor: palette.severityBg, borderColor: palette.severityBorder },
-                selected && styles.severityChipSelected,
+                selected && {
+                  backgroundColor: palette.severitySelectedBg,
+                  borderColor: palette.severitySelectedBorder,
+                },
               ]}
               onPress={() => setSeverity(option.value)}
             >
@@ -406,7 +479,7 @@ export default function CreateIncidentScreen() {
                 style={[
                   styles.severityChipLabel,
                   { color: palette.severityLabel },
-                  selected && styles.severityChipLabelSelected,
+                  selected && { color: palette.severitySelectedLabel },
                 ]}
               >
                 {option.label}
@@ -415,7 +488,7 @@ export default function CreateIncidentScreen() {
                 style={[
                   styles.severityChipCriteria,
                   { color: palette.severityCriteria },
-                  selected && styles.severityChipCriteriaSelected,
+                  selected && { color: palette.severitySelectedCriteria },
                 ]}
               >
                 {option.criteria}
@@ -436,14 +509,18 @@ export default function CreateIncidentScreen() {
       />
 
       <TouchableOpacity
-        style={[styles.button, submitting && styles.buttonDisabled]}
+        style={[
+          styles.button,
+          { backgroundColor: palette.primaryButtonBg },
+          submitting && styles.buttonDisabled,
+        ]}
         onPress={onSubmit}
         disabled={submitting}
       >
         {submitting ? (
-          <ActivityIndicator color="#fff" />
+          <ActivityIndicator color={palette.primaryButtonText} />
         ) : (
-          <Text style={styles.buttonText}>Crear incidencia</Text>
+          <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>Crear incidencia</Text>
         )}
       </TouchableOpacity>
     </ScrollView>
@@ -454,7 +531,6 @@ const styles = StyleSheet.create({
   container: {
     padding: 20,
     gap: 10,
-    backgroundColor: "#f8fafc",
   },
   rowBetween: {
     flexDirection: "row",
@@ -465,47 +541,71 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: "700",
-    color: "#0f172a",
   },
   subtitle: {
     fontSize: 14,
-    color: "#475569",
     marginBottom: 8,
   },
   feedbackBox: {
     borderWidth: 1,
-    borderColor: "#bae6fd",
-    backgroundColor: "#f0f9ff",
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
     marginBottom: 4,
   },
   feedbackText: {
-    color: "#0c4a6e",
     fontSize: 12,
   },
   sectionTitle: {
     marginTop: 10,
     fontSize: 14,
     fontWeight: "700",
-    color: "#0f172a",
+  },
+  optionalSectionCard: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
+  },
+  optionalSectionTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  optionalSectionDescription: {
+    fontSize: 12,
+  },
+  optionalSectionToggle: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  optionalSectionToggleText: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  optionalSectionForm: {
+    gap: 8,
+    marginTop: 2,
+  },
+  sectionDivider: {
+    marginTop: 12,
+    borderBottomWidth: 1,
   },
   label: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#1e293b",
   },
   input: {
     borderWidth: 1,
-    borderColor: "#cbd5e1",
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: "#fff",
   },
   hint: {
-    color: "#64748b",
     fontSize: 12,
   },
   chipsWrap: {
@@ -519,62 +619,35 @@ const styles = StyleSheet.create({
   },
   severityChip: {
     borderWidth: 1,
-    borderColor: "#cbd5e1",
     borderRadius: 10,
-    backgroundColor: "#ffffff",
     paddingHorizontal: 10,
     paddingVertical: 9,
     gap: 2,
   },
-  severityChipSelected: {
-    borderColor: "#0b7a75",
-    backgroundColor: "#ecfeff",
-  },
   severityChipLabel: {
-    color: "#0f172a",
     fontWeight: "700",
     fontSize: 12,
   },
-  severityChipLabelSelected: {
-    color: "#0f766e",
-  },
   severityChipCriteria: {
-    color: "#475569",
     fontSize: 12,
-  },
-  severityChipCriteriaSelected: {
-    color: "#155e75",
   },
   chip: {
     borderWidth: 1,
-    borderColor: "#cbd5e1",
-    backgroundColor: "#f8fafc",
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
-  chipSelected: {
-    backgroundColor: "#0b7a75",
-    borderColor: "#0b7a75",
-  },
   chipText: {
     fontSize: 12,
-    color: "#334155",
     fontWeight: "600",
-  },
-  chipTextSelected: {
-    color: "#ffffff",
   },
   refreshButton: {
     borderWidth: 1,
-    borderColor: "#cbd5e1",
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: "#ffffff",
   },
   refreshButtonText: {
-    color: "#0f172a",
     fontWeight: "600",
     fontSize: 12,
   },
@@ -588,7 +661,6 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     marginTop: 6,
-    backgroundColor: "#2563eb",
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
@@ -596,7 +668,6 @@ const styles = StyleSheet.create({
   },
   button: {
     marginTop: 10,
-    backgroundColor: "#0b7a75",
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
@@ -606,7 +677,6 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   buttonText: {
-    color: "#fff",
     fontWeight: "700",
     fontSize: 15,
   },

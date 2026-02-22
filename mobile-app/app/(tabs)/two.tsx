@@ -42,6 +42,13 @@ export default function IncidentListScreen() {
       refreshText: isDark ? "#cbd5e1" : "#0f172a",
       cardBg: isDark ? "#0f172a" : "#ffffff",
       cardBorder: isDark ? "#334155" : "#cbd5e1",
+      primaryButtonBg: isDark ? "#2563eb" : "#1d4ed8",
+      primaryButtonText: "#ffffff",
+      chipSelectedBg: isDark ? "#2563eb" : "#1d4ed8",
+      chipSelectedBorder: isDark ? "#2563eb" : "#1d4ed8",
+      chipSelectedText: "#ffffff",
+      uploadButtonBg: isDark ? "#0f766e" : "#0b7a75",
+      uploadButtonText: "#ffffff",
     }),
     [isDark],
   );
@@ -152,7 +159,10 @@ export default function IncidentListScreen() {
                   style={[
                     styles.chip,
                     { backgroundColor: palette.chipBg, borderColor: palette.chipBorder },
-                    selected && styles.chipSelected,
+                    selected && {
+                      backgroundColor: palette.chipSelectedBg,
+                      borderColor: palette.chipSelectedBorder,
+                    },
                   ]}
                   onPress={() => onSelectInstallation(item.id)}
                   disabled={loading}
@@ -161,7 +171,7 @@ export default function IncidentListScreen() {
                     style={[
                       styles.chipText,
                       { color: palette.chipText },
-                      selected && styles.chipTextSelected,
+                      selected && { color: palette.chipSelectedText },
                     ]}
                   >
                     #{item.id} {item.client_name ? `- ${item.client_name}` : ""}
@@ -184,11 +194,19 @@ export default function IncidentListScreen() {
       />
 
       <TouchableOpacity
-        style={[styles.button, loading && styles.buttonDisabled]}
+        style={[
+          styles.button,
+          { backgroundColor: palette.primaryButtonBg },
+          loading && styles.buttonDisabled,
+        ]}
         onPress={onLoad}
         disabled={loading}
       >
-        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Cargar</Text>}
+        {loading ? (
+          <ActivityIndicator color={palette.primaryButtonText} />
+        ) : (
+          <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>Cargar</Text>
+        )}
       </TouchableOpacity>
 
       <View style={styles.section}>
@@ -221,14 +239,16 @@ export default function IncidentListScreen() {
                   <Text style={[styles.detailButtonText, { color: palette.refreshText }]}>Ver detalle</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.uploadButton}
+                  style={[styles.uploadButton, { backgroundColor: palette.uploadButtonBg }]}
                   onPress={() =>
                     router.push(
                       `/incident/upload?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
                     )
                   }
                 >
-                  <Text style={styles.uploadButtonText}>Adjuntar foto</Text>
+                  <Text style={[styles.uploadButtonText, { color: palette.uploadButtonText }]}>
+                    Adjuntar foto
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -243,7 +263,6 @@ const styles = StyleSheet.create({
   container: {
     padding: 20,
     gap: 10,
-    backgroundColor: "#f8fafc",
   },
   rowBetween: {
     flexDirection: "row",
@@ -254,24 +273,19 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: "700",
-    color: "#0f172a",
   },
   label: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#1e293b",
   },
   input: {
     borderWidth: 1,
-    borderColor: "#cbd5e1",
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: "#fff",
   },
   button: {
     marginTop: 6,
-    backgroundColor: "#1d4ed8",
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
@@ -285,34 +299,21 @@ const styles = StyleSheet.create({
   },
   chip: {
     borderWidth: 1,
-    borderColor: "#cbd5e1",
-    backgroundColor: "#f8fafc",
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
-  chipSelected: {
-    backgroundColor: "#1d4ed8",
-    borderColor: "#1d4ed8",
-  },
   chipText: {
     fontSize: 12,
-    color: "#334155",
     fontWeight: "600",
-  },
-  chipTextSelected: {
-    color: "#ffffff",
   },
   refreshButton: {
     borderWidth: 1,
-    borderColor: "#cbd5e1",
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: "#ffffff",
   },
   refreshButtonText: {
-    color: "#0f172a",
     fontWeight: "600",
     fontSize: 12,
   },
@@ -320,7 +321,6 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   buttonText: {
-    color: "#fff",
     fontWeight: "700",
     fontSize: 15,
   },
@@ -329,25 +329,18 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   emptyText: {
-    color: "#64748b",
   },
   card: {
     borderWidth: 1,
-    borderColor: "#cbd5e1",
     borderRadius: 10,
-    backgroundColor: "#fff",
     padding: 12,
     gap: 6,
   },
   cardTitle: {
     fontWeight: "700",
-    color: "#0f172a",
   },
-  cardText: {
-    color: "#1e293b",
-  },
+  cardText: {},
   cardMeta: {
-    color: "#64748b",
     fontSize: 12,
   },
   actionsRow: {
@@ -359,25 +352,20 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#cbd5e1",
-    backgroundColor: "#ffffff",
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   detailButtonText: {
-    color: "#0f172a",
     fontWeight: "700",
     fontSize: 12,
   },
   uploadButton: {
     alignSelf: "flex-start",
     borderRadius: 8,
-    backgroundColor: "#0b7a75",
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   uploadButtonText: {
-    color: "#ffffff",
     fontWeight: "700",
     fontSize: 12,
   },

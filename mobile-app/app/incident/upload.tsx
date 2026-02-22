@@ -112,6 +112,9 @@ export default function UploadIncidentPhotoScreen() {
       hint: isDark ? "#94a3b8" : "#64748b",
       secondaryBg: isDark ? "#0f172a" : "#ffffff",
       secondaryText: isDark ? "#cbd5e1" : "#0f172a",
+      processingSpinner: isDark ? "#0ea5a4" : "#0b7a75",
+      primaryButtonBg: isDark ? "#0f766e" : "#0b7a75",
+      primaryButtonText: "#ffffff",
     }),
     [isDark],
   );
@@ -348,7 +351,7 @@ export default function UploadIncidentPhotoScreen() {
 
       {processingImage ? (
         <View style={styles.processingRow}>
-          <ActivityIndicator color="#0b7a75" />
+          <ActivityIndicator color={palette.processingSpinner} />
           <Text style={[styles.hintText, { color: palette.hint }]}>
             {processingMessage || "Comprimiendo imagen para subir..."}
           </Text>
@@ -367,14 +370,20 @@ export default function UploadIncidentPhotoScreen() {
       )}
 
       <TouchableOpacity
-        style={[styles.primaryButton, uploading && styles.primaryButtonDisabled]}
+        style={[
+          styles.primaryButton,
+          { backgroundColor: palette.primaryButtonBg },
+          uploading && styles.primaryButtonDisabled,
+        ]}
         onPress={onUpload}
         disabled={uploading || processingImage}
       >
         {uploading ? (
-          <ActivityIndicator color="#ffffff" />
+          <ActivityIndicator color={palette.primaryButtonText} />
         ) : (
-          <Text style={styles.primaryButtonText}>Subir foto</Text>
+          <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
+            Subir foto
+          </Text>
         )}
       </TouchableOpacity>
     </ScrollView>
@@ -385,29 +394,23 @@ const styles = StyleSheet.create({
   container: {
     padding: 20,
     gap: 12,
-    backgroundColor: "#f8fafc",
   },
   title: {
     fontSize: 24,
     fontWeight: "700",
-    color: "#0f172a",
   },
   subtitle: {
-    color: "#475569",
     fontSize: 13,
   },
   label: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#1e293b",
   },
   input: {
     borderWidth: 1,
-    borderColor: "#cbd5e1",
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: "#ffffff",
   },
   row: {
     flexDirection: "row",
@@ -421,22 +424,17 @@ const styles = StyleSheet.create({
   secondaryButton: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#cbd5e1",
     borderRadius: 10,
-    backgroundColor: "#ffffff",
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
   },
   secondaryButtonText: {
-    color: "#0f172a",
     fontWeight: "700",
   },
   previewCard: {
     borderWidth: 1,
-    borderColor: "#cbd5e1",
     borderRadius: 10,
-    backgroundColor: "#ffffff",
     padding: 10,
     gap: 8,
   },
@@ -444,20 +442,16 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 260,
     borderRadius: 8,
-    backgroundColor: "#e2e8f0",
   },
   hintText: {
-    color: "#64748b",
     fontSize: 13,
   },
   metaText: {
-    color: "#334155",
     fontSize: 12,
   },
   primaryButton: {
     marginTop: 8,
     borderRadius: 10,
-    backgroundColor: "#0b7a75",
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 14,
@@ -466,7 +460,6 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   primaryButtonText: {
-    color: "#ffffff",
     fontWeight: "700",
     fontSize: 15,
   },

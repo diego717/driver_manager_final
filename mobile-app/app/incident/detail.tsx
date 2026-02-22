@@ -94,6 +94,11 @@ export default function IncidentDetailScreen() {
       feedbackBg: isDark ? "#450a0a" : "#fef2f2",
       feedbackBorder: isDark ? "#7f1d1d" : "#fecaca",
       feedbackText: isDark ? "#fecaca" : "#7f1d1d",
+      loadingSpinner: isDark ? "#0ea5a4" : "#0b7a75",
+      previewLink: isDark ? "#2dd4bf" : "#0b7a75",
+      previewPlaceholder: isDark ? "#334155" : "#cbd5e1",
+      primaryButtonBg: isDark ? "#0f766e" : "#0b7a75",
+      primaryButtonText: "#ffffff",
     }),
     [isDark],
   );
@@ -229,7 +234,7 @@ export default function IncidentDetailScreen() {
 
       {loading ? (
         <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color="#0b7a75" />
+          <ActivityIndicator size="large" color={palette.loadingSpinner} />
         </View>
       ) : errorMessage ? (
         <View
@@ -280,10 +285,12 @@ export default function IncidentDetailScreen() {
                           uri: photoPreviews[photo.id].uri,
                           headers: photoPreviews[photo.id].headers,
                         }}
-                        style={styles.photoPreview}
+                        style={[styles.photoPreview, { backgroundColor: palette.previewPlaceholder }]}
                         resizeMode="cover"
                       />
-                      <Text style={styles.openPreviewText}>Ver en pantalla completa</Text>
+                      <Text style={[styles.openPreviewText, { color: palette.previewLink }]}>
+                        Ver en pantalla completa
+                      </Text>
                     </TouchableOpacity>
                   ) : loadingPhotoPreviews && !failedPhotoIds[photo.id] ? (
                     <Text style={[styles.hintText, { color: palette.textMuted }]}>Cargando vista previa...</Text>
@@ -295,8 +302,13 @@ export default function IncidentDetailScreen() {
             )}
           </View>
 
-          <TouchableOpacity style={styles.primaryButton} onPress={onAddEvidence}>
-            <Text style={styles.primaryButtonText}>Adjuntar evidencia</Text>
+          <TouchableOpacity
+            style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
+            onPress={onAddEvidence}
+          >
+            <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
+              Adjuntar evidencia
+            </Text>
           </TouchableOpacity>
         </>
       ) : null}
@@ -308,12 +320,10 @@ const styles = StyleSheet.create({
   container: {
     padding: 20,
     gap: 10,
-    backgroundColor: "#f8fafc",
   },
   title: {
     fontSize: 24,
     fontWeight: "700",
-    color: "#0f172a",
   },
   topRow: {
     flexDirection: "row",
@@ -322,27 +332,22 @@ const styles = StyleSheet.create({
   refreshButton: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#cbd5e1",
     borderRadius: 10,
-    backgroundColor: "#ffffff",
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
   },
   refreshButtonText: {
-    color: "#0f172a",
     fontWeight: "700",
   },
   backButton: {
     flex: 1,
     borderRadius: 10,
-    backgroundColor: "#e2e8f0",
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
   },
   backButtonText: {
-    color: "#0f172a",
     fontWeight: "700",
   },
   centerBox: {
@@ -352,53 +357,41 @@ const styles = StyleSheet.create({
   },
   feedbackBox: {
     borderWidth: 1,
-    borderColor: "#fecaca",
-    backgroundColor: "#fef2f2",
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
   },
   feedbackText: {
-    color: "#7f1d1d",
     fontSize: 12,
   },
   card: {
     borderWidth: 1,
-    borderColor: "#cbd5e1",
     borderRadius: 10,
-    backgroundColor: "#ffffff",
     padding: 12,
     gap: 6,
   },
   cardTitle: {
     fontWeight: "700",
-    color: "#0f172a",
     marginBottom: 2,
   },
   cardText: {
-    color: "#1e293b",
     fontSize: 13,
   },
   hintText: {
-    color: "#64748b",
     fontSize: 13,
   },
   photoItem: {
     borderWidth: 1,
-    borderColor: "#e2e8f0",
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
     gap: 3,
-    backgroundColor: "#f8fafc",
   },
   photoTitle: {
-    color: "#0f172a",
     fontWeight: "700",
     fontSize: 12,
   },
   photoMeta: {
-    color: "#475569",
     fontSize: 12,
   },
   photoPreview: {
@@ -406,24 +399,20 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 160,
     borderRadius: 8,
-    backgroundColor: "#cbd5e1",
   },
   openPreviewText: {
     marginTop: 6,
-    color: "#0b7a75",
     fontWeight: "700",
     fontSize: 12,
   },
   primaryButton: {
     marginTop: 4,
     borderRadius: 10,
-    backgroundColor: "#0b7a75",
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 14,
   },
   primaryButtonText: {
-    color: "#ffffff",
     fontWeight: "700",
     fontSize: 15,
   },
