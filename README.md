@@ -8,6 +8,17 @@ Driver Manager es un monorepo con tres componentes:
 - API en Cloudflare Workers (D1 + R2) para instalaciones e incidencias.
 - App movil en Expo/React Native para reportar incidencias y subir fotos.
 
+## Novedades recientes
+
+- Desktop:
+  - `UserManagerV2` ahora usa cache TTL corta para lectura de usuarios en nube y refresca cache al guardar.
+  - Logging legacy de accesos con persistencia mas robusta (escritura atomica local y reintentos con merge para reducir perdida por concurrencia).
+  - Eliminada la ruta de migracion legacy en `MainWindow` durante inicializacion de usuario.
+- Mobile:
+  - Pantallas principales alineadas con `ThemePreferenceProvider` para modo claro/oscuro real (incluye `+not-found` y pantallas de incidencias/fotos).
+  - Flujo de "crear registro manual" en `Crear incidencia` ahora es opcional/colapsable para separar mejor los flujos.
+  - Limpieza de estilos: colores de estado y botones movidos a paletas dinamicas en pantalla.
+
 ## Arquitectura
 
 - `main.py`: entrada de la app desktop.
