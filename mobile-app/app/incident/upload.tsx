@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
@@ -24,6 +24,7 @@ type SelectedImage = {
   fileName: string;
   contentType: string;
   sizeBytes: number;
+  isTemporary: boolean;
 };
 
 const IMAGE_PICK_QUALITY = 1;
@@ -44,6 +45,19 @@ function toJpegFileName(originalName: string | null | undefined, incidentId: str
   const base = sanitized.replace(/\.[a-zA-Z0-9]+$/, "");
   const finalBase = base || `incident_${incidentId || "0"}_${Date.now()}`;
   return `${finalBase}.jpg`;
+}
+
+function uniqueUris(uris: string[]): string[] {
+  return Array.from(new Set(uris.filter((uri) => Boolean(uri && uri.trim()))));
+}
+
+async function deleteFileIfExists(uri: string): Promise<void> {
+  if (!uri.trim()) return;
+  try {
+    await FileSystem.deleteAsync(uri, { idempotent: true });
+  } catch {
+    // Ignore cleanup errors for temporary artifacts.
+  }
 }
 
 async function getFileSizeBytes(uri: string): Promise<number> {
@@ -79,8 +93,10 @@ export default function UploadIncidentPhotoScreen() {
 
   const [incidentId, setIncidentId] = useState(initialIncidentId || "");
   const [selectedImage, setSelectedImage] = useState<SelectedImage | null>(null);
+  const selectedImageRef = useRef<SelectedImage | null>(null);
   const [uploading, setUploading] = useState(false);
   const [processingImage, setProcessingImage] = useState(false);
+  const [processingMessage, setProcessingMessage] = useState("");
   const palette = useMemo(
     () => ({
       screenBg: isDark ? "#020617" : "#f8fafc",
@@ -100,73 +116,116 @@ export default function UploadIncidentPhotoScreen() {
     [isDark],
   );
 
+  useEffect(() => {
+    selectedImageRef.current = selectedImage;
+  }, [selectedImage]);
+
+  useEffect(() => {
+    return () => {
+      const current = selectedImageRef.current;
+      if (!current?.isTemporary) return;
+      void deleteFileIfExists(current.uri);
+    };
+  }, []);
+
   const processAssetForUpload = async (
     asset: ImagePicker.ImagePickerAsset,
+    onProgress: (message: string) => void,
   ): Promise<SelectedImage> => {
     const sourceUri = asset.uri;
     const width = asset.width ?? 0;
     const height = asset.height ?? 0;
+    const generatedUris: string[] = [];
 
-    let workingUri = sourceUri;
-    if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
-      const ratio = Math.min(MAX_IMAGE_DIMENSION / width, MAX_IMAGE_DIMENSION / height);
-      const targetWidth = Math.max(1, Math.round(width * ratio));
-      const targetHeight = Math.max(1, Math.round(height * ratio));
-      const resized = await ImageManipulator.manipulateAsync(
-        sourceUri,
-        [{ resize: { width: targetWidth, height: targetHeight } }],
-        { compress: 1, format: ImageManipulator.SaveFormat.JPEG },
-      );
-      workingUri = resized.uri;
-    }
-
-    let bestUri = workingUri;
-    let bestSize = await getFileSizeBytes(workingUri);
-
-    for (const quality of COMPRESS_QUALITIES) {
-      const compressed = await ImageManipulator.manipulateAsync(
-        workingUri,
-        [],
-        { compress: quality, format: ImageManipulator.SaveFormat.JPEG },
-      );
-      const compressedSize = await getFileSizeBytes(compressed.uri);
-      if (compressedSize > 0 && (bestSize <= 0 || compressedSize < bestSize)) {
-        bestUri = compressed.uri;
-        bestSize = compressedSize;
+    try {
+      let workingUri = sourceUri;
+      if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
+        onProgress("Redimensionando imagen...");
+        const ratio = Math.min(MAX_IMAGE_DIMENSION / width, MAX_IMAGE_DIMENSION / height);
+        const targetWidth = Math.max(1, Math.round(width * ratio));
+        const targetHeight = Math.max(1, Math.round(height * ratio));
+        const resized = await ImageManipulator.manipulateAsync(
+          sourceUri,
+          [{ resize: { width: targetWidth, height: targetHeight } }],
+          { compress: 1, format: ImageManipulator.SaveFormat.JPEG },
+        );
+        if (resized.uri !== sourceUri) {
+          generatedUris.push(resized.uri);
+        }
+        workingUri = resized.uri;
       }
-      if (compressedSize >= MIN_UPLOAD_PHOTO_BYTES && compressedSize <= MAX_UPLOAD_PHOTO_BYTES) {
-        bestUri = compressed.uri;
-        bestSize = compressedSize;
-        break;
+
+      let bestUri = workingUri;
+      let bestSize = await getFileSizeBytes(workingUri);
+
+      for (const [index, quality] of COMPRESS_QUALITIES.entries()) {
+        onProgress(`Intento ${index + 1} de ${COMPRESS_QUALITIES.length}...`);
+        const compressed = await ImageManipulator.manipulateAsync(
+          workingUri,
+          [],
+          { compress: quality, format: ImageManipulator.SaveFormat.JPEG },
+        );
+        if (compressed.uri !== sourceUri) {
+          generatedUris.push(compressed.uri);
+        }
+        const compressedSize = await getFileSizeBytes(compressed.uri);
+        if (compressedSize > 0 && (bestSize <= 0 || compressedSize < bestSize)) {
+          bestUri = compressed.uri;
+          bestSize = compressedSize;
+        }
+        if (compressedSize >= MIN_UPLOAD_PHOTO_BYTES && compressedSize <= MAX_UPLOAD_PHOTO_BYTES) {
+          bestUri = compressed.uri;
+          bestSize = compressedSize;
+          break;
+        }
       }
-    }
 
-    if (bestSize < MIN_UPLOAD_PHOTO_BYTES) {
-      throw new Error("Imagen demasiado pequena o corrupta.");
-    }
-    if (bestSize > MAX_UPLOAD_PHOTO_BYTES) {
-      const sizeMb = (bestSize / (1024 * 1024)).toFixed(1);
-      throw new Error(`No se pudo comprimir la imagen a 5MB (actual: ${sizeMb}MB).`);
-    }
+      if (bestSize < MIN_UPLOAD_PHOTO_BYTES) {
+        throw new Error("Imagen demasiado pequena o corrupta.");
+      }
+      if (bestSize > MAX_UPLOAD_PHOTO_BYTES) {
+        const sizeMb = (bestSize / (1024 * 1024)).toFixed(1);
+        throw new Error(`No se pudo comprimir la imagen a 5MB (actual: ${sizeMb}MB).`);
+      }
 
-    return {
-      uri: bestUri,
-      fileName: toJpegFileName(asset.fileName, incidentId),
-      contentType: "image/jpeg",
-      sizeBytes: bestSize,
-    };
+      const generated = uniqueUris(generatedUris);
+      const isTemporary = generated.includes(bestUri);
+      await Promise.all(
+        generated
+          .filter((uri) => uri !== bestUri)
+          .map((uri) => deleteFileIfExists(uri)),
+      );
+
+      return {
+        uri: bestUri,
+        fileName: toJpegFileName(asset.fileName, incidentId),
+        contentType: "image/jpeg",
+        sizeBytes: bestSize,
+        isTemporary,
+      };
+    } catch (error) {
+      await Promise.all(uniqueUris(generatedUris).map((uri) => deleteFileIfExists(uri)));
+      throw error;
+    }
   };
 
   const setImageFromAsset = async (asset: ImagePicker.ImagePickerAsset) => {
     setProcessingImage(true);
+    setProcessingMessage("Preparando imagen...");
     try {
-      const processed = await processAssetForUpload(asset);
+      const previousTempUri =
+        selectedImageRef.current?.isTemporary ? selectedImageRef.current.uri : null;
+      const processed = await processAssetForUpload(asset, setProcessingMessage);
+      if (previousTempUri && previousTempUri !== processed.uri) {
+        await deleteFileIfExists(previousTempUri);
+      }
       setSelectedImage(processed);
     } catch (error) {
       setSelectedImage(null);
       Alert.alert("Imagen invalida", extractApiError(error));
     } finally {
       setProcessingImage(false);
+      setProcessingMessage("");
     }
   };
 
@@ -224,6 +283,10 @@ export default function UploadIncidentPhotoScreen() {
         contentType: selectedImage.contentType,
       });
       Alert.alert("Foto subida", `Foto ID: ${response.photo.id}`);
+      if (selectedImage.isTemporary) {
+        await deleteFileIfExists(selectedImage.uri);
+      }
+      setSelectedImage(null);
       router.replace(
         `/incident/detail?incidentId=${parsedIncidentId}&installationId=${installationId}` as never,
       );
@@ -286,7 +349,9 @@ export default function UploadIncidentPhotoScreen() {
       {processingImage ? (
         <View style={styles.processingRow}>
           <ActivityIndicator color="#0b7a75" />
-          <Text style={[styles.hintText, { color: palette.hint }]}>Comprimiendo imagen para subir...</Text>
+          <Text style={[styles.hintText, { color: palette.hint }]}>
+            {processingMessage || "Comprimiendo imagen para subir..."}
+          </Text>
         </View>
       ) : null}
 
