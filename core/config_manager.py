@@ -342,14 +342,36 @@ class ConfigManager:
     def apply_portable_config(self, portable_config):
         """Aplica la configuración, guarda y PROTEGE LA UI."""
         logger.operation_start("apply_portable_config")
-        
+
+        if not isinstance(portable_config, dict):
+            logger.error("Config portable inválida: se esperaba un objeto JSON.")
+            if hasattr(self.main, "statusBar"):
+                self.main.statusBar().showMessage("❌ Configuración portable inválida")
+            return False
+
+        required_fields = ["account_id", "access_key_id", "secret_access_key", "bucket_name"]
+        missing_fields = [field for field in required_fields if not portable_config.get(field)]
+        if missing_fields:
+            logger.error(
+                "Config portable incompleta",
+                missing_fields=missing_fields,
+            )
+            if hasattr(self.main, "statusBar"):
+                self.main.statusBar().showMessage("❌ Configuración portable incompleta")
+            return False
+
         self._applying_portable = True
-        success = self.save_config_data(portable_config)
-        self._applying_portable = False
-        
+        try:
+            success = self.save_config_data(portable_config)
+        finally:
+            self._applying_portable = False
+
         if not success:
             logger.error("Fallo al guardar config portable.")
-        
+            if hasattr(self.main, "statusBar"):
+                self.main.statusBar().showMessage("❌ Error guardando configuración portable")
+            return False
+
         self.init_cloud_connection()
         
         # ACTUALIZAR UI Y OCULTAR CREDENCIALES
@@ -403,28 +425,35 @@ class ConfigManager:
         """Inicializar conexión con Cloudflare R2"""
         logger.operation_start("init_cloud_connection")
         config = self.load_config_data()
-        
-        if config:
-            try:
-                self.main.cloud_manager = CloudflareR2Manager(
-                    account_id=config.get('account_id'),
-                    access_key_id=config.get('access_key_id'),
-                    secret_access_key=config.get('secret_access_key'),
-                    bucket_name=config.get('bucket_name')
-                )
-                
-                if hasattr(self.main, 'refresh_drivers_list'):
-                    self.main.refresh_drivers_list()
-                
-                if hasattr(self.main, 'user_manager') and self.main.user_manager:
-                    self.main.user_manager.cloud_manager = self.main.cloud_manager
 
-                self.main.statusBar().showMessage("✅ Conectado a Cloudflare R2")
-                logger.info("Conexión a Cloudflare R2 establecida.")
-                
-            except Exception as e:
-                logger.error(f"Error de conexión R2: {e}", exc_info=True)
-                self.main.statusBar().showMessage("❌ Error conectando a la nube")
+        if not config:
+            logger.warning("No hay configuración disponible para iniciar conexión R2.")
+            self.main.cloud_manager = None
+            self.main.statusBar().showMessage("❌ Configuración de nube faltante")
+            return False
+
+        try:
+            self.main.cloud_manager = CloudflareR2Manager(
+                account_id=config.get('account_id'),
+                access_key_id=config.get('access_key_id'),
+                secret_access_key=config.get('secret_access_key'),
+                bucket_name=config.get('bucket_name')
+            )
+            
+            if hasattr(self.main, 'refresh_drivers_list'):
+                self.main.refresh_drivers_list()
+            
+            if hasattr(self.main, 'user_manager') and self.main.user_manager:
+                self.main.user_manager.cloud_manager = self.main.cloud_manager
+
+            self.main.statusBar().showMessage("✅ Conectado a Cloudflare R2")
+            logger.info("Conexión a Cloudflare R2 establecida.")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error de conexión R2: {e}", exc_info=True)
+            self.main.statusBar().showMessage("❌ Error conectando a la nube")
+            return False
 
     # Mantenemos el método test_cloud_connection tal cual estaba
     @returns_result_tuple("test_cloud_connection")

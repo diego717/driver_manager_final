@@ -76,7 +76,7 @@ class PasswordValidator:
             try:
                 if bcrypt.checkpw(new_password.encode('utf-8'), old_hash.encode('utf-8')):
                     return False
-            except:
+            except (ValueError, TypeError, AttributeError, UnicodeError):
                 continue
         
         return True
@@ -333,8 +333,18 @@ class UserManagerV2:
         else:
             success = bool(raw_success)
 
+        timestamp_value = entry.get("timestamp")
+        if not timestamp_value:
+            for key, value in entry.items():
+                if not isinstance(key, str):
+                    continue
+                lowered = key.lower()
+                if lowered.startswith("timest") and "mp" in lowered:
+                    timestamp_value = value
+                    break
+
         return {
-            "timestámp": entry.get("timestámp"),
+            "timestamp": timestamp_value,
             "action": entry.get("action"),
             "username": entry.get("username"),
             "success": success,
@@ -447,7 +457,7 @@ class UserManagerV2:
             password_bytes = password.encode('utf-8')
             hashed_bytes = hashed.encode('utf-8')
             return bcrypt.checkpw(password_bytes, hashed_bytes)
-        except:
+        except (ValueError, TypeError):
             # Fallback al método antiguo si existe
             return self._verify_password_legacy(password, hashed)
     
@@ -462,7 +472,7 @@ class UserManagerV2:
                                      salt.encode('utf-8'),
                                      100000)
             return key.hex() == stored_key
-        except:
+        except (ValueError, TypeError, AttributeError, UnicodeError):
             return False
     
     def _get_system_info(self):
@@ -474,7 +484,7 @@ class UserManagerV2:
                 'platform': platform.system(),
                 'ip': socket.gethostbyname(socket.gethostname())
             }
-        except:
+        except (OSError, UnicodeError):
             return {
                 'computer_name': 'Unknown',
                 'username': 'Unknown',
@@ -838,7 +848,7 @@ class UserManagerV2:
         try:
             system_info = self._get_system_info()
             log_entry = {
-                "timestámp": datetime.now().isoformat(),
+                "timestamp": datetime.now().isoformat(),
                 "action": action,
                 "username": username,
                 "success": success,
@@ -851,7 +861,7 @@ class UserManagerV2:
                     "post",
                     "audit-logs",
                     json={
-                        "timestámp": log_entry["timestámp"],
+                        "timestamp": log_entry["timestamp"],
                         "action": action,
                         "username": username,
                         "success": bool(success),

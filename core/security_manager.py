@@ -223,7 +223,12 @@ class SecurityManager:
             config_dir = self._get_config_dir()
             current_salt_file = config_dir / ".security_salt"
             
-            if self._try_recover_salt(password, encrypted_data, expected_hmac, current_salt_file):
+            recovery_data = self._try_recover_salt(password, encrypted_data, expected_hmac)
+            if recovery_data and self._apply_recovered_salt(
+                recovery_data["legacy_salt_file"],
+                current_salt_file,
+                recovery_data["derived_key"],
+            ):
                 logger.info("Salt recuperado exitosamente. Reintentando descifrado.")
                 # Re-verificar con la clave recuperada
                 if not self.verify_hmac(encrypted_data, expected_hmac):
@@ -235,35 +240,43 @@ class SecurityManager:
         logger.operation_end("decrypt_config_file", success=True)
         return decrypted_data
     
-    def _try_recover_salt(self, password, encrypted_data, expected_hmac, current_salt_file):
-        """Intentar recuperar el salt correcto desde la ubicación legacy"""
+    def _try_recover_salt(self, password, encrypted_data, expected_hmac):
+        """Verificar si el salt legacy permite validar HMAC sin mutar estado."""
         user_salt = Path.home() / ".driver_manager" / ".security_salt"
         if not user_salt.exists():
-            return False
-            
+            return None
+
         try:
             with open(user_salt, 'rb') as f:
                 legacy_salt = f.read()
-            
-            # Derivar clave temporal con el salt legacy
+        except OSError as e:
+            logger.error(f"No se pudo leer salt legacy: {e}")
+            return None
+
+        try:
             temp_key = self._derive_key(password, legacy_salt)
-            
-            # Verificar si este salt genera el HMAC correcto
             hmac_val = hmac.new(temp_key, encrypted_data.encode(), hashlib.sha256).hexdigest()
-            
             if hmac.compare_digest(hmac_val, expected_hmac):
-                # ¡Encontrado! Sobrescribir el salt actual con el correcto
-                import shutil
-                shutil.copy2(user_salt, current_salt_file)
-                
-                # Actualizar la instancia actual
-                self.master_key = temp_key
-                self.fernet = Fernet(self.master_key)
-                return True
-        except Exception as e:
+                return {
+                    "legacy_salt_file": user_salt,
+                    "derived_key": temp_key,
+                }
+        except (ValueError, TypeError, UnicodeError) as e:
             logger.error(f"Error intentando recuperar salt: {e}")
-            
-        return False
+
+        return None
+
+    def _apply_recovered_salt(self, legacy_salt_file: Path, current_salt_file: Path, derived_key: bytes) -> bool:
+        """Migrar salt recuperado y actualizar el contexto criptográfico activo."""
+        try:
+            import shutil
+            shutil.copy2(legacy_salt_file, current_salt_file)
+            self.master_key = derived_key
+            self.fernet = Fernet(derived_key)
+            return True
+        except (OSError, ValueError, TypeError) as e:
+            logger.error(f"No se pudo aplicar salt recuperado: {e}")
+            return False
 
     @handle_errors("secure_delete_file", reraise=False)
     def secure_delete_file(self, file_path: Path):

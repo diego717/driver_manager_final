@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+import hmac
+import hashlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -64,6 +66,45 @@ class TestSecurityManager(unittest.TestCase):
             with patch.object(manager, "_try_recover_salt", return_value=False):
                 decrypted = manager.decrypt_config_file("pass123", file_path=config_file)
                 self.assertIsNone(decrypted)
+
+    def test_try_recover_salt_does_not_mutate_instance_state(self):
+        manager = self._new_manager()
+        self.assertTrue(manager.initialize_master_key("pass123"))
+        original_key = manager.master_key
+        original_fernet = manager.fernet
+
+        legacy_home = self.config_path / "legacy-home"
+        legacy_salt_dir = legacy_home / ".driver_manager"
+        legacy_salt_dir.mkdir(parents=True, exist_ok=True)
+        legacy_salt_file = legacy_salt_dir / ".security_salt"
+        legacy_salt = b"0123456789ABCDEF"
+        legacy_salt_file.write_bytes(legacy_salt)
+
+        encrypted_data = "payload-test"
+        derived_key = manager._derive_key("pass123", legacy_salt)
+        expected_hmac = hmac.new(derived_key, encrypted_data.encode(), hashlib.sha256).hexdigest()
+
+        with patch("core.security_manager.Path.home", return_value=legacy_home):
+            recovery_data = manager._try_recover_salt("pass123", encrypted_data, expected_hmac)
+
+        self.assertIsNotNone(recovery_data)
+        self.assertEqual(manager.master_key, original_key)
+        self.assertIs(manager.fernet, original_fernet)
+
+    def test_apply_recovered_salt_updates_crypto_context_and_copies_salt(self):
+        manager = self._new_manager()
+
+        legacy_salt_file = self.config_path / "legacy.security_salt"
+        legacy_salt = b"FEDCBA9876543210"
+        legacy_salt_file.write_bytes(legacy_salt)
+        current_salt_file = self.config_path / "recovered.security_salt"
+        derived_key = manager._derive_key("pass123", legacy_salt)
+
+        success = manager._apply_recovered_salt(legacy_salt_file, current_salt_file, derived_key)
+
+        self.assertTrue(success)
+        self.assertEqual(manager.master_key, derived_key)
+        self.assertEqual(current_salt_file.read_bytes(), legacy_salt)
 
     def test_cloud_data_encryption_roundtrip(self):
         manager = self._new_manager()

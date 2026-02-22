@@ -38,6 +38,11 @@ class DropZoneWidget(QWidget):
         # Configurar UI
         self.setAcceptDrops(True)
         self.setMinimumHeight(150)
+        self.setAccessibleName("Zona de carga de drivers")
+        extensions = ", ".join(self.accepted_extensions)
+        self.setAccessibleDescription(
+            f"Arrastra y suelta un archivo de driver o haz clic para seleccionarlo. Extensiones permitidas: {extensions}"
+        )
         self.init_ui()
     
     def init_ui(self):

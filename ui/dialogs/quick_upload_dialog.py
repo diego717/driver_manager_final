@@ -123,7 +123,7 @@ class QuickUploadDialog(QDialog):
             "Descripción opcional del driver (características, compatibilidad, notas importantes...)"
         )
         self.description_input.setMaximumHeight(80)
-        self.description_input.textChanged.connect(self.validate_form)
+        self.description_input.textChanged.connect(self.on_description_changed)
         form_layout.addRow("Descripción:", self.description_input)
         
         # Contador de caracteres
@@ -131,7 +131,7 @@ class QuickUploadDialog(QDialog):
         self.char_counter.setStyleSheet("color: #888; font-size: 9pt;")
         self.char_counter.setAlignment(Qt.AlignmentFlag.AlignRight)
         form_layout.addRow("", self.char_counter)
-        
+        self.update_description_counter()
         form_group.setLayout(form_layout)
         layout.addWidget(form_group)
         
@@ -238,18 +238,22 @@ class QuickUploadDialog(QDialog):
         else:
             self.version_status.setText("❌")
             self.version_status.setStyleSheet("color: #E74C3C; font-size: 14pt;")
-        
-        # Actualizar contador de descripción
-        desc_text = self.description_input.toPlainText()
-        char_count = len(desc_text)
+        self.validate_form()
+
+    def on_description_changed(self):
+        """Actualizar contador de descripción y validar formulario."""
+        self.update_description_counter()
+        self.validate_form()
+
+    def update_description_counter(self):
+        """Actualizar contador visual de caracteres para la descripción."""
+        char_count = len(self.description_input.toPlainText())
         self.char_counter.setText(f"{char_count} / 500 caracteres")
-        
+
         if char_count > 500:
             self.char_counter.setStyleSheet("color: #E74C3C; font-size: 9pt; font-weight: bold;")
         else:
             self.char_counter.setStyleSheet("color: #888; font-size: 9pt;")
-        
-        self.validate_form()
     
     def validate_form(self):
         """Validar formulario completo"""

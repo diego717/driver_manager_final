@@ -135,9 +135,11 @@ class MainWindow(QMainWindow):
     def _check_user_initialization(self):
         """Verificar y ejecutar configuración inicial de usuarios si es necesario"""
         # Usar modo local inicialmente (antes de tener cloud_manager)
+        audit_client = self.history_manager or InstallationHistory(self.config_manager)
         temp_user_manager = UserManagerV2(cloud_manager=self.cloud_manager, 
                                    security_manager=self.security_manager,
-                                   local_mode=False)  # Usar modo nube
+                                   local_mode=False,
+                                   audit_api_client=audit_client)  # Usar modo nube
         
         # Verificar si necesita inicialización
         if temp_user_manager.needs_initialization():
@@ -299,6 +301,8 @@ class MainWindow(QMainWindow):
         self.drivers_tab.drivers_list.itemSelectionChanged.connect(self.event_handlers.on_driver_selected)
         self.drivers_tab.download_btn.clicked.connect(self.event_handlers.download_driver)
         self.drivers_tab.install_btn.clicked.connect(self.event_handlers.download_and_install)
+        if hasattr(self.drivers_tab, "refresh_btn"):
+            self.drivers_tab.refresh_btn.clicked.connect(self.refresh_drivers_list)
         
         # History tab
         self.history_tab.history_view_combo.currentTextChanged.connect(self.on_history_view_changed)
@@ -413,13 +417,18 @@ class MainWindow(QMainWindow):
                 secret_access_key=config.get('secret_access_key'),
                 bucket_name=config.get('bucket_name')
             )
+
+            # 2. Inicializar cliente D1 para auditoría antes de crear UserManager
+            # para evitar fallback legacy de logs en modo producción.
+            self.history_manager = InstallationHistory(self.config_manager)
             
-            # 2. Inicializar el UserManagerV2
+            # 3. Inicializar el UserManagerV2
             # Intentar modo nube primero, fallback a local
             self.user_manager = UserManagerV2(
                 self.cloud_manager, 
                 self.security_manager,
-                local_mode=False
+                local_mode=False,
+                audit_api_client=self.history_manager
             )
             
             try:
@@ -448,11 +457,6 @@ class MainWindow(QMainWindow):
                         return
                     logger.info("✅ Sistema de usuarios inicializado mediante asistente.")
             
-            # 3. CONEXIÓN A LA NUBE D1 (Lo que configuramos hoy)
-            self.history_manager = InstallationHistory(self.config_manager)
-            if self.user_manager:
-                self.user_manager.set_audit_api_client(self.history_manager)
-
             self.refresh_drivers_list()
             self.statusBar().showMessage("✅ Conectado a Cloudflare (R2 + D1 History)")
         else:
@@ -841,14 +845,14 @@ class MainWindow(QMainWindow):
         """Delegado al event handler"""
         self.event_handlers.on_download_error(error_msg)
     
-    def on_upload_finished(self):
+    def on_upload_finished(self, upload_info=None):
     
         from ui.dialogs.quick_upload_dialog import UploadSuccessDialog
     
         self.progress_bar.setVisible(False)
         self.statusBar().showMessage("✅ Driver subido exitosamente", 5000)
     
-        upload_info = getattr(self, 'current_upload_info', {})
+        upload_info = upload_info or getattr(self, 'current_upload_info', {})
     
     # Mostrar diálogo de éxito
         success_dialog = UploadSuccessDialog(upload_info, self)
@@ -878,9 +882,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'history_tab') and hasattr(self.history_tab, 'audit_log_list'):
             self.refresh_audit_logs()
 
-    def on_upload_error(self, error_msg):
+    def on_upload_error(self, error_msg, upload_info=None):
         """Delegado al event handler"""
-        upload_info = getattr(self, 'current_upload_info', {})
+        upload_info = upload_info or getattr(self, 'current_upload_info', {})
         self.event_handlers.on_upload_error(error_msg, upload_info)
         if hasattr(self, 'current_upload_info'):
             del self.current_upload_info
@@ -1085,15 +1089,23 @@ class MainWindow(QMainWindow):
         # Inicializar user_manager si no existe
         if not self.user_manager:
             try:
-                self.user_manager = UserManagerV2(self.cloud_manager, self.security_manager)
-                audit_client = getattr(self, "history_manager", None)
-                if audit_client:
-                    self.user_manager.set_audit_api_client(audit_client)
+                if not self.history_manager:
+                    self.history_manager = InstallationHistory(self.config_manager)
+                self.user_manager = UserManagerV2(
+                    self.cloud_manager,
+                    self.security_manager,
+                    audit_api_client=self.history_manager
+                )
             except Exception as e:
                 logger.error(f"Error inicializando user_manager: {e}", exc_info=True)
                 logger.operation_end("show_login_dialog", success=False, reason=str(e))
                 QMessageBox.warning(self, "Error", f"Error inicializando sistema de usuarios: {str(e)}")
                 return
+        elif (not self.user_manager.local_mode and
+              not getattr(self.user_manager, "audit_api_client", None)):
+            if not self.history_manager:
+                self.history_manager = InstallationHistory(self.config_manager)
+            self.user_manager.set_audit_api_client(self.history_manager)
 
         try:
             if self.user_manager.needs_initialization():

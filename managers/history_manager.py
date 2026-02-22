@@ -420,6 +420,13 @@ class InstallationHistory:
         else:
             payload = str(raw_text).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
+
+    def _validate_record_id(self, record_id):
+        """Validar y normalizar IDs de registros antes de construir endpoints."""
+        raw_id = str(record_id).strip()
+        if not raw_id.isdigit():
+            raise ValueError(f"ID inválido: {record_id}")
+        return int(raw_id)
     
     def _make_request(self, method, endpoint, params=None, **kwargs):
         """
@@ -666,15 +673,21 @@ class InstallationHistory:
             dict or None: Registro de instalación
         """
         try:
-            return self._make_request('get', f'installations/{record_id}')
+            normalized_record_id = self._validate_record_id(record_id)
+        except ValueError as e:
+            logger.warning(f"Invalid installation ID: {record_id} ({e})")
+            return None
+
+        try:
+            return self._make_request('get', f'installations/{normalized_record_id}')
         except ConnectionError as e:
             if "HTTP 404" in str(e):
-                logger.warning(f"Installation {record_id} not found.")
+                logger.warning(f"Installation {normalized_record_id} not found.")
                 return None
-            logger.error(f"Could not retrieve installation {record_id}: {e}")
+            logger.error(f"Could not retrieve installation {normalized_record_id}: {e}")
             return None
         except Exception as e:
-            logger.error(f"Could not retrieve installation {record_id}: {e}")
+            logger.error(f"Could not retrieve installation {normalized_record_id}: {e}")
             return None
     
     def update_installation_details(self, record_id, notes, time_seconds):
@@ -690,9 +703,15 @@ class InstallationHistory:
             bool: True si se actualizó exitosamente
         """
         logger.operation_start("update_installation_details_cloud", record_id=record_id)
+        try:
+            normalized_record_id = self._validate_record_id(record_id)
+        except ValueError as e:
+            logger.error(f"Invalid installation ID for update: {record_id} ({e})")
+            logger.operation_end("update_installation_details_cloud", success=False, reason=str(e))
+            return False
         
         try:
-            val_seconds = int(float(time_seconds) * 60)
+            val_seconds = int(float(time_seconds))
         except (ValueError, TypeError):
             val_seconds = 0
         
@@ -702,11 +721,11 @@ class InstallationHistory:
         }
         
         try:
-            self._make_request('put', f'installations/{record_id}', json=payload)
+            self._make_request('put', f'installations/{normalized_record_id}', json=payload)
             logger.operation_end("update_installation_details_cloud", success=True)
             return True
         except ConnectionError as e:
-            logger.error(f"Failed to update installation {record_id}: {e}")
+            logger.error(f"Failed to update installation {normalized_record_id}: {e}")
             return False
     
     def delete_installation(self, record_id):
@@ -720,13 +739,19 @@ class InstallationHistory:
             bool: True si se eliminó exitosamente
         """
         logger.operation_start("delete_installation_cloud", record_id=record_id)
+        try:
+            normalized_record_id = self._validate_record_id(record_id)
+        except ValueError as e:
+            logger.error(f"Invalid installation ID for delete: {record_id} ({e})")
+            logger.operation_end("delete_installation_cloud", success=False, reason=str(e))
+            return False
         
         try:
-            self._make_request('delete', f'installations/{record_id}')
+            self._make_request('delete', f'installations/{normalized_record_id}')
             logger.operation_end("delete_installation_cloud", success=True)
             return True
         except ConnectionError as e:
-            logger.error(f"Failed to delete installation {record_id}: {e}")
+            logger.error(f"Failed to delete installation {normalized_record_id}: {e}")
             return False
     
     def get_statistics(self, start_date=None, end_date=None):

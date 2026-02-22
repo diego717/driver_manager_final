@@ -41,9 +41,11 @@ class DriversTab(QWidget):
         filter_layout.addWidget(self.brand_filter)
         filter_layout.addStretch()
         
-        refresh_btn = QPushButton("🔄 Actualizar Lista")
-        refresh_btn.setToolTip("Actualizar la lista de controladores desde la nube")
-        filter_layout.addWidget(refresh_btn)
+        self.refresh_btn = QPushButton("🔄 Actualizar Lista")
+        self.refresh_btn.setToolTip("Actualizar la lista de controladores desde la nube")
+        self.refresh_btn.setAccessibleName("Actualizar lista de drivers")
+        self.refresh_btn.setAccessibleDescription("Recarga la lista de drivers disponibles desde la nube")
+        filter_layout.addWidget(self.refresh_btn)
         layout.addLayout(filter_layout)
         
         # Lista de drivers
@@ -712,6 +714,11 @@ class AdminTab(QWidget):
         show_btn = QPushButton("👁️")
         show_btn.setMaximumWidth(40)
         show_btn.setCheckable(True)
+        show_btn.setToolTip(f"Mostrar u ocultar el campo {label_text.replace(':', '')}")
+        show_btn.setAccessibleName(f"Mostrar u ocultar {label_text.replace(':', '')}")
+        show_btn.setAccessibleDescription(
+            f"Alterna la visibilidad del texto ingresado en {label_text.replace(':', '')}"
+        )
         setattr(self, button_attr, show_btn)
         field_layout.addWidget(show_btn)
         
@@ -844,7 +851,12 @@ class EditInstallationDialog(QDialog):
         edit_layout.addWidget(QLabel("Tiempo de instalación (Minutos):"))
         self.time_spinbox = QSpinBox()
         self.time_spinbox.setRange(0, 10000)
-        self.time_spinbox.setValue(self.installation_data.get('installation_time_seconds', 0) or 0)
+        stored_seconds = self.installation_data.get('installation_time_seconds', 0) or 0
+        try:
+            stored_seconds = int(float(stored_seconds))
+        except (ValueError, TypeError):
+            stored_seconds = 0
+        self.time_spinbox.setValue(max(0, stored_seconds // 60))
         edit_layout.addWidget(self.time_spinbox)
         
         edit_group.setLayout(edit_layout)
@@ -860,7 +872,6 @@ class EditInstallationDialog(QDialog):
         """Devuelve los datos actualizados del diálogo."""
         return {
             'notes': self.notes_edit.toPlainText(),
-            'time_seconds': self.time_spinbox.value()
+            'time_seconds': self.time_spinbox.value() * 60
         }
-
 

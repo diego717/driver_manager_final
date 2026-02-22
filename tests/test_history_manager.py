@@ -156,16 +156,16 @@ class TestInstallationHistory(unittest.TestCase):
         self.assertIsNone(record)
 
     @patch.object(InstallationHistory, "_make_request")
-    def test_update_installation_details_converts_minutes_to_seconds(self, mock_make_request):
+    def test_update_installation_details_uses_seconds_payload(self, mock_make_request):
         mock_make_request.return_value = {"success": True}
 
-        success = self.history.update_installation_details("10", "nota", "2.5")
+        success = self.history.update_installation_details("10", "nota", "45")
 
         self.assertTrue(success)
         args, kwargs = mock_make_request.call_args
         self.assertEqual(args[0], "put")
         self.assertEqual(args[1], "installations/10")
-        self.assertEqual(kwargs["json"]["installation_time_seconds"], 150)
+        self.assertEqual(kwargs["json"]["installation_time_seconds"], 45)
         self.assertEqual(kwargs["json"]["notes"], "nota")
 
     @patch.object(InstallationHistory, "_make_request")
@@ -178,6 +178,27 @@ class TestInstallationHistory(unittest.TestCase):
 
         self.assertEqual(result, {"id": 99, "driver_brand": "Zebra"})
         mock_make_request.assert_called_once_with("get", "installations/99")
+
+    @patch.object(InstallationHistory, "_make_request")
+    def test_get_installation_by_id_rejects_invalid_id(self, mock_make_request):
+        result = self.history.get_installation_by_id("../../audit-logs")
+
+        self.assertIsNone(result)
+        mock_make_request.assert_not_called()
+
+    @patch.object(InstallationHistory, "_make_request")
+    def test_update_installation_details_rejects_invalid_id(self, mock_make_request):
+        success = self.history.update_installation_details("../../audit-logs", "nota", "2.5")
+
+        self.assertFalse(success)
+        mock_make_request.assert_not_called()
+
+    @patch.object(InstallationHistory, "_make_request")
+    def test_delete_installation_rejects_invalid_id(self, mock_make_request):
+        success = self.history.delete_installation("../../audit-logs")
+
+        self.assertFalse(success)
+        mock_make_request.assert_not_called()
 
     @patch.object(InstallationHistory, "_make_request")
     def test_get_statistics_returns_fallback_on_error(self, mock_make_request):

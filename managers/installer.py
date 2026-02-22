@@ -37,9 +37,6 @@ class DriverInstaller:
     # Whitelist de extensiones permitidas
     ALLOWED_EXTENSIONS = {'.exe', '.msi', '.inf'}
     
-    # Directorios permitidos (pueden configurarse)
-    ALLOWED_BASE_DIRS = []
-    
     def __init__(self, allowed_dirs=None):
         """
         Inicializar instalador.
@@ -49,21 +46,26 @@ class DriverInstaller:
         """
         self.system = platform.system()
         
-        # Configurar directorios permitidos
+        # Configurar directorios permitidos por instancia
         if allowed_dirs:
-            self.ALLOWED_BASE_DIRS = [Path(d).resolve() for d in allowed_dirs]
+            configured_dirs = [Path(d).resolve() for d in allowed_dirs]
         else:
-            # Directorios por defecto
-            home = Path.home()
-            self.ALLOWED_BASE_DIRS = [
-                home / ".driver_manager" / "cache",
-                home / "Downloads",
-                Path(os.getcwd()) / "cache",
-            ]
-            
-            # Agregar directorio temporal del sistema
             import tempfile
-            self.ALLOWED_BASE_DIRS.append(Path(tempfile.gettempdir()))
+            home = Path.home()
+            configured_dirs = [
+                (home / ".driver_manager" / "cache").resolve(),
+                (home / "Downloads").resolve(),
+                (Path(os.getcwd()) / "cache").resolve(),
+                Path(tempfile.gettempdir()).resolve(),
+            ]
+
+        seen_dirs = set()
+        self.ALLOWED_BASE_DIRS = []
+        for directory in configured_dirs:
+            if directory in seen_dirs:
+                continue
+            seen_dirs.add(directory)
+            self.ALLOWED_BASE_DIRS.append(directory)
     
     def is_admin(self):
         """Verificar si el programa se está ejecutando como administrador"""
