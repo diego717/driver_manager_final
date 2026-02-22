@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
   Alert,
@@ -113,7 +114,7 @@ export default function IncidentDetailScreen() {
       setLoading(true);
       setErrorMessage("");
       const response = await listIncidentsByInstallation(installationId);
-      const found = response.incidents.find((item) => Number(item.id) === incidentId) || null;
+      const found = response.incidents.find((item) => item.id === incidentId) || null;
       if (!found) {
         setIncident(null);
         setErrorMessage("La incidencia no existe para esta instalacion.");
@@ -130,9 +131,11 @@ export default function IncidentDetailScreen() {
     }
   }, [incidentId, installationId]);
 
-  useEffect(() => {
-    void loadIncident();
-  }, [loadIncident]);
+  useFocusEffect(
+    useCallback(() => {
+      void loadIncident();
+    }, [loadIncident]),
+  );
 
   useEffect(() => {
     let isMounted = true;

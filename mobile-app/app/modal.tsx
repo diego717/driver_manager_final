@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
   Alert,
@@ -82,7 +83,10 @@ export default function ApiSettingsScreen() {
   const [feedbackMessage, setFeedbackMessage] = useState("");
 
   const [baseUrlFromStorage, setBaseUrlFromStorage] = useState(false);
-  const hasWebSession = Boolean(webSessionExpiresAt && Date.parse(webSessionExpiresAt) > Date.now());
+  const hasWebSession = useMemo(
+    () => Boolean(webSessionExpiresAt && Date.parse(webSessionExpiresAt) > Date.now()),
+    [webSessionExpiresAt],
+  );
   const palette = {
     screenBg: isDark ? "#020617" : "#f8fafc",
     title: isDark ? "#e2e8f0" : "#0f172a",
@@ -106,7 +110,7 @@ export default function ApiSettingsScreen() {
     Alert.alert(title, message);
   };
 
-  const loadConfig = async () => {
+  const loadConfig = useCallback(async () => {
     try {
       setLoading(true);
       const [storedBaseUrl, webSession] = await Promise.all([
@@ -124,11 +128,13 @@ export default function ApiSettingsScreen() {
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    void loadConfig();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadConfig();
+    }, [loadConfig]),
+  );
 
   const onSave = async () => {
     try {
@@ -146,7 +152,7 @@ export default function ApiSettingsScreen() {
     }
   };
 
-  const onResetToEnv = async () => {
+  const performResetToEnv = async () => {
     try {
       setSaving(true);
       await Promise.all([clearStoredApiBaseUrl(), clearWebSession()]);
@@ -164,6 +170,23 @@ export default function ApiSettingsScreen() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const onResetToEnv = () => {
+    Alert.alert(
+      "Confirmar restablecer",
+      "Esto borra la URL guardada y la sesion web almacenada. ¿Deseas continuar?",
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Restablecer",
+          style: "destructive",
+          onPress: () => {
+            void performResetToEnv();
+          },
+        },
+      ],
+    );
   };
 
   const onTestConnection = async () => {
@@ -207,6 +230,7 @@ export default function ApiSettingsScreen() {
         `Usuario ${login.user.username} (${login.user.role}) valido hasta ${login.expires_at}`,
       );
     } catch (error) {
+      setWebLoginPassword("");
       notify("Error", extractApiError(error));
     } finally {
       setWebSigningIn(false);
