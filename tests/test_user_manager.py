@@ -234,6 +234,74 @@ class TestUserManagerV2(unittest.TestCase):
 
         self.assertIn("administrador", users_data["users"])
 
+    def test_load_users_cloud_cache_uses_ttl(self):
+        cloud = MagicMock()
+        cloud.download_file_content.return_value = json.dumps(
+            {
+                "users": {
+                    "cached_user": {
+                        "username": "cached_user",
+                        "password_hash": "hash",
+                        "role": "admin",
+                        "active": True,
+                    }
+                }
+            }
+        )
+        security = MagicMock()
+        manager = UserManagerV2(cloud_manager=cloud, security_manager=security, local_mode=False)
+        manager._cache_clock = MagicMock(return_value=100.0)
+
+        first = manager._load_users()
+        second = manager._load_users()
+
+        self.assertIn("cached_user", first["users"])
+        self.assertIn("cached_user", second["users"])
+        # Primer load: miss, segundo: hit.
+        self.assertEqual(cloud.download_file_content.call_count, 1)
+
+        # Invalidación explícita por expiración simulada del TTL.
+        manager._users_cache_loaded_at = 0.0
+        third = manager._load_users()
+        self.assertIn("cached_user", third["users"])
+        self.assertEqual(cloud.download_file_content.call_count, 2)
+
+    def test_save_users_refreshes_cloud_cache(self):
+        cloud = MagicMock()
+        cloud.download_file_content.return_value = json.dumps(
+            {
+                "users": {
+                    "legacy_user": {
+                        "username": "legacy_user",
+                        "password_hash": "hash",
+                        "role": "admin",
+                        "active": True,
+                    }
+                }
+            }
+        )
+        security = MagicMock()
+        manager = UserManagerV2(cloud_manager=cloud, security_manager=security, local_mode=False)
+        manager._load_users()
+
+        new_users_payload = {
+            "users": {
+                "new_user": {
+                    "username": "new_user",
+                    "password_hash": "new_hash",
+                    "role": "viewer",
+                    "active": True,
+                }
+            }
+        }
+        manager._save_users(new_users_payload)
+        cloud.download_file_content.reset_mock()
+
+        cached_users = manager._load_users()
+
+        self.assertIn("new_user", cached_users["users"])
+        cloud.download_file_content.assert_not_called()
+
     def test_log_access_uses_audit_api_when_available(self):
         cloud = MagicMock()
         security = MagicMock()
@@ -254,6 +322,55 @@ class TestUserManagerV2(unittest.TestCase):
         self.assertEqual(kwargs["json"]["action"], "login_success")
         cloud.download_file_content.assert_not_called()
         cloud.upload_file_content.assert_not_called()
+
+    def test_log_access_legacy_retries_and_merges_when_race_detected(self):
+        cloud = MagicMock()
+        security = MagicMock()
+        manager = UserManagerV2(cloud_manager=cloud, security_manager=security, local_mode=False)
+        manager._cache_clock = MagicMock(return_value=0.0)
+
+        baseline_log = {
+            "timestamp": "2026-02-01T10:00:00",
+            "action": "baseline",
+            "username": "system",
+            "success": True,
+            "details": {},
+            "system_info": {"computer_name": "PC-01", "ip": "10.0.0.1", "platform": "Windows"},
+        }
+        concurrent_log = {
+            "timestamp": "2026-02-01T10:00:01",
+            "action": "concurrent_write",
+            "username": "other_admin",
+            "success": True,
+            "details": {},
+            "system_info": {"computer_name": "PC-02", "ip": "10.0.0.2", "platform": "Windows"},
+        }
+
+        load_call_count = {"value": 0}
+        persisted_payloads = []
+
+        def fake_load():
+            load_call_count["value"] += 1
+            if load_call_count["value"] == 1:
+                return {"logs": [baseline_log], "created_at": "2026-02-01T09:00:00"}
+            if load_call_count["value"] == 2:
+                # Verificación post-escritura del intento 1: simula que otro proceso sobrescribió
+                return {"logs": [baseline_log, concurrent_log], "created_at": "2026-02-01T09:00:00"}
+            if load_call_count["value"] == 3:
+                return {"logs": [baseline_log, concurrent_log], "created_at": "2026-02-01T09:00:00"}
+            return persisted_payloads[-1]
+
+        def fake_persist(payload):
+            persisted_payloads.append(payload)
+
+        with patch.object(manager, "_load_legacy_logs_data", side_effect=fake_load):
+            with patch.object(manager, "_persist_logs_data", side_effect=fake_persist):
+                manager._log_access("login_success", "admin_root", True, {"role": "super_admin"})
+
+        self.assertGreaterEqual(len(persisted_payloads), 2)
+        final_actions = [entry["action"] for entry in persisted_payloads[-1]["logs"]]
+        self.assertIn("concurrent_write", final_actions)
+        self.assertIn("login_success", final_actions)
 
     def test_get_access_logs_reads_from_audit_api_and_normalizes_payload(self):
         cloud = MagicMock()

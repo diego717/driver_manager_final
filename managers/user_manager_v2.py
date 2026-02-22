@@ -15,6 +15,9 @@ import secrets
 import bcrypt
 import re
 import sys
+import copy
+import os
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 import socket
@@ -256,6 +259,8 @@ class UserManagerV2:
     """
     
     logger = get_logger()
+    USERS_CACHE_TTL_SECONDS = 2.0
+    LEGACY_LOG_APPEND_RETRIES = 3
     
     def __init__(self, cloud_manager=None, security_manager=None, local_mode=False, audit_api_client=None):
         """
@@ -269,6 +274,8 @@ class UserManagerV2:
         self.local_mode = local_mode or (cloud_manager is None)
         self.audit_api_client = audit_api_client
         self.current_user = None
+        self._users_cache_data = None
+        self._users_cache_loaded_at = 0.0
         
         # SECURITY IMPROVEMENT (SEC-005): Account lockout manager
         self.lockout_manager = AccountLockoutManager()
@@ -301,6 +308,28 @@ class UserManagerV2:
             self.audit_api_client is not None and
             hasattr(self.audit_api_client, "_make_request")
         )
+
+    def _cache_clock(self):
+        return time.monotonic()
+
+    def _invalidate_users_cache(self):
+        self._users_cache_data = None
+        self._users_cache_loaded_at = 0.0
+
+    def _set_users_cache(self, users_data):
+        self._users_cache_data = copy.deepcopy(self._normalize_users_data(users_data))
+        self._users_cache_loaded_at = self._cache_clock()
+
+    def _get_cached_users(self):
+        if self.local_mode or self._users_cache_data is None:
+            return None
+
+        age = self._cache_clock() - self._users_cache_loaded_at
+        if age > self.USERS_CACHE_TTL_SECONDS:
+            self._invalidate_users_cache()
+            return None
+
+        return copy.deepcopy(self._users_cache_data)
 
     def _normalize_audit_api_log_entry(self, entry):
         """Normalizar un registro de auditoría proveniente del endpoint D1."""
@@ -496,14 +525,22 @@ class UserManagerV2:
         """Cargar usuarios desde almacenamiento"""
         self.logger.operation_start("_load_users")
         try:
+            cached_data = self._get_cached_users()
+            if cached_data is not None:
+                self.logger.operation_end("_load_users", success=True, source="cache")
+                return cached_data
+
             if self.local_mode:
                 if not self.users_file.exists():
+                    self.logger.operation_end("_load_users", success=True)
                     return None
                 
                 with open(self.users_file, 'r', encoding='utf-8-sig') as f:
                     data = json.load(f)
                 
-                return self._normalize_users_data(data)
+                data = self._normalize_users_data(data)
+                self.logger.operation_end("_load_users", success=True)
+                return data
             else:
                 content = self.cloud_manager.download_file_content(self.users_file)
                 if not content:
@@ -511,7 +548,10 @@ class UserManagerV2:
                     fallback_users = self._load_users_disk_fallback()
                     if fallback_users:
                         self.logger.warning("Usando copia local de usuarios por ausencia de archivo en nube.")
+                        self._set_users_cache(fallback_users)
+                        self.logger.operation_end("_load_users", success=True)
                         return fallback_users
+                    self.logger.operation_end("_load_users", success=True)
                     return None
 
                 if isinstance(content, bytes):
@@ -545,6 +585,9 @@ class UserManagerV2:
                                 f"No se pudo subir copia local de usuarios a la nube: {sync_error}"
                             )
                         data = fallback_users
+
+                if data is not None:
+                    self._set_users_cache(data)
             
             self.logger.operation_end("_load_users", success=True)
             return data
@@ -688,17 +731,21 @@ class UserManagerV2:
         """Guardar usuarios en almacenamiento"""
         self.logger.operation_start("_save_users")
         try:
+            normalized_data = self._normalize_users_data(users_data)
             if self.local_mode:
                 with open(self.users_file, 'w') as f:
-                    json.dump(users_data, f, indent=2)
+                    json.dump(normalized_data, f, indent=2)
             else:
                 if self.cloud_encryption:
-                    encrypted_data = self.cloud_encryption.encrypt_cloud_data(users_data)
+                    encrypted_data = self.cloud_encryption.encrypt_cloud_data(normalized_data)
                     content = json.dumps(encrypted_data, indent=2)
                 else:
-                    content = json.dumps(users_data, indent=2)
+                    content = json.dumps(normalized_data, indent=2)
                 
                 self.cloud_manager.upload_file_content(self.users_file, content)
+
+                # Mantener caché consistente tras escritura remota.
+                self._set_users_cache(normalized_data)
             self.logger.operation_end("_save_users", success=True)
         except Exception as e:
             self.logger.error(f"Error saving users: {e}", exc_info=True)
@@ -793,8 +840,10 @@ class UserManagerV2:
     def _persist_logs_data(self, logs_data):
         """Persistir logs normalizados en almacenamiento local o nube."""
         if self.local_mode:
-            with open(self.logs_file, 'w') as f:
+            temp_logs_file = self.logs_file.with_suffix(f"{self.logs_file.suffix}.tmp")
+            with open(temp_logs_file, 'w', encoding='utf-8') as f:
                 json.dump(logs_data, f, indent=2)
+            os.replace(temp_logs_file, self.logs_file)
             return
 
         if self.cloud_encryption:
@@ -804,6 +853,87 @@ class UserManagerV2:
             logs_content = json.dumps(logs_data, indent=2)
 
         self.cloud_manager.upload_file_content(self.logs_file, logs_content)
+
+    def _load_legacy_logs_data(self):
+        """Leer logs desde almacenamiento legacy (archivo o blob), normalizando formato."""
+        logs_data = {"logs": [], "created_at": datetime.now().isoformat()}
+
+        try:
+            if self.local_mode:
+                if self.logs_file.exists():
+                    with open(self.logs_file, 'r', encoding='utf-8-sig') as f:
+                        logs_data = json.load(f)
+            else:
+                logs_content = self.cloud_manager.download_file_content(self.logs_file)
+                if logs_content:
+                    if isinstance(logs_content, bytes):
+                        logs_content = logs_content.decode('utf-8-sig')
+                    elif isinstance(logs_content, str):
+                        logs_content = logs_content.lstrip('\ufeff')
+                    cloud_payload = json.loads(logs_content)
+                    logs_data, recovered = self._decode_cloud_logs_payload(cloud_payload)
+                    if recovered:
+                        self.logger.warning("Se recuperaron logs historicos con fallback; normalizando archivo.")
+                        self._persist_logs_data(logs_data)
+        except Exception as error:
+            self.logger.warning(f"No se pudo leer logs legacy: {error}. Se usara estructura vacia.")
+
+        return self._normalize_logs_data(logs_data)
+
+    def _log_entry_key(self, entry):
+        details_blob = json.dumps(entry.get("details"), sort_keys=True, default=str)
+        system_blob = json.dumps(entry.get("system_info"), sort_keys=True, default=str)
+        return (
+            entry.get("timestamp"),
+            entry.get("action"),
+            entry.get("username"),
+            bool(entry.get("success")),
+            details_blob,
+            system_blob,
+        )
+
+    def _merge_logs_preserving_order(self, existing_logs, additional_logs):
+        merged_logs = list(existing_logs or [])
+        seen_keys = {self._log_entry_key(item) for item in merged_logs if isinstance(item, dict)}
+
+        for entry in additional_logs or []:
+            if not isinstance(entry, dict):
+                continue
+            entry_key = self._log_entry_key(entry)
+            if entry_key in seen_keys:
+                continue
+            merged_logs.append(entry)
+            seen_keys.add(entry_key)
+
+        return merged_logs
+
+    def _append_legacy_log_entry(self, log_entry):
+        """Agregar log con reintentos para reducir pérdidas por escritura concurrente."""
+        target_key = self._log_entry_key(log_entry)
+
+        for attempt in range(self.LEGACY_LOG_APPEND_RETRIES):
+            try:
+                logs_data = self._load_legacy_logs_data()
+                current_logs = logs_data.get("logs", [])
+                logs_data["logs"] = self._merge_logs_preserving_order(current_logs, [log_entry])[-1000:]
+                self._persist_logs_data(logs_data)
+
+                persisted = self._load_legacy_logs_data()
+                persisted_keys = {
+                    self._log_entry_key(item)
+                    for item in persisted.get("logs", [])
+                    if isinstance(item, dict)
+                }
+                if target_key in persisted_keys:
+                    return True
+            except Exception as error:
+                self.logger.warning(
+                    f"Fallo append de log en intento {attempt + 1}/{self.LEGACY_LOG_APPEND_RETRIES}: {error}"
+                )
+
+            time.sleep(0.02 * (attempt + 1))
+
+        return False
 
     @returns_result_tuple("repair_access_logs")
     def repair_access_logs(self):
@@ -817,25 +947,7 @@ class UserManagerV2:
             self.logger.operation_end("repair_access_logs", success=True, mode="audit_api")
             return True, "Auditoria en D1 activa. No se requiere reparacion de archivo local."
 
-        logs_data = {"logs": [], "created_at": datetime.now().isoformat()}
-
-        try:
-            if self.local_mode:
-                if self.logs_file.exists():
-                    with open(self.logs_file, 'r') as f:
-                        logs_data = json.load(f)
-            else:
-                logs_content = self.cloud_manager.download_file_content(self.logs_file)
-                if logs_content:
-                    cloud_payload = json.loads(logs_content)
-                    logs_data, recovered = self._decode_cloud_logs_payload(cloud_payload)
-                    if recovered:
-                        self.logger.warning("Se detecto formato legacy/corrupto en logs; se persistira version reparada.")
-                        self._persist_logs_data(logs_data)
-        except Exception as e:
-            self.logger.warning(f"No se pudo leer logs actuales para reparar: {e}. Se recreara archivo limpio.")
-
-        logs_data = self._normalize_logs_data(logs_data)
+        logs_data = self._load_legacy_logs_data()
         self._persist_logs_data(logs_data)
 
         total_logs = len(logs_data.get("logs", []))
@@ -874,35 +986,10 @@ class UserManagerV2:
                 self.logger.operation_end("_log_access", success=True, mode="audit_api")
                 return
 
-            try:
-                if self.local_mode:
-                    if self.logs_file.exists():
-                        with open(self.logs_file, 'r') as f:
-                            logs_data = json.load(f)
-                    else:
-                        logs_data = {"logs": [], "created_at": datetime.now().isoformat()}
-                else:
-                    logs_content = self.cloud_manager.download_file_content(self.logs_file)
-                    if logs_content:
-                        cloud_payload = json.loads(logs_content)
-                        logs_data, recovered = self._decode_cloud_logs_payload(cloud_payload)
-                        if recovered:
-                            self.logger.warning("Se recuperaron logs historicos con fallback; normalizando archivo.")
-                            self._persist_logs_data(logs_data)
-                    else:
-                        logs_data = {"logs": [], "created_at": datetime.now().isoformat()}
-            except Exception:
-                logs_data = {"logs": [], "created_at": datetime.now().isoformat()}
-
-            logs_data = self._normalize_logs_data(logs_data)
-            logs_data["logs"].append(log_entry)
-
-            # Mantener solo ultimos 1000 logs.
-            if len(logs_data["logs"]) > 1000:
-                logs_data["logs"] = logs_data["logs"][-1000:]
-
-            self._persist_logs_data(logs_data)
-            self.logger.operation_end("_log_access", success=True, mode="legacy_storage")
+            persisted = self._append_legacy_log_entry(log_entry)
+            if not persisted:
+                self.logger.warning("No se pudo confirmar persistencia del log tras reintentos.")
+            self.logger.operation_end("_log_access", success=persisted, mode="legacy_storage")
         except Exception as e:
             self.logger.error(f"Critical failure logging access: {e}", exc_info=True)
             self.logger.operation_end("_log_access", success=False, reason=str(e))
