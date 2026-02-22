@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
@@ -32,6 +32,7 @@ const MAX_UPLOAD_PHOTO_BYTES = 5 * 1024 * 1024;
 const MIN_UPLOAD_PHOTO_BYTES = 1024;
 const MAX_IMAGE_DIMENSION = 1920;
 const COMPRESS_QUALITIES = [0.85, 0.75, 0.65, 0.55, 0.45];
+const MIN_TOUCH_TARGET_SIZE = 44;
 
 function normalizeParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
@@ -324,6 +325,7 @@ export default function UploadIncidentPhotoScreen() {
         ]}
         placeholder="Ej: 15"
         placeholderTextColor={palette.placeholder}
+        accessibilityLabel="ID de incidencia para subir evidencia"
       />
 
       <View style={styles.row}>
@@ -334,6 +336,12 @@ export default function UploadIncidentPhotoScreen() {
           ]}
           onPress={pickFromGallery}
           disabled={uploading || processingImage}
+          accessibilityRole="button"
+          accessibilityLabel="Seleccionar foto desde la galeria"
+          accessibilityState={{
+            disabled: uploading || processingImage,
+            busy: uploading || processingImage,
+          }}
         >
           <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Galeria</Text>
         </TouchableOpacity>
@@ -344,6 +352,12 @@ export default function UploadIncidentPhotoScreen() {
           ]}
           onPress={takePhoto}
           disabled={uploading || processingImage}
+          accessibilityRole="button"
+          accessibilityLabel="Tomar foto con la camara"
+          accessibilityState={{
+            disabled: uploading || processingImage,
+            busy: uploading || processingImage,
+          }}
         >
           <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Camara</Text>
         </TouchableOpacity>
@@ -377,6 +391,12 @@ export default function UploadIncidentPhotoScreen() {
         ]}
         onPress={onUpload}
         disabled={uploading || processingImage}
+        accessibilityRole="button"
+        accessibilityLabel="Subir foto de la incidencia"
+        accessibilityState={{
+          disabled: uploading || processingImage,
+          busy: uploading || processingImage,
+        }}
       >
         {uploading ? (
           <ActivityIndicator color={palette.primaryButtonText} />
@@ -425,6 +445,7 @@ const styles = StyleSheet.create({
     flex: 1,
     borderWidth: 1,
     borderRadius: 10,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
@@ -452,6 +473,7 @@ const styles = StyleSheet.create({
   primaryButton: {
     marginTop: 8,
     borderRadius: 10,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 14,

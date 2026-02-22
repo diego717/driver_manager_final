@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import {
@@ -25,6 +25,7 @@ function normalizeParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
   return value ?? "";
 }
+const MIN_TOUCH_TARGET_SIZE = 44;
 
 function formatDate(value: string): string {
   const parsed = new Date(value);
@@ -222,12 +223,21 @@ export default function IncidentDetailScreen() {
           ]}
           onPress={loadIncident}
           disabled={loading}
+          accessibilityRole="button"
+          accessibilityLabel="Refrescar datos de la incidencia"
+          accessibilityState={{ disabled: loading, busy: loading }}
         >
           <Text style={[styles.refreshButtonText, { color: palette.buttonText }]}>
             {loading ? "Cargando..." : "Refrescar"}
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.backButton, { backgroundColor: palette.backBg }]} onPress={() => router.back()}>
+        <TouchableOpacity
+          style={[styles.backButton, { backgroundColor: palette.backBg }]}
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Volver a la pantalla anterior"
+          accessibilityState={{ disabled: false }}
+        >
           <Text style={[styles.backButtonText, { color: palette.textPrimary }]}>Volver</Text>
         </TouchableOpacity>
       </View>
@@ -279,7 +289,12 @@ export default function IncidentDetailScreen() {
                   <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Tamano: {formatBytes(photo.size_bytes)}</Text>
                   <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Fecha: {formatDate(photo.created_at)}</Text>
                   {photoPreviews[photo.id] ? (
-                    <TouchableOpacity onPress={() => onOpenPhoto(photo.id, photo.file_name)}>
+                    <TouchableOpacity
+                      onPress={() => onOpenPhoto(photo.id, photo.file_name)}
+                      accessibilityRole="imagebutton"
+                      accessibilityLabel={`Abrir vista completa de la foto ${photo.id}`}
+                      accessibilityState={{ disabled: false }}
+                    >
                       <Image
                         source={{
                           uri: photoPreviews[photo.id].uri,
@@ -305,6 +320,9 @@ export default function IncidentDetailScreen() {
           <TouchableOpacity
             style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
             onPress={onAddEvidence}
+            accessibilityRole="button"
+            accessibilityLabel="Adjuntar evidencia fotografica"
+            accessibilityState={{ disabled: false }}
           >
             <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
               Adjuntar evidencia
@@ -333,6 +351,7 @@ const styles = StyleSheet.create({
     flex: 1,
     borderWidth: 1,
     borderRadius: 10,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
@@ -343,6 +362,7 @@ const styles = StyleSheet.create({
   backButton: {
     flex: 1,
     borderRadius: 10,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
@@ -408,6 +428,7 @@ const styles = StyleSheet.create({
   primaryButton: {
     marginTop: 4,
     borderRadius: 10,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 14,

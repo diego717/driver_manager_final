@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
@@ -47,6 +47,7 @@ const SEVERITY_OPTIONS: Array<{
     criteria: "Caida total, riesgo de datos o cliente detenido.",
   },
 ];
+const MIN_TOUCH_TARGET_SIZE = 44;
 
 export default function CreateIncidentScreen() {
   const { resolvedScheme } = useThemePreference();
@@ -298,6 +299,17 @@ export default function CreateIncidentScreen() {
           ]}
           onPress={() => setShowManualRecordForm((current) => !current)}
           disabled={creatingManualRecord}
+          accessibilityRole="button"
+          accessibilityLabel={
+            showManualRecordForm
+              ? "Ocultar formulario de registro manual"
+              : "Mostrar formulario de registro manual"
+          }
+          accessibilityState={{
+            disabled: creatingManualRecord,
+            busy: creatingManualRecord,
+            expanded: showManualRecordForm,
+          }}
         >
           <Text style={[styles.optionalSectionToggleText, { color: palette.optionalToggleText }]}>
             {showManualRecordForm ? "Ocultar registro manual" : "Crear registro manual"}
@@ -320,6 +332,7 @@ export default function CreateIncidentScreen() {
               ]}
               placeholder="Cliente ACME"
               placeholderTextColor={palette.placeholder}
+              accessibilityLabel="Nombre del cliente para registro manual"
             />
 
             <Text style={[styles.label, { color: palette.label }]}>Notas del registro base (opcional)</Text>
@@ -338,6 +351,7 @@ export default function CreateIncidentScreen() {
               multiline
               placeholder="Contexto inicial del caso"
               placeholderTextColor={palette.placeholder}
+              accessibilityLabel="Notas del registro manual"
             />
 
             <TouchableOpacity
@@ -348,6 +362,12 @@ export default function CreateIncidentScreen() {
               ]}
               onPress={onCreateManualRecord}
               disabled={creatingManualRecord}
+              accessibilityRole="button"
+              accessibilityLabel="Crear registro manual"
+              accessibilityState={{
+                disabled: creatingManualRecord,
+                busy: creatingManualRecord,
+              }}
             >
               {creatingManualRecord ? (
                 <ActivityIndicator color={palette.secondaryButtonText} />
@@ -376,6 +396,9 @@ export default function CreateIncidentScreen() {
             void loadInstallations({ forceRefresh: true });
           }}
           disabled={loadingInstallations}
+          accessibilityRole="button"
+          accessibilityLabel="Refrescar lista de instalaciones"
+          accessibilityState={{ disabled: loadingInstallations, busy: loadingInstallations }}
         >
           {loadingInstallations ? (
             <ActivityIndicator size="small" color={palette.refreshText} />
@@ -408,6 +431,9 @@ export default function CreateIncidentScreen() {
                     },
                   ]}
                   onPress={() => setInstallationId(String(item.id))}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Seleccionar instalacion ${item.id}${item.client_name ? ` de ${item.client_name}` : ""}`}
+                  accessibilityState={{ selected }}
                 >
                   <Text
                     style={[
@@ -433,6 +459,7 @@ export default function CreateIncidentScreen() {
         style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
         placeholder="1"
         placeholderTextColor={palette.placeholder}
+        accessibilityLabel="ID de instalacion para la incidencia"
       />
 
       <Text style={[styles.label, { color: palette.label }]}>Usuario</Text>
@@ -442,6 +469,7 @@ export default function CreateIncidentScreen() {
         style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
         placeholder="Usuario web"
         placeholderTextColor={palette.placeholder}
+        accessibilityLabel="Usuario reportante de la incidencia"
       />
 
       <Text style={[styles.label, { color: palette.label }]}>Nota</Text>
@@ -456,6 +484,7 @@ export default function CreateIncidentScreen() {
         multiline
         placeholder="Describe la incidencia"
         placeholderTextColor={palette.placeholder}
+        accessibilityLabel="Nota de la incidencia"
       />
 
       <Text style={[styles.label, { color: palette.label }]}>Urgencia (severidad)</Text>
@@ -474,6 +503,9 @@ export default function CreateIncidentScreen() {
                 },
               ]}
               onPress={() => setSeverity(option.value)}
+              accessibilityRole="button"
+              accessibilityLabel={`Seleccionar severidad ${option.label}`}
+              accessibilityState={{ selected }}
             >
               <Text
                 style={[
@@ -506,6 +538,7 @@ export default function CreateIncidentScreen() {
         style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
         placeholder="0"
         placeholderTextColor={palette.placeholder}
+        accessibilityLabel="Ajuste de tiempo en segundos"
       />
 
       <TouchableOpacity
@@ -516,6 +549,9 @@ export default function CreateIncidentScreen() {
         ]}
         onPress={onSubmit}
         disabled={submitting}
+        accessibilityRole="button"
+        accessibilityLabel="Crear incidencia"
+        accessibilityState={{ disabled: submitting, busy: submitting }}
       >
         {submitting ? (
           <ActivityIndicator color={palette.primaryButtonText} />
@@ -580,6 +616,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -622,6 +659,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 9,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    justifyContent: "center",
     gap: 2,
   },
   severityChipLabel: {
@@ -636,6 +675,8 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    justifyContent: "center",
   },
   chipText: {
     fontSize: 12,
@@ -646,6 +687,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    justifyContent: "center",
   },
   refreshButtonText: {
     fontWeight: "600",
@@ -662,6 +705,7 @@ const styles = StyleSheet.create({
   secondaryButton: {
     marginTop: 6,
     borderRadius: 10,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 14,
@@ -669,6 +713,7 @@ const styles = StyleSheet.create({
   button: {
     marginTop: 10,
     borderRadius: 10,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 14,
