@@ -65,6 +65,9 @@ export interface PushRegistrationResult {
 }
 
 function toPushTokenString(value: unknown): string | null {
+  // Defensive normalization: Android/Expo push token payload shape has varied
+  // across SDK/device combinations (string, numeric values, byte arrays).
+  // We keep all historical cases to avoid dropping valid FCM tokens in the field.
   if (typeof value === "string") {
     const normalized = value.trim();
     return normalized.length > 0 ? normalized : null;
