@@ -46,17 +46,7 @@ export interface InstallationRecord {
   notes?: string;
 }
 
-export interface CreateRecordInput {
-  timestamp?: string;
-  driver_brand?: string;
-  driver_version?: string;
-  status?: string;
-  client_name?: string;
-  driver_description?: string;
-  installation_time_seconds?: number;
-  os_info?: string;
-  notes?: string;
-}
+export type CreateRecordInput = Omit<InstallationRecord, "id">;
 
 export interface ApiErrorResponse {
   success?: false;

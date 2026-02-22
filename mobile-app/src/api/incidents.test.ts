@@ -42,6 +42,19 @@ describe("incidents api", () => {
     });
   });
 
+  it("normalizes created record id when API returns string id", async () => {
+    clientMocks.signedJsonRequest.mockResolvedValue({
+      success: true,
+      record: { id: "51" },
+    });
+
+    const response = await createInstallationRecord({
+      client_name: "Cliente B",
+    });
+
+    expect(response.record.id).toBe(51);
+  });
+
   it("creates incident using /installations/:id/incidents", async () => {
     clientMocks.signedJsonRequest.mockResolvedValue({ success: true, incident: { id: 1 } });
 
@@ -88,6 +101,14 @@ describe("incidents api", () => {
     expect(first).toEqual([{ id: 10 }]);
     expect(second).toEqual([{ id: 10 }]);
     expect(clientMocks.signedJsonRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("normalizes installation ids returned as strings", async () => {
+    clientMocks.signedJsonRequest.mockResolvedValueOnce([{ id: "10" }]);
+
+    const records = await listInstallations();
+
+    expect(records).toEqual([{ id: 10 }]);
   });
 
   it("bypasses cache when forceRefresh is true", async () => {

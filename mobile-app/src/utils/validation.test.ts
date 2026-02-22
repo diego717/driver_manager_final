@@ -25,6 +25,8 @@ describe("validation utils", () => {
   it("detects content type by file extension", () => {
     expect(contentTypeFromFileName("photo.png")).toBe("image/png");
     expect(contentTypeFromFileName("photo.webp")).toBe("image/webp");
+    expect(contentTypeFromFileName("photo.heic")).toBe("image/heic");
+    expect(contentTypeFromFileName("photo.heif")).toBe("image/heic");
     expect(contentTypeFromFileName("photo.jpg")).toBe("image/jpeg");
     expect(contentTypeFromFileName("photo.unknown")).toBe("image/jpeg");
   });

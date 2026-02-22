@@ -13,6 +13,40 @@ const INSTALLATIONS_CACHE_TTL_MS = 60_000;
 let installationsCache: InstallationRecord[] | null = null;
 let installationsCacheExpiresAt = 0;
 
+type RawInstallationRecord = Omit<InstallationRecord, "id"> & {
+  id: number | string;
+};
+
+type RawCreateRecordResponse = Omit<CreateRecordResponse, "record"> & {
+  record: RawInstallationRecord;
+};
+
+function normalizeInstallationId(rawId: number | string): number {
+  if (typeof rawId === "number" && Number.isInteger(rawId) && rawId > 0) {
+    return rawId;
+  }
+
+  if (typeof rawId === "string") {
+    const parsed = Number.parseInt(rawId, 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  throw new Error(`ID de instalacion invalido recibido desde API: ${String(rawId)}`);
+}
+
+function normalizeInstallationRecord(record: RawInstallationRecord): InstallationRecord {
+  return {
+    ...record,
+    id: normalizeInstallationId(record.id),
+  };
+}
+
+function normalizeInstallationRecords(records: RawInstallationRecord[]): InstallationRecord[] {
+  return records.map(normalizeInstallationRecord);
+}
+
 export async function createIncident(
   installationId: number,
   payload: CreateIncidentInput,
@@ -47,13 +81,14 @@ export async function listInstallations(
     return installationsCache;
   }
 
-  const records = await signedJsonRequest<InstallationRecord[]>({
+  const records = await signedJsonRequest<RawInstallationRecord[]>({
     method: "GET",
     path: "/installations",
   });
-  installationsCache = records;
+  const normalizedRecords = normalizeInstallationRecords(records);
+  installationsCache = normalizedRecords;
   installationsCacheExpiresAt = now + INSTALLATIONS_CACHE_TTL_MS;
-  return records;
+  return normalizedRecords;
 }
 
 export function clearInstallationsCache(): void {
@@ -64,9 +99,13 @@ export function clearInstallationsCache(): void {
 export async function createInstallationRecord(
   payload: CreateRecordInput,
 ): Promise<CreateRecordResponse> {
-  return signedJsonRequest<CreateRecordResponse>({
+  const response = await signedJsonRequest<RawCreateRecordResponse>({
     method: "POST",
     path: "/records",
     data: payload,
   });
+  return {
+    ...response,
+    record: normalizeInstallationRecord(response.record),
+  };
 }

@@ -1,5 +1,5 @@
-export function unixTimestampSeconds(): string {
-  return Math.floor(Date.now() / 1000).toString();
+export function unixTimestampSeconds(): number {
+  return Math.floor(Date.now() / 1000);
 }
 
 export function isoNow(): string {

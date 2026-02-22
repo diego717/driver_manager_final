@@ -73,7 +73,7 @@ export default function IncidentListScreen() {
       setInstallations(records);
       setInstallationId((current) => {
         const currentId = Number.parseInt(current, 10);
-        const exists = records.some((item) => Number(item.id) === currentId);
+        const exists = records.some((item) => item.id === currentId);
         if (!exists && records.length > 0) {
           return String(records[0].id);
         }

@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import { getWebSessionStorage } from "./runtime";
 
 const API_TOKEN_KEY = "dm_api_token";
 const API_SECRET_KEY = "dm_api_secret";
@@ -15,28 +16,27 @@ function cleanValue(value: string): string {
   return value.trim();
 }
 
-function hasWebStorage(): boolean {
-  return typeof window !== "undefined" && typeof window.sessionStorage !== "undefined";
-}
-
 async function setItem(key: string, value: string): Promise<void> {
-  if (hasWebStorage()) {
-    window.sessionStorage.setItem(key, value);
+  const webStorage = getWebSessionStorage();
+  if (webStorage) {
+    webStorage.setItem(key, value);
     return;
   }
   await SecureStore.setItemAsync(key, value);
 }
 
 async function getItem(key: string): Promise<string | null> {
-  if (hasWebStorage()) {
-    return window.sessionStorage.getItem(key);
+  const webStorage = getWebSessionStorage();
+  if (webStorage) {
+    return webStorage.getItem(key);
   }
   return SecureStore.getItemAsync(key);
 }
 
 async function deleteItem(key: string): Promise<void> {
-  if (hasWebStorage()) {
-    window.sessionStorage.removeItem(key);
+  const webStorage = getWebSessionStorage();
+  if (webStorage) {
+    webStorage.removeItem(key);
     return;
   }
   await SecureStore.deleteItemAsync(key);

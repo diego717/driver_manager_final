@@ -53,7 +53,7 @@ export function buildAuthHeaders({
   token?: string;
   secret?: string;
 }): Record<string, string> {
-  const timestamp = unixTimestampSeconds();
+  const timestamp = String(unixTimestampSeconds());
   const finalToken = token ?? getAuthMaterial().token;
   const finalSecret = secret ?? getAuthMaterial().secret;
 

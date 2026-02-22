@@ -1,22 +1,21 @@
 import * as SecureStore from "expo-secure-store";
+import { getWebSessionStorage } from "./runtime";
 
 const BIOMETRIC_ENABLED_KEY = "dm_pref_biometric_enabled";
 
-function hasWebStorage(): boolean {
-  return typeof window !== "undefined" && typeof window.sessionStorage !== "undefined";
-}
-
 async function setItem(key: string, value: string): Promise<void> {
-  if (hasWebStorage()) {
-    window.sessionStorage.setItem(key, value);
+  const webStorage = getWebSessionStorage();
+  if (webStorage) {
+    webStorage.setItem(key, value);
     return;
   }
   await SecureStore.setItemAsync(key, value);
 }
 
 async function getItem(key: string): Promise<string | null> {
-  if (hasWebStorage()) {
-    return window.sessionStorage.getItem(key);
+  const webStorage = getWebSessionStorage();
+  if (webStorage) {
+    return webStorage.getItem(key);
   }
   return SecureStore.getItemAsync(key);
 }

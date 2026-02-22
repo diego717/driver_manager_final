@@ -52,7 +52,7 @@ export default function CreateIncidentScreen() {
   const { resolvedScheme } = useThemePreference();
   const isDark = resolvedScheme === "dark";
   const [installationId, setInstallationId] = useState("1");
-  const [reporterUsername, setReporterUsername] = useState("admin");
+  const [reporterUsername, setReporterUsername] = useState("");
   const [note, setNote] = useState("");
   const [timeAdjustment, setTimeAdjustment] = useState("0");
   const [severity, setSeverity] = useState<IncidentSeverity>("medium");
@@ -109,7 +109,7 @@ export default function CreateIncidentScreen() {
       setInstallations(records);
       setInstallationId((current) => {
         const currentId = Number.parseInt(current, 10);
-        const exists = records.some((item) => Number(item.id) === currentId);
+        const exists = records.some((item) => item.id === currentId);
         if (!exists && records.length > 0) {
           return String(records[0].id);
         }
@@ -141,7 +141,7 @@ export default function CreateIncidentScreen() {
     void getStoredWebAccessUsername().then((storedUsername) => {
       if (!mounted || !storedUsername) return;
       setReporterUsername((current) => {
-        if (current.trim() && current.trim().toLowerCase() !== "admin") {
+        if (current.trim()) {
           return current;
         }
         return storedUsername;
@@ -194,7 +194,7 @@ export default function CreateIncidentScreen() {
     }
     if (
       installations.length > 0 &&
-      !installations.some((item) => Number(item.id) === parsedInstallationId)
+      !installations.some((item) => item.id === parsedInstallationId)
     ) {
       notify(
         "Instalacion no encontrada",
@@ -370,7 +370,7 @@ export default function CreateIncidentScreen() {
         value={reporterUsername}
         onChangeText={setReporterUsername}
         style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
-        placeholder="admin"
+        placeholder="Usuario web"
         placeholderTextColor={palette.placeholder}
       />
 
