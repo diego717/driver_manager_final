@@ -8,6 +8,7 @@ const clientMocks = vi.hoisted(() => ({
 }));
 
 const secureStoreMocks = vi.hoisted(() => ({
+  clearStoredWebSession: vi.fn(),
   getStoredWebAccessToken: vi.fn(),
   getStoredWebAccessExpiresAt: vi.fn(),
 }));
@@ -49,6 +50,7 @@ describe("devices api", () => {
 
     expect(registered).toBe(false);
     expect(clientMocks.signedJsonRequest).not.toHaveBeenCalled();
+    expect(secureStoreMocks.clearStoredWebSession).toHaveBeenCalledOnce();
   });
 
   it("registers token through /devices when web session is active", async () => {

@@ -1,8 +1,10 @@
 import { extractApiError, signedJsonRequest } from "./client";
 import {
+  clearStoredWebSession,
   getStoredWebAccessExpiresAt,
   getStoredWebAccessToken,
 } from "../storage/secure";
+import { resolveWebSession } from "./webSession";
 
 export interface RegisterDeviceTokenInput {
   fcmToken: string;
@@ -16,20 +18,13 @@ export interface RegisterDeviceTokenResponse {
   registered: boolean;
 }
 
-function hasValidSessionExpiry(expiresAtIso: string | null): boolean {
-  if (!expiresAtIso) return false;
-  const expiresAtMs = Date.parse(expiresAtIso);
-  return Number.isFinite(expiresAtMs) && expiresAtMs > Date.now() + 5000;
-}
-
 async function hasActiveWebSession(): Promise<boolean> {
-  const [accessToken, expiresAt] = await Promise.all([
-    getStoredWebAccessToken(),
-    getStoredWebAccessExpiresAt(),
-  ]);
-
-  if (!accessToken) return false;
-  return hasValidSessionExpiry(expiresAt);
+  const resolved = await resolveWebSession({
+    getAccessToken: getStoredWebAccessToken,
+    getExpiresAt: getStoredWebAccessExpiresAt,
+    onExpired: clearStoredWebSession,
+  });
+  return resolved.state === "active";
 }
 
 function normalizeDeviceString(value: string | null | undefined): string | null {

@@ -11,6 +11,7 @@ import {
   setStoredWebAccessUsername,
 } from "../storage/secure";
 import { ensureNonEmpty } from "../utils/validation";
+import { resolveWebSession } from "./webSession";
 
 export interface WebSessionUser {
   id?: number;
@@ -64,28 +65,21 @@ function extractErrorMessage(body: unknown, fallback: string): string {
   return payload.error?.message || fallback;
 }
 
-function parseIsoToMillis(value: string): number | null {
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 async function resolveActiveWebToken(): Promise<string> {
-  const [token, expiresAt] = await Promise.all([
-    getStoredWebAccessToken(),
-    getStoredWebAccessExpiresAt(),
-  ]);
+  const resolved = await resolveWebSession({
+    getAccessToken: getStoredWebAccessToken,
+    getExpiresAt: getStoredWebAccessExpiresAt,
+    onExpired: clearStoredWebSession,
+  });
 
-  if (!token || !expiresAt) {
-    throw new Error("Falta token Bearer para autenticacion web.");
-  }
-
-  const expiresAtMs = parseIsoToMillis(expiresAt);
-  if (expiresAtMs === null || expiresAtMs <= Date.now() + 5000) {
-    await clearStoredWebSession();
+  if (resolved.state !== "active") {
+    if (resolved.state === "missing") {
+      throw new Error("Falta token Bearer para autenticacion web.");
+    }
     throw new Error("Sesion web expirada. Inicia sesion nuevamente.");
   }
 
-  return token;
+  return resolved.accessToken;
 }
 
 async function authorizedWebFetch(path: string, init: RequestInit = {}): Promise<Response> {

@@ -13,6 +13,7 @@ import {
   getStoredWebAccessExpiresAt,
   getStoredWebAccessToken,
 } from "../storage/secure";
+import { resolveWebSession } from "./webSession";
 
 const envBaseURL = normalizeApiBaseUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? "");
 
@@ -53,27 +54,14 @@ function ensureWebPath(path: string): string {
   return path.startsWith("/web/") ? path : `/web${path}`;
 }
 
-function parseIsoToMillis(value: string): number | null {
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return null;
-  return parsed;
-}
-
 async function resolveValidWebAccessToken(): Promise<string | null> {
-  const [token, expiresAtIso] = await Promise.all([
-    getStoredWebAccessToken(),
-    getStoredWebAccessExpiresAt(),
-  ]);
-
-  if (!token || !expiresAtIso) return null;
-
-  const expiresAtMs = parseIsoToMillis(expiresAtIso);
-  if (expiresAtMs === null || expiresAtMs <= Date.now() + 5000) {
-    await clearStoredWebSession();
-    return null;
-  }
-
-  return token;
+  const resolved = await resolveWebSession({
+    getAccessToken: getStoredWebAccessToken,
+    getExpiresAt: getStoredWebAccessExpiresAt,
+    onExpired: clearStoredWebSession,
+  });
+  if (resolved.state !== "active") return null;
+  return resolved.accessToken;
 }
 
 async function resolveApiBaseUrl(): Promise<string> {
