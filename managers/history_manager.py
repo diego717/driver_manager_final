@@ -123,26 +123,19 @@ class InstallationHistory:
     def _normalize_statistics(self, stats, start_date=None, end_date=None):
         """
         Normalizar estadísticas para garantizar todas las claves esperadas.
-        Si llegan parciales desde la API, completa desde instalaciones.
+        Si la API no devuelve datos validos, recalcula desde instalaciones.
+        Si devuelve datos parciales, completa faltantes con defaults.
         """
         normalized = self._default_statistics()
-        stats_payload = stats if isinstance(stats, dict) else {}
+        stats_payload = stats if isinstance(stats, dict) else None
+
+        if not stats_payload:
+            installations = self.get_installations(start_date=start_date, end_date=end_date)
+            return self._compute_statistics_from_installations(installations)
+
         for key in normalized.keys():
             if key in stats_payload and stats_payload.get(key) is not None:
                 normalized[key] = stats_payload.get(key)
-
-        missing_main_keys = any(
-            key not in stats_payload or stats_payload.get(key) is None
-            for key in ['total_installations', 'successful_installations', 'failed_installations']
-        )
-
-        if missing_main_keys:
-            installations = self.get_installations(start_date=start_date, end_date=end_date)
-            computed = self._compute_statistics_from_installations(installations)
-
-            for key in normalized.keys():
-                if key not in stats_payload or stats_payload.get(key) is None:
-                    normalized[key] = computed[key]
 
         return normalized
 

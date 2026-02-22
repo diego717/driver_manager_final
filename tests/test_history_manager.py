@@ -259,11 +259,45 @@ class TestInstallationHistory(unittest.TestCase):
 
         stats = self.history.get_statistics()
 
+        self.assertEqual(stats["total_installations"], 0)
+        self.assertEqual(stats["successful_installations"], 0)
+        self.assertEqual(stats["failed_installations"], 0)
+        self.assertEqual(stats["unique_clients"], 0)
+        self.assertEqual(stats["by_brand"], {"Zebra": 2})
+        mock_get_installations.assert_not_called()
+
+    @patch.object(InstallationHistory, "get_installations")
+    @patch.object(InstallationHistory, "_make_request")
+    def test_get_statistics_empty_worker_response_uses_installations_fallback(
+        self, mock_make_request, mock_get_installations
+    ):
+        mock_make_request.return_value = {}
+        mock_get_installations.return_value = [
+            {
+                "id": 1,
+                "driver_brand": "Zebra",
+                "driver_version": "1.0",
+                "status": "success",
+                "installation_time_seconds": 120,
+                "client_name": "Cliente A",
+            },
+            {
+                "id": 2,
+                "driver_brand": "Magicard",
+                "driver_version": "2.0",
+                "status": "failed",
+                "installation_time_seconds": 0,
+                "client_name": "Cliente B",
+            },
+        ]
+
+        stats = self.history.get_statistics()
+
         self.assertEqual(stats["total_installations"], 2)
         self.assertEqual(stats["successful_installations"], 1)
         self.assertEqual(stats["failed_installations"], 1)
         self.assertEqual(stats["unique_clients"], 2)
-        self.assertEqual(stats["by_brand"], {"Zebra": 2})
+        mock_get_installations.assert_called_once()
 
     @patch.object(InstallationHistory, "_make_request")
     def test_get_installations_applies_local_date_filter_when_worker_ignores_params(

@@ -143,55 +143,7 @@ class MainWindow(QMainWindow):
         
         # Verificar si necesita inicialización
         if temp_user_manager.needs_initialization():
-            # Verificar si puede migrar desde legacy
-            if temp_user_manager.can_migrate_from_legacy():
-                self._show_migration_dialog(temp_user_manager)
-            else:
-                self._show_setup_wizard(temp_user_manager)
-
-    def _show_migration_dialog(self, user_manager):
-        """Mostrar diálogo de migración desde sistema legacy"""
-        from PyQt6.QtWidgets import QMessageBox, QInputDialog, QLineEdit
-        
-        reply = QMessageBox.question(
-            None,
-            "Migración de Sistema",
-            "Se detectó una configuración antigua de Driver Manager.\n\n"
-            "¿Deseas migrar al nuevo sistema multi-usuario?\n\n"
-            "Esto mantendrá tu contraseña actual y creará una cuenta 'admin'.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            # Pedir contraseña actual
-            password, ok = QInputDialog.getText(
-                None,
-                "Migración",
-                "Ingresa tu contraseña actual de administrador:",
-                QLineEdit.EchoMode.Password
-            )
-            
-            if ok and password:
-                success, message = user_manager.migrate_from_legacy(password)
-                
-                if success:
-                    QMessageBox.information(
-                        None,
-                        "Migración Exitosa",
-                        f"✅ {message}\n\n"
-                        "Ahora puedes crear usuarios adicionales desde\n"
-                        "la pestaña Administración."
-                    )
-                else:
-                    QMessageBox.critical(
-                        None,
-                        "Error en Migración",
-                        f"❌ {message}"
-                    )
-                    self._show_setup_wizard(user_manager)
-        else:
-            self._show_setup_wizard(user_manager)
-
+            self._show_setup_wizard(temp_user_manager)
     def _show_setup_wizard(self, user_manager, exit_on_cancel=True):
         """Mostrar wizard de configuración inicial"""
         from ui.dialogs.user_setup_wizard import show_user_setup_wizard
