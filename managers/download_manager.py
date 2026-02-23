@@ -1,10 +1,11 @@
 """
 Gestor de descargas y subidas para Driver Manager
 """
-
+from pathlib import Path
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.logger import get_logger
+from utils.encryption import calculate_file_hash
 
 logger = get_logger()
 
@@ -30,6 +31,16 @@ class DownloadThread(QThread):
                 self.local_path,
                 progress_callback=lambda p: self.progress.emit(p)
             )
+            
+            # Calcular y guardar hash
+            file_path = Path(self.local_path)
+            hash_value = calculate_file_hash(file_path)
+            hash_file = file_path.with_suffix(file_path.suffix + ".sha256")
+            with open(hash_file, "w") as f:
+                f.write(hash_value)
+            
+            logger.info(f"Hash SHA256 para {file_path.name} calculado y guardado en {hash_file.name}: {hash_value}")
+            
             logger.operation_end("download_driver_thread", success=True)
             self.finished.emit(self.local_path)
         except Exception as e:

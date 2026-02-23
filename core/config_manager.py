@@ -66,7 +66,7 @@ class ConfigManager:
     def __init__(self, main_window):
         self.main = main_window
         
-        # --- 1. DETECCIÓN DE RUTA UNIFICADA (CRÍTICO PARA USB) ---
+        # Detectar ruta base unica para ejecucion en script y .exe.
         if getattr(sys, 'frozen', False):
             # Si es .exe, usar la ruta del ejecutable
             self.base_path = Path(sys.executable).parent
@@ -455,7 +455,7 @@ class ConfigManager:
             self.main.statusBar().showMessage("❌ Error conectando a la nube")
             return False
 
-    # Mantenemos el método test_cloud_connection tal cual estaba
+    # Probar conexion a R2 con credenciales proporcionadas.
     @returns_result_tuple("test_cloud_connection")
     def test_cloud_connection(self, account_id, access_key_id, secret_access_key, bucket_name):
         logger.operation_start("test_cloud_connection", bucket=bucket_name)

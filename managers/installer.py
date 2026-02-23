@@ -320,7 +320,7 @@ class DriverInstaller:
         """
         logger.operation_start("install_driver", path=str(driver_path))
         
-        # SECURITY FIX (SEC-002): Validar path antes de cualquier operación
+        # Validar path antes de cualquier operacion.
         try:
             validated_path = self._validate_driver_path(driver_path)
         except ValidationError as e:

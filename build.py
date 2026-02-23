@@ -6,7 +6,7 @@ from pathlib import Path
 # --- Configuración ---
 APP_NAME = "DriverManager"
 ENTRY_POINT = "main.py"
-# Te recomiendo crear una carpeta 'assets' y poner un icono .ico para un look profesional.
+# Icono opcional para el ejecutable.
 ICON_FILE = "assets/app_icon.ico"
 
 # --- Limpieza de compilaciones anteriores ---

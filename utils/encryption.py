@@ -10,6 +10,8 @@ import base64
 import json
 import os
 from pathlib import Path
+import hashlib
+
 
 
 class SecureConfig:
@@ -247,6 +249,23 @@ class ConfigEncryptionHelper:
             return config is not None
         except:
             return False
+
+
+def calculate_file_hash(file_path: Path) -> str:
+    """
+    Calcula el hash SHA256 de un archivo.
+
+    Args:
+        file_path: Ruta al archivo.
+
+    Returns:
+        El hash SHA256 en formato hexdigest.
+    """
+    sha256 = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        while chunk := f.read(8192):
+            sha256.update(chunk)
+    return sha256.hexdigest()
 
 
 # Funciones de utilidad para testing

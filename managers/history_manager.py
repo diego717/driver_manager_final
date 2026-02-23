@@ -324,7 +324,7 @@ class InstallationHistory:
         except Exception as e:
             logger.error(f"Failed to load API URL from config: {e}")
         
-        # SECURITY FIX: No hardcoded fallback
+        # No usar fallback hardcodeado para la URL de API.
         logger.critical(
             "API URL not configured. Application requires reconfiguration.",
             severity='CRITICAL'

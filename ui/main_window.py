@@ -72,7 +72,7 @@ class MainWindow(QMainWindow):
         # 5. Configurar conexiones de señales
         self._setup_connections()
         
-        # 6. 🚀 Ejecutar la carga portable inteligente
+        # 6. Cargar configuracion portable al inicio
         self.check_portable_config_startup()
         
         # 7. Aplicar tema inicial
@@ -1113,13 +1113,13 @@ class MainWindow(QMainWindow):
                 self.history_tab.warning.setVisible(not self.is_admin)
 
             # ========================================
-            # LÓGICA DE PERMISOS POR ROL - CORREGIDA
+            # Logica de permisos por rol
             # ========================================
             
             if user_role == "super_admin":
                 logger.info(f"Configurando panel para super_admin: {username}")
                 
-                # ✅ SUPER ADMIN VE TODO
+                # Super admin: acceso completo al panel
                 # 1. Mostrar TODAS las secciones incluyendo Cloudflare R2
                 for widget in self.admin_tab.findChildren(QGroupBox):
                     widget.setVisible(True)
@@ -1130,7 +1130,7 @@ class MainWindow(QMainWindow):
                     self.admin_tab.user_mgmt_btn.setVisible(True)
                     logger.debug("Botón gestión usuarios visible")
                 
-                # 3. Mostrar TODOS los botones de admin (subir, eliminar, etc)
+                # 3. Mostrar todos los botones operativos
                 for widget in self.admin_tab.findChildren(QPushButton):
                     # Mostrar botones de operaciones
                     if any(text in widget.text() for text in ["Seleccionar Archivo", "Subir a la Nube", "Eliminar Seleccionado"]):
@@ -1162,7 +1162,7 @@ class MainWindow(QMainWindow):
             elif user_role == "admin":
                 logger.info(f"Configurando panel para admin: {username}")
                 
-                # ✅ ADMIN: Puede subir/eliminar pero NO ve credenciales R2
+                # Admin: puede operar drivers sin ver credenciales R2
                 # 1. OCULTAR sección de Cloudflare R2
                 for widget in self.admin_tab.findChildren(QGroupBox):
                     if "Cloudflare R2" in widget.title():

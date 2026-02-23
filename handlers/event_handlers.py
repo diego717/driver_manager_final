@@ -125,7 +125,15 @@ class EventHandlers:
         self.main.installation_start_time = datetime.now()
         
         try:
-            self.main.installer.install_driver(file_path)
+            # Leer hash esperado
+            file_path_obj = Path(file_path)
+            hash_file = file_path_obj.with_suffix(file_path_obj.suffix + ".sha256")
+            expected_hash = None
+            if hash_file.exists():
+                with open(hash_file, "r") as f:
+                    expected_hash = f.read().strip()
+
+            self.main.installer.install_driver(file_path, expected_hash=expected_hash)
             
             installation_time = None
             if self.main.installation_start_time:

@@ -407,7 +407,7 @@ class UserManagerV2:
             if users_data and len(users_data.get('users', {})) > 0:
                 raise ConfigurationError("El sistema ya tiene usuarios configurados.")
             
-            # SECURITY FIX (SEC-004): Validar contraseña del primer usuario
+            # Validar contrasena del primer usuario con la politica vigente
             is_valid, message, score = PasswordValidator.validate_password_strength(
                 first_user_password,
                 first_user_username
@@ -457,7 +457,7 @@ class UserManagerV2:
             # Guardar
             self._save_users(users_data)
             
-            # Log de creacian
+            # Registrar evento de inicializacion
             self.logger.security_event(
                 event_type="system_initialized",
                 username=first_user_username,
@@ -798,7 +798,7 @@ class UserManagerV2:
             ):
                 return self._normalize_logs_data(decrypted), fallback_recovered
 
-        # Fallback especafico para logs legacy/corruptos:
+        # Fallback especifico para logs legacy/corruptos:
         # intentamos rescatar campos útiles aun con HMAC inválido.
         fallback_recovered = True
 
@@ -1012,7 +1012,7 @@ class UserManagerV2:
         """
         self.logger.operation_start("authenticate", username=username)
         
-        # SECURITY FIX (SEC-005): Check if account is locked out
+        # Verificar si la cuenta esta bloqueada
         if self.lockout_manager.is_locked_out(username):
             time_remaining = self.lockout_manager.get_lockout_time_remaining(username)
             minutes_remaining = int(time_remaining.total_seconds() / 60)
@@ -1046,7 +1046,7 @@ class UserManagerV2:
         
         # Verificar que el usuario existe
         if username not in users_data["users"]:
-            # SECURITY FIX (SEC-005): Record failed attempt even for non-existent users
+            # Registrar intento fallido tambien para usuarios inexistentes
             self.lockout_manager.record_failed_attempt(username)
             
             self.logger.security_event("login_failed", username, False, {'reason': 'User not found'})
@@ -1063,7 +1063,7 @@ class UserManagerV2:
         
         # Verificar contraseña
         if not self._verify_password(password, user["password_hash"]):
-            # SECURITY FIX (SEC-005): Record failed attempt
+            # Registrar intento fallido
             system_info = self._get_system_info()
             self.lockout_manager.record_failed_attempt(username, system_info.get('ip'))
             
@@ -1101,10 +1101,10 @@ class UserManagerV2:
             
             raise AuthenticationError(message, details={'username': username})
         
-        # SECURITY FIX (SEC-005): Login exitoso, resetear contador
+        # En login exitoso, resetear contador de intentos
         self.lockout_manager.record_successful_login(username)
         
-        # Actualizar altimo login
+        # Actualizar ultimo login
         user["last_login"] = datetime.now().isoformat()
         users_data["users"][username] = user
         self._save_users(users_data)
@@ -1144,7 +1144,7 @@ class UserManagerV2:
         if not re.match(r'^[a-zA-Z0-9_-]+$', username):
             raise ValidationError("Nombre de usuario inválido (solo letras, números, guiones y guiones bajos).", details={'username': username})
         
-        # SECURITY FIX (SEC-004): Validar contraseña con política robusta
+        # Validar contrasena con la politica de seguridad
         is_valid, message, score = PasswordValidator.validate_password_strength(password, username)
         
         if not is_valid:
@@ -1162,7 +1162,7 @@ class UserManagerV2:
                 self.logger.warning("Attempt to create duplicate user", username=username)
                 raise ValidationError("El usuario ya existe.", details={'username': username})
             
-            # Asignar permisos segan rol
+            # Asignar permisos segun rol
             if role == "super_admin":
                 permissions = ["all"]
             elif role == "admin":
@@ -1253,7 +1253,7 @@ class UserManagerV2:
             self.logger.security_event("password_change_failed", username, False, {'reason': 'Wrong old password'})
             raise AuthenticationError("Contraseaa actual incorrecta.")
         
-        # SECURITY FIX (SEC-004): Validar nueva contraseña
+        # Validar nueva contrasena con la politica de seguridad
         is_valid, message, score = PasswordValidator.validate_password_strength(new_password, username)
         
         if not is_valid:
@@ -1468,7 +1468,7 @@ class UserManagerV2:
         return (self.current_user and 
                 self.current_user.get("role") == "super_admin")
     
-    # Matodos de compatibilidad legacy
+    # Metodos de compatibilidad legacy
     def has_users(self):
         """Verificar si existen usuarios"""
         users_data = self._load_users()
