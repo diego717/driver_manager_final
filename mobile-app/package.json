@@ -22,7 +22,6 @@
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
     "@nozbe/watermelondb": "^0.28.0",
-    "@nozbe/with-observables": "^1.6.0",
     "@react-navigation/native": "^7.1.8",
     "axios": "^1.13.5",
     "crypto-js": "^4.2.0",
