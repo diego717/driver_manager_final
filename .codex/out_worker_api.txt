@@ -1,0 +1,2 @@
+`worker-api` no está disponible en esta sesión; hice revisión directa de `worker.js` únicamente.  
+Riesgo de compatibilidad (1): en `worker.js:1`, `import bcrypt from "bcryptjs"` depende de interoperabilidad ESM↔CommonJS; en runtimes/bundlers ESM estrictos puede fallar con errores tipo “no default export”, rompiendo el arranque del worker.

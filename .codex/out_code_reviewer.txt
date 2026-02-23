@@ -1,0 +1,2 @@
+Mejora concreta: en `.codex/config.toml:8`, cambia `model = "gpt-5-mini"` por `model = "gpt-5.1-codex-mini"`.  
+Impacto: mejora la profundidad del análisis del agente `code-reviewer` y reduce riesgo de pasar por alto regresiones en revisiones grandes.

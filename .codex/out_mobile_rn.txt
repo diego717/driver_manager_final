@@ -1,0 +1,3 @@
+No pude usar `mobile-rn` porque no está disponible en los skills activos; hice revisión manual solo de ese archivo.  
+- [Media] `mobile-app/app/(tabs)/index.tsx:269` actualiza `feedbackMessage` visualmente, pero el cambio no se anuncia de forma fiable a lectores de pantalla.  
+Mejora: en `feedbackBox` añade `accessible` + `accessibilityRole="alert"` + `accessibilityLiveRegion="polite"` (o llama `AccessibilityInfo.announceForAccessibility(feedbackMessage)` cuando cambie).

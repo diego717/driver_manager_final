@@ -1,0 +1,17 @@
+1. **Media** — Unificar el modelo del agente de review para mejorar calidad/consistencia.  
+Referencia: `.codex/config.toml:8`  
+Mejora concreta: cambiar `model = "gpt-5-mini"` por `model = "gpt-5.1-codex-mini"` (o el estándar que uses en los otros agentes).  
+Impacto: reduce variación entre agentes y mejora detección de riesgos/regresiones.
+
+2. **Media** — Hacer obligatorio reportar cuando no se ejecutan pruebas en todos los agentes.  
+Referencias: `.codex/config.toml:63`, `.codex/config.toml:81`, `.codex/config.toml:88`  
+Mejora concreta: agregar en `worker-api` y `mobile-rn` una regla explícita tipo “If tests/checks were not run, state why and risk”.  
+Impacto: evita falsas sensaciones de validación completa.
+
+3. **Baja** — Evitar deriva de cobertura por `Scope` hardcodeado en code-reviewer.  
+Referencia: `.codex/config.toml:12`  
+Mejora concreta: reemplazar lista cerrada por regla de alcance más robusta (p. ej. “entire repo except generated/vendor paths”) o mantener una sola fuente de verdad para rutas.  
+Impacto: reduce riesgo de que nuevas carpetas queden fuera del review.
+
+Open questions/assumptions: asumo que priorizas calidad de revisión sobre costo de inferencia.  
+Riesgo actual resumido: no hay errores sintácticos TOML visibles, pero sí riesgo operativo de cobertura incompleta y validación de tests no explícita.

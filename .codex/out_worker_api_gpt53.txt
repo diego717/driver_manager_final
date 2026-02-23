@@ -1,0 +1,26 @@
+`worker-api` aplicado sobre `worker.js` únicamente.
+
+1. **Alto**: rutas `/web/*` requieren exclusivamente Bearer y no aceptan auth HMAC legacy.
+`worker.js:1792`
+`worker.js:1833`
+`worker.js:1152`
+`worker.js:1157`
+Impacto: clientes que llamen endpoints web con `X-API-Token`/firma recibirán `401`.
+Mitigación: aceptar ambos esquemas temporalmente en `/web/*` (o versionar endpoint) y deprecar por fecha.
+
+2. **Medio**: `end_date` es **exclusivo** (`< end_date`) en filtros y estadísticas.
+`worker.js:323`
+`worker.js:2316`
+`worker.js:2325`
+`worker.js:2337`
+Impacto: integraciones que esperan rango inclusivo pueden “perder” datos del último día/hora.
+Mitigación: documentar explícitamente contrato o normalizar `end_date` a fin de día para semántica inclusiva.
+
+3. **Medio**: subida de fotos exige `Content-Type` estricto (`image/jpeg|png|webp`), raw body y validación dura de tamaño/tipo.
+`worker.js:5`
+`worker.js:120`
+`worker.js:125`
+`worker.js:145`
+`worker.js:2153`
+Impacto: clientes que envían `multipart/form-data`, `application/octet-stream` o imágenes pequeñas (<1KB) fallarán con `400`.
+Mitigación: soportar `multipart`/`octet-stream` con sniffing robusto o mantener modo estricto pero versionado.

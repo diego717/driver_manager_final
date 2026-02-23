@@ -1,0 +1,3 @@
+`desktop-python` no está disponible en esta sesión, así que hice revisión directa del archivo.
+Mejora concreta: en `tests/test_history_manager.py:72`, dentro de `test_make_request_post_json_sends_utf8_bytes_payload`, agrega `self.assertIsNone(kwargs.get("json"))`.
+Con eso verificas que el POST use exclusivamente `data` en bytes UTF-8 y previenes regresiones donde se envíen `data` y `json` al mismo tiempo.

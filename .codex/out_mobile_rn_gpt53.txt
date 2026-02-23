@@ -1,0 +1,15 @@
+No pude usar `mobile-rn` porque no está disponible en los skills listados de este repo; hice revisión manual solo de `mobile-app/app/(tabs)/index.tsx`.
+
+Hasta 3 mejoras de accesibilidad:
+
+1. `feedbackMessage` debería anunciarse como región viva  
+`mobile-app/app/(tabs)/index.tsx:269`  
+El bloque visual de feedback no garantiza anuncio por lector de pantalla. En el `<View>` de feedback agrega `accessibilityLiveRegion="polite"` (Android) y `accessibilityRole="alert"` para que cambios de estado se lean automáticamente.
+
+2. Marcar títulos como encabezados navegables  
+`mobile-app/app/(tabs)/index.tsx:265` y `mobile-app/app/(tabs)/index.tsx:386`  
+Los textos “Crear incidencia” y “2) Crear incidencia...” deberían tener `accessibilityRole="header"` para mejorar navegación por headings en VoiceOver/TalkBack.
+
+3. Controles de selección usan rol de botón, pero semánticamente son opciones exclusivas  
+`mobile-app/app/(tabs)/index.tsx:419` y `mobile-app/app/(tabs)/index.tsx:491`  
+Las chips de instalación y severidad tienen estado `selected`, pero `accessibilityRole="button"` (`mobile-app/app/(tabs)/index.tsx:434`, `mobile-app/app/(tabs)/index.tsx:506`). Mejor usar patrón de radio: contenedor con `accessibilityRole="radiogroup"` y cada opción con `accessibilityRole="radio"` + `accessibilityState={{ selected }}`.

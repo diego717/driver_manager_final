@@ -1,0 +1,14 @@
+No puedo usar `desktop-python` en este entorno porque no aparece entre las skills/agentes disponibles en tus instrucciones de sesión.  
+Revisión de `tests/test_history_manager.py` con 3 mejoras concretas:
+
+1. `tests/test_history_manager.py:79`  
+Corregir el texto con acentos en `payload` (hoy está con mojibake: `Ã¡Ã©Ã­Ã³Ãº`).  
+Sugerencia: usar caracteres correctos o escapes Unicode (`\u00e1...`) para que el test de UTF-8 valide un caso real y estable en cualquier terminal/encoding.
+
+2. `tests/test_history_manager.py:303`  
+En `test_get_installations_applies_local_date_filter_when_worker_ignores_params`, falta verificar que los filtros también se envían al worker.  
+Sugerencia: agregar `mock_make_request.assert_called_once_with("get", "installations", params={...})` además del assert del resultado filtrado.
+
+3. `tests/test_history_manager.py:117`  
+`test_add_installation_returns_false_on_connection_error` valida el retorno `False`, pero no valida persistencia local en modo offline.  
+Sugerencia: parchear `_save_local` y afirmar `assert_called_once()` para garantizar que la instalación se guarda localmente aunque falle `_make_request`.
