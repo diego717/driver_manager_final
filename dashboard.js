@@ -21,6 +21,10 @@ let sseReconnectAttempts = 0;
 const MAX_SSE_RECONNECT_ATTEMPTS = 5;
 const SSE_RECONNECT_DELAY = 3000; // 3 seconds
 
+// Accessibility / focus management state
+const modalState = new Map();
+let activeModal = null;
+
 
 // Chart.js default configuration
 function isChartAvailable() {
@@ -98,14 +102,58 @@ const api = {
     }
 };
 
-function showLogin() {
-    document.getElementById('loginModal').classList.add('active');
+function getFocusableElements(container) {
+    if (!container) return [];
+    const selectors = [
+        'a[href]',
+        'button:not([disabled])',
+        'input:not([disabled])',
+        'select:not([disabled])',
+        'textarea:not([disabled])',
+        '[tabindex]:not([tabindex="-1"])'
+    ].join(', ');
+    return Array.from(container.querySelectorAll(selectors))
+        .filter(element => !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true');
+}
+
+function openModal(modalElement, triggerElement = document.activeElement) {
+    if (!modalElement) return;
+    modalState.set(modalElement.id, { triggerElement });
+    activeModal = modalElement;
+    modalElement.classList.add('active');
     document.body.style.overflow = 'hidden';
+
+    const focusable = getFocusableElements(modalElement);
+    const target = focusable[0] || modalElement;
+    if (!modalElement.hasAttribute('tabindex')) {
+        modalElement.setAttribute('tabindex', '-1');
+    }
+    target.focus();
+}
+
+function closeModal(modalElement) {
+    if (!modalElement) return;
+    modalElement.classList.remove('active');
+
+    const hasOpenModal = document.querySelector('.modal.active');
+    if (!hasOpenModal) {
+        activeModal = null;
+        document.body.style.overflow = '';
+    }
+
+    const state = modalState.get(modalElement.id);
+    if (state?.triggerElement && document.contains(state.triggerElement)) {
+        state.triggerElement.focus();
+    }
+}
+
+function showLogin() {
+    openModal(document.getElementById('loginModal'));
 }
 
 function hideLogin() {
-    document.getElementById('loginModal').classList.remove('active');
-    document.body.style.overflow = '';
+    const loginModal = document.getElementById('loginModal');
+    closeModal(loginModal);
     document.getElementById('loginError').textContent = '';
 }
 
@@ -1022,7 +1070,7 @@ async function renderIncidents(incidents, installationId) {
                     image.className = 'photo-thumb';
                     image.dataset.photoId = String(photo.id);
                     image.alt = 'Foto de incidencia';
-                    image.addEventListener('click', () => viewPhoto(photo.id));
+                    image.addEventListener('click', () => viewPhoto(photo.id, image));
                     photosGrid.appendChild(image);
                 }
             }
@@ -1033,13 +1081,13 @@ async function renderIncidents(incidents, installationId) {
     }
 }
 
-async function viewPhoto(photoId) {
+async function viewPhoto(photoId, triggerElement = document.activeElement) {
     const modal = document.getElementById('photoModal');
     const img = document.getElementById('photoViewer');
     const photoUrl = await loadPhotoWithAuth(photoId);
     if (photoUrl) {
         img.src = photoUrl;
-        modal.classList.add('active');
+        openModal(modal, triggerElement);
     }
 }
 
@@ -1234,21 +1282,42 @@ document.getElementById('auditActionFilter').addEventListener('change', () => {
 });
 
 document.querySelector('#photoModal .close').addEventListener('click', () => {
-    document.getElementById('photoModal').classList.remove('active');
+    closeModal(document.getElementById('photoModal'));
 });
 
 // Close modal on outside click
 document.getElementById('photoModal').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) {
-        document.getElementById('photoModal').classList.remove('active');
+        closeModal(document.getElementById('photoModal'));
     }
 });
 
-// Keyboard shortcuts
+// Keyboard shortcuts and modal focus trap
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-        document.getElementById('photoModal').classList.remove('active');
+    if (e.key === 'Tab' && activeModal && activeModal.classList.contains('active')) {
+        const focusable = getFocusableElements(activeModal);
+        if (!focusable.length) {
+            e.preventDefault();
+            activeModal.focus();
+            return;
+        }
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+        }
     }
+
+    if (e.key === 'Escape' && activeModal && activeModal.classList.contains('active')) {
+        closeModal(activeModal);
+    }
+
     if (e.ctrlKey && e.key === 'r') {
         e.preventDefault();
         loadDashboard();
@@ -1583,6 +1652,13 @@ function setTheme(theme) {
         html.setAttribute('data-theme', 'light');
     } else {
         html.removeAttribute('data-theme');
+    }
+
+    const themeToggle = document.getElementById('themeToggle');
+    if (themeToggle) {
+        themeToggle.setAttribute('aria-pressed', String(theme === 'light'));
+        const nextTheme = theme === 'light' ? 'oscuro' : 'claro';
+        themeToggle.setAttribute('aria-label', `Cambiar a tema ${nextTheme}`);
     }
     
     // Save to localStorage

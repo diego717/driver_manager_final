@@ -811,6 +811,8 @@ tr[data-id] {
     font-size: 2rem;
     cursor: pointer;
     color: var(--text-secondary);
+    background: transparent;
+    border: none;
     width: 40px;
     height: 40px;
     display: flex;

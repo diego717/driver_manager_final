@@ -35,11 +35,11 @@
             <header class="header">
                 <h2 id="pageTitle">Dashboard</h2>
                 <div class="header-actions">
-                    <button id="themeToggle" class="theme-toggle" title="Cambiar tema">
-                        <span class="icon-sun">☀️</span>
-                        <span class="icon-moon">🌙</span>
+                    <button id="themeToggle" class="theme-toggle" type="button" title="Cambiar tema" aria-label="Cambiar tema" aria-pressed="false">
+                        <span class="icon-sun" aria-hidden="true">☀️</span>
+                        <span class="icon-moon" aria-hidden="true">🌙</span>
                     </button>
-                    <button id="refreshBtn" class="btn-icon" title="Actualizar">↻</button>
+                    <button id="refreshBtn" class="btn-icon" type="button" title="Actualizar" aria-label="Actualizar dashboard">↻</button>
                 </div>
             </header>
 
@@ -197,7 +197,7 @@
     
     <div id="photoModal" class="modal">
         <div class="modal-content photo-modal">
-            <span class="close">&times;</span>
+            <button type="button" class="close" aria-label="Cerrar visor de foto">&times;</button>
             <img id="photoViewer" src="" alt="Foto de incidencia">
         </div>
     </div>
