@@ -1,4 +1,4 @@
-﻿﻿﻿﻿import bcrypt from "bcryptjs";
+﻿﻿﻿﻿﻿﻿﻿﻿import bcrypt from "bcryptjs";
 
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const MIN_PHOTO_BYTES = 1024;
@@ -3669,6 +3669,275 @@ init();
           },
         });
       }
+
+      // PWA manifest.json
+      if (routeParts.length === 1 && routeParts[0] === "manifest.json" && request.method === "GET") {
+        const manifest = {
+          "name": "Driver Manager Dashboard",
+          "short_name": "Driver Manager",
+          "description": "Dashboard de gestión de instalaciones de drivers",
+          "start_url": "/web/dashboard",
+          "display": "standalone",
+          "background_color": "#0f172a",
+          "theme_color": "#06b6d4",
+          "orientation": "any",
+          "scope": "/",
+          "icons": [
+            {
+              "src": "/icons/icon-72x72.png",
+              "sizes": "72x72",
+              "type": "image/png",
+              "purpose": "maskable any"
+            },
+            {
+              "src": "/icons/icon-96x96.png",
+              "sizes": "96x96",
+              "type": "image/png",
+              "purpose": "maskable any"
+            },
+            {
+              "src": "/icons/icon-128x128.png",
+              "sizes": "128x128",
+              "type": "image/png",
+              "purpose": "maskable any"
+            },
+            {
+              "src": "/icons/icon-144x144.png",
+              "sizes": "144x144",
+              "type": "image/png",
+              "purpose": "maskable any"
+            },
+            {
+              "src": "/icons/icon-152x152.png",
+              "sizes": "152x152",
+              "type": "image/png",
+              "purpose": "maskable any"
+            },
+            {
+              "src": "/icons/icon-192x192.png",
+              "sizes": "192x192",
+              "type": "image/png",
+              "purpose": "maskable any"
+            },
+            {
+              "src": "/icons/icon-384x384.png",
+              "sizes": "384x384",
+              "type": "image/png",
+              "purpose": "maskable any"
+            },
+            {
+              "src": "/icons/icon-512x512.png",
+              "sizes": "512x512",
+              "type": "image/png",
+              "purpose": "maskable any"
+            }
+          ],
+          "categories": ["business", "productivity", "utilities"],
+          "lang": "es",
+          "dir": "ltr"
+        };
+        
+        return new Response(JSON.stringify(manifest), {
+          status: 200,
+          headers: {
+            ...corsHeaders(),
+            "Content-Type": "application/manifest+json",
+            "Cache-Control": "public, max-age=3600",
+          },
+        });
+      }
+
+      // SSE endpoint for real-time updates
+      if (routeParts.length === 1 && routeParts[0] === "events" && request.method === "GET") {
+        // Verify authentication
+        try {
+          await verifyWebAccessToken(request, env);
+        } catch (err) {
+          return jsonResponse({ error: "Unauthorized" }, 401);
+        }
+
+        const encoder = new TextEncoder();
+        let closed = false;
+
+        const stream = new ReadableStream({
+          start(controller) {
+            // Send initial connection message
+            const data = {
+              type: "connected",
+              message: "Conexión en tiempo real establecida",
+              timestamp: nowIso()
+            };
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+
+            // Keep connection alive with ping every 30 seconds
+            const keepAlive = setInterval(() => {
+              if (closed) {
+                clearInterval(keepAlive);
+                return;
+              }
+              try {
+                controller.enqueue(encoder.encode(`:ping\n\n`));
+              } catch {
+                clearInterval(keepAlive);
+              }
+            }, 30000);
+
+            // Close after 5 minutes (clients should reconnect)
+            setTimeout(() => {
+              if (!closed) {
+                closed = true;
+                try {
+                  const data = {
+                    type: "reconnect",
+                    message: "Reconexión requerida",
+                    timestamp: nowIso()
+                  };
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+                  controller.close();
+                } catch {}
+              }
+            }, 5 * 60 * 1000);
+          },
+          cancel() {
+            closed = true;
+          }
+        });
+
+        return new Response(stream, {
+          headers: {
+            ...corsHeaders(),
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+          }
+        });
+      }
+
+      // PWA Service Worker
+      if (routeParts.length === 1 && routeParts[0] === "sw.js" && request.method === "GET") {
+
+        const swCode = `// Service Worker for Driver Manager Dashboard PWA
+const CACHE_NAME = 'driver-manager-v1';
+const STATIC_ASSETS = [
+  '/web/dashboard',
+  '/dashboard.css',
+  '/dashboard.js',
+  '/manifest.json'
+];
+
+self.addEventListener('install', (event) => {
+  console.log('[SW] Installing service worker...');
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => {
+        console.log('[SW] Caching static assets');
+        return cache.addAll(STATIC_ASSETS);
+      })
+      .then(() => self.skipWaiting())
+      .catch((err) => console.error('[SW] Error caching assets:', err))
+  );
+});
+
+self.addEventListener('activate', (event) => {
+  console.log('[SW] Activating service worker...');
+  event.waitUntil(
+    caches.keys()
+      .then((cacheNames) => {
+        return Promise.all(
+          cacheNames
+            .filter((name) => name !== CACHE_NAME)
+            .map((name) => caches.delete(name))
+        );
+      })
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', (event) => {
+  const { request } = event;
+  const url = new URL(request.url);
+  
+  if (request.method !== 'GET') return;
+  if (url.pathname.startsWith('/web/') && 
+      !url.pathname.includes('/dashboard') &&
+      !url.pathname.includes('.css') &&
+      !url.pathname.includes('.js')) return;
+  if (!url.origin.includes(self.location.origin)) return;
+  
+  event.respondWith(
+    caches.match(request)
+      .then((cachedResponse) => {
+        if (cachedResponse) {
+          fetch(request)
+            .then((networkResponse) => {
+              if (networkResponse && networkResponse.status === 200) {
+                caches.open(CACHE_NAME)
+                  .then((cache) => cache.put(request, networkResponse.clone()));
+              }
+            })
+            .catch(() => {});
+          return cachedResponse;
+        }
+        
+        return fetch(request)
+          .then((networkResponse) => {
+            if (!networkResponse || networkResponse.status !== 200) {
+              return networkResponse;
+            }
+            const responseToCache = networkResponse.clone();
+            caches.open(CACHE_NAME)
+              .then((cache) => cache.put(request, responseToCache));
+            return networkResponse;
+          })
+          .catch((err) => {
+            if (request.mode === 'navigate') {
+              return caches.match('/web/dashboard');
+            }
+            throw err;
+          });
+      })
+  );
+});
+
+self.addEventListener('push', (event) => {
+  if (event.data) {
+    const data = event.data.json();
+    const options = {
+      body: data.body || 'Nueva actualización disponible',
+      icon: '/icons/icon-192x192.png',
+      badge: '/icons/icon-72x72.png',
+      tag: data.tag || 'default',
+      requireInteraction: true,
+      actions: [
+        { action: 'open', title: 'Abrir' },
+        { action: 'close', title: 'Cerrar' }
+      ]
+    };
+    event.waitUntil(
+      self.registration.showNotification(data.title || 'Driver Manager', options)
+    );
+  }
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  if (event.action === 'open' || !event.action) {
+    event.waitUntil(clients.openWindow('/web/dashboard'));
+  }
+});
+
+console.log('[SW] Service Worker loaded');`;
+        
+        return new Response(swCode, {
+          status: 200,
+          headers: {
+            ...corsHeaders(),
+            "Content-Type": "application/javascript",
+            "Cache-Control": "public, max-age=3600",
+          },
+        });
+      }
+
 
 
       if (isWebRoute) {

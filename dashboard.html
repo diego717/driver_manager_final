@@ -3,10 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#06b6d4">
+    <meta name="description" content="Dashboard de gestión de instalaciones de drivers">
     <title>Driver Manager Dashboard</title>
     <link rel="stylesheet" href="/dashboard.css">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
+
 <body>
     <div id="app">
         <nav class="sidebar">
@@ -30,9 +35,14 @@
             <header class="header">
                 <h2 id="pageTitle">Dashboard</h2>
                 <div class="header-actions">
+                    <button id="themeToggle" class="theme-toggle" title="Cambiar tema">
+                        <span class="icon-sun">☀️</span>
+                        <span class="icon-moon">🌙</span>
+                    </button>
                     <button id="refreshBtn" class="btn-icon" title="Actualizar">↻</button>
                 </div>
             </header>
+
             
             <div id="dashboardSection" class="section active">
                 <!-- Stats Cards -->
@@ -94,21 +104,45 @@
             
             <div id="installationsSection" class="section">
                 <div class="filters">
-                    <input type="text" id="clientFilter" placeholder="🔍 Filtrar por cliente...">
-                    <select id="brandFilter">
-                        <option value="">Todas las marcas</option>
-                    </select>
-                    <select id="statusFilter">
-                        <option value="">Todos los estados</option>
-                        <option value="success">✅ Éxito</option>
-                        <option value="failed">❌ Fallido</option>
-                        <option value="unknown">❓ Desconocido</option>
-                    </select>
-                    <input type="date" id="startDate">
-                    <input type="date" id="endDate">
-                    <button id="applyFilters" class="btn-primary">Aplicar Filtros</button>
-                    <button id="exportBtn" class="btn-secondary">📥 Exportar</button>
+                    <!-- Real-time search -->
+                    <div class="search-wrapper">
+                        <input type="text" id="searchInput" class="search-input" placeholder="🔍 Búsqueda en tiempo real..." autocomplete="off">
+                        <span class="search-icon">🔍</span>
+                    </div>
+                    
+                    <!-- Filter row -->
+                    <div class="filter-row">
+                        <select id="brandFilter">
+                            <option value="">Todas las marcas</option>
+                        </select>
+                        <select id="statusFilter">
+                            <option value="">Todos los estados</option>
+                            <option value="success">✅ Éxito</option>
+                            <option value="failed">❌ Fallido</option>
+                            <option value="unknown">❓ Desconocido</option>
+                        </select>
+                        <input type="date" id="startDate" placeholder="Fecha inicio">
+                        <input type="date" id="endDate" placeholder="Fecha fin">
+                    </div>
+                    
+                    <!-- Filter chips -->
+                    <div id="filterChips" class="filter-chips">
+                        <!-- Dynamic filter chips will appear here -->
+                    </div>
+                    
+                    <!-- Action buttons -->
+                    <div class="filter-actions">
+                        <button id="clearFilters" class="btn-secondary" style="display: none;">🗑️ Limpiar Filtros</button>
+                        <button id="applyFilters" class="btn-primary">🔄 Aplicar</button>
+                        <button id="exportBtn" class="btn-secondary">📥 Exportar</button>
+                    </div>
                 </div>
+                
+                <!-- Results info -->
+                <div class="results-info">
+                    <span id="resultsCount">Cargando...</span>
+                </div>
+                
                 <div id="installationsTable" class="table-container">
                     <p class="loading">Cargando instalaciones...</p>
                 </div>
@@ -169,5 +203,53 @@
     </div>
     
     <script src="/dashboard.js"></script>
+    
+    <!-- PWA Service Worker Registration -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then((registration) => {
+                        console.log('[PWA] Service Worker registered:', registration.scope);
+                        
+                        // Check for updates
+                        registration.addEventListener('updatefound', () => {
+                            const newWorker = registration.installing;
+                            newWorker.addEventListener('statechange', () => {
+                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                    // New version available
+                                    showNotification('🔄 Nueva versión disponible. Recarga para actualizar.', 'info');
+                                }
+                            });
+                        });
+                    })
+                    .catch((err) => {
+                        console.error('[PWA] Service Worker registration failed:', err);
+                    });
+                
+                // Listen for messages from service worker
+                navigator.serviceWorker.addEventListener('message', (event) => {
+                    if (event.data === 'update-available') {
+                        showNotification('🔄 Nueva versión disponible. Recarga para actualizar.', 'info');
+                    }
+                });
+            });
+        }
+        
+        // PWA Install Prompt
+        let deferredPrompt;
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            console.log('[PWA] Install prompt available');
+        });
+        
+        // Check if app is installed
+        window.addEventListener('appinstalled', () => {
+            console.log('[PWA] App installed');
+            deferredPrompt = null;
+            showNotification('✅ App instalada correctamente', 'success');
+        });
+    </script>
 </body>
 </html>
