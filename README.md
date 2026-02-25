@@ -135,16 +135,16 @@ Luego reemplaza en `wrangler.toml`:
 - `REPLACE_WITH_RATE_LIMIT_KV_ID`
 - `REPLACE_WITH_RATE_LIMIT_KV_PREVIEW_ID`
 
-Para auth firmada, configura secretos del Worker:
+Para compatibilidad con clientes legacy firmados (no recomendado en mobile distribuida), puedes configurar:
 
 ```powershell
 wrangler secret put API_TOKEN
 wrangler secret put API_SECRET
 ```
 
-Si `API_TOKEN`/`API_SECRET` no existen, el Worker responde `503` y rechaza requests protegidas.
+> Recomendado para produccion mobile: **no embebas `API_SECRET` en apps distribuidas**. Usa solo `/web/*` + Bearer de sesion corta.
 
-Para habilitar acceso web sin exponer `API_SECRET` en frontend:
+Para habilitar acceso web por sesion de usuario:
 
 ```powershell
 wrangler secret put WEB_SESSION_SECRET
@@ -190,22 +190,8 @@ npm start
 Variables en `mobile-app/.env`:
 
 - `EXPO_PUBLIC_API_BASE_URL`
-- `EXPO_PUBLIC_API_TOKEN`
-- `EXPO_PUBLIC_API_SECRET`
 
-## Sincronizar auth Mobile -> Desktop
-
-Script util para copiar token/secret del `.env` movil al `config/config.enc` desktop:
-
-```powershell
-python sync_desktop_api_auth.py
-```
-
-Lee `mobile-app/.env`, pide password maestra del desktop y actualiza:
-
-- `api_token`
-- `api_secret`
-- `api_url` (si `EXPO_PUBLIC_API_BASE_URL` esta presente)
+La autenticacion mobile en produccion usa exclusivamente login web (`/web/auth/login`) y Bearer de corta duracion con expiracion/revocacion server-side.
 
 ## Endpoints principales del Worker
 
@@ -234,6 +220,7 @@ Endpoints web (sin HMAC en cliente):
 - `POST /web/auth/users/:user_id/force-password` (forzar nueva contraseña, requiere admin)
 - `POST /web/auth/import-users` (importar hashes de usuarios legacy, requiere admin)
 - `GET /web/auth/me`
+- `POST /web/auth/logout` (revoca version de sesion)
 - `GET /web/installations`
 - `POST /web/installations`
 - `POST /web/records`
@@ -250,9 +237,10 @@ Endpoints web (sin HMAC en cliente):
 
 Notas API:
 
-- Firma HMAC: `METHOD|PATH|TIMESTAMP|SHA256(body)`.
+- Firma HMAC: `METHOD|PATH|TIMESTAMP|SHA256(body)` (solo para clientes legacy/no-publicos).
 - Ventana anti-replay: 300 segundos.
-- Web token: `Authorization: Bearer <token>` emitido por `/web/auth/login` (TTL 8 horas).
+- Requests mobile con header `X-Client-Platform: mobile` no pueden usar HMAC en rutas legacy.
+- Web token: `Authorization: Bearer <token>` emitido por `/web/auth/login` (TTL 8 horas), renovable con nuevo login/refresh y revocable server-side por version de sesion.
 - Login web: `username + password` contra `web_users` (bootstrap inicial con `/web/auth/bootstrap`).
 - Password policy web: minimo 12 caracteres, mayuscula, minuscula, numero y caracter especial.
 - Login web rate limit: maximo 5 intentos fallidos por `IP+username` en 15 minutos (requiere `RATE_LIMIT_KV`).
