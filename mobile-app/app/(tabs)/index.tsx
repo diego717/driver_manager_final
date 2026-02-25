@@ -3,6 +3,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   ScrollView,
   StyleSheet,
   Text,
@@ -109,6 +110,7 @@ export default function CreateIncidentScreen() {
     }),
     [isDark],
   );
+  const visibleInstallations = useMemo(() => installations.slice(0, 30), [installations]);
 
   const notify = (title: string, message: string) => {
     setFeedbackMessage(`${title}: ${message}`);
@@ -259,6 +261,81 @@ export default function CreateIncidentScreen() {
       setSubmitting(false);
     }
   };
+
+  const renderInstallationChip = useCallback(
+    ({ item }: { item: InstallationRecord }) => {
+      const selected = String(item.id) === installationId;
+      return (
+        <TouchableOpacity
+          style={[
+            styles.chip,
+            { backgroundColor: palette.chipBg, borderColor: palette.chipBorder },
+            selected && {
+              backgroundColor: palette.chipSelectedBg,
+              borderColor: palette.chipSelectedBorder,
+            },
+          ]}
+          onPress={() => setInstallationId(String(item.id))}
+          accessibilityRole="button"
+          accessibilityLabel={`Seleccionar instalacion ${item.id}${item.client_name ? ` de ${item.client_name}` : ""}`}
+          accessibilityState={{ selected }}
+        >
+          <Text
+            style={[
+              styles.chipText,
+              { color: palette.chipText },
+              selected && { color: palette.chipSelectedText },
+            ]}
+          >
+            #{item.id} {item.client_name ? `- ${item.client_name}` : ""}
+          </Text>
+        </TouchableOpacity>
+      );
+    },
+    [installationId, palette],
+  );
+
+  const renderSeverityOption = useCallback(
+    ({ item }: { item: (typeof SEVERITY_OPTIONS)[number] }) => {
+      const selected = severity === item.value;
+      return (
+        <TouchableOpacity
+          style={[
+            styles.severityChip,
+            { backgroundColor: palette.severityBg, borderColor: palette.severityBorder },
+            selected && {
+              backgroundColor: palette.severitySelectedBg,
+              borderColor: palette.severitySelectedBorder,
+            },
+          ]}
+          onPress={() => setSeverity(item.value)}
+          accessibilityRole="button"
+          accessibilityLabel={`Seleccionar severidad ${item.label}`}
+          accessibilityState={{ selected }}
+        >
+          <Text
+            style={[
+              styles.severityChipLabel,
+              { color: palette.severityLabel },
+              selected && { color: palette.severitySelectedLabel },
+            ]}
+          >
+            {item.label}
+          </Text>
+          <Text
+            style={[
+              styles.severityChipCriteria,
+              { color: palette.severityCriteria },
+              selected && { color: palette.severitySelectedCriteria },
+            ]}
+          >
+            {item.criteria}
+          </Text>
+        </TouchableOpacity>
+      );
+    },
+    [palette, severity],
+  );
 
   return (
     <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
@@ -416,38 +493,19 @@ export default function CreateIncidentScreen() {
               Mostrando 30 de {installations.length}. Usa Installation ID para buscar otras.
             </Text>
           ) : null}
-          <View style={styles.chipsWrap}>
-            {installations.slice(0, 30).map((item) => {
-              const selected = String(item.id) === installationId;
-              return (
-                <TouchableOpacity
-                  key={item.id}
-                  style={[
-                    styles.chip,
-                    { backgroundColor: palette.chipBg, borderColor: palette.chipBorder },
-                    selected && {
-                      backgroundColor: palette.chipSelectedBg,
-                      borderColor: palette.chipSelectedBorder,
-                    },
-                  ]}
-                  onPress={() => setInstallationId(String(item.id))}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Seleccionar instalacion ${item.id}${item.client_name ? ` de ${item.client_name}` : ""}`}
-                  accessibilityState={{ selected }}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      { color: palette.chipText },
-                      selected && { color: palette.chipSelectedText },
-                    ]}
-                  >
-                    #{item.id} {item.client_name ? `- ${item.client_name}` : ""}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+          <FlatList
+            testID="installation-options-list"
+            data={visibleInstallations}
+            keyExtractor={(item) => String(item.id)}
+            renderItem={renderInstallationChip}
+            horizontal
+            initialNumToRender={8}
+            windowSize={5}
+            removeClippedSubviews
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipsWrap}
+            scrollEnabled={visibleInstallations.length > 4}
+          />
         </>
       )}
 
@@ -487,48 +545,20 @@ export default function CreateIncidentScreen() {
         accessibilityLabel="Nota de la incidencia"
       />
 
-      <Text style={[styles.label, { color: palette.label }]}>Urgencia (severidad)</Text>
-      <View style={styles.severityWrap}>
-        {SEVERITY_OPTIONS.map((option) => {
-          const selected = severity === option.value;
-          return (
-            <TouchableOpacity
-              key={option.value}
-              style={[
-                styles.severityChip,
-                { backgroundColor: palette.severityBg, borderColor: palette.severityBorder },
-                selected && {
-                  backgroundColor: palette.severitySelectedBg,
-                  borderColor: palette.severitySelectedBorder,
-                },
-              ]}
-              onPress={() => setSeverity(option.value)}
-              accessibilityRole="button"
-              accessibilityLabel={`Seleccionar severidad ${option.label}`}
-              accessibilityState={{ selected }}
-            >
-              <Text
-                style={[
-                  styles.severityChipLabel,
-                  { color: palette.severityLabel },
-                  selected && { color: palette.severitySelectedLabel },
-                ]}
-              >
-                {option.label}
-              </Text>
-              <Text
-                style={[
-                  styles.severityChipCriteria,
-                  { color: palette.severityCriteria },
-                  selected && { color: palette.severitySelectedCriteria },
-                ]}
-              >
-                {option.criteria}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+      <FlatList
+        testID="severity-options-list"
+        data={SEVERITY_OPTIONS}
+        keyExtractor={(item) => item.value}
+        renderItem={renderSeverityOption}
+        initialNumToRender={4}
+        windowSize={4}
+        removeClippedSubviews
+        scrollEnabled={false}
+        contentContainerStyle={styles.severityWrap}
+        ListHeaderComponent={
+          <Text style={[styles.label, { color: palette.label }]}>Urgencia (severidad)</Text>
+        }
+      />
 
       <Text style={[styles.label, { color: palette.label }]}>Ajuste de tiempo (segundos)</Text>
       <TextInput
