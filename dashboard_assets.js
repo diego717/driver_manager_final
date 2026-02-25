@@ -717,7 +717,7 @@ function renderIncidents(incidents) {
         if (inc.photos && inc.photos.length) {
             html += '<div class="photos-grid">';
             inc.photos.forEach(photo => {
-                html += '<img src="/photos/' + photo.id + '" class="photo-thumb" onclick="viewPhoto(' + photo.id + ')">';
+                html += '<img src="/web/photos/' + photo.id + '" class="photo-thumb" onclick="viewPhoto(' + photo.id + ')">';
             });
             html += '</div>';
         }
@@ -731,7 +731,7 @@ function renderIncidents(incidents) {
 function viewPhoto(photoId) {
     const modal = document.getElementById('photoModal');
     const img = document.getElementById('photoViewer');
-    img.src = '/photos/' + photoId;
+    img.src = '/web/photos/' + photoId;
     modal.classList.add('active');
 }
 

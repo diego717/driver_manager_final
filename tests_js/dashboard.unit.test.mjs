@@ -648,10 +648,10 @@ describe('Photo URL Generation', () => {
     const authToken = 'test-token';
     const baseUrl = '';
     
-    const url = `${baseUrl}/photos/${photoId}`;
+    const url = `${baseUrl}/web/photos/${photoId}`;
     const headers = { Authorization: `Bearer ${authToken}` };
     
-    assert.strictEqual(url, '/photos/123');
+    assert.strictEqual(url, '/web/photos/123');
     assert.strictEqual(headers.Authorization, 'Bearer test-token');
   });
 });

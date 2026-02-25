@@ -1200,6 +1200,71 @@ test("GET /photos/:id returns binary content from R2", async () => {
   assert.equal(body.length, 4);
 });
 
+test("GET /web/photos/:id returns binary content with web Bearer session", async () => {
+  const db = createMockDB({
+    incidentPhotos: [
+      {
+        id: 21,
+        incident_id: 11,
+        r2_key: "incidents/45/11/photo1.jpg",
+        file_name: "photo1.jpg",
+        content_type: "image/jpeg",
+        size_bytes: 4,
+        sha256: "abc",
+        created_at: "2026-02-15T10:05:00Z",
+      },
+    ],
+  });
+
+  const bucket = {
+    async get(key) {
+      if (key !== "incidents/45/11/photo1.jpg") return null;
+      return {
+        body: new Uint8Array([1, 2, 3, 4]),
+        httpMetadata: { contentType: "image/jpeg" },
+      };
+    },
+  };
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
+    DB: db,
+    INCIDENTS_BUCKET: bucket,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const bootstrapBody = await bootstrapResponse.json();
+  assert.equal(bootstrapResponse.status, 201);
+  assert.equal(typeof bootstrapBody.access_token, "string");
+
+  const request = new Request("https://worker.example/web/photos/21", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${bootstrapBody.access_token}`,
+    },
+  });
+
+  const response = await workerFetch(request, {
+    DB: db,
+    INCIDENTS_BUCKET: bucket,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Content-Type"), "image/jpeg");
+  const body = new Uint8Array(await response.arrayBuffer());
+  assert.equal(body.length, 4);
+});
+
 test("POST /incidents/:id/photos rejects oversized files", async () => {
   const db = createMockDB({
     incidents: [{ id: 11, installation_id: 45 }],

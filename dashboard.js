@@ -1,4 +1,13 @@
-const API_BASE = '';
+// Auto-detect API base URL - use current origin in production, or fallback to worker URL
+const API_BASE = (() => {
+    // If running on localhost, use the production worker URL
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        return 'https://driver-manager-db.diegosasen.workers.dev';
+    }
+    // Otherwise use relative paths (same origin)
+    return '';
+})();
+
 let authToken = localStorage.getItem('authToken');
 let currentUser = null;
 let charts = {};
@@ -14,10 +23,23 @@ const SSE_RECONNECT_DELAY = 3000; // 3 seconds
 
 
 // Chart.js default configuration
+function isChartAvailable() {
+    return typeof Chart !== 'undefined' && Chart && Chart.defaults;
+}
 
-Chart.defaults.color = '#94a3b8';
-Chart.defaults.borderColor = '#334155';
-Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+function applyChartDefaults(theme = 'dark') {
+    if (!isChartAvailable()) return;
+    if (theme === 'light') {
+        Chart.defaults.color = '#475569';
+        Chart.defaults.borderColor = '#cbd5e1';
+    } else {
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.borderColor = '#334155';
+    }
+    Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+}
+
+applyChartDefaults('dark');
 
 const api = {
     async request(endpoint, options = {}) {
@@ -109,6 +131,7 @@ function animateNumber(elementId, value) {
 
 // Chart rendering functions
 function renderSuccessChart(stats) {
+    if (!isChartAvailable()) return;
     const ctx = document.getElementById('successChart').getContext('2d');
     
     if (charts.success) {
@@ -169,6 +192,7 @@ function renderSuccessChart(stats) {
 }
 
 function renderBrandChart(stats) {
+    if (!isChartAvailable()) return;
     const ctx = document.getElementById('brandChart').getContext('2d');
     
     if (charts.brand) {
@@ -235,6 +259,7 @@ function renderBrandChart(stats) {
 }
 
 async function renderTrendChart() {
+    if (!isChartAvailable()) return;
     const ctx = document.getElementById('trendChart').getContext('2d');
     
     if (charts.trend) {
@@ -515,7 +540,7 @@ function exportToCSV(data, filename = 'instalaciones.csv') {
     showNotification(`✅ Exportado: ${filename}`, 'success');
 }
 
-function exportToExcel(data, filename = 'instalaciones.xlsx') {
+function exportToExcel(data, filename = 'instalaciones.xls') {
     if (!data || !data.length) {
         showNotification('❌ No hay datos para exportar', 'error');
         return;
@@ -851,7 +876,7 @@ async function loadPhotoWithAuth(photoId) {
         if (authToken) {
             headers['Authorization'] = 'Bearer ' + authToken;
         }
-        const response = await fetch(API_BASE + '/photos/' + photoId, { headers });
+        const response = await fetch(API_BASE + '/web/photos/' + photoId, { headers });
         if (!response.ok) throw new Error('Failed to load photo');
         const blob = await response.blob();
         return URL.createObjectURL(blob);
@@ -1430,14 +1455,8 @@ function toggleTheme() {
 }
 
 function updateChartTheme(theme) {
-    // Update Chart.js defaults
-    if (theme === 'light') {
-        Chart.defaults.color = '#475569';
-        Chart.defaults.borderColor = '#cbd5e1';
-    } else {
-        Chart.defaults.color = '#94a3b8';
-        Chart.defaults.borderColor = '#334155';
-    }
+    if (!isChartAvailable()) return;
+    applyChartDefaults(theme);
     
     // Update existing charts if they exist
     Object.values(charts).forEach(chart => {

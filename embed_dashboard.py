@@ -1,32 +1,41 @@
 #!/usr/bin/env python3
+"""
+Compat wrapper para embeber dashboard en worker.js.
+Mantiene la funcionalidad historica pero con reemplazo seguro del bloque.
+"""
+
+from __future__ import annotations
+
 import re
+import sys
 
-# Leer el archivo worker.js
-with open('worker.js', 'r', encoding='utf-8') as f:
-    content = f.read()
 
-# Leer los archivos del dashboard
-with open('dashboard.html', 'r', encoding='utf-8') as f:
-    html = f.read()
-with open('dashboard.css', 'r', encoding='utf-8') as f:
-    css = f.read()
-with open('dashboard.js', 'r', encoding='utf-8') as f:
-    js = f.read()
+def read_file(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
 
-# Insertar CSS y JS en el HTML
-full_html = html.replace(
-    '<link rel="stylesheet" href="/dashboard.css">',
-    f'<style>\n{css}\n</style>'
-).replace(
-    '<script src="/dashboard.js"></script>',
-    f'<script>\n{js}\n</script>'
-)
 
-# Escapar para JavaScript template literal
-escaped = full_html.replace('\\', '\\\\').replace('`', '\\`').replace('${', '\\${')
+def write_file(path: str, content: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
 
-# Crear el código de la ruta del dashboard
-dashboard_route = f'''
+
+def escape_js_template(content: str) -> str:
+    return content.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+
+
+def build_dashboard_html() -> str:
+    html = read_file("dashboard.html")
+    css = read_file("dashboard.css")
+    js = read_file("dashboard.js")
+    return (
+        html.replace('<link rel="stylesheet" href="/dashboard.css">', f"<style>\n{css}\n</style>")
+        .replace('<script src="/dashboard.js"></script>', f"<script>\n{js}\n</script>")
+    )
+
+
+def build_dashboard_route_block(escaped_html: str) -> str:
+    return f'''
       // Dashboard route - serve embedded single-file dashboard
       if (routeParts.length === 1 && routeParts[0] === "dashboard" && request.method === "GET") {{
         try {{
@@ -35,7 +44,7 @@ dashboard_route = f'''
           // Allow access to login page even without token - JS will handle auth
         }}
         
-        const html = `{escaped}`;
+        const html = `{escaped_html}`;
         
         return new Response(html, {{
           status: 200,
@@ -68,28 +77,37 @@ dashboard_route = f'''
 
 '''
 
-# Buscar el patrón y reemplazar
-old_text = '''      if (routeParts.length === 1 && routeParts[0] === "health" && request.method === "GET") {
-        return jsonResponse({ ok: true, now: nowIso() });
-      }
 
-      if (isWebRoute) {'''
+def replace_dashboard_block(worker_content: str, dashboard_block: str) -> tuple[str, bool]:
+    patterns = [
+        re.compile(
+            r"(?ms)^ {6}// Dashboard route - serve embedded single-file dashboard.*?(?=^ {6}// PWA manifest\.json)"
+        ),
+        re.compile(
+            r"(?ms)^ {6}// Dashboard route - serve embedded single-file dashboard.*?(?=^ {6}if \(isWebRoute\) \{)"
+        ),
+    ]
+    for pattern in patterns:
+        if pattern.search(worker_content):
+            return pattern.sub(lambda _m: dashboard_block, worker_content), True
+    return worker_content, False
 
-new_text = '''      if (routeParts.length === 1 && routeParts[0] === "health" && request.method === "GET") {
-        return jsonResponse({ ok: true, now: nowIso() });
-      }
 
-''' + dashboard_route + '''
-      if (isWebRoute) {'''
+def main() -> int:
+    worker = read_file("worker.js")
+    html = build_dashboard_html()
+    block = build_dashboard_route_block(escape_js_template(html))
+    new_worker, replaced = replace_dashboard_block(worker, block)
 
-if old_text in content:
-    new_content = content.replace(old_text, new_text)
-    with open('worker.js', 'w', encoding='utf-8') as f:
-        f.write(new_content)
-    print("✅ Dashboard embebido exitosamente en worker.js")
-    print(f"   Tamaño HTML: {len(full_html)} bytes")
-else:
-    print("❌ No se encontró la sección del dashboard en worker.js")
-    # Intentar encontrar texto similar
-    if 'routeParts[0] === "health"' in content:
-        print("   Se encontró 'routeParts[0] === \"health\"' pero el contexto no coincide exactamente")
+    if not replaced:
+        print("ERROR: No se encontro el bloque del dashboard en worker.js")
+        return 1
+
+    write_file("worker.js", new_worker)
+    print("OK: Dashboard embebido actualizado en worker.js")
+    print(f"    Tamano HTML: {len(html)} bytes")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
