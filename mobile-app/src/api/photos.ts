@@ -1,7 +1,7 @@
 import * as FileSystem from "expo-file-system/legacy";
 import CryptoJS from "crypto-js";
 
-import { sha256HexFromBytes, sha256HexFromString } from "./auth";
+import { sha256HexFromString } from "./auth";
 import { getResolvedApiBaseUrl, resolveRequestAuth } from "./client";
 import { type UploadPhotoResponse } from "../types/api";
 import {
@@ -12,6 +12,7 @@ import {
 
 const MAX_UPLOAD_PHOTO_BYTES = 5 * 1024 * 1024;
 const MIN_UPLOAD_PHOTO_BYTES = 1024;
+const FILE_READ_CHUNK_BYTES = 256 * 1024;
 
 function wordArrayToUint8Array(wordArray: CryptoJS.lib.WordArray): Uint8Array {
   const { words, sigBytes } = wordArray;
@@ -25,9 +26,78 @@ function wordArrayToUint8Array(wordArray: CryptoJS.lib.WordArray): Uint8Array {
   return result;
 }
 
-function bytesFromBase64(base64: string): Uint8Array {
-  const wordArray = CryptoJS.enc.Base64.parse(base64);
-  return wordArrayToUint8Array(wordArray);
+
+function sha256HexFromBlobChunked(blob: Blob): Promise<string> {
+  const hasher = CryptoJS.algo.SHA256.create();
+  const totalSize = blob.size;
+  let offset = 0;
+
+  const processNextChunk = async (): Promise<string> => {
+    if (offset >= totalSize) {
+      return hasher.finalize().toString(CryptoJS.enc.Hex);
+    }
+
+    const chunk = blob.slice(offset, offset + FILE_READ_CHUNK_BYTES);
+    const chunkBuffer = await chunk.arrayBuffer();
+    const chunkBytes = new Uint8Array(chunkBuffer);
+    hasher.update(CryptoJS.lib.WordArray.create(chunkBytes as unknown as number[]));
+    offset += chunkBytes.byteLength;
+    return processNextChunk();
+  };
+
+  return processNextChunk();
+}
+
+async function readFileBodyAndHashChunked(
+  fileUri: string,
+  totalBytes: number,
+): Promise<{ body: ArrayBuffer; bodyHash: string }> {
+  const hasher = CryptoJS.algo.SHA256.create();
+  const payload = new Uint8Array(totalBytes);
+  let offset = 0;
+
+  while (offset < totalBytes) {
+    const length = Math.min(FILE_READ_CHUNK_BYTES, totalBytes - offset);
+    const base64Chunk = await FileSystem.readAsStringAsync(fileUri, {
+      encoding: FileSystem.EncodingType.Base64,
+      position: offset,
+      length,
+    });
+    const parsedChunk = CryptoJS.enc.Base64.parse(base64Chunk);
+    const chunkBytes = wordArrayToUint8Array(parsedChunk);
+    if (chunkBytes.byteLength === 0) {
+      throw new Error("No se pudo leer el archivo para subida.");
+    }
+
+    payload.set(chunkBytes, offset);
+    hasher.update(parsedChunk);
+    offset += chunkBytes.byteLength;
+  }
+
+  if (offset !== totalBytes) {
+    throw new Error("No se pudo leer el archivo completo para subida.");
+  }
+
+  return {
+    body: payload.buffer,
+    bodyHash: hasher.finalize().toString(CryptoJS.enc.Hex),
+  };
+}
+
+async function buildBlobFromUri(fileUri: string): Promise<Blob | null> {
+  if (typeof Blob === "undefined") {
+    return null;
+  }
+
+  try {
+    const response = await fetch(fileUri);
+    if (!response.ok) {
+      return null;
+    }
+    return response.blob();
+  } catch {
+    return null;
+  }
 }
 
 function joinUrl(baseUrl: string, path: string): string {
@@ -103,22 +173,30 @@ export async function uploadIncidentPhoto({
   const finalContentType = contentType ?? contentTypeFromFileName(finalFileName);
   const path = `/incidents/${incidentId}/photos`;
 
-  const base64 = await FileSystem.readAsStringAsync(fileUri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-  const bytes = bytesFromBase64(base64);
-  if (bytes.byteLength < MIN_UPLOAD_PHOTO_BYTES) {
+  const info = await FileSystem.getInfoAsync(fileUri, { size: true });
+  const totalBytes = "size" in info && typeof info.size === "number" ? info.size : 0;
+
+  if (totalBytes < MIN_UPLOAD_PHOTO_BYTES) {
     throw new Error("Imagen demasiado pequena o corrupta.");
   }
-  if (bytes.byteLength > MAX_UPLOAD_PHOTO_BYTES) {
-    const sizeMb = (bytes.byteLength / (1024 * 1024)).toFixed(1);
+  if (totalBytes > MAX_UPLOAD_PHOTO_BYTES) {
+    const sizeMb = (totalBytes / (1024 * 1024)).toFixed(1);
     throw new Error(`Imagen demasiado grande (${sizeMb}MB). Maximo: 5MB.`);
   }
-  const binaryBody = bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  );
-  const bodyHash = sha256HexFromBytes(bytes);
+
+  const blob = await buildBlobFromUri(fileUri);
+  let requestBody: BodyInit;
+  let bodyHash: string;
+
+  if (blob && blob.size === totalBytes) {
+    requestBody = blob;
+    bodyHash = await sha256HexFromBlobChunked(blob);
+  } else {
+    const fallbackPayload = await readFileBodyAndHashChunked(fileUri, totalBytes);
+    requestBody = fallbackPayload.body as unknown as BodyInit;
+    bodyHash = fallbackPayload.bodyHash;
+  }
+
   const requestAuth = await resolveRequestAuth({
     method: "POST",
     path,
@@ -132,7 +210,7 @@ export async function uploadIncidentPhoto({
       "X-File-Name": finalFileName,
       ...requestAuth.headers,
     },
-    body: binaryBody as unknown as BodyInit,
+    body: requestBody,
   });
 
   const body = (await response.json()) as UploadPhotoResponse | { error?: { message?: string } };

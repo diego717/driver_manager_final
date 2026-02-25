@@ -1,7 +1,9 @@
+import CryptoJS from "crypto-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const fileSystemMock = vi.hoisted(() => ({
   readAsStringAsync: vi.fn(),
+  getInfoAsync: vi.fn(),
   EncodingType: { Base64: "base64" },
 }));
 
@@ -13,11 +15,16 @@ const clientMock = vi.hoisted(() => ({
 vi.mock("expo-file-system/legacy", () => fileSystemMock);
 vi.mock("./client", () => clientMock);
 
-import { uploadIncidentPhoto } from "./photos";
-import { fetchIncidentPhotoDataUri } from "./photos";
+import { fetchIncidentPhotoDataUri, uploadIncidentPhoto } from "./photos";
 
 function toBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
+}
+
+function sha256Hex(bytes: Uint8Array): string {
+  return CryptoJS.SHA256(CryptoJS.lib.WordArray.create(bytes as unknown as number[])).toString(
+    CryptoJS.enc.Hex,
+  );
 }
 
 describe("photos api", () => {
@@ -32,13 +39,12 @@ describe("photos api", () => {
         "X-Request-Signature": "sig",
       },
     });
+    fileSystemMock.getInfoAsync.mockResolvedValue({ exists: true, size: 0 });
     vi.stubGlobal("fetch", vi.fn());
   });
 
   it("rejects too-small image payload before upload", async () => {
-    const payload = new Uint8Array(512);
-    payload.set([0xff, 0xd8, 0xff], 0);
-    fileSystemMock.readAsStringAsync.mockResolvedValue(toBase64(payload));
+    fileSystemMock.getInfoAsync.mockResolvedValue({ exists: true, size: 512 });
 
     await expect(
       uploadIncidentPhoto({
@@ -48,18 +54,25 @@ describe("photos api", () => {
         contentType: "image/jpeg",
       }),
     ).rejects.toThrow(/pequena|corrupta/i);
+    expect(fileSystemMock.readAsStringAsync).not.toHaveBeenCalled();
   });
 
   it("uploads validated payload with signed headers", async () => {
     const payload = new Uint8Array(1500);
     payload.set([0xff, 0xd8, 0xff], 0);
+    fileSystemMock.getInfoAsync.mockResolvedValue({ exists: true, size: payload.byteLength });
     fileSystemMock.readAsStringAsync.mockResolvedValue(toBase64(payload));
 
     const fetchMock = vi.mocked(globalThis.fetch);
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ success: true, photo: { id: 21 } }),
-    } as Response);
+    fetchMock.mockImplementation(async (input) => {
+      if (typeof input === "string" && input.startsWith("file://")) {
+        throw new Error("blob uri not supported in tests");
+      }
+      return {
+        ok: true,
+        json: async () => ({ success: true, photo: { id: 21 } }),
+      } as Response;
+    });
 
     const response = await uploadIncidentPhoto({
       incidentId: 11,
@@ -69,12 +82,86 @@ describe("photos api", () => {
     });
 
     expect(response.photo.id).toBe(21);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, requestInit] = fetchMock.mock.calls[0];
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const uploadCall = fetchMock.mock.calls[1];
+    const [url, requestInit] = uploadCall;
     expect(url).toBe("https://worker.example/incidents/11/photos");
     expect(requestInit?.method).toBe("POST");
     expect((requestInit?.headers as Record<string, string>)["Content-Type"]).toBe("image/jpeg");
     expect((requestInit?.headers as Record<string, string>)["X-File-Name"]).toBe("photo.jpg");
+  });
+
+  it("hashes and reads payload in chunks for 5MB files", async () => {
+    const payload = new Uint8Array(5 * 1024 * 1024);
+    payload.fill(0x61);
+    const expectedHash = sha256Hex(payload);
+
+    fileSystemMock.getInfoAsync.mockResolvedValue({ exists: true, size: payload.byteLength });
+    fileSystemMock.readAsStringAsync.mockImplementation(
+      async (_uri: string, options?: { position?: number; length?: number }) => {
+        const position = options?.position ?? 0;
+        const length = options?.length ?? payload.byteLength;
+        return toBase64(payload.slice(position, position + length));
+      },
+    );
+
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockImplementation(async (input) => {
+      if (typeof input === "string" && input.startsWith("file://")) {
+        throw new Error("blob uri not supported in tests");
+      }
+      return {
+        ok: true,
+        json: async () => ({ success: true, photo: { id: 77 } }),
+      } as Response;
+    });
+
+    await uploadIncidentPhoto({
+      incidentId: 11,
+      fileUri: "file://photo.jpg",
+      fileName: "photo.jpg",
+      contentType: "image/jpeg",
+    });
+
+    expect(clientMock.resolveRequestAuth).toHaveBeenCalledWith(
+      expect.objectContaining({ bodyHash: expectedHash }),
+    );
+    expect(fileSystemMock.readAsStringAsync.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("processes 1MB files without a full-base64 read", async () => {
+    const payload = new Uint8Array(1024 * 1024);
+    payload.fill(0x2a);
+
+    fileSystemMock.getInfoAsync.mockResolvedValue({ exists: true, size: payload.byteLength });
+    fileSystemMock.readAsStringAsync.mockImplementation(
+      async (_uri: string, options?: { position?: number; length?: number }) => {
+        const position = options?.position ?? 0;
+        const length = options?.length ?? payload.byteLength;
+        return toBase64(payload.slice(position, position + length));
+      },
+    );
+
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockImplementation(async (input) => {
+      if (typeof input === "string" && input.startsWith("file://")) {
+        throw new Error("blob uri not supported in tests");
+      }
+      return {
+        ok: true,
+        json: async () => ({ success: true, photo: { id: 31 } }),
+      } as Response;
+    });
+
+    await uploadIncidentPhoto({
+      incidentId: 11,
+      fileUri: "file://photo.jpg",
+    });
+
+    const firstReadOptions = fileSystemMock.readAsStringAsync.mock.calls[0]?.[1] as
+      | { length?: number }
+      | undefined;
+    expect(firstReadOptions?.length).toBeLessThan(payload.byteLength);
   });
 
   it("downloads incident photo as data URI with resolved auth headers", async () => {
