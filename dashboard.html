@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/dashboard.css">
     <link rel="manifest" href="/manifest.json">
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
 </head>
 
 <body>
@@ -35,11 +35,11 @@
             <header class="header">
                 <h2 id="pageTitle">Dashboard</h2>
                 <div class="header-actions">
-                    <button id="themeToggle" class="theme-toggle" title="Cambiar tema">
-                        <span class="icon-sun">☀️</span>
-                        <span class="icon-moon">🌙</span>
+                    <button id="themeToggle" class="theme-toggle" type="button" title="Cambiar tema" aria-label="Cambiar tema" aria-pressed="false">
+                        <span class="icon-sun" aria-hidden="true">☀️</span>
+                        <span class="icon-moon" aria-hidden="true">🌙</span>
                     </button>
-                    <button id="refreshBtn" class="btn-icon" title="Actualizar">↻</button>
+                    <button id="refreshBtn" class="btn-icon" type="button" title="Actualizar" aria-label="Actualizar dashboard">↻</button>
                 </div>
             </header>
 
@@ -132,7 +132,7 @@
                     
                     <!-- Action buttons -->
                     <div class="filter-actions">
-                        <button id="clearFilters" class="btn-secondary" style="display: none;">🗑️ Limpiar Filtros</button>
+                        <button id="clearFilters" class="btn-secondary is-hidden">🗑️ Limpiar Filtros</button>
                         <button id="applyFilters" class="btn-primary">🔄 Aplicar</button>
                         <button id="exportBtn" class="btn-secondary">📥 Exportar</button>
                     </div>
@@ -197,59 +197,12 @@
     
     <div id="photoModal" class="modal">
         <div class="modal-content photo-modal">
-            <span class="close">&times;</span>
+            <button type="button" class="close" aria-label="Cerrar visor de foto">&times;</button>
             <img id="photoViewer" src="" alt="Foto de incidencia">
         </div>
     </div>
     
-    <script src="/dashboard.js"></script>
-    
-    <!-- PWA Service Worker Registration -->
-    <script>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js')
-                    .then((registration) => {
-                        console.log('[PWA] Service Worker registered:', registration.scope);
-                        
-                        // Check for updates
-                        registration.addEventListener('updatefound', () => {
-                            const newWorker = registration.installing;
-                            newWorker.addEventListener('statechange', () => {
-                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                                    // New version available
-                                    showNotification('🔄 Nueva versión disponible. Recarga para actualizar.', 'info');
-                                }
-                            });
-                        });
-                    })
-                    .catch((err) => {
-                        console.error('[PWA] Service Worker registration failed:', err);
-                    });
-                
-                // Listen for messages from service worker
-                navigator.serviceWorker.addEventListener('message', (event) => {
-                    if (event.data === 'update-available') {
-                        showNotification('🔄 Nueva versión disponible. Recarga para actualizar.', 'info');
-                    }
-                });
-            });
-        }
-        
-        // PWA Install Prompt
-        let deferredPrompt;
-        window.addEventListener('beforeinstallprompt', (e) => {
-            e.preventDefault();
-            deferredPrompt = e;
-            console.log('[PWA] Install prompt available');
-        });
-        
-        // Check if app is installed
-        window.addEventListener('appinstalled', () => {
-            console.log('[PWA] App installed');
-            deferredPrompt = null;
-            showNotification('✅ App instalada correctamente', 'success');
-        });
-    </script>
+    <script src="/dashboard.js" defer></script>
+    <script src="/dashboard-pwa.js" defer></script>
 </body>
 </html>

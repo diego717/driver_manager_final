@@ -631,15 +631,97 @@ function createMockKV(initialEntries = {}) {
   };
 }
 
-test("OPTIONS request returns CORS headers", async () => {
-  const request = new Request("https://worker.example/installations", { method: "OPTIONS" });
+test("OPTIONS returns CORS headers only for allowed origins", async () => {
+  const request = new Request("https://worker.example/installations", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://dashboard.driver-manager.app",
+    },
+  });
+  const response = await workerFetch(request, {});
+
+  assert.equal(response.status, 204);
+  assert.equal(
+    response.headers.get("Access-Control-Allow-Origin"),
+    "https://dashboard.driver-manager.app",
+  );
+  assert.match(response.headers.get("Access-Control-Allow-Methods"), /GET/);
+  assert.match(response.headers.get("Access-Control-Allow-Methods"), /POST/);
+  assert.match(response.headers.get("Access-Control-Allow-Methods"), /OPTIONS/);
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-API-Token/);
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-Request-Signature/);
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /Content-Type/);
+});
+
+test("OPTIONS rejects not allowed origins with 403", async () => {
+  const request = new Request("https://worker.example/installations", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://evil.example",
+    },
+  });
+  const response = await workerFetch(request, {});
+
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), null);
+});
+
+test("CORS response headers are omitted for disallowed origins", async () => {
+  const request = new Request("https://worker.example/health", {
+    method: "GET",
+    headers: {
+      Origin: "https://evil.example",
+    },
+  });
   const response = await workerFetch(request, {});
 
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get("Access-Control-Allow-Origin"), "*");
-  assert.match(response.headers.get("Access-Control-Allow-Methods"), /OPTIONS/);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), null);
 });
 
+test("CORS methods and headers are route-specific in preflight", async () => {
+  const request = new Request("https://worker.example/web/incidents/10/photos", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://mobile.driver-manager.app",
+    },
+  });
+  const response = await workerFetch(request, {});
+
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), "https://mobile.driver-manager.app");
+  assert.equal(response.headers.get("Access-Control-Allow-Methods"), "OPTIONS, GET, POST");
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /Authorization/);
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /Content-Type/);
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-File-Name/);
+  assert.equal(response.headers.get("Access-Control-Allow-Headers").includes("X-API-Token"), false);
+});
+
+
+
+test("Dashboard assets include hardened security headers", async () => {
+  const routes = [
+    "https://worker.example/web/dashboard",
+    "https://worker.example/web/dashboard.css",
+    "https://worker.example/web/dashboard.js",
+    "https://worker.example/web/dashboard-pwa.js",
+    "https://worker.example/web/manifest.json",
+  ];
+
+  for (const url of routes) {
+    const response = await workerFetch(new Request(url, { method: "GET" }), {});
+    assert.equal(response.status, 200, `Expected 200 for ${url}`);
+    assert.equal(response.headers.get("X-Frame-Options"), "DENY");
+    assert.equal(response.headers.get("Referrer-Policy"), "no-referrer");
+    assert.equal(response.headers.get("Permissions-Policy"), "geolocation=(), microphone=(), camera=()");
+    assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
+
+    const csp = response.headers.get("Content-Security-Policy") || "";
+    assert.match(csp, /script-src 'self' https:\/\/cdn\.jsdelivr\.net/);
+    assert.match(csp, /style-src 'self'/);
+    assert.match(csp, /frame-ancestors 'none'/);
+  }
+});
 test("GET / returns service metadata", async () => {
   const request = new Request("https://worker.example/", { method: "GET" });
   const response = await workerFetch(request, {});
