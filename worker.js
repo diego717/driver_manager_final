@@ -38,29 +38,123 @@ class HttpError extends Error {
   }
 }
 
-function corsHeaders() {
+const CONTROLLED_DASHBOARD_ORIGINS = [
+  "https://dashboard.driver-manager.app",
+  "https://dashboard.drivermanager.app",
+];
+const CONTROLLED_MOBILE_ORIGINS = [
+  "https://mobile.driver-manager.app",
+  "https://app.driver-manager.app",
+  "capacitor://localhost",
+];
+
+function getAllowedCorsOrigins(request, env) {
+  const allowed = new Set([...CONTROLLED_DASHBOARD_ORIGINS, ...CONTROLLED_MOBILE_ORIGINS]);
+  if (request?.url) {
+    allowed.add(new URL(request.url).origin);
+  }
+
+  const extraOrigins = normalizeOptionalString(env?.CORS_ALLOWED_ORIGINS, "");
+  if (extraOrigins) {
+    for (const origin of extraOrigins.split(",")) {
+      const normalized = origin.trim();
+      if (normalized) {
+        allowed.add(normalized);
+      }
+    }
+  }
+
+  return allowed;
+}
+
+function buildCorsPolicy(isWebRoute, routeParts) {
+  const headers = new Set();
+  const methods = new Set(["OPTIONS"]);
+
+  if (routeParts.length === 0 || (routeParts.length === 1 && routeParts[0] === "health")) {
+    methods.add("GET");
+    return { methods: [...methods], headers: [] };
+  }
+
+  const first = routeParts[0] || "";
+  const isPhotoUpload = routeParts.length === 3 && first === "incidents" && routeParts[2] === "photos";
+  const isRecordById = routeParts.length === 2 && first === "installations";
+
+  if (isWebRoute) {
+    headers.add("Authorization");
+  } else {
+    headers.add("X-API-Token");
+    headers.add("X-Request-Timestamp");
+    headers.add("X-Request-Signature");
+  }
+
+  if (isPhotoUpload || first === "records" || first === "devices" || first === "audit-logs" || first === "auth" || first === "installations") {
+    headers.add("Content-Type");
+  }
+  if (isPhotoUpload) {
+    headers.add("X-File-Name");
+  }
+
+  if (["dashboard", "dashboard.css", "dashboard.js", "manifest.json", "events", "sw.js"].includes(first)) {
+    methods.add("GET");
+  } else if (first === "installations" && !isRecordById) {
+    methods.add("GET");
+    methods.add("POST");
+  } else if (isRecordById) {
+    methods.add("GET");
+    methods.add("PUT");
+    methods.add("DELETE");
+  } else if (["records", "devices", "audit-logs"].includes(first)) {
+    methods.add(first === "audit-logs" ? "GET" : "POST");
+    methods.add("POST");
+  } else if (first === "statistics" || first === "photos") {
+    methods.add("GET");
+  } else if (first === "incidents") {
+    methods.add("GET");
+    methods.add("POST");
+  } else if (first === "auth") {
+    methods.add("GET");
+    methods.add("POST");
+    methods.add("PATCH");
+  }
+
   return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers":
-      "Content-Type, Authorization, X-API-Token, X-Request-Timestamp, X-Request-Signature, X-File-Name",
+    methods: [...methods],
+    headers: [...headers],
   };
 }
 
-function jsonResponse(body, status = 200) {
+function corsHeaders(request, env, corsPolicy = { methods: ["OPTIONS"], headers: [] }) {
+  const origin = normalizeOptionalString(request?.headers?.get("Origin"), "");
+  if (!origin) return {};
+
+  const allowedOrigins = getAllowedCorsOrigins(request, env);
+  if (!allowedOrigins.has(origin)) {
+    return {};
+  }
+
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": corsPolicy.methods.join(", "),
+    "Access-Control-Allow-Headers": corsPolicy.headers.join(", "),
+    Vary: "Origin",
+  };
+}
+
+function jsonResponse(request, env, corsPolicy, body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders(),
+      ...corsHeaders(request, env, corsPolicy),
       "Content-Type": "application/json",
     },
   });
 }
 
-function textResponse(text, status = 200) {
+function textResponse(request, env, corsPolicy, text, status = 200) {
   return new Response(text, {
     status,
-    headers: corsHeaders(),
+    headers: corsHeaders(request, env, corsPolicy),
   });
 }
 
@@ -1473,7 +1567,7 @@ async function sendPushNotification(env, fcmTokens, notification) {
   };
 }
 
-async function handleWebAuthRoute(request, env, pathParts) {
+async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
   if (pathParts.length < 2 || pathParts[0] !== "auth") {
     return null;
   }
@@ -1553,7 +1647,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
       session_version: sessionVersion,
     });
 
-    const response = jsonResponse(
+    const response = jsonResponse(request, env, corsPolicy, {
       {
         success: true,
         access_token: token.token,
@@ -1615,7 +1709,8 @@ async function handleWebAuthRoute(request, env, pathParts) {
       session_version: sessionVersion,
     });
 
-    const response = jsonResponse(
+    const response = jsonResponse(request, env, corsPolicy, {
+   
       {
         success: true,
         bootstrapped: true,
@@ -1642,7 +1737,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
     requireAdminRole(session.role);
 
     const users = await listWebUsers(env);
-    return jsonResponse(
+    return jsonResponse(request, env, corsPolicy,
       {
         success: true,
         users,
@@ -1685,7 +1780,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
       platform: "web"
     });
 
-    return jsonResponse(
+    return jsonResponse(request, env, corsPolicy,
       {
         success: true,
         user: {
@@ -1764,7 +1859,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
     });
 
     const updatedUser = await getWebUserById(env, userId);
-    return jsonResponse(
+    return jsonResponse(request, env, corsPolicy,
       {
         success: true,
         user: serializeWebUser(updatedUser),
@@ -1816,7 +1911,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
     });
 
     const updatedUser = await getWebUserById(env, userId);
-    return jsonResponse(
+    return jsonResponse(request, env, corsPolicy,
       {
         success: true,
         user: serializeWebUser(updatedUser),
@@ -1880,7 +1975,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
       platform: "web"
     });
 
-    return jsonResponse(
+    return jsonResponse(request, env, corsPolicy,
       {
         success: true,
         imported: processedUsers.length,
@@ -1908,7 +2003,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
 
   if (pathParts[1] === "me" && request.method === "GET") {
     const payload = await verifyWebAccessToken(request, env);
-    return jsonResponse({
+    return jsonResponse(request, env, corsPolicy,{
       success: true,
       authenticated: true,
       scope: payload.scope,
@@ -2015,18 +2110,27 @@ function validateIncidentPayload(data, options = {}) {
 
 export default {
   async fetch(request, env) {
-    if (request.method === "OPTIONS") {
-      return new Response(null, { headers: corsHeaders() });
-    }
-
     const url = new URL(request.url);
     const pathParts = url.pathname.split("/").filter((part) => part !== "");
     const isWebRoute = pathParts[0] === "web";
     const routeParts = isWebRoute ? pathParts.slice(1) : pathParts;
+    const corsPolicy = buildCorsPolicy(isWebRoute, routeParts);
+
+    if (request.method === "OPTIONS") {
+      const origin = normalizeOptionalString(request.headers.get("Origin"), "");
+      const preflightHeaders = corsHeaders(request, env, corsPolicy);
+      if (origin && !preflightHeaders["Access-Control-Allow-Origin"]) {
+        return new Response("Origin no permitido.", { status: 403 });
+      }
+      return new Response(null, {
+        status: 204,
+        headers: preflightHeaders,
+      });
+    }
 
     try {
       if (routeParts.length === 0 && request.method === "GET") {
-        return jsonResponse({
+        return jsonResponse(request, env, corsPolicy,{
           service: "driver-manager-api",
           status: "ok",
           docs: {
@@ -2047,8 +2151,11 @@ export default {
       }
 
       if (routeParts.length === 1 && routeParts[0] === "health" && request.method === "GET") {
-        return jsonResponse({ ok: true, now: nowIso() });
+        return jsonResponse(request, env, corsPolicy,{ ok: true, now: nowIso() });
       }
+
+
+
 
 
       // Dashboard route - serve embedded single-file dashboard
@@ -2064,9 +2171,12 @@ export default {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#06b6d4">
+    <meta name="description" content="Dashboard de gestión de instalaciones de drivers">
     <title>Driver Manager Dashboard</title>
     <style>
 :root {
+    /* Dark theme (default) */
     --bg-primary: #0f172a;
     --bg-secondary: #1e293b;
     --bg-card: #334155;
@@ -2085,6 +2195,26 @@ export default {
     --radius: 12px;
     --radius-sm: 8px;
 }
+
+/* Light theme */
+[data-theme="light"] {
+    --bg-primary: #f8fafc;
+    --bg-secondary: #ffffff;
+    --bg-card: #f1f5f9;
+    --bg-hover: #e2e8f0;
+    --text-primary: #0f172a;
+    --text-secondary: #64748b;
+    --accent-primary: #0891b2;
+    --accent-secondary: #7c3aed;
+    --success: #059669;
+    --warning: #d97706;
+    --error: #dc2626;
+    --info: #2563eb;
+    --border: #cbd5e1;
+    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.15);
+}
+
 
 * {
     margin: 0;
@@ -2344,20 +2474,66 @@ body {
     to { opacity: 1; transform: translateY(0); }
 }
 
-/* Filters */
+/* Filters - Advanced Layout */
 .filters {
     display: flex;
+    flex-direction: column;
     gap: 1rem;
     margin-bottom: 1.5rem;
-    flex-wrap: wrap;
-    align-items: center;
-    padding: 1rem;
+    padding: 1.25rem;
     background: var(--bg-secondary);
     border-radius: var(--radius);
     border: 1px solid var(--border);
 }
 
-.filters input, .filters select {
+/* Search wrapper - Real-time search */
+.search-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.search-input {
+    width: 100%;
+    padding: 0.875rem 1rem 0.875rem 2.75rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+    transition: all 0.2s;
+}
+
+.search-input:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.15);
+}
+
+.search-input::placeholder {
+    color: var(--text-secondary);
+}
+
+.search-icon {
+    position: absolute;
+    left: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 1rem;
+    pointer-events: none;
+    opacity: 0.7;
+}
+
+/* Filter row - Combined filters */
+.filter-row {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.filter-row select,
+.filter-row input {
+    flex: 1;
+    min-width: 140px;
     padding: 0.625rem 1rem;
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -2367,10 +2543,184 @@ body {
     transition: all 0.2s;
 }
 
-.filters input:focus, .filters select:focus {
+.filter-row select:focus,
+.filter-row input:focus {
     outline: none;
     border-color: var(--accent-primary);
     box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1);
+}
+
+/* Filter chips */
+.filter-chips {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    min-height: 32px;
+}
+
+.filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem 0.75rem;
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.2), rgba(139, 92, 246, 0.2));
+    border: 1px solid var(--accent-primary);
+    border-radius: 9999px;
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    animation: chipFadeIn 0.2s ease;
+}
+
+@keyframes chipFadeIn {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+.filter-chip .chip-label {
+    color: var(--text-secondary);
+}
+
+.filter-chip .chip-value {
+    font-weight: 600;
+    color: var(--accent-primary);
+}
+
+.filter-chip .chip-remove {
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: color 0.2s;
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.filter-chip .chip-remove:hover {
+    color: var(--error);
+}
+
+/* Filter actions */
+.filter-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
+}
+
+/* Results info */
+.results-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.results-info .count {
+    color: var(--accent-primary);
+    font-weight: 600;
+}
+
+/* Keyboard shortcut hint */
+.search-wrapper::after {
+    content: 'Ctrl+K';
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 0.25rem 0.5rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    pointer-events: none;
+}
+
+/* Theme Toggle Button */
+.theme-toggle {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.theme-toggle:hover {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    transform: scale(1.05);
+}
+
+.theme-toggle .icon-sun,
+.theme-toggle .icon-moon {
+    position: absolute;
+    transition: all 0.3s ease;
+}
+
+.theme-toggle .icon-sun {
+    opacity: 0;
+    transform: translateY(20px) rotate(90deg);
+}
+
+.theme-toggle .icon-moon {
+    opacity: 1;
+    transform: translateY(0) rotate(0);
+}
+
+[data-theme="light"] .theme-toggle .icon-sun {
+    opacity: 1;
+    transform: translateY(0) rotate(0);
+}
+
+[data-theme="light"] .theme-toggle .icon-moon {
+    opacity: 0;
+    transform: translateY(-20px) rotate(-90deg);
+}
+
+/* Smooth theme transition */
+* {
+    transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+
+@media (max-width: 768px) {
+    .search-wrapper::after {
+        display: none;
+    }
+    
+    .filter-row {
+        flex-direction: column;
+    }
+    
+    .filter-row select,
+    .filter-row input {
+        width: 100%;
+        min-width: unset;
+    }
+    
+    .filter-actions {
+        flex-direction: column;
+    }
+    
+    .filter-actions button {
+        width: 100%;
+        justify-content: center;
+    }
 }
 
 /* Tables */
@@ -2881,8 +3231,11 @@ tr[data-id] {
 }
 
 </style>
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
+
 <body>
     <div id="app">
         <nav class="sidebar">
@@ -2906,9 +3259,14 @@ tr[data-id] {
             <header class="header">
                 <h2 id="pageTitle">Dashboard</h2>
                 <div class="header-actions">
+                    <button id="themeToggle" class="theme-toggle" title="Cambiar tema">
+                        <span class="icon-sun">☀️</span>
+                        <span class="icon-moon">🌙</span>
+                    </button>
                     <button id="refreshBtn" class="btn-icon" title="Actualizar">↻</button>
                 </div>
             </header>
+
             
             <div id="dashboardSection" class="section active">
                 <!-- Stats Cards -->
@@ -2970,21 +3328,45 @@ tr[data-id] {
             
             <div id="installationsSection" class="section">
                 <div class="filters">
-                    <input type="text" id="clientFilter" placeholder="🔍 Filtrar por cliente...">
-                    <select id="brandFilter">
-                        <option value="">Todas las marcas</option>
-                    </select>
-                    <select id="statusFilter">
-                        <option value="">Todos los estados</option>
-                        <option value="success">✅ Éxito</option>
-                        <option value="failed">❌ Fallido</option>
-                        <option value="unknown">❓ Desconocido</option>
-                    </select>
-                    <input type="date" id="startDate">
-                    <input type="date" id="endDate">
-                    <button id="applyFilters" class="btn-primary">Aplicar Filtros</button>
-                    <button id="exportBtn" class="btn-secondary">📥 Exportar</button>
+                    <!-- Real-time search -->
+                    <div class="search-wrapper">
+                        <input type="text" id="searchInput" class="search-input" placeholder="🔍 Búsqueda en tiempo real..." autocomplete="off">
+                        <span class="search-icon">🔍</span>
+                    </div>
+                    
+                    <!-- Filter row -->
+                    <div class="filter-row">
+                        <select id="brandFilter">
+                            <option value="">Todas las marcas</option>
+                        </select>
+                        <select id="statusFilter">
+                            <option value="">Todos los estados</option>
+                            <option value="success">✅ Éxito</option>
+                            <option value="failed">❌ Fallido</option>
+                            <option value="unknown">❓ Desconocido</option>
+                        </select>
+                        <input type="date" id="startDate" placeholder="Fecha inicio">
+                        <input type="date" id="endDate" placeholder="Fecha fin">
+                    </div>
+                    
+                    <!-- Filter chips -->
+                    <div id="filterChips" class="filter-chips">
+                        <!-- Dynamic filter chips will appear here -->
+                    </div>
+                    
+                    <!-- Action buttons -->
+                    <div class="filter-actions">
+                        <button id="clearFilters" class="btn-secondary" style="display: none;">🗑️ Limpiar Filtros</button>
+                        <button id="applyFilters" class="btn-primary">🔄 Aplicar</button>
+                        <button id="exportBtn" class="btn-secondary">📥 Exportar</button>
+                    </div>
                 </div>
+                
+                <!-- Results info -->
+                <div class="results-info">
+                    <span id="resultsCount">Cargando...</span>
+                </div>
+                
                 <div id="installationsTable" class="table-container">
                     <p class="loading">Cargando instalaciones...</p>
                 </div>
@@ -3045,15 +3427,48 @@ tr[data-id] {
     </div>
     
     <script>
-const API_BASE = '';
+// Auto-detect API base URL - use current origin in production, or fallback to worker URL
+const API_BASE = (() => {
+    // If running on localhost, use the production worker URL
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        return 'https://driver-manager-db.diegosasen.workers.dev';
+    }
+    // Otherwise use relative paths (same origin)
+    return '';
+})();
+
 let authToken = localStorage.getItem('authToken');
 let currentUser = null;
 let charts = {};
+let searchDebounceTimer = null;
+let currentInstallationsData = [];
+
+// WebSocket/SSE State
+let eventSource = null;
+let sseReconnectTimer = null;
+let sseReconnectAttempts = 0;
+const MAX_SSE_RECONNECT_ATTEMPTS = 5;
+const SSE_RECONNECT_DELAY = 3000; // 3 seconds
+
 
 // Chart.js default configuration
-Chart.defaults.color = '#94a3b8';
-Chart.defaults.borderColor = '#334155';
-Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+function isChartAvailable() {
+    return typeof Chart !== 'undefined' && Chart && Chart.defaults;
+}
+
+function applyChartDefaults(theme = 'dark') {
+    if (!isChartAvailable()) return;
+    if (theme === 'light') {
+        Chart.defaults.color = '#475569';
+        Chart.defaults.borderColor = '#cbd5e1';
+    } else {
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.borderColor = '#334155';
+    }
+    Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+}
+
+applyChartDefaults('dark');
 
 const api = {
     async request(endpoint, options = {}) {
@@ -3145,6 +3560,7 @@ function animateNumber(elementId, value) {
 
 // Chart rendering functions
 function renderSuccessChart(stats) {
+    if (!isChartAvailable()) return;
     const ctx = document.getElementById('successChart').getContext('2d');
     
     if (charts.success) {
@@ -3205,6 +3621,7 @@ function renderSuccessChart(stats) {
 }
 
 function renderBrandChart(stats) {
+    if (!isChartAvailable()) return;
     const ctx = document.getElementById('brandChart').getContext('2d');
     
     if (charts.brand) {
@@ -3271,6 +3688,7 @@ function renderBrandChart(stats) {
 }
 
 async function renderTrendChart() {
+    if (!isChartAvailable()) return;
     const ctx = document.getElementById('trendChart').getContext('2d');
     
     if (charts.trend) {
@@ -3387,26 +3805,450 @@ function renderRecentInstallations(installations) {
     container.innerHTML = html;
 }
 
+// Advanced Filters Functions
+function getActiveFilters() {
+    const filters = {};
+    
+    const searchValue = document.getElementById('searchInput')?.value?.trim();
+    const brandValue = document.getElementById('brandFilter')?.value;
+    const statusValue = document.getElementById('statusFilter')?.value;
+    const startDate = document.getElementById('startDate')?.value;
+    const endDate = document.getElementById('endDate')?.value;
+    
+    if (searchValue) filters.search = searchValue;
+    if (brandValue) filters.brand = brandValue;
+    if (statusValue) filters.status = statusValue;
+    if (startDate) filters.startDate = startDate;
+    if (endDate) filters.endDate = endDate;
+    
+    return filters;
+}
+
+function updateFilterChips() {
+    const chipsContainer = document.getElementById('filterChips');
+    const clearBtn = document.getElementById('clearFilters');
+    const filters = getActiveFilters();
+    
+    chipsContainer.innerHTML = '';
+    let hasFilters = Object.keys(filters).length > 0;
+    
+    clearBtn.style.display = hasFilters ? 'inline-flex' : 'none';
+    
+    // Search chip
+    if (filters.search) {
+        chipsContainer.innerHTML += \`
+            <span class="filter-chip">
+                <span class="chip-label">🔍</span>
+                <span class="chip-value">"\${filters.search}"</span>
+                <span class="chip-remove" data-filter="search">×</span>
+            </span>
+        \`;
+    }
+    
+    // Brand chip
+    if (filters.brand) {
+        chipsContainer.innerHTML += \`
+            <span class="filter-chip">
+                <span class="chip-label">🏷️ Marca:</span>
+                <span class="chip-value">\${filters.brand}</span>
+                <span class="chip-remove" data-filter="brand">×</span>
+            </span>
+        \`;
+    }
+    
+    // Status chip
+    if (filters.status) {
+        const statusLabel = filters.status === 'success' ? '✅ Éxito' : 
+                           filters.status === 'failed' ? '❌ Fallido' : '❓ Desconocido';
+        chipsContainer.innerHTML += \`
+            <span class="filter-chip">
+                <span class="chip-label">📊 Estado:</span>
+                <span class="chip-value">\${statusLabel}</span>
+                <span class="chip-remove" data-filter="status">×</span>
+            </span>
+        \`;
+    }
+    
+    // Date range chips
+    if (filters.startDate || filters.endDate) {
+        const dateLabel = filters.startDate && filters.endDate ? 
+            \`\${filters.startDate} - \${filters.endDate}\` :
+            filters.startDate ? \`Desde: \${filters.startDate}\` : \`Hasta: \${filters.endDate}\`;
+        chipsContainer.innerHTML += \`
+            <span class="filter-chip">
+                <span class="chip-label">📅</span>
+                <span class="chip-value">\${dateLabel}</span>
+                <span class="chip-remove" data-filter="date">×</span>
+            </span>
+        \`;
+    }
+    
+    // Add click handlers to remove buttons
+    chipsContainer.querySelectorAll('.chip-remove').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const filterType = e.target.dataset.filter;
+            removeFilter(filterType);
+        });
+    });
+}
+
+function removeFilter(filterType) {
+    switch (filterType) {
+        case 'search':
+            document.getElementById('searchInput').value = '';
+            break;
+        case 'brand':
+            document.getElementById('brandFilter').value = '';
+            break;
+        case 'status':
+            document.getElementById('statusFilter').value = '';
+            break;
+        case 'date':
+            document.getElementById('startDate').value = '';
+            document.getElementById('endDate').value = '';
+            break;
+    }
+    
+    updateFilterChips();
+    
+    // Apply filters immediately when removing
+    debouncedSearch();
+}
+
+function clearAllFilters() {
+    document.getElementById('searchInput').value = '';
+    document.getElementById('brandFilter').value = '';
+    document.getElementById('statusFilter').value = '';
+    document.getElementById('startDate').value = '';
+    document.getElementById('endDate').value = '';
+    
+    updateFilterChips();
+    debouncedSearch();
+}
+
+// Export Functions
+function exportToCSV(data, filename = 'instalaciones.csv') {
+    if (!data || !data.length) {
+        showNotification('❌ No hay datos para exportar', 'error');
+        return;
+    }
+    
+    // CSV Headers
+    const headers = ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo (s)', 'Notas', 'Fecha'];
+    
+    // Convert data to CSV rows
+    const rows = data.map(inst => [
+        inst.id,
+        inst.client_name || 'N/A',
+        inst.driver_brand || 'N/A',
+        inst.driver_version || 'N/A',
+        inst.status || 'unknown',
+        inst.installation_time_seconds || 0,
+        (inst.notes || '').replace(/"/g, '""'), // Escape quotes
+        inst.timestamp
+    ]);
+    
+    // Combine headers and rows
+    const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => \`"\${cell}"\`).join(','))
+    ].join('\\n');
+    
+    // Create and download file
+    const blob = new Blob(['\\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    showNotification(\`✅ Exportado: \${filename}\`, 'success');
+}
+
+function exportToExcel(data, filename = 'instalaciones.xls') {
+    if (!data || !data.length) {
+        showNotification('❌ No hay datos para exportar', 'error');
+        return;
+    }
+    
+    // Create HTML table for Excel
+    let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
+    html += '<head><meta charset="UTF-8"><style>th { background-color: #06b6d4; color: white; font-weight: bold; }</style></head>';
+    html += '<body><table border="1">';
+    
+    // Headers
+    html += '<tr>';
+    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo (s)', 'Notas', 'Fecha'].forEach(header => {
+        html += \`<th>\${header}</th>\`;
+    });
+    html += '</tr>';
+    
+    // Data rows
+    data.forEach(inst => {
+        html += '<tr>';
+        html += \`<td>\${inst.id}</td>\`;
+        html += \`<td>\${inst.client_name || 'N/A'}</td>\`;
+        html += \`<td>\${inst.driver_brand || 'N/A'}</td>\`;
+        html += \`<td>\${inst.driver_version || 'N/A'}</td>\`;
+        html += \`<td>\${inst.status || 'unknown'}</td>\`;
+        html += \`<td>\${inst.installation_time_seconds || 0}</td>\`;
+        html += \`<td>\${(inst.notes || '').substring(0, 100)}</td>\`;
+        html += \`<td>\${inst.timestamp}</td>\`;
+        html += '</tr>';
+    });
+    
+    html += '</table></body></html>';
+    
+    // Create and download file
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    showNotification(\`✅ Exportado: \${filename}\`, 'success');
+}
+
+function setupExportButtons() {
+    const exportBtn = document.getElementById('exportBtn');
+    if (exportBtn) {
+        // Replace single export button with dropdown
+        const filterActions = document.querySelector('.filter-actions');
+        
+        // Create export dropdown
+        const exportDropdown = document.createElement('div');
+        exportDropdown.className = 'export-dropdown';
+        exportDropdown.style.cssText = 'position: relative; display: inline-block;';
+        
+        exportDropdown.innerHTML = \`
+            <button id="exportBtn" class="btn-secondary">📥 Exportar ▼</button>
+            <div class="export-menu" style="
+                display: none;
+                position: absolute;
+                right: 0;
+                top: 100%;
+                margin-top: 0.5rem;
+                background: var(--bg-secondary);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+                box-shadow: var(--shadow-lg);
+                z-index: 100;
+                min-width: 160px;
+            ">
+                <button class="export-option" data-format="csv" style="
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                    width: 100%;
+                    padding: 0.75rem 1rem;
+                    background: none;
+                    border: none;
+                    color: var(--text-primary);
+                    cursor: pointer;
+                    font-size: 0.875rem;
+                    text-align: left;
+                ">📄 Exportar CSV</button>
+                <button class="export-option" data-format="excel" style="
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                    width: 100%;
+                    padding: 0.75rem 1rem;
+                    background: none;
+                    border: none;
+                    color: var(--text-primary);
+                    cursor: pointer;
+                    font-size: 0.875rem;
+                    text-align: left;
+                    border-top: 1px solid var(--border);
+                ">📊 Exportar Excel</button>
+            </div>
+        \`;
+        
+        // Replace old button
+        exportBtn.replaceWith(exportDropdown);
+        
+        // Toggle menu
+        const btn = exportDropdown.querySelector('#exportBtn');
+        const menu = exportDropdown.querySelector('.export-menu');
+        
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+        });
+        
+        // Close on outside click
+        document.addEventListener('click', () => {
+            menu.style.display = 'none';
+        });
+        
+        // Export options
+        exportDropdown.querySelectorAll('.export-option').forEach(option => {
+            option.addEventListener('click', () => {
+                const format = option.dataset.format;
+                if (format === 'csv') {
+                    exportToCSV(currentInstallationsData);
+                } else if (format === 'excel') {
+                    exportToExcel(currentInstallationsData);
+                }
+                menu.style.display = 'none';
+            });
+            
+            // Hover effect
+            option.addEventListener('mouseenter', () => {
+                option.style.background = 'var(--bg-hover)';
+            });
+            option.addEventListener('mouseleave', () => {
+                option.style.background = 'none';
+            });
+        });
+    }
+}
+
+
+function debouncedSearch() {
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+        searchInput.classList.add('loading');
+    }
+    
+    // Clear previous timer
+    if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer);
+    }
+    
+    // Set new timer - 300ms delay for real-time search
+    searchDebounceTimer = setTimeout(() => {
+        loadInstallations();
+        if (searchInput) {
+            searchInput.classList.remove('loading');
+        }
+    }, 300);
+}
+
+function setupAdvancedFilters() {
+    // Real-time search input
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            updateFilterChips();
+            debouncedSearch();
+        });
+        
+        // Enter key triggers immediate search
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                if (searchDebounceTimer) {
+                    clearTimeout(searchDebounceTimer);
+                }
+                loadInstallations();
+            }
+        });
+    }
+    
+    // Filter change handlers
+    const brandFilter = document.getElementById('brandFilter');
+    const statusFilter = document.getElementById('statusFilter');
+    const startDate = document.getElementById('startDate');
+    const endDate = document.getElementById('endDate');
+    
+    if (brandFilter) {
+        brandFilter.addEventListener('change', () => {
+            updateFilterChips();
+            debouncedSearch();
+        });
+    }
+    
+    if (statusFilter) {
+        statusFilter.addEventListener('change', () => {
+            updateFilterChips();
+            debouncedSearch();
+        });
+    }
+    
+    if (startDate) {
+        startDate.addEventListener('change', () => {
+            updateFilterChips();
+            debouncedSearch();
+        });
+    }
+    
+    if (endDate) {
+        endDate.addEventListener('change', () => {
+            updateFilterChips();
+            debouncedSearch();
+        });
+    }
+    
+    // Clear filters button
+    const clearBtn = document.getElementById('clearFilters');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', clearAllFilters);
+    }
+    
+    // Keyboard shortcut: Ctrl+K to focus search
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) {
+                searchInput.focus();
+                searchInput.select();
+            }
+        }
+    });
+}
+
 async function loadInstallations() {
     const container = document.getElementById('installationsTable');
+    const resultsCount = document.getElementById('resultsCount');
     container.innerHTML = '<p class="loading">Cargando...</p>';
     
+    if (resultsCount) {
+        resultsCount.innerHTML = '<span class="loading">Buscando...</span>';
+    }
+    
     try {
+        const filters = getActiveFilters();
+        
         const params = {
-            client_name: document.getElementById('clientFilter').value,
-            brand: document.getElementById('brandFilter').value,
-            status: document.getElementById('statusFilter').value,
-            start_date: document.getElementById('startDate').value,
-            end_date: document.getElementById('endDate').value,
+            client_name: filters.search || '', // Use search for client_name
+            brand: filters.brand || '',
+            status: filters.status || '',
+            start_date: filters.startDate || '',
+            end_date: filters.endDate || '',
             limit: 50
         };
         
         const installations = await api.getInstallations(params);
+        currentInstallationsData = installations || [];
         renderInstallationsTable(installations);
+        
+        // Update results count
+        if (resultsCount) {
+            const count = installations?.length || 0;
+            resultsCount.innerHTML = \`Mostrando <span class="count">\${count}</span> resultado\${count !== 1 ? 's' : ''}\`;
+        }
+        
+        // Update filter chips (in case they were cleared externally)
+        updateFilterChips();
     } catch (err) {
         container.innerHTML = '<p class="error">❌ Error cargando instalaciones</p>';
+        if (resultsCount) {
+            resultsCount.textContent = 'Error al cargar';
+        }
     }
 }
+
 
 function renderInstallationsTable(installations) {
     const container = document.getElementById('installationsTable');
@@ -3463,7 +4305,7 @@ async function loadPhotoWithAuth(photoId) {
         if (authToken) {
             headers['Authorization'] = 'Bearer ' + authToken;
         }
-        const response = await fetch(API_BASE + '/photos/' + photoId, { headers });
+        const response = await fetch(API_BASE + '/web/photos/' + photoId, { headers });
         if (!response.ok) throw new Error('Failed to load photo');
         const blob = await response.blob();
         return URL.createObjectURL(blob);
@@ -3660,7 +4502,11 @@ document.querySelectorAll('.nav-links a').forEach(link => {
     });
 });
 
-document.getElementById('applyFilters').addEventListener('click', loadInstallations);
+document.getElementById('applyFilters').addEventListener('click', () => {
+    updateFilterChips();
+    loadInstallations();
+});
+
 
 document.getElementById('refreshAudit').addEventListener('click', loadAuditLogs);
 
@@ -3730,6 +4576,229 @@ style.textContent = \`
 \`;
 document.head.appendChild(style);
 
+// WebSocket/SSE Functions
+function initSSE() {
+    if (!authToken) return;
+    if (eventSource) {
+        eventSource.close();
+    }
+
+    try {
+        // Use EventSource for Server-Sent Events
+        const sseUrl = \`\${API_BASE}/web/events?token=\${encodeURIComponent(authToken)}\`;
+        eventSource = new EventSource(sseUrl);
+
+        eventSource.onopen = () => {
+            console.log('[SSE] Connection established');
+            sseReconnectAttempts = 0;
+            updateConnectionStatus('connected');
+        };
+
+        eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                handleSSEMessage(data);
+            } catch (err) {
+                console.error('[SSE] Error parsing message:', err);
+            }
+        };
+
+        eventSource.onerror = (err) => {
+            console.error('[SSE] Connection error:', err);
+            updateConnectionStatus('disconnected');
+            
+            // Auto-reconnect logic
+            if (sseReconnectAttempts < MAX_SSE_RECONNECT_ATTEMPTS) {
+                sseReconnectAttempts++;
+                console.log(\`[SSE] Reconnecting... Attempt \${sseReconnectAttempts}/\${MAX_SSE_RECONNECT_ATTEMPTS}\`);
+                updateConnectionStatus('reconnecting');
+                
+                if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
+                sseReconnectTimer = setTimeout(() => {
+                    initSSE();
+                }, SSE_RECONNECT_DELAY * sseReconnectAttempts); // Exponential backoff
+            } else {
+                console.error('[SSE] Max reconnection attempts reached');
+                updateConnectionStatus('failed');
+                showNotification('⚠️ Conexión en tiempo real perdida. Recarga la página para reconectar.', 'error');
+            }
+        };
+
+    } catch (err) {
+        console.error('[SSE] Error initializing:', err);
+    }
+}
+
+function handleSSEMessage(data) {
+    switch (data.type) {
+        case 'connected':
+            console.log('[SSE]', data.message);
+            showNotification('🔌 Conectado en tiempo real', 'success');
+            break;
+            
+        case 'installation_created':
+            handleRealtimeInstallation(data.installation);
+            break;
+            
+        case 'installation_updated':
+            handleRealtimeInstallationUpdate(data.installation);
+            break;
+            
+        case 'incident_created':
+            handleRealtimeIncident(data.incident);
+            break;
+            
+        case 'stats_update':
+            handleRealtimeStatsUpdate(data.statistics);
+            break;
+            
+        case 'reconnect':
+            console.log('[SSE] Server requested reconnect');
+            eventSource.close();
+            setTimeout(initSSE, 1000);
+            break;
+            
+        case 'ping':
+            // Keep-alive, no action needed
+            break;
+            
+        default:
+            console.log('[SSE] Unknown message type:', data.type);
+    }
+}
+
+function handleRealtimeInstallation(installation) {
+    // Add to current data if on installations page
+    if (currentInstallationsData && document.getElementById('installationsSection')?.classList.contains('active')) {
+        currentInstallationsData.unshift(installation);
+        renderInstallationsTable(currentInstallationsData.slice(0, 50));
+        
+        // Update results count
+        const resultsCount = document.getElementById('resultsCount');
+        if (resultsCount) {
+            const count = currentInstallationsData.length;
+            resultsCount.innerHTML = \`Mostrando <span class="count">\${Math.min(count, 50)}</span> de <span class="count">\${count}</span> resultado\${count !== 1 ? 's' : ''}\`;
+        }
+    }
+    
+    // Show notification
+    const statusIcon = installation.status === 'success' ? '✅' : installation.status === 'failed' ? '❌' : '💻';
+    showNotification(\`\${statusIcon} Nueva instalación: \${installation.client_name || 'Sin cliente'}\`, 'info');
+    
+    // Refresh dashboard stats if on dashboard
+    if (document.getElementById('dashboardSection')?.classList.contains('active')) {
+        setTimeout(() => {
+            loadDashboard();
+        }, 1000);
+    }
+}
+
+function handleRealtimeInstallationUpdate(installation) {
+    // Update in current data if present
+    if (currentInstallationsData) {
+        const index = currentInstallationsData.findIndex(i => i.id === installation.id);
+        if (index !== -1) {
+            currentInstallationsData[index] = installation;
+            if (document.getElementById('installationsSection')?.classList.contains('active')) {
+                renderInstallationsTable(currentInstallationsData);
+            }
+        }
+    }
+}
+
+function handleRealtimeIncident(incident) {
+    const severityIcon = incident.severity === 'critical' ? '🔴' : incident.severity === 'high' ? '🟠' : '⚠️';
+    showNotification(\`\${severityIcon} Nueva incidencia en instalación #\${incident.installation_id}\`, 'warning');
+}
+
+function handleRealtimeStatsUpdate(stats) {
+    if (document.getElementById('dashboardSection')?.classList.contains('active')) {
+        updateStats(stats);
+        // Refresh charts with animation
+        renderSuccessChart(stats);
+        renderBrandChart(stats);
+    }
+}
+
+function updateConnectionStatus(status) {
+    // Remove existing status indicators
+    const existingIndicator = document.getElementById('connectionStatus');
+    if (existingIndicator) {
+        existingIndicator.remove();
+    }
+    
+    // Create new indicator
+    const indicator = document.createElement('div');
+    indicator.id = 'connectionStatus';
+    
+    const statusConfig = {
+        connected: { icon: '🟢', text: 'En vivo', color: 'rgba(16, 185, 129, 0.9)' },
+        disconnected: { icon: '🔴', text: 'Desconectado', color: 'rgba(239, 68, 68, 0.9)' },
+        reconnecting: { icon: '🟡', text: 'Reconectando...', color: 'rgba(245, 158, 11, 0.9)' },
+        failed: { icon: '⚫', text: 'Error de conexión', color: 'rgba(148, 163, 184, 0.9)' }
+    };
+    
+    const config = statusConfig[status] || statusConfig.disconnected;
+    
+    indicator.style.cssText = \`
+        position: fixed;
+        bottom: 1rem;
+        right: 1rem;
+        padding: 0.5rem 1rem;
+        background: \${config.color};
+        color: white;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        z-index: 9998;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+        transition: all 0.3s ease;
+        cursor: pointer;
+    \`;
+    indicator.innerHTML = \`<span>\${config.icon}</span><span>\${config.text}</span>\`;
+    
+    // Click to reconnect if disconnected
+    if (status === 'disconnected' || status === 'failed') {
+        indicator.addEventListener('click', () => {
+            showNotification('🔄 Intentando reconectar...', 'info');
+            sseReconnectAttempts = 0;
+            initSSE();
+        });
+        indicator.style.cursor = 'pointer';
+        indicator.title = 'Click para reconectar';
+    }
+    
+    document.body.appendChild(indicator);
+    
+    // Auto-hide after 5 seconds if connected
+    if (status === 'connected') {
+        setTimeout(() => {
+            if (indicator.parentNode) {
+                indicator.style.opacity = '0.6';
+                indicator.style.transform = 'scale(0.9)';
+            }
+        }, 5000);
+    }
+}
+
+function closeSSE() {
+    if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+    }
+    if (sseReconnectTimer) {
+        clearTimeout(sseReconnectTimer);
+        sseReconnectTimer = null;
+    }
+    const indicator = document.getElementById('connectionStatus');
+    if (indicator) {
+        indicator.remove();
+    }
+}
+
 // Initialize
 async function init() {
     if (!authToken) {
@@ -3741,16 +4810,165 @@ async function init() {
             document.getElementById('username').textContent = me.username || 'Usuario';
             document.getElementById('userRole').textContent = me.role || 'admin';
             loadDashboard();
+            
+            // Initialize SSE connection for real-time updates
+            initSSE();
         } catch (err) {
             console.error('Error validating session:', err);
             showLogin();
         }
+    }
+    
+    // Setup advanced filters
+    setupAdvancedFilters();
+    
+    // Setup export buttons
+    setupExportButtons();
+    
+    // Setup theme toggle
+    setupThemeToggle();
+    
+    // Handle page visibility changes to reconnect SSE
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && authToken && !eventSource) {
+            console.log('[SSE] Page visible, reconnecting...');
+            initSSE();
+        }
+    });
+    
+    // Close SSE on page unload
+    window.addEventListener('beforeunload', closeSSE);
+}
+
+
+// Theme Management Functions
+function getCurrentTheme() {
+    // Check localStorage first, then system preference, default to dark
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme) {
+        return savedTheme;
+    }
+    
+    // Check system preference
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+        return 'light';
+    }
+    
+    return 'dark';
+}
+
+function setTheme(theme) {
+    const html = document.documentElement;
+    
+    if (theme === 'light') {
+        html.setAttribute('data-theme', 'light');
+    } else {
+        html.removeAttribute('data-theme');
+    }
+    
+    // Save to localStorage
+    localStorage.setItem('theme', theme);
+    
+    // Update Chart.js colors if charts exist
+    updateChartTheme(theme);
+}
+
+function toggleTheme() {
+    const currentTheme = getCurrentTheme();
+    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+    setTheme(newTheme);
+    
+    // Show notification
+    const themeLabel = newTheme === 'light' ? 'claro' : 'oscuro';
+    showNotification(\`🎨 Tema \${themeLabel} activado\`, 'info');
+}
+
+function updateChartTheme(theme) {
+    if (!isChartAvailable()) return;
+    applyChartDefaults(theme);
+    
+    // Update existing charts if they exist
+    Object.values(charts).forEach(chart => {
+        if (chart) {
+            chart.update();
+        }
+    });
+}
+
+function setupThemeToggle() {
+    const themeToggle = document.getElementById('themeToggle');
+    if (themeToggle) {
+        // Set initial theme
+        const currentTheme = getCurrentTheme();
+        setTheme(currentTheme);
+        
+        // Add click handler
+        themeToggle.addEventListener('click', toggleTheme);
+    }
+    
+    // Listen for system theme changes
+    if (window.matchMedia) {
+        const mediaQuery = window.matchMedia('(prefers-color-scheme: light)');
+        mediaQuery.addEventListener('change', (e) => {
+            // Only auto-switch if user hasn't manually set a preference
+            if (!localStorage.getItem('theme')) {
+                setTheme(e.matches ? 'light' : 'dark');
+            }
+        });
     }
 }
 
 init();
 
 </script>
+    
+    <!-- PWA Service Worker Registration -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then((registration) => {
+                        console.log('[PWA] Service Worker registered:', registration.scope);
+                        
+                        // Check for updates
+                        registration.addEventListener('updatefound', () => {
+                            const newWorker = registration.installing;
+                            newWorker.addEventListener('statechange', () => {
+                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                    // New version available
+                                    showNotification('🔄 Nueva versión disponible. Recarga para actualizar.', 'info');
+                                }
+                            });
+                        });
+                    })
+                    .catch((err) => {
+                        console.error('[PWA] Service Worker registration failed:', err);
+                    });
+                
+                // Listen for messages from service worker
+                navigator.serviceWorker.addEventListener('message', (event) => {
+                    if (event.data === 'update-available') {
+                        showNotification('🔄 Nueva versión disponible. Recarga para actualizar.', 'info');
+                    }
+                });
+            });
+        }
+        
+        // PWA Install Prompt
+        let deferredPrompt;
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            console.log('[PWA] Install prompt available');
+        });
+        
+        // Check if app is installed
+        window.addEventListener('appinstalled', () => {
+            console.log('[PWA] App installed');
+            deferredPrompt = null;
+            showNotification('✅ App instalada correctamente', 'success');
+        });
+    </script>
 </body>
 </html>
 `;
@@ -3758,7 +4976,7 @@ init();
         return new Response(html, {
           status: 200,
           headers: {
-            ...corsHeaders(),
+            ...corsHeaders(request, env, corsPolicy),
             "Content-Type": "text/html",
           },
         });
@@ -3768,7 +4986,7 @@ init();
         return new Response("", {
           status: 200,
           headers: {
-            ...corsHeaders(),
+            ...corsHeaders(request, env, corsPolicy),
             "Content-Type": "text/css",
           },
         });
@@ -3778,7 +4996,7 @@ init();
         return new Response("", {
           status: 200,
           headers: {
-            ...corsHeaders(),
+            ...corsHeaders(request, env, corsPolicy),
             "Content-Type": "application/javascript",
           },
         });
@@ -3854,7 +5072,7 @@ init();
         return new Response(JSON.stringify(manifest), {
           status: 200,
           headers: {
-            ...corsHeaders(),
+            ...corsHeaders(request, env, corsPolicy),
             "Content-Type": "application/manifest+json",
             "Cache-Control": "public, max-age=3600",
           },
@@ -3867,7 +5085,7 @@ init();
         try {
           await verifyWebAccessToken(request, env);
         } catch (err) {
-          return jsonResponse({ error: "Unauthorized" }, 401);
+          return jsonResponse(request, env, corsPolicy,{ error: "Unauthorized" }, 401);
         }
 
         const encoder = new TextEncoder();
@@ -3919,7 +5137,7 @@ init();
 
         return new Response(stream, {
           headers: {
-            ...corsHeaders(),
+            ...corsHeaders(request, env, corsPolicy),
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
             "Connection": "keep-alive"
@@ -3931,7 +5149,7 @@ init();
       if (routeParts.length === 1 && routeParts[0] === "sw.js" && request.method === "GET") {
 
         const swCode = `// Service Worker for Driver Manager Dashboard PWA
-const CACHE_NAME = 'driver-manager-v1';
+const CACHE_NAME = 'driver-manager-v3';
 const STATIC_ASSETS = [
   '/web/dashboard',
   '/dashboard.css',
@@ -4045,7 +5263,7 @@ console.log('[SW] Service Worker loaded');`;
         return new Response(swCode, {
           status: 200,
           headers: {
-            ...corsHeaders(),
+            ...corsHeaders(request, env, corsPolicy),
             "Content-Type": "application/javascript",
             "Cache-Control": "public, max-age=3600",
           },
@@ -4055,7 +5273,7 @@ console.log('[SW] Service Worker loaded');`;
 
 
       if (isWebRoute) {
-        const webAuthResponse = await handleWebAuthRoute(request, env, routeParts);
+        const webAuthResponse = await handleWebAuthRoute(request, env, routeParts, corsPolicy);
         if (webAuthResponse) {
           return webAuthResponse;
         }
@@ -4078,7 +5296,7 @@ console.log('[SW] Service Worker loaded');`;
             "SELECT * FROM installations ORDER BY timestamp DESC",
           ).all();
           const filtered = applyInstallationFilters(results, url.searchParams);
-          return jsonResponse(filtered);
+          return jsonResponse(request, env, corsPolicy,filtered);
         }
 
         if (request.method === "POST") {
@@ -4117,7 +5335,7 @@ console.log('[SW] Service Worker loaded');`;
             platform: isWebRoute ? "web" : "api"
           });
 
-          return jsonResponse({ success: true }, 201);
+          return jsonResponse(request, env, corsPolicy,{ success: true }, 201);
         }
       }
 
@@ -4156,7 +5374,7 @@ console.log('[SW] Service Worker loaded');`;
             )
             .run();
 
-          return jsonResponse({ success: true }, 201);
+          return jsonResponse(request, env, corsPolicy,{ success: true }, 201);
 
         }
 
@@ -4175,7 +5393,7 @@ console.log('[SW] Service Worker loaded');`;
             .bind(limit)
             .all();
 
-          return jsonResponse(results || []);
+          return jsonResponse(request, env, corsPolicy,results || []);
         }
       }
 
@@ -4200,7 +5418,7 @@ console.log('[SW] Service Worker loaded');`;
           platform: data?.platform || "android",
         });
 
-        return jsonResponse(
+        return jsonResponse(request, env, corsPolicy,
           {
             success: true,
             registered: true,
@@ -4236,7 +5454,7 @@ console.log('[SW] Service Worker loaded');`;
           )
           .run();
 
-        return jsonResponse(
+        return jsonResponse(request, env, corsPolicy,
           {
             success: true,
             record: {
@@ -4288,7 +5506,7 @@ console.log('[SW] Service Worker loaded');`;
             photos: photosByIncident[incident.id] || [],
           }));
 
-          return jsonResponse({
+          return jsonResponse(request, env, corsPolicy,{
             success: true,
             installation_id: installationId,
             incidents: enriched,
@@ -4390,7 +5608,7 @@ console.log('[SW] Service Worker loaded');`;
             platform: payload.source
           });
 
-          return jsonResponse(
+          return jsonResponse(request, env, corsPolicy,
             {
               success: true,
               incident: {
@@ -4463,7 +5681,7 @@ console.log('[SW] Service Worker loaded');`;
           .bind(incidentId, r2Key, fileName, contentType, sizeBytes, sha256, createdAt)
           .run();
 
-        return jsonResponse(
+        return jsonResponse(request, env, corsPolicy,
           {
             success: true,
             photo: {
@@ -4511,7 +5729,7 @@ console.log('[SW] Service Worker loaded');`;
         return new Response(object.body, {
           status: 200,
           headers: {
-            ...corsHeaders(),
+            ...corsHeaders(request, env, corsPolicy),
             "Content-Type":
               photo.content_type || object.httpMetadata?.contentType || "application/octet-stream",
             "Content-Disposition": `inline; filename=\"${safeName}\"`,
@@ -4535,7 +5753,7 @@ console.log('[SW] Service Worker loaded');`;
             throw new HttpError(404, "Registro no encontrado.");
           }
 
-          return jsonResponse(results[0]);
+          return jsonResponse(request, env, corsPolicy,results[0]);
         }
 
         if (request.method === "PUT") {
@@ -4548,12 +5766,12 @@ console.log('[SW] Service Worker loaded');`;
             .bind(data.notes ?? null, data.installation_time_seconds ?? null, recordId)
             .run();
 
-          return jsonResponse({ success: true, updated: recordId });
+          return jsonResponse(request, env, corsPolicy,{ success: true, updated: recordId });
         }
 
         if (request.method === "DELETE") {
           if (!recordId) {
-            return textResponse("Error: El ID del registro es obligatorio.", 400);
+            return textResponse(request, env, corsPolicy, "Error: El ID del registro es obligatorio.", 400);
           }
 
           // Log audit event for installation deletion
@@ -4569,7 +5787,7 @@ console.log('[SW] Service Worker loaded');`;
           });
 
           await env.DB.prepare("DELETE FROM installations WHERE id = ?").bind(recordId).run();
-          return jsonResponse({ message: `Registro ${recordId} eliminado.` });
+          return jsonResponse(request, env, corsPolicy,{ message: `Registro ${recordId} eliminado.` });
         }
       }
 
@@ -4645,7 +5863,7 @@ console.log('[SW] Service Worker loaded');`;
           }
         }
 
-        return jsonResponse({
+        return jsonResponse(request, env, corsPolicy,{
           total_installations: Number(totals.total_installations) || 0,
           successful_installations: Number(totals.successful_installations) || 0,
           failed_installations: Number(totals.failed_installations) || 0,
@@ -4657,10 +5875,10 @@ console.log('[SW] Service Worker loaded');`;
         });
       }
 
-      return textResponse("Ruta no encontrada.", 404);
+      return textResponse(request, env, corsPolicy, "Ruta no encontrada.", 404);
     } catch (error) {
       if (error instanceof HttpError) {
-        return jsonResponse(
+        return jsonResponse(request, env, corsPolicy,
           {
             success: false,
             error: {
@@ -4672,7 +5890,7 @@ console.log('[SW] Service Worker loaded');`;
         );
       }
 
-      return jsonResponse({ error: error.message }, 500);
+      return jsonResponse(request, env, corsPolicy,{ error: error.message }, 500);
     }
   },
 };

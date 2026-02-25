@@ -1,4 +1,14 @@
-const API_BASE = '';
+// Auto-detect API base URL - use current origin in production, or fallback to worker URL
+const API_BASE = (() => {
+    // If running on localhost, use the production worker URL
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        return 'https://driver-manager-db.diegosasen.workers.dev';
+    }
+    // Otherwise use relative paths (same origin)
+    return '';
+})();
+
+let authToken = localStorage.getItem('authToken');
 let currentUser = null;
 let charts = {};
 let searchDebounceTimer = null;
@@ -13,10 +23,23 @@ const SSE_RECONNECT_DELAY = 3000; // 3 seconds
 
 
 // Chart.js default configuration
+function isChartAvailable() {
+    return typeof Chart !== 'undefined' && Chart && Chart.defaults;
+}
 
-Chart.defaults.color = '#94a3b8';
-Chart.defaults.borderColor = '#334155';
-Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+function applyChartDefaults(theme = 'dark') {
+    if (!isChartAvailable()) return;
+    if (theme === 'light') {
+        Chart.defaults.color = '#475569';
+        Chart.defaults.borderColor = '#cbd5e1';
+    } else {
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.borderColor = '#334155';
+    }
+    Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+}
+
+applyChartDefaults('dark');
 
 const api = {
     async request(endpoint, options = {}) {
@@ -109,6 +132,7 @@ function animateNumber(elementId, value) {
 
 // Chart rendering functions
 function renderSuccessChart(stats) {
+    if (!isChartAvailable()) return;
     const ctx = document.getElementById('successChart').getContext('2d');
     
     if (charts.success) {
@@ -169,6 +193,7 @@ function renderSuccessChart(stats) {
 }
 
 function renderBrandChart(stats) {
+    if (!isChartAvailable()) return;
     const ctx = document.getElementById('brandChart').getContext('2d');
     
     if (charts.brand) {
@@ -235,6 +260,7 @@ function renderBrandChart(stats) {
 }
 
 async function renderTrendChart() {
+    if (!isChartAvailable()) return;
     const ctx = document.getElementById('trendChart').getContext('2d');
     
     if (charts.trend) {
@@ -327,28 +353,60 @@ async function loadDashboard() {
 
 function renderRecentInstallations(installations) {
     const container = document.getElementById('recentInstallations');
+    container.replaceChildren();
+
     if (!installations || !installations.length) {
-        container.innerHTML = '<p class="loading">No hay instalaciones recientes</p>';
+        const emptyMessage = document.createElement('p');
+        emptyMessage.className = 'loading';
+        emptyMessage.textContent = 'No hay instalaciones recientes';
+        container.appendChild(emptyMessage);
         return;
     }
-    
-    let html = '<table><thead><tr><th>ID</th><th>Cliente</th><th>Marca</th><th>Estado</th><th>Fecha</th></tr></thead><tbody>';
-    
+
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    ['ID', 'Cliente', 'Marca', 'Estado', 'Fecha'].forEach(label => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+
+    const tbody = document.createElement('tbody');
+
     installations.forEach(inst => {
         const statusClass = inst.status || 'unknown';
         const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
-        
-        html += '<tr>';
-        html += '<td><strong>#' + inst.id + '</strong></td>';
-        html += '<td>' + (inst.client_name || 'N/A') + '</td>';
-        html += '<td>' + (inst.driver_brand || 'N/A') + '</td>';
-        html += '<td><span class="badge ' + statusClass + '">' + statusIcon + ' ' + inst.status + '</span></td>';
-        html += '<td>' + new Date(inst.timestamp).toLocaleString('es-ES') + '</td>';
-        html += '</tr>';
+
+        const row = document.createElement('tr');
+
+        const idCell = document.createElement('td');
+        const strong = document.createElement('strong');
+        strong.textContent = `#${inst.id ?? 'N/A'}`;
+        idCell.appendChild(strong);
+
+        const clientCell = document.createElement('td');
+        clientCell.textContent = inst.client_name || 'N/A';
+
+        const brandCell = document.createElement('td');
+        brandCell.textContent = inst.driver_brand || 'N/A';
+
+        const statusCell = document.createElement('td');
+        const statusBadge = document.createElement('span');
+        statusBadge.className = `badge ${statusClass}`;
+        statusBadge.textContent = `${statusIcon} ${inst.status || 'unknown'}`;
+        statusCell.appendChild(statusBadge);
+
+        const dateCell = document.createElement('td');
+        dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
+
+        row.append(idCell, clientCell, brandCell, statusCell, dateCell);
+        tbody.appendChild(row);
     });
-    
-    html += '</tbody></table>';
-    container.innerHTML = html;
+
+    table.append(thead, tbody);
+    container.appendChild(table);
 }
 
 // Advanced Filters Functions
@@ -375,58 +433,51 @@ function updateFilterChips() {
     const clearBtn = document.getElementById('clearFilters');
     const filters = getActiveFilters();
     
-    chipsContainer.innerHTML = '';
+    chipsContainer.replaceChildren();
     let hasFilters = Object.keys(filters).length > 0;
     
     clearBtn.style.display = hasFilters ? 'inline-flex' : 'none';
     
-    // Search chip
+    const appendChip = (label, value, filterType) => {
+        const chip = document.createElement('span');
+        chip.className = 'filter-chip';
+
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'chip-label';
+        labelSpan.textContent = label;
+
+        const valueSpan = document.createElement('span');
+        valueSpan.className = 'chip-value';
+        valueSpan.textContent = value;
+
+        const removeSpan = document.createElement('span');
+        removeSpan.className = 'chip-remove';
+        removeSpan.dataset.filter = filterType;
+        removeSpan.textContent = '×';
+
+        chip.append(labelSpan, valueSpan, removeSpan);
+        chipsContainer.appendChild(chip);
+    };
+
     if (filters.search) {
-        chipsContainer.innerHTML += `
-            <span class="filter-chip">
-                <span class="chip-label">🔍</span>
-                <span class="chip-value">"${filters.search}"</span>
-                <span class="chip-remove" data-filter="search">×</span>
-            </span>
-        `;
+        appendChip('🔍', `"${filters.search}"`, 'search');
     }
-    
-    // Brand chip
+
     if (filters.brand) {
-        chipsContainer.innerHTML += `
-            <span class="filter-chip">
-                <span class="chip-label">🏷️ Marca:</span>
-                <span class="chip-value">${filters.brand}</span>
-                <span class="chip-remove" data-filter="brand">×</span>
-            </span>
-        `;
+        appendChip('🏷️ Marca:', filters.brand, 'brand');
     }
-    
-    // Status chip
+
     if (filters.status) {
         const statusLabel = filters.status === 'success' ? '✅ Éxito' : 
                            filters.status === 'failed' ? '❌ Fallido' : '❓ Desconocido';
-        chipsContainer.innerHTML += `
-            <span class="filter-chip">
-                <span class="chip-label">📊 Estado:</span>
-                <span class="chip-value">${statusLabel}</span>
-                <span class="chip-remove" data-filter="status">×</span>
-            </span>
-        `;
+        appendChip('📊 Estado:', statusLabel, 'status');
     }
-    
-    // Date range chips
+
     if (filters.startDate || filters.endDate) {
         const dateLabel = filters.startDate && filters.endDate ? 
             `${filters.startDate} - ${filters.endDate}` :
             filters.startDate ? `Desde: ${filters.startDate}` : `Hasta: ${filters.endDate}`;
-        chipsContainer.innerHTML += `
-            <span class="filter-chip">
-                <span class="chip-label">📅</span>
-                <span class="chip-value">${dateLabel}</span>
-                <span class="chip-remove" data-filter="date">×</span>
-            </span>
-        `;
+        appendChip('📅', dateLabel, 'date');
     }
     
     // Add click handlers to remove buttons
@@ -515,7 +566,7 @@ function exportToCSV(data, filename = 'instalaciones.csv') {
     showNotification(`✅ Exportado: ${filename}`, 'success');
 }
 
-function exportToExcel(data, filename = 'instalaciones.xlsx') {
+function exportToExcel(data, filename = 'instalaciones.xls') {
     if (!data || !data.length) {
         showNotification('❌ No hay datos para exportar', 'error');
         return;
@@ -798,31 +849,70 @@ async function loadInstallations() {
 
 function renderInstallationsTable(installations) {
     const container = document.getElementById('installationsTable');
+    container.replaceChildren();
+
     if (!installations || !installations.length) {
-        container.innerHTML = '<p class="loading">No se encontraron instalaciones</p>';
+        const emptyMessage = document.createElement('p');
+        emptyMessage.className = 'loading';
+        emptyMessage.textContent = 'No se encontraron instalaciones';
+        container.appendChild(emptyMessage);
         return;
     }
-    
-    let html = '<table><thead><tr><th>ID</th><th>Cliente</th><th>Marca</th><th>Versión</th><th>Estado</th><th>Tiempo</th><th>Notas</th><th>Fecha</th></tr></thead><tbody>';
-    
+
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo', 'Notas', 'Fecha'].forEach(label => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+
+    const tbody = document.createElement('tbody');
+
     installations.forEach(inst => {
         const statusClass = inst.status || 'unknown';
         const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
-        
-        html += '<tr data-id="' + inst.id + '">';
-        html += '<td><strong>#' + inst.id + '</strong></td>';
-        html += '<td>' + (inst.client_name || 'N/A') + '</td>';
-        html += '<td>' + (inst.driver_brand || 'N/A') + '</td>';
-        html += '<td>' + (inst.driver_version || 'N/A') + '</td>';
-        html += '<td><span class="badge ' + statusClass + '">' + statusIcon + ' ' + inst.status + '</span></td>';
-        html += '<td>' + inst.installation_time_seconds + 's</td>';
-        html += '<td>' + (inst.notes ? inst.notes.substring(0, 30) + '...' : '-') + '</td>';
-        html += '<td>' + new Date(inst.timestamp).toLocaleString('es-ES') + '</td>';
-        html += '</tr>';
+
+        const row = document.createElement('tr');
+        row.dataset.id = String(inst.id ?? '');
+
+        const idCell = document.createElement('td');
+        const strong = document.createElement('strong');
+        strong.textContent = `#${inst.id ?? 'N/A'}`;
+        idCell.appendChild(strong);
+
+        const clientCell = document.createElement('td');
+        clientCell.textContent = inst.client_name || 'N/A';
+
+        const brandCell = document.createElement('td');
+        brandCell.textContent = inst.driver_brand || 'N/A';
+
+        const versionCell = document.createElement('td');
+        versionCell.textContent = inst.driver_version || 'N/A';
+
+        const statusCell = document.createElement('td');
+        const statusBadge = document.createElement('span');
+        statusBadge.className = `badge ${statusClass}`;
+        statusBadge.textContent = `${statusIcon} ${inst.status || 'unknown'}`;
+        statusCell.appendChild(statusBadge);
+
+        const timeCell = document.createElement('td');
+        timeCell.textContent = `${inst.installation_time_seconds ?? 0}s`;
+
+        const notesCell = document.createElement('td');
+        notesCell.textContent = inst.notes ? `${inst.notes.substring(0, 30)}...` : '-';
+
+        const dateCell = document.createElement('td');
+        dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
+
+        row.append(idCell, clientCell, brandCell, versionCell, statusCell, timeCell, notesCell, dateCell);
+        tbody.appendChild(row);
     });
-    
-    html += '</tbody></table>';
-    container.innerHTML = html;
+
+    table.append(thead, tbody);
+    container.appendChild(table);
     
     container.querySelectorAll('tr[data-id]').forEach(row => {
         row.addEventListener('click', () => {
@@ -850,6 +940,11 @@ async function loadPhotoWithAuth(photoId) {
         const response = await fetch(API_BASE + '/web/photos/' + photoId, {
             credentials: 'same-origin'
         });
+        const headers = {};
+        if (authToken) {
+            headers['Authorization'] = 'Bearer ' + authToken;
+        }
+        const response = await fetch(API_BASE + '/web/photos/' + photoId, { headers });
         if (!response.ok) throw new Error('Failed to load photo');
         const blob = await response.blob();
         return URL.createObjectURL(blob);
@@ -861,43 +956,85 @@ async function loadPhotoWithAuth(photoId) {
 
 async function renderIncidents(incidents, installationId) {
     const container = document.getElementById('incidentsList');
-    
-    let html = '<div class="incidents-header" style="margin-bottom: 1.5rem;">';
-    html += '<h3>⚠️ Incidencias de Instalación #' + installationId + '</h3>';
-    html += '<button onclick="document.querySelector(\'[data-section=\\\'installations\\\']\').click()" class="btn-secondary">← Volver</button>';
-    html += '</div>';
-    
+    container.replaceChildren();
+
+    const header = document.createElement('div');
+    header.className = 'incidents-header';
+    header.style.marginBottom = '1.5rem';
+
+    const heading = document.createElement('h3');
+    heading.textContent = `⚠️ Incidencias de Instalación #${installationId}`;
+
+    const backButton = document.createElement('button');
+    backButton.className = 'btn-secondary';
+    backButton.textContent = '← Volver';
+    backButton.addEventListener('click', () => {
+        document.querySelector('[data-section="installations"]')?.click();
+    });
+
+    header.append(heading, backButton);
+    container.appendChild(header);
+
     if (!incidents || !incidents.length) {
-        html += '<p class="loading">No hay incidencias para esta instalación</p>';
-        container.innerHTML = html;
+        const emptyMessage = document.createElement('p');
+        emptyMessage.className = 'loading';
+        emptyMessage.textContent = 'No hay incidencias para esta instalación';
+        container.appendChild(emptyMessage);
         return;
     }
-    
+
     for (const inc of incidents) {
         const severityIcon = inc.severity === 'critical' ? '🔴' : inc.severity === 'high' ? '🟠' : inc.severity === 'medium' ? '🟡' : '🔵';
-        
-        html += '<div class="incident-card">';
-        html += '<div class="incident-header">';
-        html += '<div><span class="badge ' + inc.severity + '">' + severityIcon + ' ' + inc.severity + '</span> <small>por <strong>' + inc.reporter_username + '</strong></small></div>';
-        html += '<small>🕐 ' + new Date(inc.created_at).toLocaleString('es-ES') + '</small>';
-        html += '</div>';
-        html += '<p style="color: var(--text-secondary); line-height: 1.6;">' + inc.note + '</p>';
-        
+
+        const incidentCard = document.createElement('div');
+        incidentCard.className = 'incident-card';
+
+        const incidentHeader = document.createElement('div');
+        incidentHeader.className = 'incident-header';
+
+        const leftMeta = document.createElement('div');
+        const severityBadge = document.createElement('span');
+        severityBadge.className = `badge ${inc.severity || 'low'}`;
+        severityBadge.textContent = `${severityIcon} ${inc.severity || 'low'}`;
+        const reporter = document.createElement('small');
+        reporter.textContent = 'por ';
+        const reporterStrong = document.createElement('strong');
+        reporterStrong.textContent = inc.reporter_username || 'desconocido';
+        reporter.appendChild(reporterStrong);
+        leftMeta.append(severityBadge, document.createTextNode(' '), reporter);
+
+        const createdAt = document.createElement('small');
+        createdAt.textContent = `🕐 ${new Date(inc.created_at).toLocaleString('es-ES')}`;
+
+        incidentHeader.append(leftMeta, createdAt);
+
+        const note = document.createElement('p');
+        note.style.color = 'var(--text-secondary)';
+        note.style.lineHeight = '1.6';
+        note.textContent = inc.note || '';
+
+        incidentCard.append(incidentHeader, note);
+
         if (inc.photos && inc.photos.length) {
-            html += '<div class="photos-grid">';
+            const photosGrid = document.createElement('div');
+            photosGrid.className = 'photos-grid';
             for (const photo of inc.photos) {
                 const photoUrl = await loadPhotoWithAuth(photo.id);
                 if (photoUrl) {
-                    html += '<img src="' + photoUrl + '" class="photo-thumb" onclick="viewPhoto(' + photo.id + ')" data-photo-id="' + photo.id + '" alt="Foto de incidencia">';
+                    const image = document.createElement('img');
+                    image.src = photoUrl;
+                    image.className = 'photo-thumb';
+                    image.dataset.photoId = String(photo.id);
+                    image.alt = 'Foto de incidencia';
+                    image.addEventListener('click', () => viewPhoto(photo.id));
+                    photosGrid.appendChild(image);
                 }
             }
-            html += '</div>';
+            incidentCard.appendChild(photosGrid);
         }
-        
-        html += '</div>';
+
+        container.appendChild(incidentCard);
     }
-    
-    container.innerHTML = html;
 }
 
 async function viewPhoto(photoId) {
@@ -925,9 +1062,13 @@ async function loadAuditLogs() {
 function renderAuditLogs(logs) {
     const container = document.getElementById('auditLogs');
     const actionFilter = document.getElementById('auditActionFilter')?.value;
+    container.replaceChildren();
     
     if (!logs || !logs.length) {
-        container.innerHTML = '<p class="loading">No hay logs de auditoría</p>';
+        const emptyMessage = document.createElement('p');
+        emptyMessage.className = 'loading';
+        emptyMessage.textContent = 'No hay logs de auditoría';
+        container.appendChild(emptyMessage);
         return;
     }
     
@@ -937,12 +1078,25 @@ function renderAuditLogs(logs) {
     }
     
     if (filteredLogs.length === 0) {
-        container.innerHTML = '<p class="loading">No hay logs para el filtro seleccionado</p>';
+        const emptyFilteredMessage = document.createElement('p');
+        emptyFilteredMessage.className = 'loading';
+        emptyFilteredMessage.textContent = 'No hay logs para el filtro seleccionado';
+        container.appendChild(emptyFilteredMessage);
         return;
     }
-    
-    let html = '<table><thead><tr><th>🕐 Fecha</th><th>📝 Acción</th><th>👤 Usuario</th><th>✅ Estado</th><th>💻 Detalles</th></tr></thead><tbody>';
-    
+
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    ['🕐 Fecha', '📝 Acción', '👤 Usuario', '✅ Estado', '💻 Detalles'].forEach(label => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+
+    const tbody = document.createElement('tbody');
+
     filteredLogs.forEach(log => {
         const successIcon = log.success ? '✅' : '❌';
         const successClass = log.success ? 'success' : 'failed';
@@ -961,17 +1115,42 @@ function renderAuditLogs(logs) {
             }
         }
         
-        html += '<tr>';
-        html += '<td>' + new Date(log.timestamp).toLocaleString('es-ES') + '</td>';
-        html += '<td><code style="background: var(--bg-card); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem;">' + log.action + '</code></td>';
-        html += '<td><strong>' + log.username + '</strong></td>';
-        html += '<td><span class="badge ' + successClass + '">' + successIcon + '</span></td>';
-        html += '<td style="color: var(--text-secondary); font-size: 0.875rem;">' + details + '</td>';
-        html += '</tr>';
+        const row = document.createElement('tr');
+
+        const dateCell = document.createElement('td');
+        dateCell.textContent = new Date(log.timestamp).toLocaleString('es-ES');
+
+        const actionCell = document.createElement('td');
+        const actionCode = document.createElement('code');
+        actionCode.style.background = 'var(--bg-card)';
+        actionCode.style.padding = '0.25rem 0.5rem';
+        actionCode.style.borderRadius = '4px';
+        actionCode.style.fontSize = '0.75rem';
+        actionCode.textContent = log.action || '-';
+        actionCell.appendChild(actionCode);
+
+        const userCell = document.createElement('td');
+        const userStrong = document.createElement('strong');
+        userStrong.textContent = log.username || '-';
+        userCell.appendChild(userStrong);
+
+        const statusCell = document.createElement('td');
+        const badge = document.createElement('span');
+        badge.className = `badge ${successClass}`;
+        badge.textContent = successIcon;
+        statusCell.appendChild(badge);
+
+        const detailsCell = document.createElement('td');
+        detailsCell.style.color = 'var(--text-secondary)';
+        detailsCell.style.fontSize = '0.875rem';
+        detailsCell.textContent = details;
+
+        row.append(dateCell, actionCell, userCell, statusCell, detailsCell);
+        tbody.appendChild(row);
     });
-    
-    html += '</tbody></table>';
-    container.innerHTML = html;
+
+    table.append(thead, tbody);
+    container.appendChild(table);
 }
 
 // Event Listeners
@@ -1425,14 +1604,8 @@ function toggleTheme() {
 }
 
 function updateChartTheme(theme) {
-    // Update Chart.js defaults
-    if (theme === 'light') {
-        Chart.defaults.color = '#475569';
-        Chart.defaults.borderColor = '#cbd5e1';
-    } else {
-        Chart.defaults.color = '#94a3b8';
-        Chart.defaults.borderColor = '#334155';
-    }
+    if (!isChartAvailable()) return;
+    applyChartDefaults(theme);
     
     // Update existing charts if they exist
     Object.values(charts).forEach(chart => {

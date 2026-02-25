@@ -631,13 +631,70 @@ function createMockKV(initialEntries = {}) {
   };
 }
 
-test("OPTIONS request returns CORS headers", async () => {
-  const request = new Request("https://worker.example/installations", { method: "OPTIONS" });
+test("OPTIONS returns CORS headers only for allowed origins", async () => {
+  const request = new Request("https://worker.example/installations", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://dashboard.driver-manager.app",
+    },
+  });
+  const response = await workerFetch(request, {});
+
+  assert.equal(response.status, 204);
+  assert.equal(
+    response.headers.get("Access-Control-Allow-Origin"),
+    "https://dashboard.driver-manager.app",
+  );
+  assert.match(response.headers.get("Access-Control-Allow-Methods"), /GET/);
+  assert.match(response.headers.get("Access-Control-Allow-Methods"), /POST/);
+  assert.match(response.headers.get("Access-Control-Allow-Methods"), /OPTIONS/);
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-API-Token/);
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-Request-Signature/);
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /Content-Type/);
+});
+
+test("OPTIONS rejects not allowed origins with 403", async () => {
+  const request = new Request("https://worker.example/installations", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://evil.example",
+    },
+  });
+  const response = await workerFetch(request, {});
+
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), null);
+});
+
+test("CORS response headers are omitted for disallowed origins", async () => {
+  const request = new Request("https://worker.example/health", {
+    method: "GET",
+    headers: {
+      Origin: "https://evil.example",
+    },
+  });
   const response = await workerFetch(request, {});
 
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get("Access-Control-Allow-Origin"), "*");
-  assert.match(response.headers.get("Access-Control-Allow-Methods"), /OPTIONS/);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), null);
+});
+
+test("CORS methods and headers are route-specific in preflight", async () => {
+  const request = new Request("https://worker.example/web/incidents/10/photos", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://mobile.driver-manager.app",
+    },
+  });
+  const response = await workerFetch(request, {});
+
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), "https://mobile.driver-manager.app");
+  assert.equal(response.headers.get("Access-Control-Allow-Methods"), "OPTIONS, GET, POST");
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /Authorization/);
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /Content-Type/);
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-File-Name/);
+  assert.equal(response.headers.get("Access-Control-Allow-Headers").includes("X-API-Token"), false);
 });
 
 test("GET / returns service metadata", async () => {
@@ -1192,6 +1249,71 @@ test("GET /photos/:id returns binary content from R2", async () => {
   const response = await workerFetch(request, {
     DB: db,
     INCIDENTS_BUCKET: bucket,
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Content-Type"), "image/jpeg");
+  const body = new Uint8Array(await response.arrayBuffer());
+  assert.equal(body.length, 4);
+});
+
+test("GET /web/photos/:id returns binary content with web Bearer session", async () => {
+  const db = createMockDB({
+    incidentPhotos: [
+      {
+        id: 21,
+        incident_id: 11,
+        r2_key: "incidents/45/11/photo1.jpg",
+        file_name: "photo1.jpg",
+        content_type: "image/jpeg",
+        size_bytes: 4,
+        sha256: "abc",
+        created_at: "2026-02-15T10:05:00Z",
+      },
+    ],
+  });
+
+  const bucket = {
+    async get(key) {
+      if (key !== "incidents/45/11/photo1.jpg") return null;
+      return {
+        body: new Uint8Array([1, 2, 3, 4]),
+        httpMetadata: { contentType: "image/jpeg" },
+      };
+    },
+  };
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
+    DB: db,
+    INCIDENTS_BUCKET: bucket,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const bootstrapBody = await bootstrapResponse.json();
+  assert.equal(bootstrapResponse.status, 201);
+  assert.equal(typeof bootstrapBody.access_token, "string");
+
+  const request = new Request("https://worker.example/web/photos/21", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${bootstrapBody.access_token}`,
+    },
+  });
+
+  const response = await workerFetch(request, {
+    DB: db,
+    INCIDENTS_BUCKET: bucket,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
   });
 
   assert.equal(response.status, 200);

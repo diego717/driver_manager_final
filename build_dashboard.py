@@ -1,52 +1,48 @@
 #!/usr/bin/env python3
 """
-Build script para embeber el dashboard en worker.js
-Combina dashboard.css y dashboard.js en un solo archivo HTML embebido
+Build script para embeber el dashboard en worker.js.
+Combina dashboard.css y dashboard.js en un solo HTML embebido.
 """
 
-import re
+from __future__ import annotations
 
-def read_file(path):
-    with open(path, 'r', encoding='utf-8') as f:
+import re
+import sys
+
+
+def read_file(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
-def escape_js_string(content):
-    """Escapa contenido para usarlo en una string JavaScript"""
-    # Escapa backslashes primero
-    content = content.replace('\\', '\\\\')
-    # Escapa comillas simples (usaremos template literals)
-    content = content.replace('`', '\\`')
-    # Escapa ${ para evitar interpolación
-    content = content.replace('${', '\\${')
-    return content
 
-def build_dashboard_html():
-    css = read_file('dashboard.css')
-    js = read_file('dashboard.js')
-    html_template = read_file('dashboard.html')
-    
-    # Inserta CSS y JS en el HTML
-    html = html_template.replace(
-        '<link rel="stylesheet" href="/dashboard.css">',
-        f'<style>\n{css}\n</style>'
-    ).replace(
-        '<script src="/dashboard.js"></script>',
-        f'<script>\n{js}\n</script>'
+def write_file(path: str, content: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
+def escape_js_template(content: str) -> str:
+    # Escape for JS template literal in worker.js
+    return content.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+
+
+def build_dashboard_html() -> str:
+    css = read_file("dashboard.css")
+    js = read_file("dashboard.js")
+    html_template = read_file("dashboard.html")
+
+    return (
+        html_template.replace(
+            '<link rel="stylesheet" href="/dashboard.css">',
+            f"<style>\n{css}\n</style>",
+        ).replace(
+            '<script src="/dashboard.js"></script>',
+            f"<script>\n{js}\n</script>",
+        )
     )
-    
-    return html
 
-def update_worker():
-    dashboard_html = build_dashboard_html()
-    
-    # Lee el worker actual
-    worker_content = read_file('worker.js')
-    
-    # Escapa el HTML para JavaScript template literal
-    escaped_html = escape_js_string(dashboard_html)
-    
-    # Crea el código para servir el dashboard
-    dashboard_route_code = f'''
+
+def build_dashboard_route_block(escaped_html: str) -> str:
+    return f'''
       // Dashboard route - serve embedded single-file dashboard
       if (routeParts.length === 1 && routeParts[0] === "dashboard" && request.method === "GET") {{
         try {{
@@ -86,25 +82,44 @@ def update_worker():
         }});
       }}
 
-      if (isWebRoute) {{'''
-    
-    # Busca y reemplaza la sección del dashboard en el worker
-    # Patrón para encontrar la sección del dashboard actual
-    pattern = r'''
-      // Dashboard routes.*?if \(isWebRoute\) \{'''
-    
-    if re.search(pattern, worker_content, re.DOTALL):
-        new_content = re.sub(pattern, dashboard_route_code, worker_content, flags=re.DOTALL)
-        
-        with open('worker.js', 'w', encoding='utf-8') as f:
-            f.write(new_content)
-        
-        print("✅ Dashboard embebido exitosamente en worker.js")
-        print(f"   Tamaño HTML: {len(dashboard_html)} bytes")
-        return True
-    else:
-        print("❌ No se encontró la sección del dashboard en worker.js")
+'''
+
+
+def replace_dashboard_block(worker_content: str, dashboard_block: str) -> tuple[str, bool]:
+    # Preferred: replace only the embedded dashboard routes block, preserving PWA/SSE routes.
+    patterns = [
+        re.compile(
+            r"(?ms)^ {6}// Dashboard route - serve embedded single-file dashboard.*?(?=^ {6}// PWA manifest\.json)"
+        ),
+        # Fallback for older worker variants without the PWA section in-between.
+        re.compile(
+            r"(?ms)^ {6}// Dashboard route - serve embedded single-file dashboard.*?(?=^ {6}if \(isWebRoute\) \{)"
+        ),
+    ]
+
+    for pattern in patterns:
+        if pattern.search(worker_content):
+            return pattern.sub(lambda _m: dashboard_block, worker_content), True
+    return worker_content, False
+
+
+def update_worker() -> bool:
+    dashboard_html = build_dashboard_html()
+    worker_content = read_file("worker.js")
+    escaped_html = escape_js_template(dashboard_html)
+    dashboard_block = build_dashboard_route_block(escaped_html)
+
+    new_content, replaced = replace_dashboard_block(worker_content, dashboard_block)
+    if not replaced:
+        print("ERROR: No se encontro el bloque del dashboard en worker.js")
         return False
 
-if __name__ == '__main__':
-    update_worker()
+    write_file("worker.js", new_content)
+    print("OK: Dashboard embebido actualizado en worker.js")
+    print(f"    Tamano HTML: {len(dashboard_html)} bytes")
+    return True
+
+
+if __name__ == "__main__":
+    # Avoid unicode console issues on Windows by keeping output ASCII-only.
+    raise SystemExit(0 if update_worker() else 1)
