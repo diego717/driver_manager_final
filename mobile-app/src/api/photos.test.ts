@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const fileSystemMock = vi.hoisted(() => ({
+  getInfoAsync: vi.fn(),
   readAsStringAsync: vi.fn(),
   EncodingType: { Base64: "base64" },
 }));
@@ -23,6 +24,7 @@ function toBase64(bytes: Uint8Array): string {
 describe("photos api", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    fileSystemMock.getInfoAsync.mockResolvedValue({ exists: true, size: 0 });
     clientMock.getResolvedApiBaseUrl.mockResolvedValue("https://worker.example");
     clientMock.resolveRequestAuth.mockResolvedValue({
       path: "/incidents/11/photos",
@@ -38,6 +40,7 @@ describe("photos api", () => {
   it("rejects too-small image payload before upload", async () => {
     const payload = new Uint8Array(512);
     payload.set([0xff, 0xd8, 0xff], 0);
+    fileSystemMock.getInfoAsync.mockResolvedValue({ exists: true, size: payload.byteLength });
     fileSystemMock.readAsStringAsync.mockResolvedValue(toBase64(payload));
 
     await expect(
@@ -53,6 +56,7 @@ describe("photos api", () => {
   it("uploads validated payload with signed headers", async () => {
     const payload = new Uint8Array(1500);
     payload.set([0xff, 0xd8, 0xff], 0);
+    fileSystemMock.getInfoAsync.mockResolvedValue({ exists: true, size: payload.byteLength });
     fileSystemMock.readAsStringAsync.mockResolvedValue(toBase64(payload));
 
     const fetchMock = vi.mocked(globalThis.fetch);
