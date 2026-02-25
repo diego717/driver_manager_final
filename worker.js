@@ -95,7 +95,7 @@ function buildCorsPolicy(isWebRoute, routeParts) {
     headers.add("X-File-Name");
   }
 
-  if (["dashboard", "dashboard.css", "dashboard.js", "manifest.json", "events", "sw.js"].includes(first)) {
+  if (["dashboard", "dashboard.css", "dashboard.js", "dashboard-pwa.js", "manifest.json", "events", "sw.js"].includes(first)) {
     methods.add("GET");
   } else if (first === "installations" && !isRecordById) {
     methods.add("GET");
@@ -156,6 +156,28 @@ function textResponse(request, env, corsPolicy, text, status = 200) {
     status,
     headers: corsHeaders(request, env, corsPolicy),
   });
+}
+
+function dashboardAssetSecurityHeaders() {
+  // Dashboard HTML includes inline CSS/JS, so CSP must allow inline while denying framing.
+  return {
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "frame-ancestors 'none'",
+      "object-src 'none'",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      "connect-src 'self'",
+      "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "manifest-src 'self'",
+    ].join("; "),
+  };
 }
 
 function parsePositiveInt(value, label) {
@@ -4982,6 +5004,7 @@ init();
           status: 200,
           headers: {
             ...corsHeaders(request, env, corsPolicy),
+            ...dashboardAssetSecurityHeaders(),
             "Content-Type": "text/html",
           },
         });
@@ -4992,6 +5015,7 @@ init();
           status: 200,
           headers: {
             ...corsHeaders(request, env, corsPolicy),
+            ...dashboardAssetSecurityHeaders(),
             "Content-Type": "text/css",
           },
         });
@@ -5002,7 +5026,27 @@ init();
           status: 200,
           headers: {
             ...corsHeaders(request, env, corsPolicy),
+            ...dashboardAssetSecurityHeaders(),
             "Content-Type": "application/javascript",
+          },
+        });
+      }
+
+      if (routeParts.length === 1 && routeParts[0] === "dashboard-pwa.js" && request.method === "GET") {
+        const pwaCode = `// Lightweight dashboard PWA bootstrap
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+`;
+        return new Response(pwaCode, {
+          status: 200,
+          headers: {
+            ...corsHeaders(request, env, corsPolicy),
+            ...dashboardAssetSecurityHeaders(),
+            "Content-Type": "application/javascript",
+            "Cache-Control": "public, max-age=300",
           },
         });
       }
@@ -5078,6 +5122,7 @@ init();
           status: 200,
           headers: {
             ...corsHeaders(request, env, corsPolicy),
+            ...dashboardAssetSecurityHeaders(),
             "Content-Type": "application/manifest+json",
             "Cache-Control": "public, max-age=3600",
           },
