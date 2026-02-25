@@ -36,29 +36,123 @@ class HttpError extends Error {
   }
 }
 
-function corsHeaders() {
+const CONTROLLED_DASHBOARD_ORIGINS = [
+  "https://dashboard.driver-manager.app",
+  "https://dashboard.drivermanager.app",
+];
+const CONTROLLED_MOBILE_ORIGINS = [
+  "https://mobile.driver-manager.app",
+  "https://app.driver-manager.app",
+  "capacitor://localhost",
+];
+
+function getAllowedCorsOrigins(request, env) {
+  const allowed = new Set([...CONTROLLED_DASHBOARD_ORIGINS, ...CONTROLLED_MOBILE_ORIGINS]);
+  if (request?.url) {
+    allowed.add(new URL(request.url).origin);
+  }
+
+  const extraOrigins = normalizeOptionalString(env?.CORS_ALLOWED_ORIGINS, "");
+  if (extraOrigins) {
+    for (const origin of extraOrigins.split(",")) {
+      const normalized = origin.trim();
+      if (normalized) {
+        allowed.add(normalized);
+      }
+    }
+  }
+
+  return allowed;
+}
+
+function buildCorsPolicy(isWebRoute, routeParts) {
+  const headers = new Set();
+  const methods = new Set(["OPTIONS"]);
+
+  if (routeParts.length === 0 || (routeParts.length === 1 && routeParts[0] === "health")) {
+    methods.add("GET");
+    return { methods: [...methods], headers: [] };
+  }
+
+  const first = routeParts[0] || "";
+  const isPhotoUpload = routeParts.length === 3 && first === "incidents" && routeParts[2] === "photos";
+  const isRecordById = routeParts.length === 2 && first === "installations";
+
+  if (isWebRoute) {
+    headers.add("Authorization");
+  } else {
+    headers.add("X-API-Token");
+    headers.add("X-Request-Timestamp");
+    headers.add("X-Request-Signature");
+  }
+
+  if (isPhotoUpload || first === "records" || first === "devices" || first === "audit-logs" || first === "auth" || first === "installations") {
+    headers.add("Content-Type");
+  }
+  if (isPhotoUpload) {
+    headers.add("X-File-Name");
+  }
+
+  if (["dashboard", "dashboard.css", "dashboard.js", "manifest.json", "events", "sw.js"].includes(first)) {
+    methods.add("GET");
+  } else if (first === "installations" && !isRecordById) {
+    methods.add("GET");
+    methods.add("POST");
+  } else if (isRecordById) {
+    methods.add("GET");
+    methods.add("PUT");
+    methods.add("DELETE");
+  } else if (["records", "devices", "audit-logs"].includes(first)) {
+    methods.add(first === "audit-logs" ? "GET" : "POST");
+    methods.add("POST");
+  } else if (first === "statistics" || first === "photos") {
+    methods.add("GET");
+  } else if (first === "incidents") {
+    methods.add("GET");
+    methods.add("POST");
+  } else if (first === "auth") {
+    methods.add("GET");
+    methods.add("POST");
+    methods.add("PATCH");
+  }
+
   return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers":
-      "Content-Type, Authorization, X-API-Token, X-Request-Timestamp, X-Request-Signature, X-File-Name",
+    methods: [...methods],
+    headers: [...headers],
   };
 }
 
-function jsonResponse(body, status = 200) {
+function corsHeaders(request, env, corsPolicy = { methods: ["OPTIONS"], headers: [] }) {
+  const origin = normalizeOptionalString(request?.headers?.get("Origin"), "");
+  if (!origin) return {};
+
+  const allowedOrigins = getAllowedCorsOrigins(request, env);
+  if (!allowedOrigins.has(origin)) {
+    return {};
+  }
+
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": corsPolicy.methods.join(", "),
+    "Access-Control-Allow-Headers": corsPolicy.headers.join(", "),
+    Vary: "Origin",
+  };
+}
+
+function jsonResponse(request, env, corsPolicy, body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders(),
+      ...corsHeaders(request, env, corsPolicy),
       "Content-Type": "application/json",
     },
   });
 }
 
-function textResponse(text, status = 200) {
+function textResponse(request, env, corsPolicy, text, status = 200) {
   return new Response(text, {
     status,
-    headers: corsHeaders(),
+    headers: corsHeaders(request, env, corsPolicy),
   });
 }
 
@@ -1381,7 +1475,7 @@ async function sendPushNotification(env, fcmTokens, notification) {
   };
 }
 
-async function handleWebAuthRoute(request, env, pathParts) {
+async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
   if (pathParts.length < 2 || pathParts[0] !== "auth") {
     return null;
   }
@@ -1459,7 +1553,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
       user_id: Number(user.id),
     });
 
-    return jsonResponse(
+    return jsonResponse(request, env, corsPolicy,
       {
         success: true,
         access_token: token.token,
@@ -1517,7 +1611,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
       user_id: Number(createdUser.id),
     });
 
-    return jsonResponse(
+    return jsonResponse(request, env, corsPolicy,
       {
         success: true,
         bootstrapped: true,
@@ -1542,7 +1636,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
     requireAdminRole(session.role);
 
     const users = await listWebUsers(env);
-    return jsonResponse(
+    return jsonResponse(request, env, corsPolicy,
       {
         success: true,
         users,
@@ -1585,7 +1679,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
       platform: "web"
     });
 
-    return jsonResponse(
+    return jsonResponse(request, env, corsPolicy,
       {
         success: true,
         user: {
@@ -1664,7 +1758,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
     });
 
     const updatedUser = await getWebUserById(env, userId);
-    return jsonResponse(
+    return jsonResponse(request, env, corsPolicy,
       {
         success: true,
         user: serializeWebUser(updatedUser),
@@ -1716,7 +1810,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
     });
 
     const updatedUser = await getWebUserById(env, userId);
-    return jsonResponse(
+    return jsonResponse(request, env, corsPolicy,
       {
         success: true,
         user: serializeWebUser(updatedUser),
@@ -1780,7 +1874,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
       platform: "web"
     });
 
-    return jsonResponse(
+    return jsonResponse(request, env, corsPolicy,
       {
         success: true,
         imported: processedUsers.length,
@@ -1794,7 +1888,7 @@ async function handleWebAuthRoute(request, env, pathParts) {
 
   if (pathParts[1] === "me" && request.method === "GET") {
     const payload = await verifyWebAccessToken(request, env);
-    return jsonResponse({
+    return jsonResponse(request, env, corsPolicy,{
       success: true,
       authenticated: true,
       scope: payload.scope,
@@ -1901,18 +1995,27 @@ function validateIncidentPayload(data, options = {}) {
 
 export default {
   async fetch(request, env) {
-    if (request.method === "OPTIONS") {
-      return new Response(null, { headers: corsHeaders() });
-    }
-
     const url = new URL(request.url);
     const pathParts = url.pathname.split("/").filter((part) => part !== "");
     const isWebRoute = pathParts[0] === "web";
     const routeParts = isWebRoute ? pathParts.slice(1) : pathParts;
+    const corsPolicy = buildCorsPolicy(isWebRoute, routeParts);
+
+    if (request.method === "OPTIONS") {
+      const origin = normalizeOptionalString(request.headers.get("Origin"), "");
+      const preflightHeaders = corsHeaders(request, env, corsPolicy);
+      if (origin && !preflightHeaders["Access-Control-Allow-Origin"]) {
+        return new Response("Origin no permitido.", { status: 403 });
+      }
+      return new Response(null, {
+        status: 204,
+        headers: preflightHeaders,
+      });
+    }
 
     try {
       if (routeParts.length === 0 && request.method === "GET") {
-        return jsonResponse({
+        return jsonResponse(request, env, corsPolicy,{
           service: "driver-manager-api",
           status: "ok",
           docs: {
@@ -1933,7 +2036,7 @@ export default {
       }
 
       if (routeParts.length === 1 && routeParts[0] === "health" && request.method === "GET") {
-        return jsonResponse({ ok: true, now: nowIso() });
+        return jsonResponse(request, env, corsPolicy,{ ok: true, now: nowIso() });
       }
 
 
@@ -4758,7 +4861,7 @@ init();
         return new Response(html, {
           status: 200,
           headers: {
-            ...corsHeaders(),
+            ...corsHeaders(request, env, corsPolicy),
             "Content-Type": "text/html",
           },
         });
@@ -4768,7 +4871,7 @@ init();
         return new Response("", {
           status: 200,
           headers: {
-            ...corsHeaders(),
+            ...corsHeaders(request, env, corsPolicy),
             "Content-Type": "text/css",
           },
         });
@@ -4778,7 +4881,7 @@ init();
         return new Response("", {
           status: 200,
           headers: {
-            ...corsHeaders(),
+            ...corsHeaders(request, env, corsPolicy),
             "Content-Type": "application/javascript",
           },
         });
@@ -4854,7 +4957,7 @@ init();
         return new Response(JSON.stringify(manifest), {
           status: 200,
           headers: {
-            ...corsHeaders(),
+            ...corsHeaders(request, env, corsPolicy),
             "Content-Type": "application/manifest+json",
             "Cache-Control": "public, max-age=3600",
           },
@@ -4867,7 +4970,7 @@ init();
         try {
           await verifyWebAccessToken(request, env);
         } catch (err) {
-          return jsonResponse({ error: "Unauthorized" }, 401);
+          return jsonResponse(request, env, corsPolicy,{ error: "Unauthorized" }, 401);
         }
 
         const encoder = new TextEncoder();
@@ -4919,7 +5022,7 @@ init();
 
         return new Response(stream, {
           headers: {
-            ...corsHeaders(),
+            ...corsHeaders(request, env, corsPolicy),
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
             "Connection": "keep-alive"
@@ -5045,7 +5148,7 @@ console.log('[SW] Service Worker loaded');`;
         return new Response(swCode, {
           status: 200,
           headers: {
-            ...corsHeaders(),
+            ...corsHeaders(request, env, corsPolicy),
             "Content-Type": "application/javascript",
             "Cache-Control": "public, max-age=3600",
           },
@@ -5055,7 +5158,7 @@ console.log('[SW] Service Worker loaded');`;
 
 
       if (isWebRoute) {
-        const webAuthResponse = await handleWebAuthRoute(request, env, routeParts);
+        const webAuthResponse = await handleWebAuthRoute(request, env, routeParts, corsPolicy);
         if (webAuthResponse) {
           return webAuthResponse;
         }
@@ -5078,7 +5181,7 @@ console.log('[SW] Service Worker loaded');`;
             "SELECT * FROM installations ORDER BY timestamp DESC",
           ).all();
           const filtered = applyInstallationFilters(results, url.searchParams);
-          return jsonResponse(filtered);
+          return jsonResponse(request, env, corsPolicy,filtered);
         }
 
         if (request.method === "POST") {
@@ -5117,7 +5220,7 @@ console.log('[SW] Service Worker loaded');`;
             platform: isWebRoute ? "web" : "api"
           });
 
-          return jsonResponse({ success: true }, 201);
+          return jsonResponse(request, env, corsPolicy,{ success: true }, 201);
         }
       }
 
@@ -5156,7 +5259,7 @@ console.log('[SW] Service Worker loaded');`;
             )
             .run();
 
-          return jsonResponse({ success: true }, 201);
+          return jsonResponse(request, env, corsPolicy,{ success: true }, 201);
 
         }
 
@@ -5175,7 +5278,7 @@ console.log('[SW] Service Worker loaded');`;
             .bind(limit)
             .all();
 
-          return jsonResponse(results || []);
+          return jsonResponse(request, env, corsPolicy,results || []);
         }
       }
 
@@ -5200,7 +5303,7 @@ console.log('[SW] Service Worker loaded');`;
           platform: data?.platform || "android",
         });
 
-        return jsonResponse(
+        return jsonResponse(request, env, corsPolicy,
           {
             success: true,
             registered: true,
@@ -5236,7 +5339,7 @@ console.log('[SW] Service Worker loaded');`;
           )
           .run();
 
-        return jsonResponse(
+        return jsonResponse(request, env, corsPolicy,
           {
             success: true,
             record: {
@@ -5288,7 +5391,7 @@ console.log('[SW] Service Worker loaded');`;
             photos: photosByIncident[incident.id] || [],
           }));
 
-          return jsonResponse({
+          return jsonResponse(request, env, corsPolicy,{
             success: true,
             installation_id: installationId,
             incidents: enriched,
@@ -5390,7 +5493,7 @@ console.log('[SW] Service Worker loaded');`;
             platform: payload.source
           });
 
-          return jsonResponse(
+          return jsonResponse(request, env, corsPolicy,
             {
               success: true,
               incident: {
@@ -5463,7 +5566,7 @@ console.log('[SW] Service Worker loaded');`;
           .bind(incidentId, r2Key, fileName, contentType, sizeBytes, sha256, createdAt)
           .run();
 
-        return jsonResponse(
+        return jsonResponse(request, env, corsPolicy,
           {
             success: true,
             photo: {
@@ -5511,7 +5614,7 @@ console.log('[SW] Service Worker loaded');`;
         return new Response(object.body, {
           status: 200,
           headers: {
-            ...corsHeaders(),
+            ...corsHeaders(request, env, corsPolicy),
             "Content-Type":
               photo.content_type || object.httpMetadata?.contentType || "application/octet-stream",
             "Content-Disposition": `inline; filename=\"${safeName}\"`,
@@ -5535,7 +5638,7 @@ console.log('[SW] Service Worker loaded');`;
             throw new HttpError(404, "Registro no encontrado.");
           }
 
-          return jsonResponse(results[0]);
+          return jsonResponse(request, env, corsPolicy,results[0]);
         }
 
         if (request.method === "PUT") {
@@ -5548,12 +5651,12 @@ console.log('[SW] Service Worker loaded');`;
             .bind(data.notes ?? null, data.installation_time_seconds ?? null, recordId)
             .run();
 
-          return jsonResponse({ success: true, updated: recordId });
+          return jsonResponse(request, env, corsPolicy,{ success: true, updated: recordId });
         }
 
         if (request.method === "DELETE") {
           if (!recordId) {
-            return textResponse("Error: El ID del registro es obligatorio.", 400);
+            return textResponse(request, env, corsPolicy, "Error: El ID del registro es obligatorio.", 400);
           }
 
           // Log audit event for installation deletion
@@ -5569,7 +5672,7 @@ console.log('[SW] Service Worker loaded');`;
           });
 
           await env.DB.prepare("DELETE FROM installations WHERE id = ?").bind(recordId).run();
-          return jsonResponse({ message: `Registro ${recordId} eliminado.` });
+          return jsonResponse(request, env, corsPolicy,{ message: `Registro ${recordId} eliminado.` });
         }
       }
 
@@ -5645,7 +5748,7 @@ console.log('[SW] Service Worker loaded');`;
           }
         }
 
-        return jsonResponse({
+        return jsonResponse(request, env, corsPolicy,{
           total_installations: Number(totals.total_installations) || 0,
           successful_installations: Number(totals.successful_installations) || 0,
           failed_installations: Number(totals.failed_installations) || 0,
@@ -5657,10 +5760,10 @@ console.log('[SW] Service Worker loaded');`;
         });
       }
 
-      return textResponse("Ruta no encontrada.", 404);
+      return textResponse(request, env, corsPolicy, "Ruta no encontrada.", 404);
     } catch (error) {
       if (error instanceof HttpError) {
-        return jsonResponse(
+        return jsonResponse(request, env, corsPolicy,
           {
             success: false,
             error: {
@@ -5672,7 +5775,7 @@ console.log('[SW] Service Worker loaded');`;
         );
       }
 
-      return jsonResponse({ error: error.message }, 500);
+      return jsonResponse(request, env, corsPolicy,{ error: error.message }, 500);
     }
   },
 };
