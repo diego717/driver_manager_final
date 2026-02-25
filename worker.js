@@ -1647,7 +1647,6 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       session_version: sessionVersion,
     });
 
-    const response = jsonResponse(request, env, corsPolicy, {
     const response = jsonResponse(
       request,
       env,
@@ -1713,8 +1712,6 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       session_version: sessionVersion,
     });
 
-    const response = jsonResponse(request, env, corsPolicy, {
-   
     const response = jsonResponse(
       request,
       env,
@@ -2001,7 +1998,6 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       await invalidateWebSessionVersion(env, Number(payload.user_id));
     }
 
-    const response = jsonResponse({
     const response = jsonResponse(request, env, corsPolicy, {
       success: true,
       logged_out: true,

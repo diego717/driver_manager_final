@@ -937,9 +937,6 @@ async function showIncidentsForInstallation(installationId) {
 
 async function loadPhotoWithAuth(photoId) {
     try {
-        const response = await fetch(API_BASE + '/web/photos/' + photoId, {
-            credentials: 'same-origin'
-        });
         const headers = {};
         if (authToken) {
             headers['Authorization'] = 'Bearer ' + authToken;
