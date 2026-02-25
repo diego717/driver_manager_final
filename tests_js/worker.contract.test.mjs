@@ -697,6 +697,31 @@ test("CORS methods and headers are route-specific in preflight", async () => {
   assert.equal(response.headers.get("Access-Control-Allow-Headers").includes("X-API-Token"), false);
 });
 
+
+
+test("Dashboard assets include hardened security headers", async () => {
+  const routes = [
+    "https://worker.example/web/dashboard",
+    "https://worker.example/web/dashboard.css",
+    "https://worker.example/web/dashboard.js",
+    "https://worker.example/web/dashboard-pwa.js",
+    "https://worker.example/web/manifest.json",
+  ];
+
+  for (const url of routes) {
+    const response = await workerFetch(new Request(url, { method: "GET" }), {});
+    assert.equal(response.status, 200, `Expected 200 for ${url}`);
+    assert.equal(response.headers.get("X-Frame-Options"), "DENY");
+    assert.equal(response.headers.get("Referrer-Policy"), "no-referrer");
+    assert.equal(response.headers.get("Permissions-Policy"), "geolocation=(), microphone=(), camera=()");
+    assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
+
+    const csp = response.headers.get("Content-Security-Policy") || "";
+    assert.match(csp, /script-src 'self' https:\/\/cdn\.jsdelivr\.net/);
+    assert.match(csp, /style-src 'self'/);
+    assert.match(csp, /frame-ancestors 'none'/);
+  }
+});
 test("GET / returns service metadata", async () => {
   const request = new Request("https://worker.example/", { method: "GET" });
   const response = await workerFetch(request, {});

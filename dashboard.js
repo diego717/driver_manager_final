@@ -944,7 +944,10 @@ async function loadPhotoWithAuth(photoId) {
         if (authToken) {
             headers['Authorization'] = 'Bearer ' + authToken;
         }
-        const response = await fetch(API_BASE + '/web/photos/' + photoId, { headers });
+        const response = await fetch(API_BASE + '/web/photos/' + photoId, {
+            headers,
+            credentials: 'same-origin'
+        });
         if (!response.ok) throw new Error('Failed to load photo');
         const blob = await response.blob();
         return URL.createObjectURL(blob);

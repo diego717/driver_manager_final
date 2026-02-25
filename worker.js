@@ -1648,6 +1648,10 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     });
 
     const response = jsonResponse(request, env, corsPolicy, {
+    const response = jsonResponse(
+      request,
+      env,
+      corsPolicy,
       {
         success: true,
         access_token: token.token,
@@ -1711,6 +1715,10 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
 
     const response = jsonResponse(request, env, corsPolicy, {
    
+    const response = jsonResponse(
+      request,
+      env,
+      corsPolicy,
       {
         success: true,
         bootstrapped: true,
@@ -1994,6 +2002,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     }
 
     const response = jsonResponse({
+    const response = jsonResponse(request, env, corsPolicy, {
       success: true,
       logged_out: true,
     });
