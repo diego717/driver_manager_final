@@ -93,7 +93,7 @@ function buildCorsPolicy(isWebRoute, routeParts) {
     headers.add("X-File-Name");
   }
 
-  if (["dashboard", "dashboard.css", "dashboard.js", "manifest.json", "events", "sw.js"].includes(first)) {
+  if (["dashboard", "dashboard.css", "dashboard.js", "dashboard-pwa.js", "manifest.json", "events", "sw.js"].includes(first)) {
     methods.add("GET");
   } else if (first === "installations" && !isRecordById) {
     methods.add("GET");
@@ -154,6 +154,36 @@ function textResponse(request, env, corsPolicy, text, status = 200) {
     status,
     headers: corsHeaders(request, env, corsPolicy),
   });
+}
+
+
+function buildDashboardCsp() {
+  return [
+    "default-src 'self'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "form-action 'self'",
+    "img-src 'self' data: blob:",
+    "style-src 'self'",
+    "script-src 'self' https://cdn.jsdelivr.net",
+    "connect-src 'self'",
+    "font-src 'self' data:",
+    "manifest-src 'self'",
+    "worker-src 'self'",
+  ].join('; ');
+}
+
+function dashboardSecurityHeaders(contentType, extraHeaders = {}) {
+  return {
+    "Content-Type": contentType,
+    "Content-Security-Policy": buildDashboardCsp(),
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+    "X-Content-Type-Options": "nosniff",
+    ...extraHeaders,
+  };
 }
 
 function parsePositiveInt(value, label) {
@@ -2043,6 +2073,8 @@ export default {
 
 
 
+
+
       // Dashboard route - serve embedded single-file dashboard
       if (routeParts.length === 1 && routeParts[0] === "dashboard" && request.method === "GET") {
         try {
@@ -2050,7 +2082,7 @@ export default {
         } catch {
           // Allow access to login page even without token - JS will handle auth
         }
-        
+
         const html = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -2059,8 +2091,219 @@ export default {
     <meta name="theme-color" content="#06b6d4">
     <meta name="description" content="Dashboard de gestión de instalaciones de drivers">
     <title>Driver Manager Dashboard</title>
-    <style>
-:root {
+    <link rel="stylesheet" href="/dashboard.css">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+</head>
+
+<body>
+    <div id="app">
+        <nav class="sidebar">
+            <div class="logo">
+                <h1>📊 Driver Manager</h1>
+            </div>
+            <ul class="nav-links">
+                <li><a href="#" class="active" data-section="dashboard">📈 Dashboard</a></li>
+                <li><a href="#" data-section="installations">💻 Instalaciones</a></li>
+                <li><a href="#" data-section="incidents">⚠️ Incidencias</a></li>
+                <li><a href="#" data-section="audit">📋 Auditoría</a></li>
+            </ul>
+            <div class="user-info">
+                <span id="username">Usuario</span>
+                <span id="userRole" class="role-badge">admin</span>
+                <button id="logoutBtn" class="btn-secondary">Cerrar sesión</button>
+            </div>
+        </nav>
+        
+        <main class="main-content">
+            <header class="header">
+                <h2 id="pageTitle">Dashboard</h2>
+                <div class="header-actions">
+                    <button id="themeToggle" class="theme-toggle" title="Cambiar tema">
+                        <span class="icon-sun">☀️</span>
+                        <span class="icon-moon">🌙</span>
+                    </button>
+                    <button id="refreshBtn" class="btn-icon" title="Actualizar">↻</button>
+                </div>
+            </header>
+
+            
+            <div id="dashboardSection" class="section active">
+                <!-- Stats Cards -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon total">📦</div>
+                        <div class="stat-info">
+                            <h3>Total Instalaciones</h3>
+                            <p id="totalInstallations">-</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon success">✅</div>
+                        <div class="stat-info">
+                            <h3>Tasa de Éxito</h3>
+                            <p id="successRate">-</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon time">⏱️</div>
+                        <div class="stat-info">
+                            <h3>Tiempo Promedio</h3>
+                            <p id="avgTime">-</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon clients">👥</div>
+                        <div class="stat-info">
+                            <h3>Clientes Únicos</h3>
+                            <p id="uniqueClients">-</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Charts Grid -->
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <h3>📊 Tasa de Éxito</h3>
+                        <canvas id="successChart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>🏷️ Instalaciones por Marca</h3>
+                        <canvas id="brandChart"></canvas>
+                    </div>
+                    <div class="chart-card wide">
+                        <h3>📈 Tendencia de Instalaciones (Últimos 7 días)</h3>
+                        <canvas id="trendChart"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Recent Activity -->
+                <div class="recent-section">
+                    <h3>🕐 Instalaciones Recientes</h3>
+                    <div id="recentInstallations" class="table-container">
+                        <p class="loading">Cargando...</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="installationsSection" class="section">
+                <div class="filters">
+                    <!-- Real-time search -->
+                    <div class="search-wrapper">
+                        <input type="text" id="searchInput" class="search-input" placeholder="🔍 Búsqueda en tiempo real..." autocomplete="off">
+                        <span class="search-icon">🔍</span>
+                    </div>
+                    
+                    <!-- Filter row -->
+                    <div class="filter-row">
+                        <select id="brandFilter">
+                            <option value="">Todas las marcas</option>
+                        </select>
+                        <select id="statusFilter">
+                            <option value="">Todos los estados</option>
+                            <option value="success">✅ Éxito</option>
+                            <option value="failed">❌ Fallido</option>
+                            <option value="unknown">❓ Desconocido</option>
+                        </select>
+                        <input type="date" id="startDate" placeholder="Fecha inicio">
+                        <input type="date" id="endDate" placeholder="Fecha fin">
+                    </div>
+                    
+                    <!-- Filter chips -->
+                    <div id="filterChips" class="filter-chips">
+                        <!-- Dynamic filter chips will appear here -->
+                    </div>
+                    
+                    <!-- Action buttons -->
+                    <div class="filter-actions">
+                        <button id="clearFilters" class="btn-secondary is-hidden">🗑️ Limpiar Filtros</button>
+                        <button id="applyFilters" class="btn-primary">🔄 Aplicar</button>
+                        <button id="exportBtn" class="btn-secondary">📥 Exportar</button>
+                    </div>
+                </div>
+                
+                <!-- Results info -->
+                <div class="results-info">
+                    <span id="resultsCount">Cargando...</span>
+                </div>
+                
+                <div id="installationsTable" class="table-container">
+                    <p class="loading">Cargando instalaciones...</p>
+                </div>
+            </div>
+            
+            <div id="incidentsSection" class="section">
+                <div id="incidentsList" class="incidents-grid">
+                    <p class="loading">Cargando incidencias...</p>
+                </div>
+            </div>
+            
+            <div id="auditSection" class="section">
+                <div class="filters">
+                    <select id="auditActionFilter">
+                        <option value="">Todas las acciones</option>
+                        <option value="web_login_success">✅ Login exitoso</option>
+                        <option value="web_login_failed">❌ Login fallido</option>
+                        <option value="create_web_user">👤 Crear usuario</option>
+                        <option value="update_web_user">✏️ Actualizar usuario</option>
+                        <option value="create_incident">⚠️ Crear incidencia</option>
+                        <option value="create_installation">💻 Crear instalación</option>
+                    </select>
+                    <button id="refreshAudit" class="btn-secondary">🔄 Actualizar</button>
+                </div>
+                <div id="auditLogs" class="table-container">
+                    <p class="loading">Cargando logs...</p>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <div id="loginModal" class="modal">
+        <div class="modal-content">
+            <div class="login-header">
+                <h2>🔐 Driver Manager</h2>
+                <p>Iniciar Sesión</p>
+            </div>
+            <form id="loginForm">
+                <div class="input-group">
+                    <label for="loginUsername">Usuario</label>
+                    <input type="text" id="loginUsername" placeholder="nombre_usuario" required>
+                </div>
+                <div class="input-group">
+                    <label for="loginPassword">Contraseña</label>
+                    <input type="password" id="loginPassword" placeholder="••••••••" required>
+                </div>
+                <button type="submit" class="btn-primary btn-full">Ingresar</button>
+            </form>
+            <p id="loginError" class="error"></p>
+        </div>
+    </div>
+    
+    <div id="photoModal" class="modal">
+        <div class="modal-content photo-modal">
+            <span class="close">&times;</span>
+            <img id="photoViewer" src="" alt="Foto de incidencia">
+        </div>
+    </div>
+    
+    <script src="/dashboard.js" defer></script>
+    <script src="/dashboard-pwa.js" defer></script>
+</body>
+</html>
+`;
+
+        return new Response(html, {
+          status: 200,
+          headers: {
+            ...corsHeaders(request, env, corsPolicy),
+            ...dashboardSecurityHeaders("text/html; charset=utf-8"),
+          },
+        });
+      }
+
+      if (routeParts.length === 1 && routeParts[0] === "dashboard.css" && request.method === "GET") {
+        const css = `:root {
     /* Dark theme (default) */
     --bg-primary: #0f172a;
     --bg-secondary: #1e293b;
@@ -3115,204 +3358,22 @@ tr[data-id] {
     background: var(--bg-hover);
 }
 
-</style>
-    <link rel="manifest" href="/manifest.json">
-    <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-</head>
 
-<body>
-    <div id="app">
-        <nav class="sidebar">
-            <div class="logo">
-                <h1>📊 Driver Manager</h1>
-            </div>
-            <ul class="nav-links">
-                <li><a href="#" class="active" data-section="dashboard">📈 Dashboard</a></li>
-                <li><a href="#" data-section="installations">💻 Instalaciones</a></li>
-                <li><a href="#" data-section="incidents">⚠️ Incidencias</a></li>
-                <li><a href="#" data-section="audit">📋 Auditoría</a></li>
-            </ul>
-            <div class="user-info">
-                <span id="username">Usuario</span>
-                <span id="userRole" class="role-badge">admin</span>
-                <button id="logoutBtn" class="btn-secondary">Cerrar sesión</button>
-            </div>
-        </nav>
-        
-        <main class="main-content">
-            <header class="header">
-                <h2 id="pageTitle">Dashboard</h2>
-                <div class="header-actions">
-                    <button id="themeToggle" class="theme-toggle" title="Cambiar tema">
-                        <span class="icon-sun">☀️</span>
-                        <span class="icon-moon">🌙</span>
-                    </button>
-                    <button id="refreshBtn" class="btn-icon" title="Actualizar">↻</button>
-                </div>
-            </header>
+.is-hidden {
+    display: none !important;
+}
+`;
+        return new Response(css, {
+          status: 200,
+          headers: {
+            ...corsHeaders(request, env, corsPolicy),
+            ...dashboardSecurityHeaders("text/css; charset=utf-8"),
+          },
+        });
+      }
 
-            
-            <div id="dashboardSection" class="section active">
-                <!-- Stats Cards -->
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon total">📦</div>
-                        <div class="stat-info">
-                            <h3>Total Instalaciones</h3>
-                            <p id="totalInstallations">-</p>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon success">✅</div>
-                        <div class="stat-info">
-                            <h3>Tasa de Éxito</h3>
-                            <p id="successRate">-</p>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon time">⏱️</div>
-                        <div class="stat-info">
-                            <h3>Tiempo Promedio</h3>
-                            <p id="avgTime">-</p>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon clients">👥</div>
-                        <div class="stat-info">
-                            <h3>Clientes Únicos</h3>
-                            <p id="uniqueClients">-</p>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Charts Grid -->
-                <div class="charts-grid">
-                    <div class="chart-card">
-                        <h3>📊 Tasa de Éxito</h3>
-                        <canvas id="successChart"></canvas>
-                    </div>
-                    <div class="chart-card">
-                        <h3>🏷️ Instalaciones por Marca</h3>
-                        <canvas id="brandChart"></canvas>
-                    </div>
-                    <div class="chart-card wide">
-                        <h3>📈 Tendencia de Instalaciones (Últimos 7 días)</h3>
-                        <canvas id="trendChart"></canvas>
-                    </div>
-                </div>
-                
-                <!-- Recent Activity -->
-                <div class="recent-section">
-                    <h3>🕐 Instalaciones Recientes</h3>
-                    <div id="recentInstallations" class="table-container">
-                        <p class="loading">Cargando...</p>
-                    </div>
-                </div>
-            </div>
-            
-            <div id="installationsSection" class="section">
-                <div class="filters">
-                    <!-- Real-time search -->
-                    <div class="search-wrapper">
-                        <input type="text" id="searchInput" class="search-input" placeholder="🔍 Búsqueda en tiempo real..." autocomplete="off">
-                        <span class="search-icon">🔍</span>
-                    </div>
-                    
-                    <!-- Filter row -->
-                    <div class="filter-row">
-                        <select id="brandFilter">
-                            <option value="">Todas las marcas</option>
-                        </select>
-                        <select id="statusFilter">
-                            <option value="">Todos los estados</option>
-                            <option value="success">✅ Éxito</option>
-                            <option value="failed">❌ Fallido</option>
-                            <option value="unknown">❓ Desconocido</option>
-                        </select>
-                        <input type="date" id="startDate" placeholder="Fecha inicio">
-                        <input type="date" id="endDate" placeholder="Fecha fin">
-                    </div>
-                    
-                    <!-- Filter chips -->
-                    <div id="filterChips" class="filter-chips">
-                        <!-- Dynamic filter chips will appear here -->
-                    </div>
-                    
-                    <!-- Action buttons -->
-                    <div class="filter-actions">
-                        <button id="clearFilters" class="btn-secondary" style="display: none;">🗑️ Limpiar Filtros</button>
-                        <button id="applyFilters" class="btn-primary">🔄 Aplicar</button>
-                        <button id="exportBtn" class="btn-secondary">📥 Exportar</button>
-                    </div>
-                </div>
-                
-                <!-- Results info -->
-                <div class="results-info">
-                    <span id="resultsCount">Cargando...</span>
-                </div>
-                
-                <div id="installationsTable" class="table-container">
-                    <p class="loading">Cargando instalaciones...</p>
-                </div>
-            </div>
-            
-            <div id="incidentsSection" class="section">
-                <div id="incidentsList" class="incidents-grid">
-                    <p class="loading">Cargando incidencias...</p>
-                </div>
-            </div>
-            
-            <div id="auditSection" class="section">
-                <div class="filters">
-                    <select id="auditActionFilter">
-                        <option value="">Todas las acciones</option>
-                        <option value="web_login_success">✅ Login exitoso</option>
-                        <option value="web_login_failed">❌ Login fallido</option>
-                        <option value="create_web_user">👤 Crear usuario</option>
-                        <option value="update_web_user">✏️ Actualizar usuario</option>
-                        <option value="create_incident">⚠️ Crear incidencia</option>
-                        <option value="create_installation">💻 Crear instalación</option>
-                    </select>
-                    <button id="refreshAudit" class="btn-secondary">🔄 Actualizar</button>
-                </div>
-                <div id="auditLogs" class="table-container">
-                    <p class="loading">Cargando logs...</p>
-                </div>
-            </div>
-        </main>
-    </div>
-    
-    <div id="loginModal" class="modal">
-        <div class="modal-content">
-            <div class="login-header">
-                <h2>🔐 Driver Manager</h2>
-                <p>Iniciar Sesión</p>
-            </div>
-            <form id="loginForm">
-                <div class="input-group">
-                    <label for="loginUsername">Usuario</label>
-                    <input type="text" id="loginUsername" placeholder="nombre_usuario" required>
-                </div>
-                <div class="input-group">
-                    <label for="loginPassword">Contraseña</label>
-                    <input type="password" id="loginPassword" placeholder="••••••••" required>
-                </div>
-                <button type="submit" class="btn-primary btn-full">Ingresar</button>
-            </form>
-            <p id="loginError" class="error"></p>
-        </div>
-    </div>
-    
-    <div id="photoModal" class="modal">
-        <div class="modal-content photo-modal">
-            <span class="close">&times;</span>
-            <img id="photoViewer" src="" alt="Foto de incidencia">
-        </div>
-    </div>
-    
-    <script>
-// Auto-detect API base URL - use current origin in production, or fallback to worker URL
+      if (routeParts.length === 1 && routeParts[0] === "dashboard.js" && request.method === "GET") {
+        const js = `// Auto-detect API base URL - use current origin in production, or fallback to worker URL
 const API_BASE = (() => {
     // If running on localhost, use the production worker URL
     if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
@@ -3666,28 +3727,60 @@ async function loadDashboard() {
 
 function renderRecentInstallations(installations) {
     const container = document.getElementById('recentInstallations');
+    container.replaceChildren();
+
     if (!installations || !installations.length) {
-        container.innerHTML = '<p class="loading">No hay instalaciones recientes</p>';
+        const emptyMessage = document.createElement('p');
+        emptyMessage.className = 'loading';
+        emptyMessage.textContent = 'No hay instalaciones recientes';
+        container.appendChild(emptyMessage);
         return;
     }
-    
-    let html = '<table><thead><tr><th>ID</th><th>Cliente</th><th>Marca</th><th>Estado</th><th>Fecha</th></tr></thead><tbody>';
-    
+
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    ['ID', 'Cliente', 'Marca', 'Estado', 'Fecha'].forEach(label => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+
+    const tbody = document.createElement('tbody');
+
     installations.forEach(inst => {
         const statusClass = inst.status || 'unknown';
         const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
-        
-        html += '<tr>';
-        html += '<td><strong>#' + inst.id + '</strong></td>';
-        html += '<td>' + (inst.client_name || 'N/A') + '</td>';
-        html += '<td>' + (inst.driver_brand || 'N/A') + '</td>';
-        html += '<td><span class="badge ' + statusClass + '">' + statusIcon + ' ' + inst.status + '</span></td>';
-        html += '<td>' + new Date(inst.timestamp).toLocaleString('es-ES') + '</td>';
-        html += '</tr>';
+
+        const row = document.createElement('tr');
+
+        const idCell = document.createElement('td');
+        const strong = document.createElement('strong');
+        strong.textContent = \`#\${inst.id ?? 'N/A'}\`;
+        idCell.appendChild(strong);
+
+        const clientCell = document.createElement('td');
+        clientCell.textContent = inst.client_name || 'N/A';
+
+        const brandCell = document.createElement('td');
+        brandCell.textContent = inst.driver_brand || 'N/A';
+
+        const statusCell = document.createElement('td');
+        const statusBadge = document.createElement('span');
+        statusBadge.className = \`badge \${statusClass}\`;
+        statusBadge.textContent = \`\${statusIcon} \${inst.status || 'unknown'}\`;
+        statusCell.appendChild(statusBadge);
+
+        const dateCell = document.createElement('td');
+        dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
+
+        row.append(idCell, clientCell, brandCell, statusCell, dateCell);
+        tbody.appendChild(row);
     });
-    
-    html += '</tbody></table>';
-    container.innerHTML = html;
+
+    table.append(thead, tbody);
+    container.appendChild(table);
 }
 
 // Advanced Filters Functions
@@ -3714,58 +3807,51 @@ function updateFilterChips() {
     const clearBtn = document.getElementById('clearFilters');
     const filters = getActiveFilters();
     
-    chipsContainer.innerHTML = '';
+    chipsContainer.replaceChildren();
     let hasFilters = Object.keys(filters).length > 0;
     
     clearBtn.style.display = hasFilters ? 'inline-flex' : 'none';
     
-    // Search chip
+    const appendChip = (label, value, filterType) => {
+        const chip = document.createElement('span');
+        chip.className = 'filter-chip';
+
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'chip-label';
+        labelSpan.textContent = label;
+
+        const valueSpan = document.createElement('span');
+        valueSpan.className = 'chip-value';
+        valueSpan.textContent = value;
+
+        const removeSpan = document.createElement('span');
+        removeSpan.className = 'chip-remove';
+        removeSpan.dataset.filter = filterType;
+        removeSpan.textContent = '×';
+
+        chip.append(labelSpan, valueSpan, removeSpan);
+        chipsContainer.appendChild(chip);
+    };
+
     if (filters.search) {
-        chipsContainer.innerHTML += \`
-            <span class="filter-chip">
-                <span class="chip-label">🔍</span>
-                <span class="chip-value">"\${filters.search}"</span>
-                <span class="chip-remove" data-filter="search">×</span>
-            </span>
-        \`;
+        appendChip('🔍', \`"\${filters.search}"\`, 'search');
     }
-    
-    // Brand chip
+
     if (filters.brand) {
-        chipsContainer.innerHTML += \`
-            <span class="filter-chip">
-                <span class="chip-label">🏷️ Marca:</span>
-                <span class="chip-value">\${filters.brand}</span>
-                <span class="chip-remove" data-filter="brand">×</span>
-            </span>
-        \`;
+        appendChip('🏷️ Marca:', filters.brand, 'brand');
     }
-    
-    // Status chip
+
     if (filters.status) {
         const statusLabel = filters.status === 'success' ? '✅ Éxito' : 
                            filters.status === 'failed' ? '❌ Fallido' : '❓ Desconocido';
-        chipsContainer.innerHTML += \`
-            <span class="filter-chip">
-                <span class="chip-label">📊 Estado:</span>
-                <span class="chip-value">\${statusLabel}</span>
-                <span class="chip-remove" data-filter="status">×</span>
-            </span>
-        \`;
+        appendChip('📊 Estado:', statusLabel, 'status');
     }
-    
-    // Date range chips
+
     if (filters.startDate || filters.endDate) {
         const dateLabel = filters.startDate && filters.endDate ? 
             \`\${filters.startDate} - \${filters.endDate}\` :
             filters.startDate ? \`Desde: \${filters.startDate}\` : \`Hasta: \${filters.endDate}\`;
-        chipsContainer.innerHTML += \`
-            <span class="filter-chip">
-                <span class="chip-label">📅</span>
-                <span class="chip-value">\${dateLabel}</span>
-                <span class="chip-remove" data-filter="date">×</span>
-            </span>
-        \`;
+        appendChip('📅', dateLabel, 'date');
     }
     
     // Add click handlers to remove buttons
@@ -3837,10 +3923,10 @@ function exportToCSV(data, filename = 'instalaciones.csv') {
     const csvContent = [
         headers.join(','),
         ...rows.map(row => row.map(cell => \`"\${cell}"\`).join(','))
-    ].join('\\n');
+    ].join('\n');
     
     // Create and download file
-    const blob = new Blob(['\\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     
@@ -4137,31 +4223,70 @@ async function loadInstallations() {
 
 function renderInstallationsTable(installations) {
     const container = document.getElementById('installationsTable');
+    container.replaceChildren();
+
     if (!installations || !installations.length) {
-        container.innerHTML = '<p class="loading">No se encontraron instalaciones</p>';
+        const emptyMessage = document.createElement('p');
+        emptyMessage.className = 'loading';
+        emptyMessage.textContent = 'No se encontraron instalaciones';
+        container.appendChild(emptyMessage);
         return;
     }
-    
-    let html = '<table><thead><tr><th>ID</th><th>Cliente</th><th>Marca</th><th>Versión</th><th>Estado</th><th>Tiempo</th><th>Notas</th><th>Fecha</th></tr></thead><tbody>';
-    
+
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo', 'Notas', 'Fecha'].forEach(label => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+
+    const tbody = document.createElement('tbody');
+
     installations.forEach(inst => {
         const statusClass = inst.status || 'unknown';
         const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
-        
-        html += '<tr data-id="' + inst.id + '">';
-        html += '<td><strong>#' + inst.id + '</strong></td>';
-        html += '<td>' + (inst.client_name || 'N/A') + '</td>';
-        html += '<td>' + (inst.driver_brand || 'N/A') + '</td>';
-        html += '<td>' + (inst.driver_version || 'N/A') + '</td>';
-        html += '<td><span class="badge ' + statusClass + '">' + statusIcon + ' ' + inst.status + '</span></td>';
-        html += '<td>' + inst.installation_time_seconds + 's</td>';
-        html += '<td>' + (inst.notes ? inst.notes.substring(0, 30) + '...' : '-') + '</td>';
-        html += '<td>' + new Date(inst.timestamp).toLocaleString('es-ES') + '</td>';
-        html += '</tr>';
+
+        const row = document.createElement('tr');
+        row.dataset.id = String(inst.id ?? '');
+
+        const idCell = document.createElement('td');
+        const strong = document.createElement('strong');
+        strong.textContent = \`#\${inst.id ?? 'N/A'}\`;
+        idCell.appendChild(strong);
+
+        const clientCell = document.createElement('td');
+        clientCell.textContent = inst.client_name || 'N/A';
+
+        const brandCell = document.createElement('td');
+        brandCell.textContent = inst.driver_brand || 'N/A';
+
+        const versionCell = document.createElement('td');
+        versionCell.textContent = inst.driver_version || 'N/A';
+
+        const statusCell = document.createElement('td');
+        const statusBadge = document.createElement('span');
+        statusBadge.className = \`badge \${statusClass}\`;
+        statusBadge.textContent = \`\${statusIcon} \${inst.status || 'unknown'}\`;
+        statusCell.appendChild(statusBadge);
+
+        const timeCell = document.createElement('td');
+        timeCell.textContent = \`\${inst.installation_time_seconds ?? 0}s\`;
+
+        const notesCell = document.createElement('td');
+        notesCell.textContent = inst.notes ? \`\${inst.notes.substring(0, 30)}...\` : '-';
+
+        const dateCell = document.createElement('td');
+        dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
+
+        row.append(idCell, clientCell, brandCell, versionCell, statusCell, timeCell, notesCell, dateCell);
+        tbody.appendChild(row);
     });
-    
-    html += '</tbody></table>';
-    container.innerHTML = html;
+
+    table.append(thead, tbody);
+    container.appendChild(table);
     
     container.querySelectorAll('tr[data-id]').forEach(row => {
         row.addEventListener('click', () => {
@@ -4202,43 +4327,85 @@ async function loadPhotoWithAuth(photoId) {
 
 async function renderIncidents(incidents, installationId) {
     const container = document.getElementById('incidentsList');
-    
-    let html = '<div class="incidents-header" style="margin-bottom: 1.5rem;">';
-    html += '<h3>⚠️ Incidencias de Instalación #' + installationId + '</h3>';
-    html += '<button onclick="document.querySelector(\\'[data-section=\\\\\\'installations\\\\\\']\\').click()" class="btn-secondary">← Volver</button>';
-    html += '</div>';
-    
+    container.replaceChildren();
+
+    const header = document.createElement('div');
+    header.className = 'incidents-header';
+    header.style.marginBottom = '1.5rem';
+
+    const heading = document.createElement('h3');
+    heading.textContent = \`⚠️ Incidencias de Instalación #\${installationId}\`;
+
+    const backButton = document.createElement('button');
+    backButton.className = 'btn-secondary';
+    backButton.textContent = '← Volver';
+    backButton.addEventListener('click', () => {
+        document.querySelector('[data-section="installations"]')?.click();
+    });
+
+    header.append(heading, backButton);
+    container.appendChild(header);
+
     if (!incidents || !incidents.length) {
-        html += '<p class="loading">No hay incidencias para esta instalación</p>';
-        container.innerHTML = html;
+        const emptyMessage = document.createElement('p');
+        emptyMessage.className = 'loading';
+        emptyMessage.textContent = 'No hay incidencias para esta instalación';
+        container.appendChild(emptyMessage);
         return;
     }
-    
+
     for (const inc of incidents) {
         const severityIcon = inc.severity === 'critical' ? '🔴' : inc.severity === 'high' ? '🟠' : inc.severity === 'medium' ? '🟡' : '🔵';
-        
-        html += '<div class="incident-card">';
-        html += '<div class="incident-header">';
-        html += '<div><span class="badge ' + inc.severity + '">' + severityIcon + ' ' + inc.severity + '</span> <small>por <strong>' + inc.reporter_username + '</strong></small></div>';
-        html += '<small>🕐 ' + new Date(inc.created_at).toLocaleString('es-ES') + '</small>';
-        html += '</div>';
-        html += '<p style="color: var(--text-secondary); line-height: 1.6;">' + inc.note + '</p>';
-        
+
+        const incidentCard = document.createElement('div');
+        incidentCard.className = 'incident-card';
+
+        const incidentHeader = document.createElement('div');
+        incidentHeader.className = 'incident-header';
+
+        const leftMeta = document.createElement('div');
+        const severityBadge = document.createElement('span');
+        severityBadge.className = \`badge \${inc.severity || 'low'}\`;
+        severityBadge.textContent = \`\${severityIcon} \${inc.severity || 'low'}\`;
+        const reporter = document.createElement('small');
+        reporter.textContent = 'por ';
+        const reporterStrong = document.createElement('strong');
+        reporterStrong.textContent = inc.reporter_username || 'desconocido';
+        reporter.appendChild(reporterStrong);
+        leftMeta.append(severityBadge, document.createTextNode(' '), reporter);
+
+        const createdAt = document.createElement('small');
+        createdAt.textContent = \`🕐 \${new Date(inc.created_at).toLocaleString('es-ES')}\`;
+
+        incidentHeader.append(leftMeta, createdAt);
+
+        const note = document.createElement('p');
+        note.style.color = 'var(--text-secondary)';
+        note.style.lineHeight = '1.6';
+        note.textContent = inc.note || '';
+
+        incidentCard.append(incidentHeader, note);
+
         if (inc.photos && inc.photos.length) {
-            html += '<div class="photos-grid">';
+            const photosGrid = document.createElement('div');
+            photosGrid.className = 'photos-grid';
             for (const photo of inc.photos) {
                 const photoUrl = await loadPhotoWithAuth(photo.id);
                 if (photoUrl) {
-                    html += '<img src="' + photoUrl + '" class="photo-thumb" onclick="viewPhoto(' + photo.id + ')" data-photo-id="' + photo.id + '" alt="Foto de incidencia">';
+                    const image = document.createElement('img');
+                    image.src = photoUrl;
+                    image.className = 'photo-thumb';
+                    image.dataset.photoId = String(photo.id);
+                    image.alt = 'Foto de incidencia';
+                    image.addEventListener('click', () => viewPhoto(photo.id));
+                    photosGrid.appendChild(image);
                 }
             }
-            html += '</div>';
+            incidentCard.appendChild(photosGrid);
         }
-        
-        html += '</div>';
+
+        container.appendChild(incidentCard);
     }
-    
-    container.innerHTML = html;
 }
 
 async function viewPhoto(photoId) {
@@ -4266,9 +4433,13 @@ async function loadAuditLogs() {
 function renderAuditLogs(logs) {
     const container = document.getElementById('auditLogs');
     const actionFilter = document.getElementById('auditActionFilter')?.value;
+    container.replaceChildren();
     
     if (!logs || !logs.length) {
-        container.innerHTML = '<p class="loading">No hay logs de auditoría</p>';
+        const emptyMessage = document.createElement('p');
+        emptyMessage.className = 'loading';
+        emptyMessage.textContent = 'No hay logs de auditoría';
+        container.appendChild(emptyMessage);
         return;
     }
     
@@ -4278,12 +4449,25 @@ function renderAuditLogs(logs) {
     }
     
     if (filteredLogs.length === 0) {
-        container.innerHTML = '<p class="loading">No hay logs para el filtro seleccionado</p>';
+        const emptyFilteredMessage = document.createElement('p');
+        emptyFilteredMessage.className = 'loading';
+        emptyFilteredMessage.textContent = 'No hay logs para el filtro seleccionado';
+        container.appendChild(emptyFilteredMessage);
         return;
     }
-    
-    let html = '<table><thead><tr><th>🕐 Fecha</th><th>📝 Acción</th><th>👤 Usuario</th><th>✅ Estado</th><th>💻 Detalles</th></tr></thead><tbody>';
-    
+
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    ['🕐 Fecha', '📝 Acción', '👤 Usuario', '✅ Estado', '💻 Detalles'].forEach(label => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+
+    const tbody = document.createElement('tbody');
+
     filteredLogs.forEach(log => {
         const successIcon = log.success ? '✅' : '❌';
         const successClass = log.success ? 'success' : 'failed';
@@ -4302,17 +4486,42 @@ function renderAuditLogs(logs) {
             }
         }
         
-        html += '<tr>';
-        html += '<td>' + new Date(log.timestamp).toLocaleString('es-ES') + '</td>';
-        html += '<td><code style="background: var(--bg-card); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem;">' + log.action + '</code></td>';
-        html += '<td><strong>' + log.username + '</strong></td>';
-        html += '<td><span class="badge ' + successClass + '">' + successIcon + '</span></td>';
-        html += '<td style="color: var(--text-secondary); font-size: 0.875rem;">' + details + '</td>';
-        html += '</tr>';
+        const row = document.createElement('tr');
+
+        const dateCell = document.createElement('td');
+        dateCell.textContent = new Date(log.timestamp).toLocaleString('es-ES');
+
+        const actionCell = document.createElement('td');
+        const actionCode = document.createElement('code');
+        actionCode.style.background = 'var(--bg-card)';
+        actionCode.style.padding = '0.25rem 0.5rem';
+        actionCode.style.borderRadius = '4px';
+        actionCode.style.fontSize = '0.75rem';
+        actionCode.textContent = log.action || '-';
+        actionCell.appendChild(actionCode);
+
+        const userCell = document.createElement('td');
+        const userStrong = document.createElement('strong');
+        userStrong.textContent = log.username || '-';
+        userCell.appendChild(userStrong);
+
+        const statusCell = document.createElement('td');
+        const badge = document.createElement('span');
+        badge.className = \`badge \${successClass}\`;
+        badge.textContent = successIcon;
+        statusCell.appendChild(badge);
+
+        const detailsCell = document.createElement('td');
+        detailsCell.style.color = 'var(--text-secondary)';
+        detailsCell.style.fontSize = '0.875rem';
+        detailsCell.textContent = details;
+
+        row.append(dateCell, actionCell, userCell, statusCell, detailsCell);
+        tbody.appendChild(row);
     });
-    
-    html += '</tbody></table>';
-    container.innerHTML = html;
+
+    table.append(thead, tbody);
+    container.appendChild(table);
 }
 
 // Event Listeners
@@ -4804,85 +5013,68 @@ function setupThemeToggle() {
 }
 
 init();
-
-</script>
-    
-    <!-- PWA Service Worker Registration -->
-    <script>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js')
-                    .then((registration) => {
-                        console.log('[PWA] Service Worker registered:', registration.scope);
-                        
-                        // Check for updates
-                        registration.addEventListener('updatefound', () => {
-                            const newWorker = registration.installing;
-                            newWorker.addEventListener('statechange', () => {
-                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                                    // New version available
-                                    showNotification('🔄 Nueva versión disponible. Recarga para actualizar.', 'info');
-                                }
-                            });
-                        });
-                    })
-                    .catch((err) => {
-                        console.error('[PWA] Service Worker registration failed:', err);
-                    });
-                
-                // Listen for messages from service worker
-                navigator.serviceWorker.addEventListener('message', (event) => {
-                    if (event.data === 'update-available') {
-                        showNotification('🔄 Nueva versión disponible. Recarga para actualizar.', 'info');
-                    }
-                });
-            });
-        }
-        
-        // PWA Install Prompt
-        let deferredPrompt;
-        window.addEventListener('beforeinstallprompt', (e) => {
-            e.preventDefault();
-            deferredPrompt = e;
-            console.log('[PWA] Install prompt available');
-        });
-        
-        // Check if app is installed
-        window.addEventListener('appinstalled', () => {
-            console.log('[PWA] App installed');
-            deferredPrompt = null;
-            showNotification('✅ App instalada correctamente', 'success');
-        });
-    </script>
-</body>
-</html>
 `;
-        
-        return new Response(html, {
+        return new Response(js, {
           status: 200,
           headers: {
             ...corsHeaders(request, env, corsPolicy),
-            "Content-Type": "text/html",
+            ...dashboardSecurityHeaders("application/javascript; charset=utf-8"),
           },
         });
       }
 
-      if (routeParts.length === 1 && routeParts[0] === "dashboard.css" && request.method === "GET") {
-        return new Response("", {
-          status: 200,
-          headers: {
-            ...corsHeaders(request, env, corsPolicy),
-            "Content-Type": "text/css",
-          },
-        });
-      }
+      if (routeParts.length === 1 && routeParts[0] === "dashboard-pwa.js" && request.method === "GET") {
+        const pwa = `if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/sw.js")
+      .then((registration) => {
+        console.log("[PWA] Service Worker registered:", registration.scope);
 
-      if (routeParts.length === 1 && routeParts[0] === "dashboard.js" && request.method === "GET") {
-        return new Response("", {
+        registration.addEventListener("updatefound", () => {
+          const newWorker = registration.installing;
+          if (!newWorker) return;
+          newWorker.addEventListener("statechange", () => {
+            if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+              if (typeof showNotification === "function") {
+                showNotification("🔄 Nueva versión disponible. Recarga para actualizar.", "info");
+              }
+            }
+          });
+        });
+      })
+      .catch((err) => {
+        console.error("[PWA] Service Worker registration failed:", err);
+      });
+
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (event.data === "update-available" && typeof showNotification === "function") {
+        showNotification("🔄 Nueva versión disponible. Recarga para actualizar.", "info");
+      }
+    });
+  });
+}
+
+let deferredPrompt;
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  deferredPrompt = event;
+  console.log("[PWA] Install prompt available");
+});
+
+window.addEventListener("appinstalled", () => {
+  console.log("[PWA] App installed");
+  deferredPrompt = null;
+  if (typeof showNotification === "function") {
+    showNotification("✅ App instalada correctamente", "success");
+  }
+});
+`;
+        return new Response(pwa, {
           status: 200,
           headers: {
             ...corsHeaders(request, env, corsPolicy),
-            "Content-Type": "application/javascript",
+            ...dashboardSecurityHeaders("application/javascript; charset=utf-8"),
           },
         });
       }
@@ -4958,8 +5150,9 @@ init();
           status: 200,
           headers: {
             ...corsHeaders(request, env, corsPolicy),
-            "Content-Type": "application/manifest+json",
-            "Cache-Control": "public, max-age=3600",
+            ...dashboardSecurityHeaders("application/manifest+json; charset=utf-8", {
+              "Cache-Control": "public, max-age=3600",
+            }),
           },
         });
       }
@@ -5039,6 +5232,7 @@ const STATIC_ASSETS = [
   '/web/dashboard',
   '/dashboard.css',
   '/dashboard.js',
+  '/dashboard-pwa.js',
   '/manifest.json'
 ];
 
