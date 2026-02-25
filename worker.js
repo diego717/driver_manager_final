@@ -5,6 +5,8 @@ const MIN_PHOTO_BYTES = 1024;
 const ALLOWED_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const AUTH_WINDOW_SECONDS = 300;
 const WEB_ACCESS_TTL_SECONDS = 8 * 60 * 60;
+const WEB_SESSION_COOKIE_NAME = "__Host-web_session";
+const WEB_SESSION_STORE_TTL_SECONDS = WEB_ACCESS_TTL_SECONDS + 60;
 const WEB_LOGIN_RATE_LIMIT_MAX_ATTEMPTS = 5;
 const WEB_LOGIN_RATE_LIMIT_LOCKOUT_SECONDS = 15 * 60;
 const WEB_PASSWORD_MIN_LENGTH = 12;
@@ -682,6 +684,78 @@ function getBearerToken(request) {
   return token;
 }
 
+function parseCookies(request) {
+  const cookieHeader = request.headers.get("Cookie") || "";
+  if (!cookieHeader) return {};
+
+  return cookieHeader.split(";").reduce((acc, pair) => {
+    const [rawName, ...rawValue] = pair.split("=");
+    const name = normalizeOptionalString(rawName, "");
+    if (!name) return acc;
+    acc[name] = decodeURIComponent(rawValue.join("=") || "");
+    return acc;
+  }, {});
+}
+
+function getWebSessionTokenFromRequest(request) {
+  const bearer = getBearerToken(request);
+  if (bearer) return bearer;
+
+  const cookies = parseCookies(request);
+  return normalizeOptionalString(cookies[WEB_SESSION_COOKIE_NAME], "");
+}
+
+function buildWebSessionCookie(token, maxAgeSeconds = WEB_ACCESS_TTL_SECONDS) {
+  return `${WEB_SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAgeSeconds}`;
+}
+
+function buildWebSessionCookieClearHeader() {
+  return `${WEB_SESSION_COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
+}
+
+function getWebSessionStore(env) {
+  if (env.WEB_SESSION_KV && typeof env.WEB_SESSION_KV.get === "function") {
+    return env.WEB_SESSION_KV;
+  }
+  const fallbackKv = getRateLimitKv(env);
+  if (fallbackKv) return fallbackKv;
+  return null;
+}
+
+function buildWebSessionVersionKey(userId) {
+  return `web_session_active:${userId}`;
+}
+
+async function rotateWebSessionVersion(env, userId) {
+  const store = getWebSessionStore(env);
+  const nextVersion = nowUnixSeconds();
+  if (!store || !Number.isInteger(userId) || userId <= 0) {
+    return nextVersion;
+  }
+
+  await store.put(buildWebSessionVersionKey(userId), String(nextVersion), {
+    expirationTtl: WEB_SESSION_STORE_TTL_SECONDS,
+  });
+  return nextVersion;
+}
+
+async function invalidateWebSessionVersion(env, userId) {
+  const store = getWebSessionStore(env);
+  if (!store || !Number.isInteger(userId) || userId <= 0) return;
+
+  await store.delete(buildWebSessionVersionKey(userId));
+}
+
+async function resolveActiveWebSessionVersion(env, userId) {
+  const store = getWebSessionStore(env);
+  if (!store || !Number.isInteger(userId) || userId <= 0) return null;
+
+  const raw = await store.get(buildWebSessionVersionKey(userId));
+  const parsed = Number.parseInt(String(raw ?? ""), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
 function ensureWebSessionSecret(env) {
   if (!env.WEB_SESSION_SECRET) {
     throw new HttpError(500, "Autenticacion web no configurada. Define WEB_SESSION_SECRET.");
@@ -1161,6 +1235,9 @@ async function buildWebAccessToken(env, sessionUser = {}) {
   if (Number.isInteger(sessionUser.user_id) && sessionUser.user_id > 0) {
     payload.user_id = sessionUser.user_id;
   }
+  if (Number.isInteger(sessionUser.session_version) && sessionUser.session_version > 0) {
+    payload.sv = sessionUser.session_version;
+  }
 
   const encodedPayload = base64UrlEncodeUtf8(JSON.stringify(payload));
   const signature = await hmacSha256Hex(env.WEB_SESSION_SECRET, encodedPayload);
@@ -1177,9 +1254,9 @@ async function buildWebAccessToken(env, sessionUser = {}) {
 async function verifyWebAccessToken(request, env) {
   ensureWebSessionSecret(env);
 
-  const token = getBearerToken(request);
+  const token = getWebSessionTokenFromRequest(request);
   if (!token) {
-    throw new HttpError(401, "Falta token Bearer para autenticacion web.");
+    throw new HttpError(401, "Falta token Bearer o cookie de sesion web.");
   }
 
   const [encodedPayload, signature] = token.split(".", 2);
@@ -1208,11 +1285,26 @@ async function verifyWebAccessToken(request, env) {
     throw new HttpError(401, "Sesion web expirada.");
   }
 
+  const userId = Number.isInteger(payload.user_id) ? payload.user_id : null;
+  const tokenSessionVersion = Number(payload.sv || 0);
+  if (
+    getWebSessionStore(env) &&
+    userId &&
+    Number.isInteger(tokenSessionVersion) &&
+    tokenSessionVersion > 0
+  ) {
+    const activeSessionVersion = await resolveActiveWebSessionVersion(env, userId);
+    if (!activeSessionVersion || activeSessionVersion !== tokenSessionVersion) {
+      throw new HttpError(401, "Sesion web invalida o cerrada.");
+    }
+  }
+
   return {
     scope: "web",
     sub: normalizeWebUsername(payload.sub || payload.username || "web-user") || "web-user",
     role: normalizeOptionalString(payload.role, WEB_DEFAULT_ROLE) || WEB_DEFAULT_ROLE,
-    user_id: Number.isInteger(payload.user_id) ? payload.user_id : null,
+    user_id: userId,
+    session_version: Number.isInteger(tokenSessionVersion) ? tokenSessionVersion : null,
     iat: Number(payload.iat || 0),
     exp,
   };
@@ -1453,13 +1545,15 @@ async function handleWebAuthRoute(request, env, pathParts) {
       platform: "web"
     });
     
+    const sessionVersion = await rotateWebSessionVersion(env, Number(user.id));
     const token = await buildWebAccessToken(env, {
       username: user.username,
       role: user.role,
       user_id: Number(user.id),
+      session_version: sessionVersion,
     });
 
-    return jsonResponse(
+    const response = jsonResponse(
       {
         success: true,
         access_token: token.token,
@@ -1474,6 +1568,8 @@ async function handleWebAuthRoute(request, env, pathParts) {
       },
       200,
     );
+    response.headers.append("Set-Cookie", buildWebSessionCookie(token.token, token.expires_in));
+    return response;
   }
 
   if (pathParts[1] === "bootstrap" && request.method === "POST") {
@@ -1511,13 +1607,15 @@ async function handleWebAuthRoute(request, env, pathParts) {
     const role = normalizeWebRole(body?.role || WEB_DEFAULT_ROLE);
     const createdUser = await createWebUser(env, { username, password, role });
 
+    const sessionVersion = await rotateWebSessionVersion(env, Number(createdUser.id));
     const token = await buildWebAccessToken(env, {
       username: createdUser.username,
       role: createdUser.role,
       user_id: Number(createdUser.id),
+      session_version: sessionVersion,
     });
 
-    return jsonResponse(
+    const response = jsonResponse(
       {
         success: true,
         bootstrapped: true,
@@ -1533,6 +1631,8 @@ async function handleWebAuthRoute(request, env, pathParts) {
       },
       201,
     );
+    response.headers.append("Set-Cookie", buildWebSessionCookie(token.token, token.expires_in));
+    return response;
   }
 
   if (pathParts[1] === "users" && pathParts.length === 2 && request.method === "GET") {
@@ -1790,6 +1890,20 @@ async function handleWebAuthRoute(request, env, pathParts) {
       },
       200,
     );
+  }
+
+  if (pathParts[1] === "logout" && request.method === "POST") {
+    const payload = await verifyWebAccessToken(request, env);
+    if (payload.user_id) {
+      await invalidateWebSessionVersion(env, Number(payload.user_id));
+    }
+
+    const response = jsonResponse({
+      success: true,
+      logged_out: true,
+    });
+    response.headers.append("Set-Cookie", buildWebSessionCookieClearHeader());
+    return response;
   }
 
   if (pathParts[1] === "me" && request.method === "GET") {

@@ -1,5 +1,4 @@
 const API_BASE = '';
-let authToken = localStorage.getItem('authToken');
 let currentUser = null;
 let charts = {};
 let searchDebounceTimer = null;
@@ -26,13 +25,10 @@ const api = {
             ...options.headers
         };
         
-        if (authToken) {
-            headers['Authorization'] = 'Bearer ' + authToken;
-        }
-        
         const response = await fetch(API_BASE + endpoint, {
             ...options,
-            headers
+            headers,
+            credentials: 'same-origin'
         });
         
         if (response.status === 401) {
@@ -73,6 +69,10 @@ const api = {
     
     getMe() {
         return this.request('/web/auth/me');
+    },
+
+    logout() {
+        return this.request('/web/auth/logout', { method: 'POST' });
     }
 };
 
@@ -847,11 +847,9 @@ async function showIncidentsForInstallation(installationId) {
 
 async function loadPhotoWithAuth(photoId) {
     try {
-        const headers = {};
-        if (authToken) {
-            headers['Authorization'] = 'Bearer ' + authToken;
-        }
-        const response = await fetch(API_BASE + '/photos/' + photoId, { headers });
+        const response = await fetch(API_BASE + '/web/photos/' + photoId, {
+            credentials: 'same-origin'
+        });
         if (!response.ok) throw new Error('Failed to load photo');
         const blob = await response.blob();
         return URL.createObjectURL(blob);
@@ -984,9 +982,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     
     try {
         const result = await api.login(username, password);
-        authToken = result.access_token;
         currentUser = result.user;
-        localStorage.setItem('authToken', authToken);
         
         document.getElementById('username').textContent = result.user.username;
         document.getElementById('userRole').textContent = result.user.role;
@@ -1002,10 +998,14 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     }
 });
 
-document.getElementById('logoutBtn').addEventListener('click', () => {
-    authToken = null;
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+    try {
+        await api.logout();
+    } catch (err) {
+        console.error('Error during logout:', err);
+    }
     currentUser = null;
-    localStorage.removeItem('authToken');
+    closeSSE();
     showLogin();
     showNotification('👋 Sesión cerrada', 'info');
 });
@@ -1124,15 +1124,14 @@ document.head.appendChild(style);
 
 // WebSocket/SSE Functions
 function initSSE() {
-    if (!authToken) return;
     if (eventSource) {
         eventSource.close();
     }
 
     try {
         // Use EventSource for Server-Sent Events
-        const sseUrl = `${API_BASE}/web/events?token=${encodeURIComponent(authToken)}`;
-        eventSource = new EventSource(sseUrl);
+        const sseUrl = `${API_BASE}/web/events`;
+        eventSource = new EventSource(sseUrl, { withCredentials: true });
 
         eventSource.onopen = () => {
             console.log('[SSE] Connection established');
@@ -1347,22 +1346,18 @@ function closeSSE() {
 
 // Initialize
 async function init() {
-    if (!authToken) {
+    try {
+        const me = await api.getMe();
+        currentUser = me;
+        document.getElementById('username').textContent = me.username || 'Usuario';
+        document.getElementById('userRole').textContent = me.role || 'admin';
+        loadDashboard();
+
+        // Initialize SSE connection for real-time updates
+        initSSE();
+    } catch (err) {
+        console.error('Error validating session:', err);
         showLogin();
-    } else {
-        try {
-            const me = await api.getMe();
-            currentUser = me;
-            document.getElementById('username').textContent = me.username || 'Usuario';
-            document.getElementById('userRole').textContent = me.role || 'admin';
-            loadDashboard();
-            
-            // Initialize SSE connection for real-time updates
-            initSSE();
-        } catch (err) {
-            console.error('Error validating session:', err);
-            showLogin();
-        }
     }
     
     // Setup advanced filters
@@ -1376,7 +1371,7 @@ async function init() {
     
     // Handle page visibility changes to reconnect SSE
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && authToken && !eventSource) {
+        if (document.visibilityState === 'visible' && currentUser && !eventSource) {
             console.log('[SSE] Page visible, reconnecting...');
             initSSE();
         }
