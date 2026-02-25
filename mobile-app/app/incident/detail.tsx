@@ -4,6 +4,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Image,
   ScrollView,
   StyleSheet,
@@ -195,19 +196,53 @@ export default function IncidentDetailScreen() {
     };
   }, [incident]);
 
-  const onAddEvidence = () => {
+  const onAddEvidence = useCallback(() => {
     if (!incident) return;
     router.push(
       `/incident/upload?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
     );
-  };
+  }, [incident, router]);
 
-  const onOpenPhoto = (photoId: number, fileName: string) => {
+  const onOpenPhoto = useCallback((photoId: number, fileName: string) => {
     if (!incident) return;
     router.push(
       `/incident/photo-viewer?photoId=${photoId}&incidentId=${incident.id}&installationId=${incident.installation_id}&fileName=${encodeURIComponent(fileName)}` as never,
     );
-  };
+  }, [incident, router]);
+
+  const renderPhotoItem = useCallback(
+    ({ item }: { item: NonNullable<Incident["photos"]>[number] }) => (
+      <View style={[styles.photoItem, { backgroundColor: palette.itemBg, borderColor: palette.itemBorder }]}>
+        <Text style={[styles.photoTitle, { color: palette.textPrimary }]}>#{item.id} - {item.file_name}</Text>
+        <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Tipo: {item.content_type}</Text>
+        <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Tamano: {formatBytes(item.size_bytes)}</Text>
+        <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Fecha: {formatDate(item.created_at)}</Text>
+        {photoPreviews[item.id] ? (
+          <TouchableOpacity
+            onPress={() => onOpenPhoto(item.id, item.file_name)}
+            accessibilityRole="imagebutton"
+            accessibilityLabel={`Abrir vista completa de la foto ${item.id}`}
+            accessibilityState={{ disabled: false }}
+          >
+            <Image
+              source={{
+                uri: photoPreviews[item.id].uri,
+                headers: photoPreviews[item.id].headers,
+              }}
+              style={[styles.photoPreview, { backgroundColor: palette.previewPlaceholder }]}
+              resizeMode="cover"
+            />
+            <Text style={[styles.openPreviewText, { color: palette.previewLink }]}>Ver en pantalla completa</Text>
+          </TouchableOpacity>
+        ) : loadingPhotoPreviews && !failedPhotoIds[item.id] ? (
+          <Text style={[styles.hintText, { color: palette.textMuted }]}>Cargando vista previa...</Text>
+        ) : (
+          <Text style={[styles.hintText, { color: palette.textMuted }]}>No se pudo cargar la vista previa.</Text>
+        )}
+      </View>
+    ),
+    [failedPhotoIds, loadingPhotoPreviews, onOpenPhoto, palette, photoPreviews],
+  );
 
   return (
     <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
@@ -279,41 +314,17 @@ export default function IncidentDetailScreen() {
             {!incident.photos?.length ? (
               <Text style={[styles.hintText, { color: palette.textMuted }]}>Esta incidencia aun no tiene fotos adjuntas.</Text>
             ) : (
-              incident.photos.map((photo) => (
-                <View
-                  key={photo.id}
-                  style={[styles.photoItem, { backgroundColor: palette.itemBg, borderColor: palette.itemBorder }]}
-                >
-                  <Text style={[styles.photoTitle, { color: palette.textPrimary }]}>#{photo.id} - {photo.file_name}</Text>
-                  <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Tipo: {photo.content_type}</Text>
-                  <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Tamano: {formatBytes(photo.size_bytes)}</Text>
-                  <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Fecha: {formatDate(photo.created_at)}</Text>
-                  {photoPreviews[photo.id] ? (
-                    <TouchableOpacity
-                      onPress={() => onOpenPhoto(photo.id, photo.file_name)}
-                      accessibilityRole="imagebutton"
-                      accessibilityLabel={`Abrir vista completa de la foto ${photo.id}`}
-                      accessibilityState={{ disabled: false }}
-                    >
-                      <Image
-                        source={{
-                          uri: photoPreviews[photo.id].uri,
-                          headers: photoPreviews[photo.id].headers,
-                        }}
-                        style={[styles.photoPreview, { backgroundColor: palette.previewPlaceholder }]}
-                        resizeMode="cover"
-                      />
-                      <Text style={[styles.openPreviewText, { color: palette.previewLink }]}>
-                        Ver en pantalla completa
-                      </Text>
-                    </TouchableOpacity>
-                  ) : loadingPhotoPreviews && !failedPhotoIds[photo.id] ? (
-                    <Text style={[styles.hintText, { color: palette.textMuted }]}>Cargando vista previa...</Text>
-                  ) : (
-                    <Text style={[styles.hintText, { color: palette.textMuted }]}>No se pudo cargar la vista previa.</Text>
-                  )}
-                </View>
-              ))
+              <FlatList
+                testID="incident-photos-list"
+                data={incident.photos}
+                keyExtractor={(item) => String(item.id)}
+                renderItem={renderPhotoItem}
+                initialNumToRender={3}
+                windowSize={5}
+                removeClippedSubviews
+                scrollEnabled={false}
+                contentContainerStyle={styles.photosList}
+              />
             )}
           </View>
 
@@ -424,6 +435,9 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontWeight: "700",
     fontSize: 12,
+  },
+  photosList: {
+    gap: 8,
   },
   primaryButton: {
     marginTop: 4,
