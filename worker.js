@@ -82,6 +82,7 @@ function buildCorsPolicy(isWebRoute, routeParts) {
 
   if (isWebRoute) {
     headers.add("Authorization");
+    headers.add("X-Client-Platform");
   } else {
     headers.add("X-API-Token");
     headers.add("X-Request-Timestamp");
@@ -2044,6 +2045,14 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
 }
 
 async function verifyAuth(request, env, url) {
+  const clientPlatform = (request.headers.get("X-Client-Platform") || "").toLowerCase();
+  if (clientPlatform === "mobile") {
+    throw new HttpError(
+      410,
+      "Autenticacion HMAC deshabilitada para clientes moviles. Usa /web/* con Bearer de sesion corta.",
+    );
+  }
+
   const expectedToken = env.API_TOKEN;
   const expectedSecret = env.API_SECRET;
 

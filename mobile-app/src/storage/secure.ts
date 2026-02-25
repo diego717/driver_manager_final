@@ -1,8 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 import { getWebSessionStorage } from "./runtime";
 
-const API_TOKEN_KEY = "dm_api_token";
-const API_SECRET_KEY = "dm_api_secret";
 const API_BASE_URL_KEY = "dm_api_base_url";
 const WEB_ACCESS_TOKEN_KEY = "dm_web_access_token";
 const WEB_ACCESS_EXPIRES_AT_KEY = "dm_web_access_expires_at";
@@ -49,27 +47,6 @@ async function setOrDelete(key: string, value: string): Promise<void> {
     return;
   }
   await setItem(key, normalized);
-}
-
-export async function setStoredApiToken(token: string): Promise<void> {
-  await setOrDelete(API_TOKEN_KEY, token);
-}
-
-export async function getStoredApiToken(): Promise<string | null> {
-  return getItem(API_TOKEN_KEY);
-}
-
-export async function setStoredApiSecret(secret: string): Promise<void> {
-  await setOrDelete(API_SECRET_KEY, secret);
-}
-
-export async function getStoredApiSecret(): Promise<string | null> {
-  return getItem(API_SECRET_KEY);
-}
-
-export async function clearStoredAuth(): Promise<void> {
-  await deleteItem(API_TOKEN_KEY);
-  await deleteItem(API_SECRET_KEY);
 }
 
 export async function setStoredApiBaseUrl(baseUrl: string): Promise<void> {

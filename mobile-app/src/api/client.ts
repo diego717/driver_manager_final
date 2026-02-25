@@ -1,15 +1,9 @@
 import axios, { AxiosError, type AxiosRequestConfig } from "axios";
 
-import {
-  buildAuthHeaders,
-  getAuthMaterial,
-  sha256HexFromString,
-} from "./auth";
+import { sha256HexFromString } from "./auth";
 import {
   clearStoredWebSession,
   getStoredApiBaseUrl,
-  getStoredApiSecret,
-  getStoredApiToken,
   getStoredWebAccessExpiresAt,
   getStoredWebAccessToken,
 } from "../storage/secure";
@@ -72,20 +66,6 @@ async function resolveApiBaseUrl(): Promise<string> {
   return envBaseURL;
 }
 
-async function resolveAuth() {
-  const envAuth = getAuthMaterial();
-  if (envAuth.token && envAuth.secret) return envAuth;
-
-  const [storedToken, storedSecret] = await Promise.all([
-    getStoredApiToken(),
-    getStoredApiSecret(),
-  ]);
-  return {
-    token: storedToken || envAuth.token,
-    secret: storedSecret || envAuth.secret,
-  };
-}
-
 export async function resolveRequestAuth({
   method,
   path,
@@ -94,32 +74,24 @@ export async function resolveRequestAuth({
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   bodyHash: string;
-}): Promise<{ path: string; headers: Record<string, string>; mode: "hmac" | "web" }> {
+}): Promise<{ path: string; headers: Record<string, string>; mode: "web" }> {
+  void method;
+  void bodyHash;
   const normalizedPath = normalizePath(path);
   const webAccessToken = await resolveValidWebAccessToken();
-  if (webAccessToken) {
-    return {
-      path: ensureWebPath(normalizedPath),
-      headers: {
-        Authorization: `Bearer ${webAccessToken}`,
-      },
-      mode: "web",
-    };
+  if (!webAccessToken) {
+    throw new Error(
+      "Sesion web requerida. Inicia sesion para continuar (Bearer) y vuelve a intentar.",
+    );
   }
 
-  const auth = await resolveAuth();
-  const authHeaders = buildAuthHeaders({
-    method,
-    path: normalizedPath,
-    bodyHash,
-    token: auth.token,
-    secret: auth.secret,
-  });
-
   return {
-    path: normalizedPath,
-    headers: authHeaders,
-    mode: "hmac",
+    path: ensureWebPath(normalizedPath),
+    headers: {
+      Authorization: `Bearer ${webAccessToken}`,
+      "X-Client-Platform": "mobile",
+    },
+    mode: "web",
   };
 }
 
