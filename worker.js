@@ -1,4 +1,4 @@
-﻿import bcrypt from "bcryptjs";
+﻿﻿﻿﻿import bcrypt from "bcryptjs";
 
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const MIN_PHOTO_BYTES = 1024;
@@ -483,7 +483,32 @@ function normalizeNotificationData(rawData) {
   return normalized;
 }
 
+// AUDIT LOGGING FUNCTION
+async function logAuditEvent(env, { action, username, success, details, computerName, ipAddress, platform }) {
+  try {
+    const detailsJson = details && typeof details === "object" ? JSON.stringify(details) : "{}";
+    await env.DB.prepare(`
+      INSERT INTO audit_logs (timestamp, action, username, success, details, computer_name, ip_address, platform)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+      .bind(
+        nowIso(),
+        normalizeOptionalString(action, "unknown"),
+        normalizeOptionalString(username, "unknown"),
+        success ? 1 : 0,
+        detailsJson,
+        normalizeOptionalString(computerName, ""),
+        normalizeOptionalString(ipAddress, ""),
+        normalizeOptionalString(platform, "")
+      )
+      .run();
+  } catch (err) {
+    console.error("Failed to write audit log:", err);
+  }
+}
+
 function normalizeFcmServiceAccount(env) {
+
   const raw = normalizeOptionalString(env.FCM_SERVICE_ACCOUNT_JSON, "");
   if (!raw) return null;
 
@@ -1396,11 +1421,38 @@ async function handleWebAuthRoute(request, env, pathParts) {
     } catch (error) {
       if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
         await recordFailedWebLoginAttempt(env, rateLimitIdentifier);
+        
+        // Log audit event for failed login
+        await logAuditEvent(env, {
+          action: "web_login_failed",
+          username: username,
+          success: false,
+          details: {
+            reason: error.message,
+            status_code: error.status
+          },
+          ipAddress: getClientIpForRateLimit(request),
+          platform: "web"
+        });
       }
       throw error;
     }
 
     await clearWebLoginRateLimit(env, rateLimitIdentifier);
+    
+    // Log audit event for successful login
+    await logAuditEvent(env, {
+      action: "web_login_success",
+      username: user.username,
+      success: true,
+      details: {
+        role: user.role,
+        user_id: Number(user.id)
+      },
+      ipAddress: getClientIpForRateLimit(request),
+      platform: "web"
+    });
+    
     const token = await buildWebAccessToken(env, {
       username: user.username,
       role: user.role,
@@ -1517,6 +1569,22 @@ async function handleWebAuthRoute(request, env, pathParts) {
     const role = normalizeWebRole(body?.role || "viewer");
     const createdUser = await createWebUser(env, { username, password, role });
 
+    // Log audit event for user creation
+    await logAuditEvent(env, {
+      action: "web_user_created",
+      username: session.sub,
+      success: true,
+      details: {
+        created_user: createdUser.username,
+        created_user_id: createdUser.id,
+        created_role: createdUser.role,
+        performed_by: session.sub,
+        performed_by_role: session.role
+      },
+      ipAddress: getClientIpForRateLimit(request),
+      platform: "web"
+    });
+
     return jsonResponse(
       {
         success: true,
@@ -1576,6 +1644,25 @@ async function handleWebAuthRoute(request, env, pathParts) {
       isActive: nextIsActive,
     });
 
+    // Log audit event for user update
+    await logAuditEvent(env, {
+      action: "web_user_updated",
+      username: session.sub,
+      success: true,
+      details: {
+        updated_user_id: userId,
+        updated_user: existingUser.username,
+        old_role: existingUser.role,
+        new_role: nextRole,
+        old_active: Boolean(existingUser.is_active),
+        new_active: Boolean(nextIsActive),
+        performed_by: session.sub,
+        performed_by_role: session.role
+      },
+      ipAddress: getClientIpForRateLimit(request),
+      platform: "web"
+    });
+
     const updatedUser = await getWebUserById(env, userId);
     return jsonResponse(
       {
@@ -1612,6 +1699,21 @@ async function handleWebAuthRoute(request, env, pathParts) {
 
     const newPassword = validateWebPassword(body?.new_password, "new_password");
     await forceResetWebUserPassword(env, { userId, newPassword });
+
+    // Log audit event for password reset
+    await logAuditEvent(env, {
+      action: "web_password_reset",
+      username: session.sub,
+      success: true,
+      details: {
+        target_user_id: userId,
+        target_user: existingUser.username,
+        performed_by: session.sub,
+        performed_by_role: session.role
+      },
+      ipAddress: getClientIpForRateLimit(request),
+      platform: "web"
+    });
 
     const updatedUser = await getWebUserById(env, userId);
     return jsonResponse(
@@ -1661,6 +1763,22 @@ async function handleWebAuthRoute(request, env, pathParts) {
         password_hash_type: imported.passwordHashType,
       });
     }
+
+    // Log audit event for user import
+    await logAuditEvent(env, {
+      action: "web_users_imported",
+      username: session.sub,
+      success: true,
+      details: {
+        total_imported: processedUsers.length,
+        created,
+        updated,
+        performed_by: session.sub,
+        performed_by_role: session.role
+      },
+      ipAddress: getClientIpForRateLimit(request),
+      platform: "web"
+    });
 
     return jsonResponse(
       {
@@ -1818,6 +1936,1741 @@ export default {
         return jsonResponse({ ok: true, now: nowIso() });
       }
 
+
+      // Dashboard route - serve embedded single-file dashboard
+      if (routeParts.length === 1 && routeParts[0] === "dashboard" && request.method === "GET") {
+        try {
+          await verifyWebAccessToken(request, env);
+        } catch {
+          // Allow access to login page even without token - JS will handle auth
+        }
+        
+        const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Driver Manager Dashboard</title>
+    <style>
+:root {
+    --bg-primary: #0f172a;
+    --bg-secondary: #1e293b;
+    --bg-card: #334155;
+    --bg-hover: #475569;
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --accent-primary: #06b6d4;
+    --accent-secondary: #8b5cf6;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --error: #ef4444;
+    --info: #3b82f6;
+    --border: #475569;
+    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+    --radius: 12px;
+    --radius-sm: 8px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.6;
+    min-height: 100vh;
+}
+
+#app {
+    display: flex;
+    min-height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+    width: 280px;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 1.5rem;
+    position: fixed;
+    height: 100vh;
+    overflow-y: auto;
+}
+
+.logo h1 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.nav-links {
+    list-style: none;
+    flex: 1;
+}
+
+.nav-links li {
+    margin-bottom: 0.5rem;
+}
+
+.nav-links a {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem;
+    color: var(--text-secondary);
+    text-decoration: none;
+    border-radius: var(--radius);
+    transition: all 0.2s;
+    font-size: 0.9375rem;
+}
+
+.nav-links a:hover, .nav-links a.active {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    box-shadow: var(--shadow);
+}
+
+.user-info {
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    margin-top: auto;
+}
+
+.user-info span {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.role-badge {
+    display: inline-block !important;
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    color: white !important;
+    padding: 0.25rem 0.75rem !important;
+    border-radius: 9999px;
+    font-size: 0.75rem !important;
+    font-weight: 600;
+    text-transform: uppercase;
+    width: fit-content;
+}
+
+/* Main Content */
+.main-content {
+    flex: 1;
+    margin-left: 280px;
+    padding: 2rem;
+    overflow-y: auto;
+    min-height: 100vh;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.header h2 {
+    font-size: 1.875rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--text-primary), var(--text-secondary));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.header-actions {
+    display: flex;
+    gap: 0.75rem;
+}
+
+/* Stats Grid */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.stat-card {
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 4px;
+    height: 100%;
+    background: linear-gradient(180deg, var(--accent-primary), var(--accent-secondary));
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.stat-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--accent-primary);
+}
+
+.stat-card:hover::before {
+    opacity: 1;
+}
+
+.stat-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.75rem;
+    background: var(--bg-card);
+    box-shadow: var(--shadow);
+}
+
+.stat-icon.total { background: linear-gradient(135deg, rgba(6, 182, 212, 0.2), rgba(6, 182, 212, 0.1)); }
+.stat-icon.success { background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(16, 185, 129, 0.1)); }
+.stat-icon.time { background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(139, 92, 246, 0.1)); }
+.stat-icon.clients { background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(245, 158, 11, 0.1)); }
+
+.stat-info h3 {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.25rem;
+    font-weight: 500;
+}
+
+.stat-info p {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    background: linear-gradient(135deg, var(--text-primary), var(--accent-primary));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Charts Grid */
+.charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.chart-card {
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+    transition: all 0.3s ease;
+}
+
+.chart-card:hover {
+    border-color: var(--accent-primary);
+    box-shadow: var(--shadow-lg);
+}
+
+.chart-card.wide {
+    grid-column: 1 / -1;
+}
+
+.chart-card h3 {
+    font-size: 1rem;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.chart-card canvas {
+    max-height: 300px;
+}
+
+/* Sections */
+.section {
+    display: none;
+    animation: fadeIn 0.3s ease;
+}
+
+.section.active {
+    display: block;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Filters */
+.filters {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+}
+
+.filters input, .filters select {
+    padding: 0.625rem 1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    transition: all 0.2s;
+}
+
+.filters input:focus, .filters select:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1);
+}
+
+/* Tables */
+.table-container {
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    padding: 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+th {
+    background: var(--bg-card);
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.75rem;
+}
+
+td {
+    font-size: 0.875rem;
+    color: var(--text-primary);
+}
+
+tr {
+    transition: background 0.2s;
+}
+
+tr:hover {
+    background: var(--bg-hover);
+}
+
+tr[data-id] {
+    cursor: pointer;
+}
+
+/* Badges */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.875rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+
+.badge::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.badge.success { background: rgba(16, 185, 129, 0.15); color: var(--success); }
+.badge.failed { background: rgba(239, 68, 68, 0.15); color: var(--error); }
+.badge.unknown { background: rgba(148, 163, 184, 0.15); color: var(--text-secondary); }
+.badge.low { background: rgba(6, 182, 212, 0.15); color: var(--accent-primary); }
+.badge.medium { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
+.badge.high { background: rgba(239, 68, 68, 0.15); color: var(--error); }
+.badge.critical { background: rgba(239, 68, 68, 0.25); color: var(--error); animation: pulse 2s infinite; }
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* Incidents */
+.incidents-grid {
+    display: grid;
+    gap: 1rem;
+}
+
+.incident-card {
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    border: 1px solid var(--border);
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.incident-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.incident-card:hover {
+    border-color: var(--accent-primary);
+    transform: translateX(4px);
+}
+
+.incident-card:hover::before {
+    opacity: 1;
+}
+
+.incident-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.incident-header small {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.photos-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.photo-thumb {
+    width: 100%;
+    height: 140px;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border: 2px solid transparent;
+}
+
+.photo-thumb:hover {
+    transform: scale(1.05);
+    border-color: var(--accent-primary);
+    box-shadow: var(--shadow-lg);
+}
+
+/* Modal */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(15, 23, 42, 0.9);
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+
+.modal.active {
+    display: flex;
+    animation: modalFadeIn 0.3s ease;
+}
+
+@keyframes modalFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.modal-content {
+    background: var(--bg-secondary);
+    padding: 2rem;
+    border-radius: var(--radius);
+    max-width: 420px;
+    width: 100%;
+    box-shadow: var(--shadow-lg);
+    border: 1px solid var(--border);
+    animation: modalSlideIn 0.3s ease;
+}
+
+@keyframes modalSlideIn {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.modal-content.photo-modal {
+    max-width: 90%;
+    max-height: 90%;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.login-header {
+    text-align: center;
+    margin-bottom: 1.5rem;
+}
+
+.login-header h2 {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.login-header p {
+    color: var(--text-secondary);
+    font-size: 0.9375rem;
+}
+
+.input-group {
+    margin-bottom: 1rem;
+}
+
+.input-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.input-group input {
+    width: 100%;
+    padding: 0.875rem 1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+    transition: all 0.2s;
+}
+
+.input-group input:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1);
+}
+
+.modal-content img {
+    max-width: 100%;
+    max-height: 80vh;
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+}
+
+.close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    font-size: 2rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: all 0.2s;
+}
+
+.close:hover {
+    background: var(--bg-card);
+    color: var(--text-primary);
+}
+
+/* Buttons */
+.btn-primary {
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    color: white;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(6, 182, 212, 0.4);
+}
+
+.btn-primary:active {
+    transform: translateY(0);
+}
+
+.btn-secondary {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    padding: 0.625rem 1.25rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.btn-secondary:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-primary);
+}
+
+.btn-icon {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.btn-icon:hover {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    transform: rotate(180deg);
+}
+
+.btn-full {
+    width: 100%;
+    justify-content: center;
+    padding: 1rem;
+}
+
+/* Loading & Error States */
+.loading {
+    text-align: center;
+    padding: 3rem;
+    color: var(--text-secondary);
+    font-size: 0.9375rem;
+}
+
+.loading::after {
+    content: '';
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent-primary);
+    border-radius: 50%;
+    margin-left: 0.75rem;
+    animation: spin 1s linear infinite;
+    vertical-align: middle;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.error {
+    color: var(--error);
+    font-size: 0.875rem;
+    margin-top: 0.75rem;
+    text-align: center;
+    padding: 0.75rem;
+    background: rgba(239, 68, 68, 0.1);
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+/* Recent Section */
+.recent-section {
+    margin-top: 2rem;
+}
+
+.recent-section h3 {
+    font-size: 1.125rem;
+    color: var(--text-primary);
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+    .charts-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .chart-card.wide {
+        grid-column: 1;
+    }
+}
+
+@media (max-width: 768px) {
+    .sidebar {
+        width: 100%;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        flex-direction: row;
+        padding: 0.75rem;
+        z-index: 100;
+        height: auto;
+        border-right: none;
+        border-top: 1px solid var(--border);
+    }
+    
+    .logo, .user-info {
+        display: none;
+    }
+    
+    .nav-links {
+        display: flex;
+        flex: 1;
+        justify-content: space-around;
+    }
+    
+    .nav-links li {
+        margin-bottom: 0;
+    }
+    
+    .nav-links a {
+        padding: 0.625rem;
+        font-size: 0.875rem;
+    }
+    
+    .main-content {
+        margin-left: 0;
+        padding: 1rem;
+        padding-bottom: 5rem;
+    }
+    
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+    }
+    
+    .stat-card {
+        padding: 1rem;
+    }
+    
+    .stat-icon {
+        width: 44px;
+        height: 44px;
+        font-size: 1.25rem;
+    }
+    
+    .stat-info p {
+        font-size: 1.25rem;
+    }
+    
+    .filters {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .filters input, .filters select, .filters button {
+        width: 100%;
+    }
+    
+    .charts-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .header h2 {
+        font-size: 1.5rem;
+    }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--bg-card);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--bg-hover);
+}
+
+</style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <nav class="sidebar">
+            <div class="logo">
+                <h1>📊 Driver Manager</h1>
+            </div>
+            <ul class="nav-links">
+                <li><a href="#" class="active" data-section="dashboard">📈 Dashboard</a></li>
+                <li><a href="#" data-section="installations">💻 Instalaciones</a></li>
+                <li><a href="#" data-section="incidents">⚠️ Incidencias</a></li>
+                <li><a href="#" data-section="audit">📋 Auditoría</a></li>
+            </ul>
+            <div class="user-info">
+                <span id="username">Usuario</span>
+                <span id="userRole" class="role-badge">admin</span>
+                <button id="logoutBtn" class="btn-secondary">Cerrar sesión</button>
+            </div>
+        </nav>
+        
+        <main class="main-content">
+            <header class="header">
+                <h2 id="pageTitle">Dashboard</h2>
+                <div class="header-actions">
+                    <button id="refreshBtn" class="btn-icon" title="Actualizar">↻</button>
+                </div>
+            </header>
+            
+            <div id="dashboardSection" class="section active">
+                <!-- Stats Cards -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon total">📦</div>
+                        <div class="stat-info">
+                            <h3>Total Instalaciones</h3>
+                            <p id="totalInstallations">-</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon success">✅</div>
+                        <div class="stat-info">
+                            <h3>Tasa de Éxito</h3>
+                            <p id="successRate">-</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon time">⏱️</div>
+                        <div class="stat-info">
+                            <h3>Tiempo Promedio</h3>
+                            <p id="avgTime">-</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon clients">👥</div>
+                        <div class="stat-info">
+                            <h3>Clientes Únicos</h3>
+                            <p id="uniqueClients">-</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Charts Grid -->
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <h3>📊 Tasa de Éxito</h3>
+                        <canvas id="successChart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>🏷️ Instalaciones por Marca</h3>
+                        <canvas id="brandChart"></canvas>
+                    </div>
+                    <div class="chart-card wide">
+                        <h3>📈 Tendencia de Instalaciones (Últimos 7 días)</h3>
+                        <canvas id="trendChart"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Recent Activity -->
+                <div class="recent-section">
+                    <h3>🕐 Instalaciones Recientes</h3>
+                    <div id="recentInstallations" class="table-container">
+                        <p class="loading">Cargando...</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="installationsSection" class="section">
+                <div class="filters">
+                    <input type="text" id="clientFilter" placeholder="🔍 Filtrar por cliente...">
+                    <select id="brandFilter">
+                        <option value="">Todas las marcas</option>
+                    </select>
+                    <select id="statusFilter">
+                        <option value="">Todos los estados</option>
+                        <option value="success">✅ Éxito</option>
+                        <option value="failed">❌ Fallido</option>
+                        <option value="unknown">❓ Desconocido</option>
+                    </select>
+                    <input type="date" id="startDate">
+                    <input type="date" id="endDate">
+                    <button id="applyFilters" class="btn-primary">Aplicar Filtros</button>
+                    <button id="exportBtn" class="btn-secondary">📥 Exportar</button>
+                </div>
+                <div id="installationsTable" class="table-container">
+                    <p class="loading">Cargando instalaciones...</p>
+                </div>
+            </div>
+            
+            <div id="incidentsSection" class="section">
+                <div id="incidentsList" class="incidents-grid">
+                    <p class="loading">Cargando incidencias...</p>
+                </div>
+            </div>
+            
+            <div id="auditSection" class="section">
+                <div class="filters">
+                    <select id="auditActionFilter">
+                        <option value="">Todas las acciones</option>
+                        <option value="web_login_success">✅ Login exitoso</option>
+                        <option value="web_login_failed">❌ Login fallido</option>
+                        <option value="create_web_user">👤 Crear usuario</option>
+                        <option value="update_web_user">✏️ Actualizar usuario</option>
+                        <option value="create_incident">⚠️ Crear incidencia</option>
+                        <option value="create_installation">💻 Crear instalación</option>
+                    </select>
+                    <button id="refreshAudit" class="btn-secondary">🔄 Actualizar</button>
+                </div>
+                <div id="auditLogs" class="table-container">
+                    <p class="loading">Cargando logs...</p>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <div id="loginModal" class="modal">
+        <div class="modal-content">
+            <div class="login-header">
+                <h2>🔐 Driver Manager</h2>
+                <p>Iniciar Sesión</p>
+            </div>
+            <form id="loginForm">
+                <div class="input-group">
+                    <label for="loginUsername">Usuario</label>
+                    <input type="text" id="loginUsername" placeholder="nombre_usuario" required>
+                </div>
+                <div class="input-group">
+                    <label for="loginPassword">Contraseña</label>
+                    <input type="password" id="loginPassword" placeholder="••••••••" required>
+                </div>
+                <button type="submit" class="btn-primary btn-full">Ingresar</button>
+            </form>
+            <p id="loginError" class="error"></p>
+        </div>
+    </div>
+    
+    <div id="photoModal" class="modal">
+        <div class="modal-content photo-modal">
+            <span class="close">&times;</span>
+            <img id="photoViewer" src="" alt="Foto de incidencia">
+        </div>
+    </div>
+    
+    <script>
+const API_BASE = '';
+let authToken = localStorage.getItem('authToken');
+let currentUser = null;
+let charts = {};
+
+// Chart.js default configuration
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.borderColor = '#334155';
+Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+
+const api = {
+    async request(endpoint, options = {}) {
+        const headers = {
+            'Content-Type': 'application/json',
+            ...options.headers
+        };
+        
+        if (authToken) {
+            headers['Authorization'] = 'Bearer ' + authToken;
+        }
+        
+        const response = await fetch(API_BASE + endpoint, {
+            ...options,
+            headers
+        });
+        
+        if (response.status === 401) {
+            showLogin();
+            throw new Error('No autorizado');
+        }
+        
+        return response.json();
+    },
+    
+    getInstallations(params = {}) {
+        const query = new URLSearchParams(params).toString();
+        return this.request('/web/installations?' + query);
+    },
+    
+    getStatistics() {
+        return this.request('/web/statistics');
+    },
+    
+    getAuditLogs(limit = 100) {
+        return this.request('/web/audit-logs?limit=' + limit);
+    },
+    
+    getIncidents(installationId) {
+        return this.request('/web/installations/' + installationId + '/incidents');
+    },
+    
+    getTrendData() {
+        return this.request('/web/statistics/trend');
+    },
+    
+    login(username, password) {
+        return this.request('/web/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ username, password })
+        });
+    },
+    
+    getMe() {
+        return this.request('/web/auth/me');
+    }
+};
+
+function showLogin() {
+    document.getElementById('loginModal').classList.add('active');
+    document.body.style.overflow = 'hidden';
+}
+
+function hideLogin() {
+    document.getElementById('loginModal').classList.remove('active');
+    document.body.style.overflow = '';
+    document.getElementById('loginError').textContent = '';
+}
+
+function updateStats(stats) {
+    animateNumber('totalInstallations', stats.total_installations || 0);
+    animateNumber('successRate', (stats.success_rate || 0) + '%');
+    animateNumber('avgTime', (stats.average_time_minutes || 0) + ' min');
+    animateNumber('uniqueClients', stats.unique_clients || 0);
+}
+
+function animateNumber(elementId, value) {
+    const element = document.getElementById(elementId);
+    element.style.opacity = '0';
+    element.style.transform = 'translateY(10px)';
+    
+    setTimeout(() => {
+        element.textContent = value;
+        element.style.transition = 'all 0.3s ease';
+        element.style.opacity = '1';
+        element.style.transform = 'translateY(0)';
+    }, 100);
+}
+
+// Chart rendering functions
+function renderSuccessChart(stats) {
+    const ctx = document.getElementById('successChart').getContext('2d');
+    
+    if (charts.success) {
+        charts.success.destroy();
+    }
+    
+    const success = stats.successful_installations || 0;
+    const failed = stats.failed_installations || 0;
+    const total = stats.total_installations || 1;
+    const other = total - success - failed;
+    
+    charts.success = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Éxito', 'Fallido', 'Otro'],
+            datasets: [{
+                data: [success, failed, Math.max(0, other)],
+                backgroundColor: [
+                    'rgba(16, 185, 129, 0.8)',
+                    'rgba(239, 68, 68, 0.8)',
+                    'rgba(148, 163, 184, 0.3)'
+                ],
+                borderColor: [
+                    'rgba(16, 185, 129, 1)',
+                    'rgba(239, 68, 68, 1)',
+                    'rgba(148, 163, 184, 0.5)'
+                ],
+                borderWidth: 2,
+                hoverOffset: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        padding: 15,
+                        usePointStyle: true,
+                        pointStyle: 'circle'
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.label || '';
+                            const value = context.parsed || 0;
+                            const percentage = ((value / total) * 100).toFixed(1);
+                            return \`\${label}: \${value} (\${percentage}%)\`;
+                        }
+                    }
+                }
+            },
+            cutout: '65%'
+        }
+    });
+}
+
+function renderBrandChart(stats) {
+    const ctx = document.getElementById('brandChart').getContext('2d');
+    
+    if (charts.brand) {
+        charts.brand.destroy();
+    }
+    
+    const brands = Object.entries(stats.by_brand || {})
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6);
+    
+    if (brands.length === 0) {
+        brands.push(['Sin datos', 1]);
+    }
+    
+    const colors = [
+        'rgba(6, 182, 212, 0.8)',
+        'rgba(139, 92, 246, 0.8)',
+        'rgba(16, 185, 129, 0.8)',
+        'rgba(245, 158, 11, 0.8)',
+        'rgba(239, 68, 68, 0.8)',
+        'rgba(59, 130, 246, 0.8)'
+    ];
+    
+    charts.brand = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: brands.map(b => b[0]),
+            datasets: [{
+                label: 'Instalaciones',
+                data: brands.map(b => b[1]),
+                backgroundColor: colors,
+                borderColor: colors.map(c => c.replace('0.8', '1')),
+                borderWidth: 2,
+                borderRadius: 6,
+                borderSkipped: false
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: {
+                        color: 'rgba(71, 85, 105, 0.3)'
+                    },
+                    ticks: {
+                        precision: 0
+                    }
+                },
+                x: {
+                    grid: {
+                        display: false
+                    }
+                }
+            }
+        }
+    });
+}
+
+async function renderTrendChart() {
+    const ctx = document.getElementById('trendChart').getContext('2d');
+    
+    if (charts.trend) {
+        charts.trend.destroy();
+    }
+    
+    try {
+        // Generate last 7 days labels
+        const labels = [];
+        const data = [];
+        const today = new Date();
+        
+        for (let i = 6; i >= 0; i--) {
+            const date = new Date(today);
+            date.setDate(date.getDate() - i);
+            labels.push(date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' }));
+            data.push(Math.floor(Math.random() * 20) + 5); // Simulated data - replace with real API
+        }
+        
+        charts.trend = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Instalaciones',
+                    data: data,
+                    borderColor: 'rgba(6, 182, 212, 1)',
+                    backgroundColor: 'rgba(6, 182, 212, 0.1)',
+                    borderWidth: 3,
+                    fill: true,
+                    tension: 0.4,
+                    pointBackgroundColor: 'rgba(6, 182, 212, 1)',
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2,
+                    pointRadius: 5,
+                    pointHoverRadius: 7
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(71, 85, 105, 0.3)'
+                        },
+                        ticks: {
+                            precision: 0
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
+    } catch (err) {
+        console.error('Error rendering trend chart:', err);
+    }
+}
+
+async function loadDashboard() {
+    try {
+        const stats = await api.getStatistics();
+        updateStats(stats);
+        
+        // Render charts
+        renderSuccessChart(stats);
+        renderBrandChart(stats);
+        await renderTrendChart();
+        
+        const installations = await api.getInstallations({ limit: 5 });
+        renderRecentInstallations(installations);
+    } catch (err) {
+        console.error('Error cargando dashboard:', err);
+    }
+}
+
+function renderRecentInstallations(installations) {
+    const container = document.getElementById('recentInstallations');
+    if (!installations || !installations.length) {
+        container.innerHTML = '<p class="loading">No hay instalaciones recientes</p>';
+        return;
+    }
+    
+    let html = '<table><thead><tr><th>ID</th><th>Cliente</th><th>Marca</th><th>Estado</th><th>Fecha</th></tr></thead><tbody>';
+    
+    installations.forEach(inst => {
+        const statusClass = inst.status || 'unknown';
+        const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
+        
+        html += '<tr>';
+        html += '<td><strong>#' + inst.id + '</strong></td>';
+        html += '<td>' + (inst.client_name || 'N/A') + '</td>';
+        html += '<td>' + (inst.driver_brand || 'N/A') + '</td>';
+        html += '<td><span class="badge ' + statusClass + '">' + statusIcon + ' ' + inst.status + '</span></td>';
+        html += '<td>' + new Date(inst.timestamp).toLocaleString('es-ES') + '</td>';
+        html += '</tr>';
+    });
+    
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+async function loadInstallations() {
+    const container = document.getElementById('installationsTable');
+    container.innerHTML = '<p class="loading">Cargando...</p>';
+    
+    try {
+        const params = {
+            client_name: document.getElementById('clientFilter').value,
+            brand: document.getElementById('brandFilter').value,
+            status: document.getElementById('statusFilter').value,
+            start_date: document.getElementById('startDate').value,
+            end_date: document.getElementById('endDate').value,
+            limit: 50
+        };
+        
+        const installations = await api.getInstallations(params);
+        renderInstallationsTable(installations);
+    } catch (err) {
+        container.innerHTML = '<p class="error">❌ Error cargando instalaciones</p>';
+    }
+}
+
+function renderInstallationsTable(installations) {
+    const container = document.getElementById('installationsTable');
+    if (!installations || !installations.length) {
+        container.innerHTML = '<p class="loading">No se encontraron instalaciones</p>';
+        return;
+    }
+    
+    let html = '<table><thead><tr><th>ID</th><th>Cliente</th><th>Marca</th><th>Versión</th><th>Estado</th><th>Tiempo</th><th>Notas</th><th>Fecha</th></tr></thead><tbody>';
+    
+    installations.forEach(inst => {
+        const statusClass = inst.status || 'unknown';
+        const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
+        
+        html += '<tr data-id="' + inst.id + '">';
+        html += '<td><strong>#' + inst.id + '</strong></td>';
+        html += '<td>' + (inst.client_name || 'N/A') + '</td>';
+        html += '<td>' + (inst.driver_brand || 'N/A') + '</td>';
+        html += '<td>' + (inst.driver_version || 'N/A') + '</td>';
+        html += '<td><span class="badge ' + statusClass + '">' + statusIcon + ' ' + inst.status + '</span></td>';
+        html += '<td>' + inst.installation_time_seconds + 's</td>';
+        html += '<td>' + (inst.notes ? inst.notes.substring(0, 30) + '...' : '-') + '</td>';
+        html += '<td>' + new Date(inst.timestamp).toLocaleString('es-ES') + '</td>';
+        html += '</tr>';
+    });
+    
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    
+    container.querySelectorAll('tr[data-id]').forEach(row => {
+        row.addEventListener('click', () => {
+            const id = row.dataset.id;
+            showIncidentsForInstallation(id);
+        });
+    });
+}
+
+async function showIncidentsForInstallation(installationId) {
+    const container = document.getElementById('incidentsList');
+    document.querySelector('[data-section="incidents"]').click();
+    container.innerHTML = '<p class="loading">Cargando incidencias...</p>';
+    
+    try {
+        const data = await api.getIncidents(installationId);
+        renderIncidents(data.incidents || [], installationId);
+    } catch (err) {
+        container.innerHTML = '<p class="error">❌ Error cargando incidencias</p>';
+    }
+}
+
+async function loadPhotoWithAuth(photoId) {
+    try {
+        const headers = {};
+        if (authToken) {
+            headers['Authorization'] = 'Bearer ' + authToken;
+        }
+        const response = await fetch(API_BASE + '/photos/' + photoId, { headers });
+        if (!response.ok) throw new Error('Failed to load photo');
+        const blob = await response.blob();
+        return URL.createObjectURL(blob);
+    } catch (err) {
+        console.error('Error loading photo:', err);
+        return '';
+    }
+}
+
+async function renderIncidents(incidents, installationId) {
+    const container = document.getElementById('incidentsList');
+    
+    let html = '<div class="incidents-header" style="margin-bottom: 1.5rem;">';
+    html += '<h3>⚠️ Incidencias de Instalación #' + installationId + '</h3>';
+    html += '<button onclick="document.querySelector(\\'[data-section=\\\\\\'installations\\\\\\']\\').click()" class="btn-secondary">← Volver</button>';
+    html += '</div>';
+    
+    if (!incidents || !incidents.length) {
+        html += '<p class="loading">No hay incidencias para esta instalación</p>';
+        container.innerHTML = html;
+        return;
+    }
+    
+    for (const inc of incidents) {
+        const severityIcon = inc.severity === 'critical' ? '🔴' : inc.severity === 'high' ? '🟠' : inc.severity === 'medium' ? '🟡' : '🔵';
+        
+        html += '<div class="incident-card">';
+        html += '<div class="incident-header">';
+        html += '<div><span class="badge ' + inc.severity + '">' + severityIcon + ' ' + inc.severity + '</span> <small>por <strong>' + inc.reporter_username + '</strong></small></div>';
+        html += '<small>🕐 ' + new Date(inc.created_at).toLocaleString('es-ES') + '</small>';
+        html += '</div>';
+        html += '<p style="color: var(--text-secondary); line-height: 1.6;">' + inc.note + '</p>';
+        
+        if (inc.photos && inc.photos.length) {
+            html += '<div class="photos-grid">';
+            for (const photo of inc.photos) {
+                const photoUrl = await loadPhotoWithAuth(photo.id);
+                if (photoUrl) {
+                    html += '<img src="' + photoUrl + '" class="photo-thumb" onclick="viewPhoto(' + photo.id + ')" data-photo-id="' + photo.id + '" alt="Foto de incidencia">';
+                }
+            }
+            html += '</div>';
+        }
+        
+        html += '</div>';
+    }
+    
+    container.innerHTML = html;
+}
+
+async function viewPhoto(photoId) {
+    const modal = document.getElementById('photoModal');
+    const img = document.getElementById('photoViewer');
+    const photoUrl = await loadPhotoWithAuth(photoId);
+    if (photoUrl) {
+        img.src = photoUrl;
+        modal.classList.add('active');
+    }
+}
+
+async function loadAuditLogs() {
+    const container = document.getElementById('auditLogs');
+    container.innerHTML = '<p class="loading">Cargando logs...</p>';
+    
+    try {
+        const logs = await api.getAuditLogs();
+        renderAuditLogs(logs);
+    } catch (err) {
+        container.innerHTML = '<p class="error">❌ Error cargando logs</p>';
+    }
+}
+
+function renderAuditLogs(logs) {
+    const container = document.getElementById('auditLogs');
+    const actionFilter = document.getElementById('auditActionFilter')?.value;
+    
+    if (!logs || !logs.length) {
+        container.innerHTML = '<p class="loading">No hay logs de auditoría</p>';
+        return;
+    }
+    
+    let filteredLogs = logs;
+    if (actionFilter) {
+        filteredLogs = logs.filter(log => log.action === actionFilter);
+    }
+    
+    if (filteredLogs.length === 0) {
+        container.innerHTML = '<p class="loading">No hay logs para el filtro seleccionado</p>';
+        return;
+    }
+    
+    let html = '<table><thead><tr><th>🕐 Fecha</th><th>📝 Acción</th><th>👤 Usuario</th><th>✅ Estado</th><th>💻 Detalles</th></tr></thead><tbody>';
+    
+    filteredLogs.forEach(log => {
+        const successIcon = log.success ? '✅' : '❌';
+        const successClass = log.success ? 'success' : 'failed';
+        
+        let details = '-';
+        if (log.details) {
+            try {
+                const parsed = typeof log.details === 'string' ? JSON.parse(log.details) : log.details;
+                details = Object.entries(parsed)
+                    .map(([k, v]) => \`\${k}: \${v}\`)
+                    .slice(0, 2)
+                    .join(', ');
+                if (details.length > 50) details = details.substring(0, 50) + '...';
+            } catch {
+                details = String(log.details).substring(0, 50);
+            }
+        }
+        
+        html += '<tr>';
+        html += '<td>' + new Date(log.timestamp).toLocaleString('es-ES') + '</td>';
+        html += '<td><code style="background: var(--bg-card); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem;">' + log.action + '</code></td>';
+        html += '<td><strong>' + log.username + '</strong></td>';
+        html += '<td><span class="badge ' + successClass + '">' + successIcon + '</span></td>';
+        html += '<td style="color: var(--text-secondary); font-size: 0.875rem;">' + details + '</td>';
+        html += '</tr>';
+    });
+    
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+// Event Listeners
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = document.getElementById('loginUsername').value;
+    const password = document.getElementById('loginPassword').value;
+    
+    try {
+        const result = await api.login(username, password);
+        authToken = result.access_token;
+        currentUser = result.user;
+        localStorage.setItem('authToken', authToken);
+        
+        document.getElementById('username').textContent = result.user.username;
+        document.getElementById('userRole').textContent = result.user.role;
+        
+        hideLogin();
+        loadDashboard();
+        
+        // Show success notification
+        showNotification('✅ Bienvenido, ' + result.user.username + '!', 'success');
+    } catch (err) {
+        document.getElementById('loginError').textContent = '❌ Credenciales inválidas';
+        document.getElementById('loginPassword').value = '';
+    }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', () => {
+    authToken = null;
+    currentUser = null;
+    localStorage.removeItem('authToken');
+    showLogin();
+    showNotification('👋 Sesión cerrada', 'info');
+});
+
+document.getElementById('refreshBtn').addEventListener('click', () => {
+    const btn = document.getElementById('refreshBtn');
+    btn.style.transform = 'rotate(360deg)';
+    btn.style.transition = 'transform 0.5s ease';
+    
+    setTimeout(() => {
+        btn.style.transform = '';
+        btn.style.transition = '';
+    }, 500);
+    
+    loadDashboard();
+    showNotification('🔄 Dashboard actualizado', 'info');
+});
+
+document.querySelectorAll('.nav-links a').forEach(link => {
+    link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const section = link.dataset.section;
+        
+        document.querySelectorAll('.nav-links a').forEach(l => l.classList.remove('active'));
+        link.classList.add('active');
+        
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        document.getElementById(section + 'Section').classList.add('active');
+        
+        const titles = {
+            dashboard: '📈 Dashboard',
+            installations: '💻 Instalaciones',
+            incidents: '⚠️ Incidencias',
+            audit: '📋 Auditoría'
+        };
+        document.getElementById('pageTitle').textContent = titles[section] || 'Dashboard';
+        
+        if (section === 'installations') loadInstallations();
+        if (section === 'audit') loadAuditLogs();
+    });
+});
+
+document.getElementById('applyFilters').addEventListener('click', loadInstallations);
+
+document.getElementById('refreshAudit').addEventListener('click', loadAuditLogs);
+
+document.getElementById('auditActionFilter').addEventListener('change', () => {
+    loadAuditLogs();
+});
+
+document.querySelector('#photoModal .close').addEventListener('click', () => {
+    document.getElementById('photoModal').classList.remove('active');
+});
+
+// Close modal on outside click
+document.getElementById('photoModal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) {
+        document.getElementById('photoModal').classList.remove('active');
+    }
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        document.getElementById('photoModal').classList.remove('active');
+    }
+    if (e.ctrlKey && e.key === 'r') {
+        e.preventDefault();
+        loadDashboard();
+    }
+});
+
+// Notification system
+function showNotification(message, type = 'info') {
+    const notification = document.createElement('div');
+    notification.style.cssText = \`
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+        padding: 1rem 1.5rem;
+        background: \${type === 'success' ? 'rgba(16, 185, 129, 0.9)' : type === 'error' ? 'rgba(239, 68, 68, 0.9)' : 'rgba(6, 182, 212, 0.9)'};
+        color: white;
+        border-radius: 12px;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+        z-index: 9999;
+        font-weight: 500;
+        animation: slideIn 0.3s ease;
+    \`;
+    notification.textContent = message;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
+}
+
+// Add animation styles
+const style = document.createElement('style');
+style.textContent = \`
+    @keyframes slideIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+    @keyframes slideOut {
+        from { transform: translateX(0); opacity: 1; }
+        to { transform: translateX(100%); opacity: 0; }
+    }
+\`;
+document.head.appendChild(style);
+
+// Initialize
+async function init() {
+    if (!authToken) {
+        showLogin();
+    } else {
+        try {
+            const me = await api.getMe();
+            currentUser = me;
+            document.getElementById('username').textContent = me.username || 'Usuario';
+            document.getElementById('userRole').textContent = me.role || 'admin';
+            loadDashboard();
+        } catch (err) {
+            console.error('Error validating session:', err);
+            showLogin();
+        }
+    }
+}
+
+init();
+
+</script>
+</body>
+</html>
+`;
+        
+        return new Response(html, {
+          status: 200,
+          headers: {
+            ...corsHeaders(),
+            "Content-Type": "text/html",
+          },
+        });
+      }
+
+      if (routeParts.length === 1 && routeParts[0] === "dashboard.css" && request.method === "GET") {
+        return new Response("", {
+          status: 200,
+          headers: {
+            ...corsHeaders(),
+            "Content-Type": "text/css",
+          },
+        });
+      }
+
+      if (routeParts.length === 1 && routeParts[0] === "dashboard.js" && request.method === "GET") {
+        return new Response("", {
+          status: 200,
+          headers: {
+            ...corsHeaders(),
+            "Content-Type": "application/javascript",
+          },
+        });
+      }
+
+
       if (isWebRoute) {
         const webAuthResponse = await handleWebAuthRoute(request, env, routeParts);
         if (webAuthResponse) {
@@ -1866,6 +3719,21 @@ export default {
             )
             .run();
 
+          // Log audit event for installation creation
+          await logAuditEvent(env, {
+            action: "installation_created",
+            username: webSession?.sub || "api",
+            success: true,
+            details: {
+              driver_brand: payload.driver_brand,
+              driver_version: payload.driver_version,
+              status: payload.status,
+              client_name: payload.client_name
+            },
+            ipAddress: getClientIpForRateLimit(request),
+            platform: isWebRoute ? "web" : "api"
+          });
+
           return jsonResponse({ success: true }, 201);
         }
       }
@@ -1906,6 +3774,7 @@ export default {
             .run();
 
           return jsonResponse({ success: true }, 201);
+
         }
 
         if (request.method === "GET") {
@@ -2121,6 +3990,23 @@ export default {
             }
           }
 
+          // Log audit event for incident creation
+          await logAuditEvent(env, {
+            action: "create_incident",
+            username: payload.reporterUsername,
+            success: true,
+            details: {
+              incident_id: incidentId,
+              installation_id: installationId,
+              severity: payload.severity,
+              source: payload.source,
+              note_preview: payload.note.substring(0, 100)
+            },
+            computerName: "",
+            ipAddress: getClientIpForRateLimit(request),
+            platform: payload.source
+          });
+
           return jsonResponse(
             {
               success: true,
@@ -2139,6 +4025,7 @@ export default {
           );
         }
       }
+
 
       if (
         routeParts.length === 3 &&
@@ -2286,6 +4173,18 @@ export default {
             return textResponse("Error: El ID del registro es obligatorio.", 400);
           }
 
+          // Log audit event for installation deletion
+          await logAuditEvent(env, {
+            action: "installation_deleted",
+            username: webSession?.sub || "api",
+            success: true,
+            details: {
+              deleted_id: recordId
+            },
+            ipAddress: getClientIpForRateLimit(request),
+            platform: isWebRoute ? "web" : "api"
+          });
+
           await env.DB.prepare("DELETE FROM installations WHERE id = ?").bind(recordId).run();
           return jsonResponse({ message: `Registro ${recordId} eliminado.` });
         }
@@ -2394,5 +4293,3 @@ export default {
     }
   },
 };
-
-

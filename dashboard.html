@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Driver Manager Dashboard</title>
+    <link rel="stylesheet" href="/dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <nav class="sidebar">
+            <div class="logo">
+                <h1>📊 Driver Manager</h1>
+            </div>
+            <ul class="nav-links">
+                <li><a href="#" class="active" data-section="dashboard">📈 Dashboard</a></li>
+                <li><a href="#" data-section="installations">💻 Instalaciones</a></li>
+                <li><a href="#" data-section="incidents">⚠️ Incidencias</a></li>
+                <li><a href="#" data-section="audit">📋 Auditoría</a></li>
+            </ul>
+            <div class="user-info">
+                <span id="username">Usuario</span>
+                <span id="userRole" class="role-badge">admin</span>
+                <button id="logoutBtn" class="btn-secondary">Cerrar sesión</button>
+            </div>
+        </nav>
+        
+        <main class="main-content">
+            <header class="header">
+                <h2 id="pageTitle">Dashboard</h2>
+                <div class="header-actions">
+                    <button id="refreshBtn" class="btn-icon" title="Actualizar">↻</button>
+                </div>
+            </header>
+            
+            <div id="dashboardSection" class="section active">
+                <!-- Stats Cards -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon total">📦</div>
+                        <div class="stat-info">
+                            <h3>Total Instalaciones</h3>
+                            <p id="totalInstallations">-</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon success">✅</div>
+                        <div class="stat-info">
+                            <h3>Tasa de Éxito</h3>
+                            <p id="successRate">-</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon time">⏱️</div>
+                        <div class="stat-info">
+                            <h3>Tiempo Promedio</h3>
+                            <p id="avgTime">-</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon clients">👥</div>
+                        <div class="stat-info">
+                            <h3>Clientes Únicos</h3>
+                            <p id="uniqueClients">-</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Charts Grid -->
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <h3>📊 Tasa de Éxito</h3>
+                        <canvas id="successChart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>🏷️ Instalaciones por Marca</h3>
+                        <canvas id="brandChart"></canvas>
+                    </div>
+                    <div class="chart-card wide">
+                        <h3>📈 Tendencia de Instalaciones (Últimos 7 días)</h3>
+                        <canvas id="trendChart"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Recent Activity -->
+                <div class="recent-section">
+                    <h3>🕐 Instalaciones Recientes</h3>
+                    <div id="recentInstallations" class="table-container">
+                        <p class="loading">Cargando...</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="installationsSection" class="section">
+                <div class="filters">
+                    <input type="text" id="clientFilter" placeholder="🔍 Filtrar por cliente...">
+                    <select id="brandFilter">
+                        <option value="">Todas las marcas</option>
+                    </select>
+                    <select id="statusFilter">
+                        <option value="">Todos los estados</option>
+                        <option value="success">✅ Éxito</option>
+                        <option value="failed">❌ Fallido</option>
+                        <option value="unknown">❓ Desconocido</option>
+                    </select>
+                    <input type="date" id="startDate">
+                    <input type="date" id="endDate">
+                    <button id="applyFilters" class="btn-primary">Aplicar Filtros</button>
+                    <button id="exportBtn" class="btn-secondary">📥 Exportar</button>
+                </div>
+                <div id="installationsTable" class="table-container">
+                    <p class="loading">Cargando instalaciones...</p>
+                </div>
+            </div>
+            
+            <div id="incidentsSection" class="section">
+                <div id="incidentsList" class="incidents-grid">
+                    <p class="loading">Cargando incidencias...</p>
+                </div>
+            </div>
+            
+            <div id="auditSection" class="section">
+                <div class="filters">
+                    <select id="auditActionFilter">
+                        <option value="">Todas las acciones</option>
+                        <option value="web_login_success">✅ Login exitoso</option>
+                        <option value="web_login_failed">❌ Login fallido</option>
+                        <option value="create_web_user">👤 Crear usuario</option>
+                        <option value="update_web_user">✏️ Actualizar usuario</option>
+                        <option value="create_incident">⚠️ Crear incidencia</option>
+                        <option value="create_installation">💻 Crear instalación</option>
+                    </select>
+                    <button id="refreshAudit" class="btn-secondary">🔄 Actualizar</button>
+                </div>
+                <div id="auditLogs" class="table-container">
+                    <p class="loading">Cargando logs...</p>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <div id="loginModal" class="modal">
+        <div class="modal-content">
+            <div class="login-header">
+                <h2>🔐 Driver Manager</h2>
+                <p>Iniciar Sesión</p>
+            </div>
+            <form id="loginForm">
+                <div class="input-group">
+                    <label for="loginUsername">Usuario</label>
+                    <input type="text" id="loginUsername" placeholder="nombre_usuario" required>
+                </div>
+                <div class="input-group">
+                    <label for="loginPassword">Contraseña</label>
+                    <input type="password" id="loginPassword" placeholder="••••••••" required>
+                </div>
+                <button type="submit" class="btn-primary btn-full">Ingresar</button>
+            </form>
+            <p id="loginError" class="error"></p>
+        </div>
+    </div>
+    
+    <div id="photoModal" class="modal">
+        <div class="modal-content photo-modal">
+            <span class="close">&times;</span>
+            <img id="photoViewer" src="" alt="Foto de incidencia">
+        </div>
+    </div>
+    
+    <script src="/dashboard.js"></script>
+</body>
+</html>
