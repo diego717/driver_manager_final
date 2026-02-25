@@ -27,6 +27,8 @@ Driver Manager es un monorepo con tres componentes:
 - `migrations/0002_incidents_v1.sql`: migracion de incidencias y fotos.
 - `docs/incidents-v1.openapi.yaml`: contrato OpenAPI.
 - `docs/postman/`: coleccion y entorno de Postman.
+- `docs/multi-tenant-rollout.md`: plan de rollout multiempresa (tenant, roles, R2 y limites).
+- `docs/operational-differentiation-implementation.md`: plan de implementacion para workflow+SLA, offline Android, tablero web y push critico.
 
 ## Requisitos
 
@@ -177,6 +179,7 @@ Las migraciones incluidas crean:
 - `0004_web_users_hash_types.sql`: soporte de hash tipo `pbkdf2/bcrypt/legacy`.
 - `0005_audit_logs.sql`: tabla `audit_logs` para auditoria centralizada en D1.
 - `0006_device_tokens.sql`: tabla `device_tokens` para registro de dispositivos y push.
+- `0007_multi_tenant_foundation.sql`: base multi-tenant (tenants, roles por tenant, auditoria tenant y limites de plan).
 
 ## Mobile app (Expo)
 
