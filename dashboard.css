@@ -1052,3 +1052,8 @@ tr[data-id] {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--bg-hover);
 }
+
+
+.is-hidden {
+    display: none !important;
+}
