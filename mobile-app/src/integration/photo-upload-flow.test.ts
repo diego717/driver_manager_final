@@ -24,11 +24,10 @@ describe("critical integration flow: photo upload limits", () => {
     vi.clearAllMocks();
     clientMock.getResolvedApiBaseUrl.mockResolvedValue("https://worker.example");
     clientMock.resolveRequestAuth.mockResolvedValue({
-      path: "/incidents/33/photos",
+      path: "/web/incidents/33/photos",
       headers: {
-        "X-API-Token": "token",
-        "X-Request-Timestamp": "1",
-        "X-Request-Signature": "sig",
+        Authorization: "Bearer web-token",
+        "X-Client-Platform": "mobile",
       },
     });
     vi.stubGlobal("fetch", vi.fn());

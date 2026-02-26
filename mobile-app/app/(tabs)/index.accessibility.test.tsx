@@ -27,10 +27,48 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 
 function createReactNativeMock() {
   const ReactModule = require("react") as typeof React;
+  const FlatList = ({
+    children,
+    data = [],
+    renderItem,
+    keyExtractor,
+    initialNumToRender,
+    ListHeaderComponent,
+    onScroll,
+    ...props
+  }: any) => {
+    const [renderCount, setRenderCount] = ReactModule.useState(
+      Math.min(initialNumToRender ?? data.length, data.length),
+    );
+    const visibleItems = data.slice(0, renderCount);
+    return ReactModule.createElement(
+      "FlatList",
+      {
+        ...props,
+        initialNumToRender,
+        windowSize: props.windowSize,
+        removeClippedSubviews: props.removeClippedSubviews,
+        onScroll: (event: unknown) => {
+          onScroll?.(event);
+          setRenderCount(data.length);
+        },
+      },
+      ListHeaderComponent,
+      visibleItems.map((item: unknown, index: number) =>
+        ReactModule.createElement(
+          ReactModule.Fragment,
+          { key: keyExtractor ? keyExtractor(item, index) : String(index) },
+          renderItem?.({ item, index }),
+        ),
+      ),
+      children,
+    );
+  };
   return {
     ActivityIndicator: ({ children, ...props }: any) =>
       ReactModule.createElement("ActivityIndicator", props, children),
     Alert: { alert: vi.fn() },
+    FlatList,
     ScrollView: ({ children, ...props }: any) =>
       ReactModule.createElement("ScrollView", props, children),
     StyleSheet: {
@@ -150,5 +188,36 @@ describe("CreateIncidentScreen accessibility", () => {
     expect(labels.indexOf("Crear incidencia")).toBeGreaterThan(
       labels.indexOf("Refrescar lista de instalaciones"),
     );
+  });
+
+  it("renders installation options incrementally and enables scroll interaction", async () => {
+    const { fireEvent, render, waitFor } = await import("@testing-library/react-native/pure");
+    incidentsApiMocks.listInstallations.mockResolvedValueOnce(
+      Array.from({ length: 30 }, (_, index) => ({
+        id: index + 1,
+        client_name: `Cliente ${index + 1}`,
+      })),
+    );
+
+    const view = render(<CreateIncidentScreen />);
+    await waitFor(() => {
+      expect(view.getByTestId("installation-options-list")).toBeTruthy();
+    });
+
+    const installationList = view.getByTestId("installation-options-list");
+    expect(installationList.props.initialNumToRender).toBe(8);
+    expect(installationList.props.windowSize).toBe(5);
+    expect(installationList.props.removeClippedSubviews).toBe(true);
+    expect(view.queryByText("#9 - Cliente 9")).toBeNull();
+
+    fireEvent.scroll(installationList, {
+      nativeEvent: {
+        contentOffset: { x: 400, y: 0 },
+        layoutMeasurement: { width: 320, height: 60 },
+        contentSize: { width: 1200, height: 60 },
+      },
+    });
+
+    expect(view.getByText("#9 - Cliente 9")).toBeTruthy();
   });
 });

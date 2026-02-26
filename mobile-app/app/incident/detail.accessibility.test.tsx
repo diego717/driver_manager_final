@@ -43,10 +43,48 @@ function createDeferred<T>(): Deferred<T> {
 
 function createReactNativeMock() {
   const ReactModule = require("react") as typeof React;
+  const FlatList = ({
+    children,
+    data = [],
+    renderItem,
+    keyExtractor,
+    initialNumToRender,
+    ListHeaderComponent,
+    onScroll,
+    ...props
+  }: any) => {
+    const [renderCount, setRenderCount] = ReactModule.useState(
+      Math.min(initialNumToRender ?? data.length, data.length),
+    );
+    const visibleItems = data.slice(0, renderCount);
+    return ReactModule.createElement(
+      "FlatList",
+      {
+        ...props,
+        initialNumToRender,
+        windowSize: props.windowSize,
+        removeClippedSubviews: props.removeClippedSubviews,
+        onScroll: (event: unknown) => {
+          onScroll?.(event);
+          setRenderCount(data.length);
+        },
+      },
+      ListHeaderComponent,
+      visibleItems.map((item: unknown, index: number) =>
+        ReactModule.createElement(
+          ReactModule.Fragment,
+          { key: keyExtractor ? keyExtractor(item, index) : String(index) },
+          renderItem?.({ item, index }),
+        ),
+      ),
+      children,
+    );
+  };
   return {
     ActivityIndicator: ({ children, ...props }: any) =>
       ReactModule.createElement("ActivityIndicator", props, children),
     Alert: { alert: vi.fn() },
+    FlatList,
     Image: ({ children, ...props }: any) => ReactModule.createElement("Image", props, children),
     ScrollView: ({ children, ...props }: any) =>
       ReactModule.createElement("ScrollView", props, children),
@@ -251,5 +289,56 @@ describe("IncidentDetailScreen accessibility", () => {
     expect(labels.indexOf("Adjuntar evidencia fotografica")).toBeGreaterThan(
       labels.indexOf("Volver a la pantalla anterior"),
     );
+  });
+
+  it("supports partial photo rendering and reveals the rest after scroll", async () => {
+    const { fireEvent, render, waitFor } = await import("@testing-library/react-native/pure");
+    incidentsApiMocks.listIncidentsByInstallation.mockResolvedValueOnce({
+      success: true,
+      installation_id: 7,
+      incidents: [
+        {
+          id: 50,
+          installation_id: 7,
+          reporter_username: "tester",
+          note: "Fallo de prueba",
+          time_adjustment_seconds: 20,
+          severity: "high",
+          source: "mobile",
+          created_at: "2026-02-20T10:00:00.000Z",
+          photos: Array.from({ length: 5 }, (_, index) => ({
+            id: index + 1,
+            incident_id: 50,
+            r2_key: `a/${index + 1}.jpg`,
+            file_name: `captura-${index + 1}.jpg`,
+            content_type: "image/jpeg",
+            size_bytes: 340000,
+            sha256: null,
+            created_at: "2026-02-20T10:01:00.000Z",
+          })),
+        },
+      ],
+    });
+
+    const view = render(<IncidentDetailScreen />);
+    await waitFor(() => {
+      expect(view.getByTestId("incident-photos-list")).toBeTruthy();
+    });
+
+    const photosList = view.getByTestId("incident-photos-list");
+    expect(photosList.props.initialNumToRender).toBe(3);
+    expect(photosList.props.windowSize).toBe(5);
+    expect(photosList.props.removeClippedSubviews).toBe(true);
+    expect(view.queryByText("#4 - captura-4.jpg")).toBeNull();
+
+    fireEvent.scroll(photosList, {
+      nativeEvent: {
+        contentOffset: { x: 0, y: 400 },
+        layoutMeasurement: { width: 320, height: 400 },
+        contentSize: { width: 320, height: 1200 },
+      },
+    });
+
+    expect(view.getByText("#4 - captura-4.jpg")).toBeTruthy();
   });
 });
