@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const fileSystemMock = vi.hoisted(() => ({
   readAsStringAsync: vi.fn(),
+  getInfoAsync: vi.fn(),
   EncodingType: { Base64: "base64" },
 }));
 
