@@ -10,6 +10,8 @@ import {
 import { resolveWebSession } from "./webSession";
 
 const envBaseURL = normalizeApiBaseUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? "");
+const allowHttpApiBaseUrlInDebug =
+  process.env.EXPO_PUBLIC_ALLOW_HTTP_API_BASE_URL === "true";
 
 if (!envBaseURL) {
   // Keep an explicit warning for dev builds; requests will fail if baseURL stays empty.
@@ -37,6 +39,48 @@ export function normalizeApiBaseUrl(value: string): string {
   }
 }
 
+function isLocalDebugHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "10.0.2.2";
+}
+
+export function assertSecureApiBaseUrl(
+  value: string,
+  options?: {
+    isDevRuntime?: boolean;
+    allowHttpInDebug?: boolean;
+  },
+): string {
+  if (!value) return "";
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(
+      "API Base URL invalida. Configura una URL completa (https://...) en Configuracion y acceso.",
+    );
+  }
+
+  const isDevRuntime = options?.isDevRuntime ?? (typeof __DEV__ !== "undefined" && __DEV__);
+  const allowHttpInDebug = options?.allowHttpInDebug ?? allowHttpApiBaseUrlInDebug;
+  const canUseLocalHttp =
+    isDevRuntime && allowHttpInDebug && isLocalDebugHostname(parsed.hostname);
+
+  if (parsed.protocol === "http:" && !canUseLocalHttp) {
+    throw new Error(
+      "API Base URL insegura: se requiere https en release. Para debug local usa localhost/127.0.0.1/10.0.2.2 y habilita EXPO_PUBLIC_ALLOW_HTTP_API_BASE_URL=true solo en desarrollo.",
+    );
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(
+      "API Base URL invalida: solo se permiten esquemas https:// (o http:// local en debug).",
+    );
+  }
+
+  return value;
+}
+
 function normalizePath(path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) {
     return new URL(path).pathname;
@@ -61,9 +105,9 @@ async function resolveValidWebAccessToken(): Promise<string | null> {
 async function resolveApiBaseUrl(): Promise<string> {
   const storedBaseUrl = await getStoredApiBaseUrl();
   if (storedBaseUrl) {
-    return normalizeApiBaseUrl(storedBaseUrl);
+    return assertSecureApiBaseUrl(normalizeApiBaseUrl(storedBaseUrl));
   }
-  return envBaseURL;
+  return assertSecureApiBaseUrl(envBaseURL);
 }
 
 export async function resolveRequestAuth({

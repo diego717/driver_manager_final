@@ -13,7 +13,14 @@ const secureStoreMocks = vi.hoisted(() => ({
 
 vi.mock("../storage/secure", () => secureStoreMocks);
 
-import { apiClient, extractApiError, normalizeApiBaseUrl, signedJsonRequest } from "./client";
+import { hmacSha256Hex } from "./auth";
+import {
+  apiClient,
+  assertSecureApiBaseUrl,
+  extractApiError,
+  normalizeApiBaseUrl,
+  signedJsonRequest,
+} from "./client";
 
 describe("api client", () => {
   beforeEach(() => {
@@ -108,5 +115,36 @@ describe("api client", () => {
     expect(normalizeApiBaseUrl("https://worker.example/web/installations")).toBe(
       "https://worker.example",
     );
+  });
+
+  it("accepts https API base URLs", () => {
+    expect(assertSecureApiBaseUrl("https://worker.example")).toBe("https://worker.example");
+  });
+
+  it("rejects http API base URLs outside debug local", () => {
+    expect(() =>
+      assertSecureApiBaseUrl("http://worker.example", {
+        isDevRuntime: false,
+        allowHttpInDebug: false,
+      }),
+    ).toThrow(/se requiere https en release/i);
+  });
+
+  it("allows local http API base URL only in debug with explicit override", () => {
+    expect(
+      assertSecureApiBaseUrl("http://localhost:8787", {
+        isDevRuntime: true,
+        allowHttpInDebug: true,
+      }),
+    ).toBe("http://localhost:8787");
+  });
+
+  it("rejects local http API base URL if override is disabled", () => {
+    expect(() =>
+      assertSecureApiBaseUrl("http://localhost:8787", {
+        isDevRuntime: true,
+        allowHttpInDebug: false,
+      }),
+    ).toThrow(/se requiere https en release/i);
   });
 });
