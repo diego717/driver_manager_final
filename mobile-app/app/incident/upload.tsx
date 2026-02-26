@@ -267,6 +267,8 @@ export default function UploadIncidentPhotoScreen() {
   };
 
   const pickFromGallery = async () => {
+    setProcessingImage(true);
+    setProcessingMessage("Abriendo galeria...");
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
       publishFeedback({
@@ -274,6 +276,8 @@ export default function UploadIncidentPhotoScreen() {
         message: "Debes permitir acceso a galeria.",
         tone: "error",
       });
+      setProcessingImage(false);
+      setProcessingMessage("");
       return;
     }
 
@@ -281,11 +285,17 @@ export default function UploadIncidentPhotoScreen() {
       allowsEditing: false,
       quality: IMAGE_PICK_QUALITY,
     });
-    if (result.canceled || !result.assets?.length) return;
+    if (result.canceled || !result.assets?.length) {
+      setProcessingImage(false);
+      setProcessingMessage("");
+      return;
+    }
     await setImageFromAsset(result.assets[0]);
   };
 
   const takePhoto = async () => {
+    setProcessingImage(true);
+    setProcessingMessage("Abriendo camara...");
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
       publishFeedback({
@@ -293,6 +303,8 @@ export default function UploadIncidentPhotoScreen() {
         message: "Debes permitir acceso a camara.",
         tone: "error",
       });
+      setProcessingImage(false);
+      setProcessingMessage("");
       return;
     }
 
@@ -300,7 +312,11 @@ export default function UploadIncidentPhotoScreen() {
       allowsEditing: false,
       quality: IMAGE_PICK_QUALITY,
     });
-    if (result.canceled || !result.assets?.length) return;
+    if (result.canceled || !result.assets?.length) {
+      setProcessingImage(false);
+      setProcessingMessage("");
+      return;
+    }
     await setImageFromAsset(result.assets[0]);
   };
 
