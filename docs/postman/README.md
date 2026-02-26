@@ -12,9 +12,10 @@
 ## Set Variables
 1. `base_url`: your Worker URL.
 2. `installation_id`: an existing installation id in D1.
-3. `api_token`: token used by your Worker auth (if enabled).
-4. `api_secret`: HMAC secret used by Worker auth (if enabled).
-5. `photo_file_path`: local image file path for upload.
+3. `access_token`: Bearer token obtenido de `/web/auth/login`.
+4. `photo_file_path`: local image file path for upload.
+
+Opcional legacy (solo clientes no-publicos): `api_token` + `api_secret` para HMAC.
 
 ## Run Order
 1. `Create Incident`
@@ -24,8 +25,6 @@
 `Create Incident` test script stores `incident_id` automatically in environment.
 
 ## Auth Notes
-- If `api_secret` is empty, the collection sends `dev-signature` for development mode.
-- If `api_secret` is set, signature is auto-generated in pre-request script using:
-  `METHOD|PATH|TIMESTAMP|SHA256(raw_body)`.
-- Limitation: Postman cannot hash local file bytes in `body: file` mode from scripts.
-  For strict auth on photo upload, use your app/client code or `curl` with a precomputed signature.
+- Recomendado: usar `Authorization: Bearer <access_token>` contra rutas `/web/*`.
+- El flujo mobile productivo no debe distribuir `api_secret` embebido en la app.
+- HMAC (`api_token`/`api_secret`) queda solo para integraciones legacy/no-publicas.

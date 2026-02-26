@@ -27,6 +27,12 @@ type SelectedImage = {
   isTemporary: boolean;
 };
 
+type FeedbackState = {
+  title: string;
+  message: string;
+  tone: "error" | "success" | "info";
+};
+
 const IMAGE_PICK_QUALITY = 1;
 const MAX_UPLOAD_PHOTO_BYTES = 5 * 1024 * 1024;
 const MIN_UPLOAD_PHOTO_BYTES = 1024;
@@ -98,6 +104,7 @@ export default function UploadIncidentPhotoScreen() {
   const [uploading, setUploading] = useState(false);
   const [processingImage, setProcessingImage] = useState(false);
   const [processingMessage, setProcessingMessage] = useState("");
+  const [feedback, setFeedback] = useState<FeedbackState | null>(null);
   const palette = useMemo(
     () => ({
       screenBg: isDark ? "#020617" : "#f8fafc",
@@ -116,9 +123,28 @@ export default function UploadIncidentPhotoScreen() {
       processingSpinner: isDark ? "#0ea5a4" : "#0b7a75",
       primaryButtonBg: isDark ? "#0f766e" : "#0b7a75",
       primaryButtonText: "#ffffff",
+      errorBg: isDark ? "#450a0a" : "#fee2e2",
+      errorBorder: isDark ? "#991b1b" : "#fca5a5",
+      errorText: isDark ? "#fecaca" : "#991b1b",
+      successBg: isDark ? "#052e16" : "#dcfce7",
+      successBorder: isDark ? "#166534" : "#86efac",
+      successText: isDark ? "#bbf7d0" : "#166534",
+      infoBg: isDark ? "#082f49" : "#e0f2fe",
+      infoBorder: isDark ? "#0c4a6e" : "#7dd3fc",
+      infoText: isDark ? "#bae6fd" : "#0c4a6e",
     }),
     [isDark],
   );
+
+  const publishFeedback = (
+    nextFeedback: FeedbackState,
+    options: { showAlert?: boolean } = {},
+  ) => {
+    setFeedback(nextFeedback);
+    if (options.showAlert !== false) {
+      Alert.alert(nextFeedback.title, nextFeedback.message);
+    }
+  };
 
   useEffect(() => {
     selectedImageRef.current = selectedImage;
@@ -224,6 +250,7 @@ export default function UploadIncidentPhotoScreen() {
   };
 
   const setImageFromAsset = async (asset: ImagePicker.ImagePickerAsset) => {
+    setFeedback(null);
     setProcessingImage(true);
     setProcessingMessage("Preparando imagen...");
     try {
@@ -236,7 +263,13 @@ export default function UploadIncidentPhotoScreen() {
       setSelectedImage(processed);
     } catch (error) {
       setSelectedImage(null);
-      Alert.alert("Imagen invalida", extractApiError(error));
+      publishFeedback(
+        {
+          title: "Imagen invalida",
+          message: extractApiError(error),
+          tone: "error",
+        },
+      );
     } finally {
       setProcessingImage(false);
       setProcessingMessage("");
@@ -246,7 +279,11 @@ export default function UploadIncidentPhotoScreen() {
   const pickFromGallery = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert("Permiso requerido", "Debes permitir acceso a galeria.");
+      publishFeedback({
+        title: "Permiso requerido",
+        message: "Debes permitir acceso a galeria.",
+        tone: "error",
+      });
       return;
     }
 
@@ -261,7 +298,11 @@ export default function UploadIncidentPhotoScreen() {
   const takePhoto = async () => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert("Permiso requerido", "Debes permitir acceso a camara.");
+      publishFeedback({
+        title: "Permiso requerido",
+        message: "Debes permitir acceso a camara.",
+        tone: "error",
+      });
       return;
     }
 
@@ -276,27 +317,44 @@ export default function UploadIncidentPhotoScreen() {
   const onUpload = async () => {
     const parsedIncidentId = Number.parseInt(incidentId, 10);
     if (!Number.isInteger(parsedIncidentId) || parsedIncidentId <= 0) {
-      Alert.alert("Dato invalido", "incident_id debe ser un numero positivo.");
+      publishFeedback({
+        title: "Dato invalido",
+        message: "incident_id debe ser un numero positivo.",
+        tone: "error",
+      });
       return;
     }
     if (!selectedImage?.uri) {
-      Alert.alert("Falta imagen", "Selecciona o toma una foto primero.");
+      publishFeedback({
+        title: "Falta imagen",
+        message: "Selecciona o toma una foto primero.",
+        tone: "error",
+      });
       return;
     }
     if (processingImage) {
-      Alert.alert("Procesando imagen", "Espera a que termine la compresion.");
+      publishFeedback({
+        title: "Procesando imagen",
+        message: "Espera a que termine la compresion.",
+        tone: "info",
+      });
       return;
     }
 
+    setFeedback(null);
+    setUploading(true);
     try {
-      setUploading(true);
       const response = await uploadIncidentPhoto({
         incidentId: parsedIncidentId,
         fileUri: selectedImage.uri,
         fileName: selectedImage.fileName,
         contentType: selectedImage.contentType,
       });
-      Alert.alert("Foto subida", `Foto ID: ${response.photo.id}`);
+      publishFeedback({
+        title: "Foto subida",
+        message: `Foto ID: ${response.photo.id}`,
+        tone: "success",
+      });
       if (selectedImage.isTemporary) {
         await deleteFileIfExists(selectedImage.uri);
       }
@@ -305,11 +363,30 @@ export default function UploadIncidentPhotoScreen() {
         `/incident/detail?incidentId=${parsedIncidentId}&installationId=${installationId}` as never,
       );
     } catch (error) {
-      Alert.alert("Error", extractApiError(error));
+      publishFeedback({
+        title: "Error",
+        message: extractApiError(error),
+        tone: "error",
+      });
     } finally {
       setUploading(false);
     }
   };
+
+  const feedbackColors =
+    feedback?.tone === "error"
+      ? { backgroundColor: palette.errorBg, borderColor: palette.errorBorder, color: palette.errorText }
+      : feedback?.tone === "success"
+        ? {
+            backgroundColor: palette.successBg,
+            borderColor: palette.successBorder,
+            color: palette.successText,
+          }
+        : {
+            backgroundColor: palette.infoBg,
+            borderColor: palette.infoBorder,
+            color: palette.infoText,
+          };
 
   return (
     <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
@@ -379,6 +456,23 @@ export default function UploadIncidentPhotoScreen() {
           <Text style={[styles.hintText, { color: palette.hint }]}>
             {processingMessage || "Comprimiendo imagen para subir..."}
           </Text>
+        </View>
+      ) : null}
+
+      {feedback ? (
+        <View
+          style={[
+            styles.feedbackBox,
+            {
+              backgroundColor: feedbackColors.backgroundColor,
+              borderColor: feedbackColors.borderColor,
+            },
+          ]}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+        >
+          <Text style={[styles.feedbackTitle, { color: feedbackColors.color }]}>{feedback.title}</Text>
+          <Text style={[styles.feedbackMessage, { color: feedbackColors.color }]}>{feedback.message}</Text>
         </View>
       ) : null}
 
@@ -494,5 +588,19 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     fontWeight: "700",
     fontSize: 15,
+  },
+  feedbackBox: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 2,
+  },
+  feedbackTitle: {
+    fontWeight: "700",
+    fontSize: 13,
+  },
+  feedbackMessage: {
+    fontSize: 13,
   },
 });

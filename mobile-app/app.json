@@ -69,6 +69,9 @@
       "router": {},
       "eas": {
         "projectId": "9203816d-c0f9-446f-a1d4-24f76db40f12"
+      },
+      "apiSecurity": {
+        "allowHttpApiBaseUrlInDebug": false
       }
     }
   }

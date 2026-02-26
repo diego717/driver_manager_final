@@ -6,8 +6,6 @@ vi.hoisted(() => {
 
 const secureStoreMocks = vi.hoisted(() => ({
   getStoredApiBaseUrl: vi.fn(async (): Promise<string | null> => null),
-  getStoredApiToken: vi.fn(async (): Promise<string | null> => null),
-  getStoredApiSecret: vi.fn(async (): Promise<string | null> => null),
   getStoredWebAccessToken: vi.fn(async (): Promise<string | null> => null),
   getStoredWebAccessExpiresAt: vi.fn(async (): Promise<string | null> => null),
   clearStoredWebSession: vi.fn(async (): Promise<void> => undefined),
@@ -16,23 +14,27 @@ const secureStoreMocks = vi.hoisted(() => ({
 vi.mock("../storage/secure", () => secureStoreMocks);
 
 import { hmacSha256Hex } from "./auth";
-import { apiClient, extractApiError, normalizeApiBaseUrl, signedJsonRequest } from "./client";
+import {
+  apiClient,
+  assertSecureApiBaseUrl,
+  extractApiError,
+  normalizeApiBaseUrl,
+  signedJsonRequest,
+} from "./client";
 
 describe("api client", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     secureStoreMocks.getStoredApiBaseUrl.mockClear();
-    secureStoreMocks.getStoredApiToken.mockClear();
-    secureStoreMocks.getStoredApiSecret.mockClear();
     secureStoreMocks.getStoredWebAccessToken.mockClear();
     secureStoreMocks.getStoredWebAccessExpiresAt.mockClear();
     secureStoreMocks.clearStoredWebSession.mockClear();
-    process.env.EXPO_PUBLIC_API_TOKEN = "token-123";
-    process.env.EXPO_PUBLIC_API_SECRET = "secret-abc";
   });
 
-  it("sends signed json request with normalized path", async () => {
-    vi.spyOn(Date, "now").mockReturnValue(1700000000000);
+  it("sends bearer request using normalized /web path", async () => {
+    secureStoreMocks.getStoredWebAccessToken.mockResolvedValueOnce("web-access-token");
+    secureStoreMocks.getStoredWebAccessExpiresAt.mockResolvedValueOnce("2030-01-01T00:00:00.000Z");
+
     const requestSpy = vi
       .spyOn(apiClient, "request")
       .mockResolvedValue({ data: { success: true } });
@@ -46,28 +48,33 @@ describe("api client", () => {
     expect(response).toEqual({ success: true });
     expect(requestSpy).toHaveBeenCalledOnce();
     expect(secureStoreMocks.getStoredApiBaseUrl).toHaveBeenCalledOnce();
-    expect(secureStoreMocks.getStoredApiToken).not.toHaveBeenCalled();
-    expect(secureStoreMocks.getStoredApiSecret).not.toHaveBeenCalled();
 
     const call = requestSpy.mock.calls[0][0];
-    const expectedBodyHash =
-      "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93";
-    const expectedCanonical =
-      `POST|/installations|1700000000|${expectedBodyHash}`;
-
-    expect(call.url).toBe("/installations");
+    expect(call.url).toBe("/web/installations");
     expect(call.baseURL).toBe("https://worker.example");
     expect(call.headers).toMatchObject({
       "Content-Type": "application/json",
-      "X-API-Token": "token-123",
-      "X-Request-Timestamp": "1700000000",
-      "X-Request-Signature": hmacSha256Hex("secret-abc", expectedCanonical),
+      Authorization: "Bearer web-access-token",
+      "X-Client-Platform": "mobile",
     });
   });
 
+  it("fails when there is no active bearer session", async () => {
+    secureStoreMocks.getStoredWebAccessToken.mockResolvedValueOnce(null);
+    secureStoreMocks.getStoredWebAccessExpiresAt.mockResolvedValueOnce(null);
+
+    await expect(
+      signedJsonRequest<{ ok: boolean }>({
+        method: "GET",
+        path: "/installations",
+      }),
+    ).rejects.toThrow(/Sesion web requerida/i);
+  });
+
   it("uses stored API base URL when present", async () => {
-    vi.spyOn(Date, "now").mockReturnValue(1700000000000);
     secureStoreMocks.getStoredApiBaseUrl.mockResolvedValueOnce("https://stored-worker.example/");
+    secureStoreMocks.getStoredWebAccessToken.mockResolvedValueOnce("web-access-token");
+    secureStoreMocks.getStoredWebAccessExpiresAt.mockResolvedValueOnce("2030-01-01T00:00:00.000Z");
     const requestSpy = vi
       .spyOn(apiClient, "request")
       .mockResolvedValue({ data: { ok: true } });
@@ -80,31 +87,6 @@ describe("api client", () => {
     expect(requestSpy).toHaveBeenCalledOnce();
     const call = requestSpy.mock.calls[0][0];
     expect(call.baseURL).toBe("https://stored-worker.example");
-  });
-
-  it("uses web bearer session and /web path when session token exists", async () => {
-    vi.spyOn(Date, "now").mockReturnValue(1700000000000);
-    secureStoreMocks.getStoredWebAccessToken.mockResolvedValueOnce("web-access-token");
-    secureStoreMocks.getStoredWebAccessExpiresAt.mockResolvedValueOnce("2030-01-01T00:00:00.000Z");
-
-    const requestSpy = vi
-      .spyOn(apiClient, "request")
-      .mockResolvedValue({ data: [{ id: 1 }] });
-
-    await signedJsonRequest<Array<{ id: number }>>({
-      method: "GET",
-      path: "/installations",
-    });
-
-    expect(requestSpy).toHaveBeenCalledOnce();
-    const call = requestSpy.mock.calls[0][0];
-    const headers = (call.headers ?? {}) as Record<string, unknown>;
-    expect(call.url).toBe("/web/installations");
-    expect(headers).toMatchObject({
-      Authorization: "Bearer web-access-token",
-    });
-    expect(headers["X-API-Token"]).toBeUndefined();
-    expect(headers["X-Request-Signature"]).toBeUndefined();
   });
 
   it("extracts message from axios-like API error payload", () => {
@@ -133,5 +115,36 @@ describe("api client", () => {
     expect(normalizeApiBaseUrl("https://worker.example/web/installations")).toBe(
       "https://worker.example",
     );
+  });
+
+  it("accepts https API base URLs", () => {
+    expect(assertSecureApiBaseUrl("https://worker.example")).toBe("https://worker.example");
+  });
+
+  it("rejects http API base URLs outside debug local", () => {
+    expect(() =>
+      assertSecureApiBaseUrl("http://worker.example", {
+        isDevRuntime: false,
+        allowHttpInDebug: false,
+      }),
+    ).toThrow(/se requiere https en release/i);
+  });
+
+  it("allows local http API base URL only in debug with explicit override", () => {
+    expect(
+      assertSecureApiBaseUrl("http://localhost:8787", {
+        isDevRuntime: true,
+        allowHttpInDebug: true,
+      }),
+    ).toBe("http://localhost:8787");
+  });
+
+  it("rejects local http API base URL if override is disabled", () => {
+    expect(() =>
+      assertSecureApiBaseUrl("http://localhost:8787", {
+        isDevRuntime: true,
+        allowHttpInDebug: false,
+      }),
+    ).toThrow(/se requiere https en release/i);
   });
 });

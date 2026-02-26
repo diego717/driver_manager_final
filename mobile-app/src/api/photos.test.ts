@@ -32,11 +32,10 @@ describe("photos api", () => {
     vi.clearAllMocks();
     clientMock.getResolvedApiBaseUrl.mockResolvedValue("https://worker.example");
     clientMock.resolveRequestAuth.mockResolvedValue({
-      path: "/incidents/11/photos",
+      path: "/web/incidents/11/photos",
       headers: {
-        "X-API-Token": "token",
-        "X-Request-Timestamp": "1",
-        "X-Request-Signature": "sig",
+        Authorization: "Bearer web-token",
+        "X-Client-Platform": "mobile",
       },
     });
     fileSystemMock.getInfoAsync.mockResolvedValue({ exists: true, size: 0 });
@@ -202,7 +201,7 @@ describe("photos api", () => {
 
   it("throws explicit HTTP error when photo download fails", async () => {
     clientMock.resolveRequestAuth.mockResolvedValueOnce({
-      path: "/photos/99",
+      path: "/web/photos/99",
       headers: {},
     });
 
