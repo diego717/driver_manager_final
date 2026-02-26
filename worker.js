@@ -18,6 +18,12 @@ const WEB_DEFAULT_ROLE = "admin";
 const WEB_HASH_TYPE_PBKDF2 = "pbkdf2_sha256";
 const WEB_HASH_TYPE_BCRYPT = "bcrypt";
 const WEB_HASH_TYPE_LEGACY_PBKDF2 = "legacy_pbkdf2_hex";
+const DEFAULT_TENANT_ID = "default";
+const TENANT_ID_HEADER = "X-Tenant-Id";
+const TENANT_ROLE_ADMIN = "admin";
+const TENANT_ROLE_SUPERVISOR = "supervisor";
+const TENANT_ROLE_TECNICO = "tecnico";
+const TENANT_ROLE_SOLO_LECTURA = "solo_lectura";
 const PUSH_NOTIFICATION_MAX_TOKENS_PER_REQUEST = 500;
 const CRITICAL_INCIDENT_PUSH_ROLES = ["admin", "super_admin"];
 const FCM_OAUTH_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
@@ -27,6 +33,12 @@ const WEB_ALLOWED_HASH_TYPES = new Set([
   WEB_HASH_TYPE_PBKDF2,
   WEB_HASH_TYPE_BCRYPT,
   WEB_HASH_TYPE_LEGACY_PBKDF2,
+]);
+const TENANT_ALLOWED_ROLES = new Set([
+  TENANT_ROLE_ADMIN,
+  TENANT_ROLE_SUPERVISOR,
+  TENANT_ROLE_TECNICO,
+  TENANT_ROLE_SOLO_LECTURA,
 ]);
 
 let fcmAccessTokenCache = null;
@@ -86,6 +98,7 @@ function buildCorsPolicy(isWebRoute, routeParts) {
     headers.add("X-API-Token");
     headers.add("X-Request-Timestamp");
     headers.add("X-Request-Signature");
+    headers.add(TENANT_ID_HEADER);
   }
 
   if (isPhotoUpload || first === "records" || first === "devices" || first === "audit-logs" || first === "auth" || first === "installations") {
@@ -602,14 +615,18 @@ function normalizeNotificationData(rawData) {
 }
 
 // AUDIT LOGGING FUNCTION
-async function logAuditEvent(env, { action, username, success, details, computerName, ipAddress, platform }) {
+async function logAuditEvent(
+  env,
+  { tenantId = DEFAULT_TENANT_ID, action, username, success, details, computerName, ipAddress, platform },
+) {
   try {
     const detailsJson = details && typeof details === "object" ? JSON.stringify(details) : "{}";
     await env.DB.prepare(`
-      INSERT INTO audit_logs (timestamp, action, username, success, details, computer_name, ip_address, platform)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO audit_logs (tenant_id, timestamp, action, username, success, details, computer_name, ip_address, platform)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
       .bind(
+        normalizeTenantId(tenantId, DEFAULT_TENANT_ID),
         nowIso(),
         normalizeOptionalString(action, "unknown"),
         normalizeOptionalString(username, "unknown"),
@@ -617,11 +634,76 @@ async function logAuditEvent(env, { action, username, success, details, computer
         detailsJson,
         normalizeOptionalString(computerName, ""),
         normalizeOptionalString(ipAddress, ""),
-        normalizeOptionalString(platform, "")
+        normalizeOptionalString(platform, ""),
       )
       .run();
   } catch (err) {
+    const message = normalizeOptionalString(err?.message, "").toLowerCase();
+    if (message.includes("no such column") && message.includes("tenant_id")) {
+      try {
+        await env.DB.prepare(`
+          INSERT INTO audit_logs (timestamp, action, username, success, details, computer_name, ip_address, platform)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+          .bind(
+            nowIso(),
+            normalizeOptionalString(action, "unknown"),
+            normalizeOptionalString(username, "unknown"),
+            success ? 1 : 0,
+            detailsJson,
+            normalizeOptionalString(computerName, ""),
+            normalizeOptionalString(ipAddress, ""),
+            normalizeOptionalString(platform, ""),
+          )
+          .run();
+        return;
+      } catch (legacyErr) {
+        console.error("Failed to write audit log (legacy fallback):", legacyErr);
+        return;
+      }
+    }
     console.error("Failed to write audit log:", err);
+  }
+}
+
+async function logTenantAuditEvent(
+  env,
+  {
+    tenantId = DEFAULT_TENANT_ID,
+    actorUserId = null,
+    actorUsername = "",
+    action = "unknown",
+    entityType = "",
+    entityId = "",
+    metadata = null,
+    occurredAt = null,
+  } = {},
+) {
+  try {
+    const metadataJson =
+      metadata && typeof metadata === "object" ? JSON.stringify(metadata) : metadata ? String(metadata) : null;
+    await env.DB.prepare(`
+      INSERT INTO tenant_audit_events
+        (tenant_id, actor_user_id, actor_username, action, entity_type, entity_id, occurred_at, metadata_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+      .bind(
+        normalizeTenantId(tenantId, DEFAULT_TENANT_ID),
+        Number.isInteger(Number(actorUserId)) && Number(actorUserId) > 0 ? Number(actorUserId) : null,
+        normalizeOptionalString(actorUsername, ""),
+        normalizeOptionalString(action, "unknown"),
+        normalizeOptionalString(entityType, ""),
+        entityId === null || entityId === undefined ? null : String(entityId),
+        normalizeOptionalString(occurredAt, nowIso()),
+        metadataJson,
+      )
+      .run();
+  } catch (error) {
+    try {
+      ensureTenantAuditEventsTableAvailable(error);
+    } catch (nextError) {
+      console.error("Failed to write tenant audit event:", nextError);
+    }
   }
 }
 
@@ -884,6 +966,70 @@ function ensureDbBinding(env) {
   }
 }
 
+function normalizeTenantId(value, fallback = "") {
+  const normalized = normalizeOptionalString(value, fallback).trim().toLowerCase();
+  if (!normalized) return "";
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(normalized)) {
+    throw new HttpError(400, "Tenant invalido.");
+  }
+  return normalized;
+}
+
+function isMissingTenantsSchemaError(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  return message.includes("no such table") && message.includes("tenants");
+}
+
+async function resolveTenantContext(request, env, authContext = {}) {
+  ensureDbBinding(env);
+
+  const isWebScope = authContext?.scope === "web";
+  const rawTenantId = isWebScope
+    ? authContext?.tenant_id
+    : request.headers.get(TENANT_ID_HEADER) || DEFAULT_TENANT_ID;
+  const tenantId = normalizeTenantId(rawTenantId, DEFAULT_TENANT_ID);
+
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT id, name, status, plan_code
+      FROM tenants
+      WHERE id = ?
+      LIMIT 1
+    `)
+      .bind(tenantId)
+      .all();
+
+    const tenant = results?.[0];
+    if (!tenant) {
+      throw new HttpError(403, "Tenant no encontrado.");
+    }
+    if (normalizeOptionalString(tenant.status, "").toLowerCase() !== "active") {
+      throw new HttpError(403, "Tenant inactivo.");
+    }
+
+    return {
+      tenantId,
+      source: isWebScope ? "web_session" : "api_header",
+      tenant,
+    };
+  } catch (error) {
+    // Fallback de rollout para evitar downtime si el Worker se despliega antes de aplicar 0007.
+    if (isMissingTenantsSchemaError(error)) {
+      return {
+        tenantId,
+        source: isWebScope ? "web_session_legacy" : "api_header_legacy",
+        tenant: {
+          id: tenantId,
+          name: "Tenant por defecto",
+          status: "active",
+          plan_code: "starter",
+        },
+      };
+    }
+    throw error;
+  }
+}
+
 function ensureWebUsersTableAvailable(error) {
   const message = normalizeOptionalString(error?.message, "").toLowerCase();
   if (
@@ -1075,6 +1221,30 @@ function normalizeWebRole(roleRaw) {
     throw new HttpError(400, "Rol web invalido.");
   }
   return role;
+}
+
+function normalizeTenantRole(roleRaw, fallback = TENANT_ROLE_SOLO_LECTURA) {
+  const role = normalizeOptionalString(roleRaw, fallback).toLowerCase();
+  if (!TENANT_ALLOWED_ROLES.has(role)) {
+    throw new HttpError(400, "Rol tenant invalido.");
+  }
+  return role;
+}
+
+function mapWebRoleToTenantRole(webRoleRaw) {
+  const webRole = normalizeWebRole(webRoleRaw || WEB_DEFAULT_ROLE);
+  if (webRole === "viewer") return TENANT_ROLE_SOLO_LECTURA;
+  return TENANT_ROLE_ADMIN;
+}
+
+function requireTenantRole(actualRoleRaw, allowedRoles = [], message = "No tienes permisos para esta operacion en el tenant.") {
+  const actualRole = normalizeOptionalString(actualRoleRaw, "").toLowerCase();
+  const normalizedAllowed = (allowedRoles || [])
+    .map((role) => normalizeOptionalString(role, "").toLowerCase())
+    .filter((role) => role);
+  if (!normalizedAllowed.includes(actualRole)) {
+    throw new HttpError(403, message);
+  }
 }
 
 function parseBooleanOrNull(value) {
@@ -1340,10 +1510,12 @@ async function buildWebAccessToken(env, sessionUser = {}) {
   const exp = iat + WEB_ACCESS_TTL_SECONDS;
   const sub = normalizeWebUsername(sessionUser.username || "web-user") || "web-user";
   const role = normalizeOptionalString(sessionUser.role, WEB_DEFAULT_ROLE) || WEB_DEFAULT_ROLE;
+  const tenantId = normalizeTenantId(sessionUser.tenant_id, DEFAULT_TENANT_ID);
   const payload = {
     scope: "web",
     sub,
     role,
+    tenant_id: tenantId,
     iat,
     exp,
   };
@@ -1364,6 +1536,7 @@ async function buildWebAccessToken(env, sessionUser = {}) {
     expires_at: new Date(exp * 1000).toISOString(),
     sub,
     role,
+    tenant_id: tenantId,
   };
 }
 
@@ -1419,6 +1592,7 @@ async function verifyWebAccessToken(request, env) {
     scope: "web",
     sub: normalizeWebUsername(payload.sub || payload.username || "web-user") || "web-user",
     role: normalizeOptionalString(payload.role, WEB_DEFAULT_ROLE) || WEB_DEFAULT_ROLE,
+    tenant_id: normalizeTenantId(payload.tenant_id, DEFAULT_TENANT_ID),
     user_id: userId,
     session_version: Number.isInteger(tokenSessionVersion) ? tokenSessionVersion : null,
     iat: Number(payload.iat || 0),
@@ -1460,15 +1634,16 @@ async function authenticateWebUserByCredentials(env, { username, password }) {
 
 async function upsertDeviceTokenForWebUser(
   env,
-  { userId, fcmToken, deviceModel = "", appVersion = "", platform = "android" },
+  { tenantId = DEFAULT_TENANT_ID, userId, fcmToken, deviceModel = "", appVersion = "", platform = "android" },
 ) {
   const registeredAt = nowIso();
   try {
     await env.DB.prepare(`
-      INSERT INTO device_tokens (user_id, fcm_token, device_model, app_version, platform, registered_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO device_tokens (tenant_id, user_id, fcm_token, device_model, app_version, platform, registered_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(fcm_token) DO UPDATE
-      SET user_id = excluded.user_id,
+      SET tenant_id = excluded.tenant_id,
+          user_id = excluded.user_id,
           device_model = excluded.device_model,
           app_version = excluded.app_version,
           platform = excluded.platform,
@@ -1476,6 +1651,7 @@ async function upsertDeviceTokenForWebUser(
           updated_at = excluded.updated_at
     `)
       .bind(
+        normalizeTenantId(tenantId, DEFAULT_TENANT_ID),
         userId,
         fcmToken,
         normalizeOptionalString(deviceModel, ""),
@@ -1486,11 +1662,171 @@ async function upsertDeviceTokenForWebUser(
       )
       .run();
   } catch (error) {
+    const message = normalizeOptionalString(error?.message, "").toLowerCase();
+    if (message.includes("no such column") && message.includes("tenant_id")) {
+      await env.DB.prepare(`
+        INSERT INTO device_tokens (user_id, fcm_token, device_model, app_version, platform, registered_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(fcm_token) DO UPDATE
+        SET user_id = excluded.user_id,
+            device_model = excluded.device_model,
+            app_version = excluded.app_version,
+            platform = excluded.platform,
+            registered_at = excluded.registered_at,
+            updated_at = excluded.updated_at
+      `)
+        .bind(
+          userId,
+          fcmToken,
+          normalizeOptionalString(deviceModel, ""),
+          normalizeOptionalString(appVersion, ""),
+          normalizeOptionalString(platform, "android"),
+          registeredAt,
+          registeredAt,
+        )
+        .run();
+      return;
+    }
     ensureDeviceTokensTableAvailable(error);
   }
 }
 
-async function listDeviceTokensForWebRoles(env, roles = []) {
+async function resolveWebTenantSessionContext(request, env, options = {}) {
+  const session = await verifyWebAccessToken(request, env);
+  const tenantContext = await resolveTenantContext(request, env, session);
+  const tenantId = tenantContext.tenantId;
+  const tenantRole = session.user_id
+    ? await resolveTenantRoleForWebUser(env, {
+      tenantId,
+      userId: Number(session.user_id),
+      webRole: session.role,
+    })
+    : mapWebRoleToTenantRole(session.role);
+
+  if (options.allowedTenantRoles?.length) {
+    requireTenantRole(
+      tenantRole,
+      options.allowedTenantRoles,
+      options.forbiddenMessage || "No tienes permisos para esta operacion en el tenant.",
+    );
+  }
+
+  return {
+    session,
+    tenantContext,
+    tenantId,
+    tenantRole,
+  };
+}
+
+function ensureTenantUserRolesTableAvailable(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  if (message.includes("no such table") && message.includes("tenant_user_roles")) {
+    return false;
+  }
+  throw error;
+}
+
+function ensureTenantAuditEventsTableAvailable(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  if (message.includes("no such table") && message.includes("tenant_audit_events")) {
+    return false;
+  }
+  throw error;
+}
+
+async function getTenantUserRoleRecord(env, { tenantId, userId }) {
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT tenant_id, user_id, role, is_active, created_at, updated_at
+      FROM tenant_user_roles
+      WHERE tenant_id = ?
+        AND user_id = ?
+      LIMIT 1
+    `)
+      .bind(normalizeTenantId(tenantId, DEFAULT_TENANT_ID), Number(userId))
+      .all();
+    return results?.[0] || null;
+  } catch (error) {
+    try {
+      ensureTenantUserRolesTableAvailable(error);
+      return null;
+    } catch (nextError) {
+      throw nextError;
+    }
+  }
+}
+
+async function upsertTenantUserRole(env, { tenantId, userId, role, isActive = 1 }) {
+  const normalizedTenantId = normalizeTenantId(tenantId, DEFAULT_TENANT_ID);
+  const normalizedRole = normalizeTenantRole(role);
+  const normalizedIsActive = normalizeActiveFlag(isActive, 1);
+  const now = nowIso();
+  try {
+    await env.DB.prepare(`
+      INSERT INTO tenant_user_roles (tenant_id, user_id, role, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(tenant_id, user_id) DO UPDATE
+      SET role = excluded.role,
+          is_active = excluded.is_active,
+          updated_at = excluded.updated_at
+    `)
+      .bind(normalizedTenantId, Number(userId), normalizedRole, normalizedIsActive, now, now)
+      .run();
+    return true;
+  } catch (error) {
+    try {
+      ensureTenantUserRolesTableAvailable(error);
+      return false;
+    } catch (nextError) {
+      throw nextError;
+    }
+  }
+}
+
+async function resolveTenantRoleForWebUser(env, { tenantId, userId, webRole }) {
+  if (!Number.isInteger(Number(userId)) || Number(userId) <= 0) {
+    return mapWebRoleToTenantRole(webRole);
+  }
+
+  const record = await getTenantUserRoleRecord(env, {
+    tenantId,
+    userId: Number(userId),
+  });
+
+  if (!record) {
+    return mapWebRoleToTenantRole(webRole);
+  }
+
+  if (normalizeActiveFlag(record.is_active, 1) !== 1) {
+    throw new HttpError(403, "Tu acceso a este tenant esta inactivo.");
+  }
+
+  return normalizeTenantRole(record.role);
+}
+
+async function listTenantUserRoles(env, tenantId) {
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT tenant_id, user_id, role, is_active, created_at, updated_at
+      FROM tenant_user_roles
+      WHERE tenant_id = ?
+      ORDER BY user_id ASC
+    `)
+      .bind(normalizeTenantId(tenantId, DEFAULT_TENANT_ID))
+      .all();
+    return results || [];
+  } catch (error) {
+    try {
+      ensureTenantUserRolesTableAvailable(error);
+      return [];
+    } catch (nextError) {
+      throw nextError;
+    }
+  }
+}
+
+async function listDeviceTokensForWebRoles(env, roles = [], tenantId = DEFAULT_TENANT_ID) {
   const normalizedRoles = (roles || [])
     .map((role) => normalizeOptionalString(role, "").toLowerCase())
     .filter((role) => role);
@@ -1504,10 +1840,11 @@ async function listDeviceTokensForWebRoles(env, roles = []) {
       FROM device_tokens dt
       INNER JOIN web_users wu ON wu.id = dt.user_id
       WHERE wu.is_active = 1
+        AND dt.tenant_id = ?
         AND wu.role IN (${placeholders})
         AND NULLIF(TRIM(dt.fcm_token), '') IS NOT NULL
     `)
-      .bind(...normalizedRoles)
+      .bind(normalizeTenantId(tenantId, DEFAULT_TENANT_ID), ...normalizedRoles)
       .all();
 
     return (results || [])
@@ -1515,6 +1852,22 @@ async function listDeviceTokensForWebRoles(env, roles = []) {
       .filter((token) => token);
   } catch (error) {
     const message = normalizeOptionalString(error?.message, "").toLowerCase();
+    if (message.includes("no such column") && message.includes("tenant_id")) {
+      const { results } = await env.DB.prepare(`
+        SELECT DISTINCT dt.fcm_token
+        FROM device_tokens dt
+        INNER JOIN web_users wu ON wu.id = dt.user_id
+        WHERE wu.is_active = 1
+          AND wu.role IN (${placeholders})
+          AND NULLIF(TRIM(dt.fcm_token), '') IS NOT NULL
+      `)
+        .bind(...normalizedRoles)
+        .all();
+
+      return (results || [])
+        .map((row) => normalizeOptionalString(row?.fcm_token, ""))
+        .filter((token) => token);
+    }
     if (message.includes("no such table") && message.includes("web_users")) {
       ensureWebUsersTableAvailable(error);
     }
@@ -1632,6 +1985,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
         
         // Log audit event for failed login
         await logAuditEvent(env, {
+          tenantId: DEFAULT_TENANT_ID,
           action: "web_login_failed",
           username: username,
           success: false,
@@ -1642,6 +1996,16 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
           ipAddress: getClientIpForRateLimit(request),
           platform: "web"
         });
+        await logTenantAuditEvent(env, {
+          tenantId: DEFAULT_TENANT_ID,
+          actorUsername: username,
+          action: "login_failed",
+          entityType: "session",
+          metadata: {
+            reason: error.message,
+            status_code: error.status,
+          },
+        });
       }
       throw error;
     }
@@ -1650,6 +2014,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     
     // Log audit event for successful login
     await logAuditEvent(env, {
+      tenantId: DEFAULT_TENANT_ID,
       action: "web_login_success",
       username: user.username,
       success: true,
@@ -1659,6 +2024,17 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       },
       ipAddress: getClientIpForRateLimit(request),
       platform: "web"
+    });
+    await logTenantAuditEvent(env, {
+      tenantId: DEFAULT_TENANT_ID,
+      actorUserId: Number(user.id),
+      actorUsername: user.username,
+      action: "login_success",
+      entityType: "session",
+      metadata: {
+        role: user.role,
+        tenant_role: mapWebRoleToTenantRole(user.role),
+      },
     });
     
     const sessionVersion = await rotateWebSessionVersion(env, Number(user.id));
@@ -1725,6 +2101,12 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     const password = validateWebPassword(body?.password);
     const role = normalizeWebRole(body?.role || WEB_DEFAULT_ROLE);
     const createdUser = await createWebUser(env, { username, password, role });
+    await upsertTenantUserRole(env, {
+      tenantId: DEFAULT_TENANT_ID,
+      userId: Number(createdUser.id),
+      role: mapWebRoleToTenantRole(createdUser.role),
+      isActive: createdUser.is_active,
+    });
 
     const sessionVersion = await rotateWebSessionVersion(env, Number(createdUser.id));
     const token = await buildWebAccessToken(env, {
@@ -1760,8 +2142,10 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
   if (pathParts[1] === "users" && pathParts.length === 2 && request.method === "GET") {
     ensureDbBinding(env);
 
-    const session = await verifyWebAccessToken(request, env);
-    requireAdminRole(session.role);
+    const { tenantId } = await resolveWebTenantSessionContext(request, env, {
+      allowedTenantRoles: [TENANT_ROLE_ADMIN],
+      forbiddenMessage: "No tienes permisos para administrar usuarios del tenant.",
+    });
 
     const users = await listWebUsers(env);
     return jsonResponse(request, env, corsPolicy,
@@ -1776,8 +2160,10 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
   if (pathParts[1] === "users" && pathParts.length === 2 && request.method === "POST") {
     ensureDbBinding(env);
 
-    const session = await verifyWebAccessToken(request, env);
-    requireAdminRole(session.role);
+    const { session, tenantId } = await resolveWebTenantSessionContext(request, env, {
+      allowedTenantRoles: [TENANT_ROLE_ADMIN],
+      forbiddenMessage: "No tienes permisos para administrar usuarios del tenant.",
+    });
 
     let body = {};
     try {
@@ -1790,9 +2176,16 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     const password = validateWebPassword(body?.password);
     const role = normalizeWebRole(body?.role || "viewer");
     const createdUser = await createWebUser(env, { username, password, role });
+    await upsertTenantUserRole(env, {
+      tenantId,
+      userId: Number(createdUser.id),
+      role: mapWebRoleToTenantRole(createdUser.role),
+      isActive: createdUser.is_active,
+    });
 
     // Log audit event for user creation
     await logAuditEvent(env, {
+      tenantId,
       action: "web_user_created",
       username: session.sub,
       success: true,
@@ -1805,6 +2198,19 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       },
       ipAddress: getClientIpForRateLimit(request),
       platform: "web"
+    });
+    await logTenantAuditEvent(env, {
+      tenantId,
+      actorUserId: Number(session.user_id || 0) || null,
+      actorUsername: session.sub,
+      action: "tenant_user_created",
+      entityType: "web_user",
+      entityId: createdUser.id,
+      metadata: {
+        username: createdUser.username,
+        web_role: createdUser.role,
+        tenant_role: mapWebRoleToTenantRole(createdUser.role),
+      },
     });
 
     return jsonResponse(request, env, corsPolicy,
@@ -1823,8 +2229,10 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
   if (pathParts[1] === "users" && pathParts.length === 3 && request.method === "PATCH") {
     ensureDbBinding(env);
 
-    const session = await verifyWebAccessToken(request, env);
-    requireAdminRole(session.role);
+    const { session, tenantId } = await resolveWebTenantSessionContext(request, env, {
+      allowedTenantRoles: [TENANT_ROLE_ADMIN],
+      forbiddenMessage: "No tienes permisos para administrar usuarios del tenant.",
+    });
 
     const userId = parsePositiveInt(pathParts[2], "user_id");
     const existingUser = await getWebUserById(env, userId);
@@ -1865,9 +2273,16 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       role: nextRole,
       isActive: nextIsActive,
     });
+    await upsertTenantUserRole(env, {
+      tenantId,
+      userId,
+      role: mapWebRoleToTenantRole(nextRole),
+      isActive: nextIsActive,
+    });
 
     // Log audit event for user update
     await logAuditEvent(env, {
+      tenantId,
       action: "web_user_updated",
       username: session.sub,
       success: true,
@@ -1884,6 +2299,23 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       ipAddress: getClientIpForRateLimit(request),
       platform: "web"
     });
+    await logTenantAuditEvent(env, {
+      tenantId,
+      actorUserId: Number(session.user_id || 0) || null,
+      actorUsername: session.sub,
+      action: "tenant_user_role_status_changed",
+      entityType: "web_user",
+      entityId: userId,
+      metadata: {
+        username: existingUser.username,
+        old_web_role: existingUser.role,
+        new_web_role: nextRole,
+        old_tenant_role: mapWebRoleToTenantRole(existingUser.role),
+        new_tenant_role: mapWebRoleToTenantRole(nextRole),
+        old_is_active: Boolean(existingUser.is_active),
+        new_is_active: Boolean(nextIsActive),
+      },
+    });
 
     const updatedUser = await getWebUserById(env, userId);
     return jsonResponse(request, env, corsPolicy,
@@ -1898,13 +2330,106 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
   if (
     pathParts[1] === "users" &&
     pathParts.length === 4 &&
+    pathParts[3] === "tenant-role" &&
+    request.method === "PATCH"
+  ) {
+    ensureDbBinding(env);
+
+    const { session, tenantId } = await resolveWebTenantSessionContext(request, env, {
+      allowedTenantRoles: [TENANT_ROLE_ADMIN],
+      forbiddenMessage: "No tienes permisos para administrar roles del tenant.",
+    });
+
+    const userId = parsePositiveInt(pathParts[2], "user_id");
+    const existingUser = await getWebUserById(env, userId);
+    if (!existingUser) {
+      throw new HttpError(404, "Usuario web no encontrado.");
+    }
+
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      throw new HttpError(400, "Payload invalido.");
+    }
+
+    const role = normalizeTenantRole(body?.role);
+    const requestedActive = parseBooleanOrNull(body?.is_active);
+    const existingTenantRoleRecord = await getTenantUserRoleRecord(env, { tenantId, userId });
+    const nextIsActive =
+      requestedActive === null
+        ? normalizeActiveFlag(existingTenantRoleRecord?.is_active, 1)
+        : requestedActive ? 1 : 0;
+
+    if (session.user_id && Number(session.user_id) === userId && nextIsActive === 0) {
+      throw new HttpError(400, "No puedes desactivar tu propio acceso al tenant.");
+    }
+    if (session.user_id && Number(session.user_id) === userId && role !== TENANT_ROLE_ADMIN) {
+      throw new HttpError(400, "No puedes quitarte el rol admin del tenant.");
+    }
+
+    await upsertTenantUserRole(env, {
+      tenantId,
+      userId,
+      role,
+      isActive: nextIsActive,
+    });
+    const updatedTenantRole = await getTenantUserRoleRecord(env, { tenantId, userId });
+
+    await logAuditEvent(env, {
+      tenantId,
+      action: "tenant_user_role_assigned",
+      username: session.sub,
+      success: true,
+      details: {
+        target_user_id: userId,
+        target_user: existingUser.username,
+        tenant_role: role,
+        is_active: Boolean(nextIsActive),
+        performed_by: session.sub,
+        performed_by_role: session.role,
+      },
+      ipAddress: getClientIpForRateLimit(request),
+      platform: "web",
+    });
+    await logTenantAuditEvent(env, {
+      tenantId,
+      actorUserId: Number(session.user_id || 0) || null,
+      actorUsername: session.sub,
+      action: "tenant_user_role_assigned",
+      entityType: "tenant_user_role",
+      entityId: `${tenantId}:${userId}`,
+      metadata: {
+        username: existingUser.username,
+        role,
+        is_active: Boolean(nextIsActive),
+      },
+    });
+
+    return jsonResponse(request, env, corsPolicy, {
+      success: true,
+      assignment: {
+        tenant_id: tenantId,
+        user_id: userId,
+        username: existingUser.username,
+        role: normalizeTenantRole(updatedTenantRole?.role || role),
+        is_active: normalizeActiveFlag(updatedTenantRole?.is_active, nextIsActive) === 1,
+      },
+    }, 200);
+  }
+
+  if (
+    pathParts[1] === "users" &&
+    pathParts.length === 4 &&
     pathParts[3] === "force-password" &&
     request.method === "POST"
   ) {
     ensureDbBinding(env);
 
-    const session = await verifyWebAccessToken(request, env);
-    requireAdminRole(session.role);
+    const { session, tenantId } = await resolveWebTenantSessionContext(request, env, {
+      allowedTenantRoles: [TENANT_ROLE_ADMIN],
+      forbiddenMessage: "No tienes permisos para administrar usuarios del tenant.",
+    });
 
     const userId = parsePositiveInt(pathParts[2], "user_id");
     const existingUser = await getWebUserById(env, userId);
@@ -1925,6 +2450,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     // Log audit event for password reset
     await logAuditEvent(env, {
       action: "web_password_reset",
+      tenantId,
       username: session.sub,
       success: true,
       details: {
@@ -1950,10 +2476,10 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
   if (pathParts[1] === "import-users" && request.method === "POST") {
     ensureDbBinding(env);
 
-    const session = await verifyWebAccessToken(request, env);
-    if (!["admin", "super_admin"].includes(session.role)) {
-      throw new HttpError(403, "No tienes permisos para importar usuarios web.");
-    }
+    const { session, tenantId } = await resolveWebTenantSessionContext(request, env, {
+      allowedTenantRoles: [TENANT_ROLE_ADMIN],
+      forbiddenMessage: "No tienes permisos para importar usuarios del tenant.",
+    });
 
     let body = {};
     try {
@@ -1976,6 +2502,15 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     for (const rawUser of users) {
       const imported = normalizeImportedWebUser(rawUser);
       const result = await upsertWebUserFromImport(env, imported);
+      const userRecord = await getWebUserByUsername(env, imported.username);
+      if (userRecord?.id) {
+        await upsertTenantUserRole(env, {
+          tenantId,
+          userId: Number(userRecord.id),
+          role: mapWebRoleToTenantRole(imported.role),
+          isActive: imported.isActive,
+        });
+      }
       if (result === "created") created += 1;
       if (result === "updated") updated += 1;
       processedUsers.push({
@@ -1988,6 +2523,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
 
     // Log audit event for user import
     await logAuditEvent(env, {
+      tenantId,
       action: "web_users_imported",
       username: session.sub,
       success: true,
@@ -2000,6 +2536,18 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       },
       ipAddress: getClientIpForRateLimit(request),
       platform: "web"
+    });
+    await logTenantAuditEvent(env, {
+      tenantId,
+      actorUserId: Number(session.user_id || 0) || null,
+      actorUsername: session.sub,
+      action: "tenant_users_imported",
+      entityType: "tenant_user_role",
+      metadata: {
+        imported: processedUsers.length,
+        created,
+        updated,
+      },
     });
 
     return jsonResponse(request, env, corsPolicy,
@@ -2030,14 +2578,61 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
 
   if (pathParts[1] === "me" && request.method === "GET") {
     const payload = await verifyWebAccessToken(request, env);
+    const tenantContext = await resolveTenantContext(request, env, payload);
+    const tenantRole =
+      payload.user_id
+        ? await resolveTenantRoleForWebUser(env, {
+          tenantId: tenantContext.tenantId,
+          userId: Number(payload.user_id),
+          webRole: payload.role,
+        })
+        : mapWebRoleToTenantRole(payload.role);
     return jsonResponse(request, env, corsPolicy,{
       success: true,
       authenticated: true,
       scope: payload.scope,
       username: payload.sub,
       role: payload.role,
+      tenant_id: payload.tenant_id || DEFAULT_TENANT_ID,
+      tenant_role: tenantRole,
       expires_at: new Date(Number(payload.exp) * 1000).toISOString(),
     });
+  }
+
+  if (pathParts[1] === "tenant-users" && pathParts.length === 2 && request.method === "GET") {
+    ensureDbBinding(env);
+
+    const { tenantId } = await resolveWebTenantSessionContext(request, env, {
+      allowedTenantRoles: [TENANT_ROLE_ADMIN],
+      forbiddenMessage: "No tienes permisos para ver roles del tenant.",
+    });
+
+    const users = await listWebUsers(env);
+    const tenantAssignments = await listTenantUserRoles(env, tenantId);
+    const assignmentByUserId = new Map(
+      (tenantAssignments || []).map((item) => [Number(item.user_id), item]),
+    );
+
+    const items = users.map((user) => {
+      const assignment = assignmentByUserId.get(Number(user.id));
+      return {
+        user_id: Number(user.id),
+        username: user.username,
+        web_role: user.role,
+        web_is_active: user.is_active,
+        tenant_id: tenantId,
+        tenant_role: assignment ? normalizeTenantRole(assignment.role) : mapWebRoleToTenantRole(user.role),
+        tenant_role_is_active: assignment
+          ? normalizeActiveFlag(assignment.is_active, 1) === 1
+          : true,
+      };
+    });
+
+    return jsonResponse(request, env, corsPolicy, {
+      success: true,
+      tenant_id: tenantId,
+      users: items,
+    }, 200);
   }
 
   return null;
@@ -5334,30 +5929,59 @@ console.log('[SW] Service Worker loaded');`;
       }
 
       let webSession = null;
+      let tenantContext = null;
       if (isWebRoute) {
         webSession = await verifyWebAccessToken(request, env);
+        tenantContext = await resolveTenantContext(request, env, webSession);
       } else {
         await verifyAuth(request, env, url);
+        tenantContext = await resolveTenantContext(request, env, { scope: "api" });
       }
+      const tenantId = tenantContext?.tenantId || DEFAULT_TENANT_ID;
+      if (isWebRoute && webSession?.user_id) {
+        webSession.tenant_role = await resolveTenantRoleForWebUser(env, {
+          tenantId,
+          userId: Number(webSession.user_id),
+          webRole: webSession.role,
+        });
+      }
+      const requireWebTenantRole = (allowedRoles, message) => {
+        if (!isWebRoute) return;
+        requireTenantRole(webSession?.tenant_role, allowedRoles, message);
+      };
 
       if (routeParts.length === 1 && routeParts[0] === "installations") {
         if (request.method === "GET") {
+          requireWebTenantRole(
+            [TENANT_ROLE_ADMIN, TENANT_ROLE_SUPERVISOR, TENANT_ROLE_TECNICO, TENANT_ROLE_SOLO_LECTURA],
+            "No tienes permisos para consultar instalaciones en este tenant.",
+          );
           const { results } = await env.DB.prepare(
-            "SELECT * FROM installations ORDER BY timestamp DESC",
-          ).all();
-          const filtered = applyInstallationFilters(results, url.searchParams);
+            "SELECT * FROM installations WHERE tenant_id = ? ORDER BY timestamp DESC",
+          )
+            .bind(tenantId)
+            .all();
+          const scopedResults = (results || []).filter(
+            (row) => normalizeTenantId(row?.tenant_id, DEFAULT_TENANT_ID) === tenantId,
+          );
+          const filtered = applyInstallationFilters(scopedResults, url.searchParams);
           return jsonResponse(request, env, corsPolicy,filtered);
         }
 
         if (request.method === "POST") {
+          requireWebTenantRole(
+            [TENANT_ROLE_ADMIN, TENANT_ROLE_SUPERVISOR, TENANT_ROLE_TECNICO],
+            "No tienes permisos para crear instalaciones en este tenant.",
+          );
           const data = await request.json();
           const payload = normalizeInstallationPayload(data, "unknown");
 
           await env.DB.prepare(`
-            INSERT INTO installations (timestamp, driver_brand, driver_version, status, client_name, driver_description, installation_time_seconds, os_info, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO installations (tenant_id, timestamp, driver_brand, driver_version, status, client_name, driver_description, installation_time_seconds, os_info, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `)
             .bind(
+              tenantId,
               payload.timestamp,
               payload.driver_brand,
               payload.driver_version,
@@ -5372,6 +5996,7 @@ console.log('[SW] Service Worker loaded');`;
 
           // Log audit event for installation creation
           await logAuditEvent(env, {
+            tenantId,
             action: "installation_created",
             username: webSession?.sub || "api",
             success: true,
@@ -5391,6 +6016,10 @@ console.log('[SW] Service Worker loaded');`;
 
       if (routeParts.length === 1 && routeParts[0] === "audit-logs") {
         if (request.method === "POST") {
+          requireWebTenantRole(
+            [TENANT_ROLE_ADMIN, TENANT_ROLE_SUPERVISOR, TENANT_ROLE_TECNICO],
+            "No tienes permisos para registrar auditoria en este tenant.",
+          );
           const data = await request.json();
 
           const action = normalizeOptionalString(data?.action, "");
@@ -5409,10 +6038,11 @@ console.log('[SW] Service Worker loaded');`;
 
           await env.DB.prepare(`
             INSERT INTO audit_logs
-              (timestamp, action, username, success, details, computer_name, ip_address, platform)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              (tenant_id, timestamp, action, username, success, details, computer_name, ip_address, platform)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           `)
             .bind(
+              tenantId,
               normalizeOptionalString(data.timestamp, nowIso()),
               action,
               username,
@@ -5429,6 +6059,10 @@ console.log('[SW] Service Worker loaded');`;
         }
 
         if (request.method === "GET") {
+          requireWebTenantRole(
+            [TENANT_ROLE_ADMIN, TENANT_ROLE_SUPERVISOR, TENANT_ROLE_TECNICO, TENANT_ROLE_SOLO_LECTURA],
+            "No tienes permisos para consultar auditoria en este tenant.",
+          );
           const limit = Math.min(
             parseOptionalPositiveInt(url.searchParams.get("limit"), "limit") || 100,
             500,
@@ -5437,10 +6071,11 @@ console.log('[SW] Service Worker loaded');`;
           const { results } = await env.DB.prepare(`
             SELECT id, timestamp, action, username, success, details, computer_name, ip_address, platform
             FROM audit_logs
+            WHERE tenant_id = ?
             ORDER BY timestamp DESC, id DESC
             LIMIT ?
           `)
-            .bind(limit)
+            .bind(tenantId, limit)
             .all();
 
           return jsonResponse(request, env, corsPolicy,results || []);
@@ -5451,6 +6086,10 @@ console.log('[SW] Service Worker loaded');`;
         if (!isWebRoute || !webSession?.user_id) {
           throw new HttpError(401, "Registro de dispositivos requiere token Bearer web.");
         }
+        requireWebTenantRole(
+          [TENANT_ROLE_ADMIN, TENANT_ROLE_SUPERVISOR, TENANT_ROLE_TECNICO, TENANT_ROLE_SOLO_LECTURA],
+          "No tienes permisos para registrar dispositivos en este tenant.",
+        );
 
         let data = {};
         try {
@@ -5461,6 +6100,7 @@ console.log('[SW] Service Worker loaded');`;
 
         const fcmToken = normalizeFcmToken(data?.fcm_token);
         await upsertDeviceTokenForWebUser(env, {
+          tenantId,
           userId: Number(webSession.user_id),
           fcmToken,
           deviceModel: data?.device_model,
@@ -5488,10 +6128,11 @@ console.log('[SW] Service Worker loaded');`;
         if (!payload.os_info) payload.os_info = "manual";
 
         const insertResult = await env.DB.prepare(`
-          INSERT INTO installations (timestamp, driver_brand, driver_version, status, client_name, driver_description, installation_time_seconds, os_info, notes)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO installations (tenant_id, timestamp, driver_brand, driver_version, status, client_name, driver_description, installation_time_seconds, os_info, notes)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
           .bind(
+            tenantId,
             payload.timestamp,
             payload.driver_brand,
             payload.driver_version,
@@ -5509,6 +6150,7 @@ console.log('[SW] Service Worker loaded');`;
             success: true,
             record: {
               id: insertResult?.meta?.last_row_id || null,
+              tenant_id: tenantId,
               ...payload,
             },
           },
@@ -5524,13 +6166,18 @@ console.log('[SW] Service Worker loaded');`;
         const installationId = parsePositiveInt(routeParts[1], "installation_id");
 
         if (request.method === "GET") {
+          requireWebTenantRole(
+            [TENANT_ROLE_ADMIN, TENANT_ROLE_SUPERVISOR, TENANT_ROLE_TECNICO, TENANT_ROLE_SOLO_LECTURA],
+            "No tienes permisos para consultar incidencias en este tenant.",
+          );
           const { results: incidents } = await env.DB.prepare(`
             SELECT id, installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at
             FROM incidents
             WHERE installation_id = ?
+              AND tenant_id = ?
             ORDER BY created_at DESC, id DESC
           `)
-            .bind(installationId)
+            .bind(installationId, tenantId)
             .all();
 
           const { results: photos } = await env.DB.prepare(`
@@ -5538,9 +6185,11 @@ console.log('[SW] Service Worker loaded');`;
             FROM incident_photos p
             INNER JOIN incidents i ON i.id = p.incident_id
             WHERE i.installation_id = ?
+              AND i.tenant_id = ?
+              AND p.tenant_id = ?
             ORDER BY p.created_at ASC, p.id ASC
           `)
-            .bind(installationId)
+            .bind(installationId, tenantId, tenantId)
             .all();
 
           const photosByIncident = {};
@@ -5564,6 +6213,10 @@ console.log('[SW] Service Worker loaded');`;
         }
 
         if (request.method === "POST") {
+          requireWebTenantRole(
+            [TENANT_ROLE_ADMIN, TENANT_ROLE_SUPERVISOR, TENANT_ROLE_TECNICO],
+            "No tienes permisos para crear incidencias en este tenant.",
+          );
           const data = await request.json();
           const payload = validateIncidentPayload(data, {
             defaultSource: isWebRoute ? "web" : "mobile",
@@ -5575,8 +6228,9 @@ console.log('[SW] Service Worker loaded');`;
             SELECT id, notes, installation_time_seconds
             FROM installations
             WHERE id = ?
+              AND tenant_id = ?
           `)
-            .bind(installationId)
+            .bind(installationId, tenantId)
             .all();
 
           const installation = installationRows?.[0];
@@ -5585,10 +6239,11 @@ console.log('[SW] Service Worker loaded');`;
           }
 
           const insertResult = await env.DB.prepare(`
-            INSERT INTO incidents (installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO incidents (tenant_id, installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `)
             .bind(
+              tenantId,
               installationId,
               payload.reporterUsername,
               payload.note,
@@ -5613,8 +6268,9 @@ console.log('[SW] Service Worker loaded');`;
               UPDATE installations
               SET notes = ?, installation_time_seconds = ?
               WHERE id = ?
+                AND tenant_id = ?
             `)
-              .bind(composedNotes, nextTime, installationId)
+              .bind(composedNotes, nextTime, installationId, tenantId)
               .run();
           }
 
@@ -5623,6 +6279,7 @@ console.log('[SW] Service Worker loaded');`;
               const fcmTokens = await listDeviceTokensForWebRoles(
                 env,
                 CRITICAL_INCIDENT_PUSH_ROLES,
+                tenantId,
               );
               if (fcmTokens.length > 0) {
                 await sendPushNotification(env, fcmTokens, {
@@ -5643,6 +6300,7 @@ console.log('[SW] Service Worker loaded');`;
 
           // Log audit event for incident creation
           await logAuditEvent(env, {
+            tenantId,
             action: "create_incident",
             username: payload.reporterUsername,
             success: true,
@@ -5657,12 +6315,26 @@ console.log('[SW] Service Worker loaded');`;
             ipAddress: getClientIpForRateLimit(request),
             platform: payload.source
           });
+          await logTenantAuditEvent(env, {
+            tenantId,
+            actorUserId: Number(webSession?.user_id || 0) || null,
+            actorUsername: payload.reporterUsername,
+            action: "incident_created",
+            entityType: "incident",
+            entityId: incidentId,
+            metadata: {
+              installation_id: installationId,
+              severity: payload.severity,
+              source: payload.source,
+            },
+          });
 
           return jsonResponse(request, env, corsPolicy,
             {
               success: true,
               incident: {
                 id: incidentId,
+                tenant_id: tenantId,
                 installation_id: installationId,
                 reporter_username: payload.reporterUsername,
                 note: payload.note,
@@ -5684,6 +6356,10 @@ console.log('[SW] Service Worker loaded');`;
         routeParts[2] === "photos" &&
         request.method === "POST"
       ) {
+        requireWebTenantRole(
+          [TENANT_ROLE_ADMIN, TENANT_ROLE_SUPERVISOR, TENANT_ROLE_TECNICO],
+          "No tienes permisos para subir fotos de incidencias en este tenant.",
+        );
         const incidentId = parsePositiveInt(routeParts[1], "incident_id");
         const declaredContentType = normalizeContentType(request.headers.get("content-type"));
 
@@ -5702,8 +6378,9 @@ console.log('[SW] Service Worker loaded');`;
           SELECT id, installation_id
           FROM incidents
           WHERE id = ?
+            AND tenant_id = ?
         `)
-          .bind(incidentId)
+          .bind(incidentId, tenantId)
           .all();
 
         const incident = incidentRows?.[0];
@@ -5725,17 +6402,33 @@ console.log('[SW] Service Worker loaded');`;
         });
 
         const insertResult = await env.DB.prepare(`
-          INSERT INTO incident_photos (incident_id, r2_key, file_name, content_type, size_bytes, sha256, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO incident_photos (tenant_id, incident_id, r2_key, file_name, content_type, size_bytes, sha256, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `)
-          .bind(incidentId, r2Key, fileName, contentType, sizeBytes, sha256, createdAt)
+          .bind(tenantId, incidentId, r2Key, fileName, contentType, sizeBytes, sha256, createdAt)
           .run();
+        const photoId = insertResult?.meta?.last_row_id || null;
+        await logTenantAuditEvent(env, {
+          tenantId,
+          actorUserId: Number(webSession?.user_id || 0) || null,
+          actorUsername: webSession?.sub || (isWebRoute ? "web" : "api"),
+          action: "photo_uploaded",
+          entityType: "incident_photo",
+          entityId: photoId,
+          metadata: {
+            incident_id: incidentId,
+            r2_key: r2Key,
+            size_bytes: sizeBytes,
+            content_type: contentType,
+          },
+        });
 
         return jsonResponse(request, env, corsPolicy,
           {
             success: true,
             photo: {
-              id: insertResult?.meta?.last_row_id || null,
+              id: photoId,
+              tenant_id: tenantId,
               incident_id: incidentId,
               r2_key: r2Key,
               file_name: fileName,
@@ -5750,6 +6443,10 @@ console.log('[SW] Service Worker loaded');`;
       }
 
       if (routeParts.length === 2 && routeParts[0] === "photos" && request.method === "GET") {
+        requireWebTenantRole(
+          [TENANT_ROLE_ADMIN, TENANT_ROLE_SUPERVISOR, TENANT_ROLE_TECNICO, TENANT_ROLE_SOLO_LECTURA],
+          "No tienes permisos para ver fotos en este tenant.",
+        );
         const photoId = parsePositiveInt(routeParts[1], "photo_id");
 
         if (!env.INCIDENTS_BUCKET || typeof env.INCIDENTS_BUCKET.get !== "function") {
@@ -5760,8 +6457,9 @@ console.log('[SW] Service Worker loaded');`;
           SELECT id, incident_id, r2_key, file_name, content_type, size_bytes, sha256, created_at
           FROM incident_photos
           WHERE id = ?
+            AND tenant_id = ?
         `)
-          .bind(photoId)
+          .bind(photoId, tenantId)
           .all();
 
         const photo = photoRows?.[0];
@@ -5792,11 +6490,15 @@ console.log('[SW] Service Worker loaded');`;
         const recordId = routeParts[1];
 
         if (request.method === "GET") {
+          requireWebTenantRole(
+            [TENANT_ROLE_ADMIN, TENANT_ROLE_SUPERVISOR, TENANT_ROLE_TECNICO, TENANT_ROLE_SOLO_LECTURA],
+            "No tienes permisos para consultar instalaciones en este tenant.",
+          );
           const installationId = parsePositiveInt(recordId, "id");
           const { results } = await env.DB.prepare(
-            "SELECT * FROM installations WHERE id = ? LIMIT 1",
+            "SELECT * FROM installations WHERE id = ? AND tenant_id = ? LIMIT 1",
           )
-            .bind(installationId)
+            .bind(installationId, tenantId)
             .all();
 
           if (!results?.length) {
@@ -5807,25 +6509,35 @@ console.log('[SW] Service Worker loaded');`;
         }
 
         if (request.method === "PUT") {
+          requireWebTenantRole(
+            [TENANT_ROLE_ADMIN, TENANT_ROLE_SUPERVISOR, TENANT_ROLE_TECNICO],
+            "No tienes permisos para editar instalaciones en este tenant.",
+          );
           const data = await request.json();
           await env.DB.prepare(`
             UPDATE installations
             SET notes = ?, installation_time_seconds = ?
             WHERE id = ?
+              AND tenant_id = ?
           `)
-            .bind(data.notes ?? null, data.installation_time_seconds ?? null, recordId)
+            .bind(data.notes ?? null, data.installation_time_seconds ?? null, recordId, tenantId)
             .run();
 
           return jsonResponse(request, env, corsPolicy,{ success: true, updated: recordId });
         }
 
         if (request.method === "DELETE") {
+          requireWebTenantRole(
+            [TENANT_ROLE_ADMIN, TENANT_ROLE_SUPERVISOR],
+            "No tienes permisos para eliminar instalaciones en este tenant.",
+          );
           if (!recordId) {
             return textResponse(request, env, corsPolicy, "Error: El ID del registro es obligatorio.", 400);
           }
 
           // Log audit event for installation deletion
           await logAuditEvent(env, {
+            tenantId,
             action: "installation_deleted",
             username: webSession?.sub || "api",
             success: true,
@@ -5836,12 +6548,18 @@ console.log('[SW] Service Worker loaded');`;
             platform: isWebRoute ? "web" : "api"
           });
 
-          await env.DB.prepare("DELETE FROM installations WHERE id = ?").bind(recordId).run();
+          await env.DB.prepare("DELETE FROM installations WHERE id = ? AND tenant_id = ?")
+            .bind(recordId, tenantId)
+            .run();
           return jsonResponse(request, env, corsPolicy,{ message: `Registro ${recordId} eliminado.` });
         }
       }
 
       if (routeParts.length === 1 && routeParts[0] === "statistics") {
+        requireWebTenantRole(
+          [TENANT_ROLE_ADMIN, TENANT_ROLE_SUPERVISOR, TENANT_ROLE_TECNICO, TENANT_ROLE_SOLO_LECTURA],
+          "No tienes permisos para consultar estadisticas en este tenant.",
+        );
         const startDate = parseDateOrNull(url.searchParams.get("start_date"));
         const endDate = parseDateOrNull(url.searchParams.get("end_date"));
         const startFilter = startDate ? startDate.toISOString() : null;
@@ -5862,34 +6580,37 @@ console.log('[SW] Service Worker loaded');`;
             ) AS average_time_minutes,
             COUNT(DISTINCT NULLIF(TRIM(client_name), '')) AS unique_clients
           FROM installations
-          WHERE (? IS NULL OR timestamp >= ?)
+          WHERE tenant_id = ?
+            AND (? IS NULL OR timestamp >= ?)
             AND (? IS NULL OR timestamp < ?)
         `)
-          .bind(startFilter, startFilter, endFilter, endFilter)
+          .bind(tenantId, startFilter, startFilter, endFilter, endFilter)
           .all();
 
         const { results: byBrandRows } = await env.DB.prepare(`
           SELECT driver_brand AS brand, COUNT(*) AS count
           FROM installations
-          WHERE (? IS NULL OR timestamp >= ?)
+          WHERE tenant_id = ?
+            AND (? IS NULL OR timestamp >= ?)
             AND (? IS NULL OR timestamp < ?)
             AND NULLIF(TRIM(driver_brand), '') IS NOT NULL
           GROUP BY driver_brand
           ORDER BY count DESC
         `)
-          .bind(startFilter, startFilter, endFilter, endFilter)
+          .bind(tenantId, startFilter, startFilter, endFilter, endFilter)
           .all();
 
         const { results: topDriverRows } = await env.DB.prepare(`
           SELECT TRIM(driver_brand) AS brand, TRIM(driver_version) AS version, COUNT(*) AS count
           FROM installations
-          WHERE (? IS NULL OR timestamp >= ?)
+          WHERE tenant_id = ?
+            AND (? IS NULL OR timestamp >= ?)
             AND (? IS NULL OR timestamp < ?)
             AND NULLIF(TRIM(driver_brand || ' ' || driver_version), '') IS NOT NULL
           GROUP BY TRIM(driver_brand), TRIM(driver_version)
           ORDER BY count DESC
         `)
-          .bind(startFilter, startFilter, endFilter, endFilter)
+          .bind(tenantId, startFilter, startFilter, endFilter, endFilter)
           .all();
 
         const totals = totalsRows?.[0] || {};

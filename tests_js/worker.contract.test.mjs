@@ -66,6 +66,30 @@ function signRequest({ method, path, timestamp, bodyBuffer, secret }) {
   return crypto.createHmac("sha256", secret).update(canonical).digest("hex");
 }
 
+function base64UrlEncodeUtf8(value) {
+  return Buffer.from(String(value), "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function createWebAccessTokenForTest(secret, payload = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  const normalizedPayload = {
+    scope: "web",
+    sub: "web-user",
+    role: "viewer",
+    tenant_id: "default",
+    iat: now,
+    exp: now + (60 * 60),
+    ...payload,
+  };
+  const encodedPayload = base64UrlEncodeUtf8(JSON.stringify(normalizedPayload));
+  const signature = crypto.createHmac("sha256", secret).update(encodedPayload).digest("hex");
+  return `${encodedPayload}.${signature}`;
+}
+
 function createTestFcmServiceAccountJson(projectId = "driver-manager-fcm-test") {
   const { privateKey } = crypto.generateKeyPairSync("rsa", {
     modulusLength: 2048,
@@ -84,6 +108,9 @@ function createTestFcmServiceAccountJson(projectId = "driver-manager-fcm-test") 
 }
 
 function createMockDB({
+  tenants = [{ id: "default", name: "Tenant por defecto", status: "active", plan_code: "starter" }],
+  tenantUserRoles = [],
+  tenantAuditEvents = [],
   installations = [],
   byBrand = [],
   incidents = [],
@@ -94,17 +121,21 @@ function createMockDB({
 } = {}) {
   const calls = [];
   const state = {
-    installations: installations.map((row) => ({ ...row })),
+    tenants: tenants.map((row) => ({ ...row })),
+    tenantUserRoles: tenantUserRoles.map((row) => ({ tenant_id: "default", is_active: 1, ...row })),
+    tenantAuditEvents: tenantAuditEvents.map((row) => ({ tenant_id: "default", ...row })),
+    installations: installations.map((row) => ({ tenant_id: "default", ...row })),
     byBrand: byBrand.map((row) => ({ ...row })),
-    incidents: incidents.map((row) => ({ ...row })),
-    incidentPhotos: incidentPhotos.map((row) => ({ ...row })),
-    auditLogs: auditLogs.map((row) => ({ ...row })),
+    incidents: incidents.map((row) => ({ tenant_id: "default", ...row })),
+    incidentPhotos: incidentPhotos.map((row) => ({ tenant_id: "default", ...row })),
+    auditLogs: auditLogs.map((row) => ({ tenant_id: "default", ...row })),
     webUsers: webUsers.map((row) => ({
       password_hash_type: "pbkdf2_sha256",
       is_active: 1,
+      tenant_id: "default",
       ...row,
     })),
-    deviceTokens: deviceTokens.map((row) => ({ ...row })),
+    deviceTokens: deviceTokens.map((row) => ({ tenant_id: "default", ...row })),
   };
 
   let nextInstallationId = 100;
@@ -113,6 +144,8 @@ function createMockDB({
   let nextAuditLogId = 2500;
   let nextWebUserId = 3000;
   let nextDeviceTokenId = 3500;
+  let nextTenantUserRoleId = 4000;
+  let nextTenantAuditEventId = 4500;
 
   const normalizeStatus = (value) => String(value ?? "").toLowerCase();
   const parseDate = (value) => {
@@ -132,6 +165,7 @@ function createMockDB({
     });
   };
   const round2 = (value) => Math.round(value * 100) / 100;
+  const withTenant = (row) => String(row?.tenant_id ?? "default");
 
   return {
     calls,
@@ -147,20 +181,81 @@ function createMockDB({
           return this;
         },
         async all() {
-          if (normalized.startsWith("SELECT * FROM installations ORDER BY timestamp DESC")) {
-            return { results: state.installations };
+          if (
+            normalized.startsWith(
+              "SELECT id, name, status, plan_code FROM tenants WHERE id = ? LIMIT 1",
+            )
+          ) {
+            const tenantId = String(call.bound?.[0] ?? "");
+            const row = state.tenants.find((item) => String(item.id) === tenantId);
+            return { results: row ? [row] : [] };
           }
 
-          if (normalized.startsWith("SELECT * FROM installations WHERE id = ? LIMIT 1")) {
+          if (
+            normalized.startsWith(
+              "SELECT tenant_id, user_id, role, is_active, created_at, updated_at FROM tenant_user_roles WHERE tenant_id = ? AND user_id = ? LIMIT 1",
+            )
+          ) {
+            const tenantId = String(call.bound?.[0] ?? "default");
+            const userId = Number(call.bound?.[1]);
+            const row = state.tenantUserRoles.find(
+              (item) => String(item.tenant_id) === tenantId && Number(item.user_id) === userId,
+            );
+            return { results: row ? [row] : [] };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT tenant_id, user_id, role, is_active, created_at, updated_at FROM tenant_user_roles WHERE tenant_id = ? ORDER BY user_id ASC",
+            )
+          ) {
+            const tenantId = String(call.bound?.[0] ?? "default");
+            const rows = state.tenantUserRoles
+              .filter((item) => String(item.tenant_id) === tenantId)
+              .sort((a, b) => Number(a.user_id) - Number(b.user_id));
+            return { results: rows };
+          }
+
+          if (
+            normalized.startsWith("SELECT * FROM installations ORDER BY timestamp DESC") ||
+            normalized.startsWith("SELECT * FROM installations WHERE tenant_id = ? ORDER BY timestamp DESC")
+          ) {
+            const tenantId = normalized.includes("WHERE tenant_id = ?")
+              ? String(call.bound?.[0] ?? "default")
+              : "default";
+            return {
+              results: state.installations.filter((row) => withTenant(row) === tenantId),
+            };
+          }
+
+          if (
+            normalized.startsWith("SELECT * FROM installations WHERE id = ? LIMIT 1") ||
+            normalized.startsWith("SELECT * FROM installations WHERE id = ? AND tenant_id = ? LIMIT 1")
+          ) {
             const id = Number(call.bound?.[0]);
-            const row = state.installations.find((item) => Number(item.id) === id);
+            const tenantId = normalized.includes("tenant_id = ?")
+              ? String(call.bound?.[1] ?? "default")
+              : "default";
+            const row = state.installations.find(
+              (item) => Number(item.id) === id && withTenant(item) === tenantId,
+            );
             return { results: row ? [row] : [] };
           }
 
           if (normalized.includes("COUNT(*) AS total_installations")) {
-            const start = call.bound?.[1] ?? call.bound?.[0] ?? null;
-            const end = call.bound?.[3] ?? call.bound?.[2] ?? null;
-            const filtered = applyDateRange(state.installations, start, end);
+            const hasTenantFilter = normalized.includes("WHERE tenant_id = ?");
+            const tenantId = hasTenantFilter ? String(call.bound?.[0] ?? "default") : "default";
+            const start = hasTenantFilter
+              ? (call.bound?.[2] ?? call.bound?.[1] ?? null)
+              : (call.bound?.[1] ?? call.bound?.[0] ?? null);
+            const end = hasTenantFilter
+              ? (call.bound?.[4] ?? call.bound?.[3] ?? null)
+              : (call.bound?.[3] ?? call.bound?.[2] ?? null);
+            const filtered = applyDateRange(
+              state.installations.filter((row) => withTenant(row) === tenantId),
+              start,
+              end,
+            );
 
             const total = filtered.length;
             const successful = filtered.filter((row) => normalizeStatus(row.status) === "success").length;
@@ -190,9 +285,19 @@ function createMockDB({
           }
 
           if (normalized.startsWith("SELECT driver_brand AS brand, COUNT(*) AS count FROM installations")) {
-            const start = call.bound?.[1] ?? call.bound?.[0] ?? null;
-            const end = call.bound?.[3] ?? call.bound?.[2] ?? null;
-            const filtered = applyDateRange(state.installations, start, end);
+            const hasTenantFilter = normalized.includes("WHERE tenant_id = ?");
+            const tenantId = hasTenantFilter ? String(call.bound?.[0] ?? "default") : "default";
+            const start = hasTenantFilter
+              ? (call.bound?.[2] ?? call.bound?.[1] ?? null)
+              : (call.bound?.[1] ?? call.bound?.[0] ?? null);
+            const end = hasTenantFilter
+              ? (call.bound?.[4] ?? call.bound?.[3] ?? null)
+              : (call.bound?.[3] ?? call.bound?.[2] ?? null);
+            const filtered = applyDateRange(
+              state.installations.filter((row) => withTenant(row) === tenantId),
+              start,
+              end,
+            );
             const counts = new Map();
 
             for (const row of filtered) {
@@ -211,9 +316,19 @@ function createMockDB({
               "SELECT TRIM(driver_brand) AS brand, TRIM(driver_version) AS version, COUNT(*) AS count FROM installations",
             )
           ) {
-            const start = call.bound?.[1] ?? call.bound?.[0] ?? null;
-            const end = call.bound?.[3] ?? call.bound?.[2] ?? null;
-            const filtered = applyDateRange(state.installations, start, end);
+            const hasTenantFilter = normalized.includes("WHERE tenant_id = ?");
+            const tenantId = hasTenantFilter ? String(call.bound?.[0] ?? "default") : "default";
+            const start = hasTenantFilter
+              ? (call.bound?.[2] ?? call.bound?.[1] ?? null)
+              : (call.bound?.[1] ?? call.bound?.[0] ?? null);
+            const end = hasTenantFilter
+              ? (call.bound?.[4] ?? call.bound?.[3] ?? null)
+              : (call.bound?.[3] ?? call.bound?.[2] ?? null);
+            const filtered = applyDateRange(
+              state.installations.filter((row) => withTenant(row) === tenantId),
+              start,
+              end,
+            );
             const counts = new Map();
 
             for (const row of filtered) {
@@ -239,7 +354,12 @@ function createMockDB({
 
           if (normalized.startsWith("SELECT id, notes, installation_time_seconds FROM installations WHERE id = ?")) {
             const id = Number(call.bound?.[0]);
-            const row = state.installations.find((item) => Number(item.id) === id);
+            const tenantId = normalized.includes("tenant_id = ?")
+              ? String(call.bound?.[1] ?? "default")
+              : "default";
+            const row = state.installations.find(
+              (item) => Number(item.id) === id && withTenant(item) === tenantId,
+            );
             return { results: row ? [row] : [] };
           }
 
@@ -249,8 +369,14 @@ function createMockDB({
             )
           ) {
             const installationId = Number(call.bound?.[0]);
+            const tenantId = normalized.includes("AND tenant_id = ?")
+              ? String(call.bound?.[1] ?? "default")
+              : "default";
             const rows = state.incidents
-              .filter((item) => Number(item.installation_id) === installationId)
+              .filter(
+                (item) =>
+                  Number(item.installation_id) === installationId && withTenant(item) === tenantId,
+              )
               .sort((a, b) => Number(b.id) - Number(a.id));
             return { results: rows };
           }
@@ -261,18 +387,32 @@ function createMockDB({
             )
           ) {
             const installationId = Number(call.bound?.[0]);
+            const tenantId = normalized.includes("i.tenant_id = ?")
+              ? String(call.bound?.[1] ?? "default")
+              : "default";
             const incidentIds = new Set(
               state.incidents
-                .filter((item) => Number(item.installation_id) === installationId)
+                .filter(
+                  (item) =>
+                    Number(item.installation_id) === installationId && withTenant(item) === tenantId,
+                )
                 .map((item) => Number(item.id)),
             );
-            const rows = state.incidentPhotos.filter((item) => incidentIds.has(Number(item.incident_id)));
+            const rows = state.incidentPhotos.filter(
+              (item) =>
+                incidentIds.has(Number(item.incident_id)) && withTenant(item) === tenantId,
+            );
             return { results: rows };
           }
 
           if (normalized.startsWith("SELECT id, installation_id FROM incidents WHERE id = ?")) {
             const id = Number(call.bound?.[0]);
-            const row = state.incidents.find((item) => Number(item.id) === id);
+            const tenantId = normalized.includes("AND tenant_id = ?")
+              ? String(call.bound?.[1] ?? "default")
+              : "default";
+            const row = state.incidents.find(
+              (item) => Number(item.id) === id && withTenant(item) === tenantId,
+            );
             return { results: row ? [row] : [] };
           }
 
@@ -282,22 +422,33 @@ function createMockDB({
             )
           ) {
             const id = Number(call.bound?.[0]);
-            const row = state.incidentPhotos.find((item) => Number(item.id) === id);
+            const tenantId = normalized.includes("AND tenant_id = ?")
+              ? String(call.bound?.[1] ?? "default")
+              : "default";
+            const row = state.incidentPhotos.find(
+              (item) => Number(item.id) === id && withTenant(item) === tenantId,
+            );
             return { results: row ? [row] : [] };
           }
 
           if (
             normalized.startsWith(
-              "SELECT id, timestamp, action, username, success, details, computer_name, ip_address, platform FROM audit_logs ORDER BY timestamp DESC, id DESC LIMIT ?",
+              "SELECT id, timestamp, action, username, success, details, computer_name, ip_address, platform FROM audit_logs",
             )
           ) {
-            const limit = Math.max(1, Number(call.bound?.[0]) || 100);
+            const tenantId = normalized.includes("WHERE tenant_id = ?")
+              ? String(call.bound?.[0] ?? "default")
+              : "default";
+            const limitIndex = normalized.includes("WHERE tenant_id = ?") ? 1 : 0;
+            const limit = Math.max(1, Number(call.bound?.[limitIndex]) || 100);
             const rows = [...state.auditLogs].sort((a, b) => {
               const byTimestamp = String(b.timestamp ?? "").localeCompare(String(a.timestamp ?? ""));
               if (byTimestamp !== 0) return byTimestamp;
               return Number(b.id) - Number(a.id);
             });
-            return { results: rows.slice(0, limit) };
+            return {
+              results: rows.filter((row) => withTenant(row) === tenantId).slice(0, limit),
+            };
           }
 
           if (normalized === "SELECT COUNT(*) AS total FROM web_users") {
@@ -347,10 +498,15 @@ function createMockDB({
 
           if (
             normalized.startsWith(
-              "SELECT DISTINCT dt.fcm_token FROM device_tokens dt INNER JOIN web_users wu ON wu.id = dt.user_id WHERE wu.is_active = 1 AND wu.role IN (",
+              "SELECT DISTINCT dt.fcm_token FROM device_tokens dt INNER JOIN web_users wu ON wu.id = dt.user_id WHERE wu.is_active = 1",
             )
           ) {
-            const roles = (call.bound || []).map((value) => String(value ?? "").toLowerCase());
+            const hasTenantFilter = normalized.includes("dt.tenant_id = ?");
+            const tenantId = hasTenantFilter ? String(call.bound?.[0] ?? "default") : "default";
+            const roleOffset = hasTenantFilter ? 1 : 0;
+            const roles = (call.bound || [])
+              .slice(roleOffset)
+              .map((value) => String(value ?? "").toLowerCase());
             const allowedRoles = new Set(roles);
             const activeUserIds = new Set(
               state.webUsers
@@ -366,6 +522,7 @@ function createMockDB({
             for (const row of state.deviceTokens) {
               const token = String(row.fcm_token ?? "").trim();
               if (!token) continue;
+              if (withTenant(row) !== tenantId) continue;
               if (!activeUserIds.has(Number(row.user_id))) continue;
               unique.add(token);
             }
@@ -378,6 +535,72 @@ function createMockDB({
           throw new Error(`Unexpected query for .all(): ${normalized}`);
         },
         async run() {
+          if (normalized.startsWith("INSERT INTO tenant_user_roles")) {
+            const [tenantId, userId, role, isActive, createdAt, updatedAt] = call.bound;
+            const existing = state.tenantUserRoles.find(
+              (item) =>
+                String(item.tenant_id) === String(tenantId) && Number(item.user_id) === Number(userId),
+            );
+            if (existing) {
+              existing.role = role;
+              existing.is_active = isActive;
+              existing.updated_at = updatedAt;
+              return { success: true, meta: { last_row_id: existing.id } };
+            }
+            const id = nextTenantUserRoleId++;
+            state.tenantUserRoles.push({
+              id,
+              tenant_id: tenantId,
+              user_id: userId,
+              role,
+              is_active: isActive,
+              created_at: createdAt,
+              updated_at: updatedAt,
+            });
+            return { success: true, meta: { last_row_id: id } };
+          }
+
+          if (normalized.startsWith("INSERT INTO tenant_audit_events")) {
+            const id = nextTenantAuditEventId++;
+            const [tenantId, actorUserId, actorUsername, action, entityType, entityId, occurredAt, metadataJson] =
+              call.bound;
+            state.tenantAuditEvents.push({
+              id,
+              tenant_id: tenantId,
+              actor_user_id: actorUserId,
+              actor_username: actorUsername,
+              action,
+              entity_type: entityType,
+              entity_id: entityId,
+              occurred_at: occurredAt,
+              metadata_json: metadataJson,
+            });
+            return { success: true, meta: { last_row_id: id } };
+          }
+
+          if (
+            normalized.startsWith(
+              "INSERT INTO audit_logs (tenant_id, timestamp, action, username, success, details, computer_name, ip_address, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+          ) {
+            const id = nextAuditLogId++;
+            const [tenantId, timestamp, action, username, success, details, computerName, ipAddress, platform] =
+              call.bound;
+            state.auditLogs.push({
+              id,
+              tenant_id: tenantId,
+              timestamp,
+              action,
+              username,
+              success,
+              details,
+              computer_name: computerName,
+              ip_address: ipAddress,
+              platform,
+            });
+            return { success: true, meta: { last_row_id: id } };
+          }
+
           if (
             normalized.startsWith(
               "INSERT INTO audit_logs (timestamp, action, username, success, details, computer_name, ip_address, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -387,6 +610,7 @@ function createMockDB({
             const [timestamp, action, username, success, details, computerName, ipAddress, platform] = call.bound;
             state.auditLogs.push({
               id,
+              tenant_id: "default",
               timestamp,
               action,
               username,
@@ -401,10 +625,34 @@ function createMockDB({
 
           if (normalized.startsWith("INSERT INTO installations")) {
             const id = nextInstallationId++;
-            const [timestamp, driverBrand, driverVersion, status, clientName, driverDescription, installationTime, osInfo, notes] =
-              call.bound;
+            const hasTenantId = call.bound.length >= 10;
+            const [
+              tenantIdOrTimestamp,
+              timestampOrDriverBrand,
+              driverBrandOrDriverVersion,
+              driverVersionOrStatus,
+              statusOrClientName,
+              clientNameOrDriverDescription,
+              driverDescriptionOrInstallationTime,
+              installationTimeOrOsInfo,
+              osInfoOrNotes,
+              maybeNotes,
+            ] = call.bound;
+            const tenantId = hasTenantId ? tenantIdOrTimestamp : "default";
+            const timestamp = hasTenantId ? timestampOrDriverBrand : tenantIdOrTimestamp;
+            const driverBrand = hasTenantId ? driverBrandOrDriverVersion : timestampOrDriverBrand;
+            const driverVersion = hasTenantId ? driverVersionOrStatus : driverBrandOrDriverVersion;
+            const status = hasTenantId ? statusOrClientName : driverVersionOrStatus;
+            const clientName = hasTenantId ? clientNameOrDriverDescription : statusOrClientName;
+            const driverDescription = hasTenantId
+              ? driverDescriptionOrInstallationTime
+              : clientNameOrDriverDescription;
+            const installationTime = hasTenantId ? installationTimeOrOsInfo : driverDescriptionOrInstallationTime;
+            const osInfo = hasTenantId ? osInfoOrNotes : installationTimeOrOsInfo;
+            const notes = hasTenantId ? maybeNotes : osInfoOrNotes;
             state.installations.push({
               id,
+              tenant_id: tenantId,
               timestamp,
               driver_brand: driverBrand,
               driver_version: driverVersion,
@@ -419,8 +667,12 @@ function createMockDB({
           }
 
           if (normalized.startsWith("UPDATE installations SET notes = ?, installation_time_seconds = ? WHERE id = ?")) {
-            const [notes, installationTimeSeconds, id] = call.bound;
-            const row = state.installations.find((item) => String(item.id) === String(id));
+            const [notes, installationTimeSeconds, id, tenantId = "default"] = call.bound;
+            const row = state.installations.find(
+              (item) =>
+                String(item.id) === String(id) &&
+                (!normalized.includes("tenant_id = ?") || withTenant(item) === String(tenantId)),
+            );
             if (row) {
               row.notes = notes;
               row.installation_time_seconds = installationTimeSeconds;
@@ -428,18 +680,38 @@ function createMockDB({
             return { success: true };
           }
 
-          if (normalized === "DELETE FROM installations WHERE id = ?") {
-            const [id] = call.bound;
-            state.installations = state.installations.filter((item) => String(item.id) !== String(id));
+          if (
+            normalized === "DELETE FROM installations WHERE id = ?" ||
+            normalized === "DELETE FROM installations WHERE id = ? AND tenant_id = ?"
+          ) {
+            const [id, tenantId = "default"] = call.bound;
+            state.installations = state.installations.filter(
+              (item) =>
+                String(item.id) !== String(id) ||
+                (normalized.includes("tenant_id = ?") && withTenant(item) !== String(tenantId)),
+            );
             return { success: true };
           }
 
-          if (normalized.startsWith("INSERT INTO incidents (installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at)")) {
+          if (
+            normalized.startsWith("INSERT INTO incidents (installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at)") ||
+            normalized.startsWith("INSERT INTO incidents (tenant_id, installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at)")
+          ) {
             const id = nextIncidentId++;
-            const [installationId, reporterUsername, note, timeAdjustmentSeconds, severity, source, createdAt] =
+            const hasTenantId = call.bound.length >= 8;
+            const [tenantIdOrInstallationId, installationIdOrReporter, reporterOrNote, noteOrAdjustment, adjustmentOrSeverity, severityOrSource, sourceOrCreatedAt, maybeCreatedAt] =
               call.bound;
+            const tenantId = hasTenantId ? tenantIdOrInstallationId : "default";
+            const installationId = hasTenantId ? installationIdOrReporter : tenantIdOrInstallationId;
+            const reporterUsername = hasTenantId ? reporterOrNote : installationIdOrReporter;
+            const note = hasTenantId ? noteOrAdjustment : reporterOrNote;
+            const timeAdjustmentSeconds = hasTenantId ? adjustmentOrSeverity : noteOrAdjustment;
+            const severity = hasTenantId ? severityOrSource : adjustmentOrSeverity;
+            const source = hasTenantId ? sourceOrCreatedAt : severityOrSource;
+            const createdAt = hasTenantId ? maybeCreatedAt : sourceOrCreatedAt;
             state.incidents.push({
               id,
+              tenant_id: tenantId,
               installation_id: installationId,
               reporter_username: reporterUsername,
               note,
@@ -451,11 +723,25 @@ function createMockDB({
             return { success: true, meta: { last_row_id: id } };
           }
 
-          if (normalized.startsWith("INSERT INTO incident_photos (incident_id, r2_key, file_name, content_type, size_bytes, sha256, created_at)")) {
+          if (
+            normalized.startsWith("INSERT INTO incident_photos (incident_id, r2_key, file_name, content_type, size_bytes, sha256, created_at)") ||
+            normalized.startsWith("INSERT INTO incident_photos (tenant_id, incident_id, r2_key, file_name, content_type, size_bytes, sha256, created_at)")
+          ) {
             const id = nextPhotoId++;
-            const [incidentId, r2Key, fileName, contentType, sizeBytes, sha256, createdAt] = call.bound;
+            const hasTenantId = call.bound.length >= 8;
+            const [tenantIdOrIncidentId, incidentIdOrR2Key, r2KeyOrFileName, fileNameOrContentType, contentTypeOrSize, sizeOrSha, shaOrCreatedAt, maybeCreatedAt] =
+              call.bound;
+            const tenantId = hasTenantId ? tenantIdOrIncidentId : "default";
+            const incidentId = hasTenantId ? incidentIdOrR2Key : tenantIdOrIncidentId;
+            const r2Key = hasTenantId ? r2KeyOrFileName : incidentIdOrR2Key;
+            const fileName = hasTenantId ? fileNameOrContentType : r2KeyOrFileName;
+            const contentType = hasTenantId ? contentTypeOrSize : fileNameOrContentType;
+            const sizeBytes = hasTenantId ? sizeOrSha : contentTypeOrSize;
+            const sha256 = hasTenantId ? shaOrCreatedAt : sizeOrSha;
+            const createdAt = hasTenantId ? maybeCreatedAt : shaOrCreatedAt;
             state.incidentPhotos.push({
               id,
+              tenant_id: tenantId,
               incident_id: incidentId,
               r2_key: r2Key,
               file_name: fileName,
@@ -566,14 +852,27 @@ function createMockDB({
             normalized.startsWith(
               "INSERT INTO device_tokens (user_id, fcm_token, device_model, app_version, platform, registered_at, updated_at)",
             )
+            || normalized.startsWith(
+              "INSERT INTO device_tokens (tenant_id, user_id, fcm_token, device_model, app_version, platform, registered_at, updated_at)",
+            )
           ) {
-            const [userId, fcmToken, deviceModel, appVersion, platform, registeredAt, updatedAt] =
+            const hasTenantId = call.bound.length >= 8;
+            const [tenantIdOrUserId, userIdOrFcmToken, fcmTokenOrModel, modelOrVersion, versionOrPlatform, platformOrRegisteredAt, registeredAtOrUpdatedAt, maybeUpdatedAt] =
               call.bound;
+            const tenantId = hasTenantId ? tenantIdOrUserId : "default";
+            const userId = hasTenantId ? userIdOrFcmToken : tenantIdOrUserId;
+            const fcmToken = hasTenantId ? fcmTokenOrModel : userIdOrFcmToken;
+            const deviceModel = hasTenantId ? modelOrVersion : fcmTokenOrModel;
+            const appVersion = hasTenantId ? versionOrPlatform : modelOrVersion;
+            const platform = hasTenantId ? platformOrRegisteredAt : versionOrPlatform;
+            const registeredAt = hasTenantId ? registeredAtOrUpdatedAt : platformOrRegisteredAt;
+            const updatedAt = hasTenantId ? maybeUpdatedAt : registeredAtOrUpdatedAt;
             const existing = state.deviceTokens.find(
               (item) => String(item.fcm_token) === String(fcmToken),
             );
 
             if (existing) {
+              existing.tenant_id = tenantId;
               existing.user_id = userId;
               existing.device_model = deviceModel;
               existing.app_version = appVersion;
@@ -586,6 +885,7 @@ function createMockDB({
             const id = nextDeviceTokenId++;
             state.deviceTokens.push({
               id,
+              tenant_id: tenantId,
               user_id: userId,
               fcm_token: fcmToken,
               device_model: deviceModel,
@@ -742,9 +1042,56 @@ test("GET /installations returns DB rows as JSON", async () => {
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.deepEqual(body, [{ id: 1, driver_brand: "Zebra", status: "success" }]);
+  assert.deepEqual(body, [{ id: 1, driver_brand: "Zebra", status: "success", tenant_id: "default" }]);
+  assert.equal(db.calls.length, 2);
+  assert.ok(db.calls[0].sql.includes("FROM tenants"));
+  assert.ok(db.calls[1].sql.startsWith("SELECT * FROM installations"));
+});
+
+test("GET /installations rejects inactive tenant from X-Tenant-Id", async () => {
+  const db = createMockDB({
+    tenants: [{ id: "acme", name: "ACME", status: "inactive", plan_code: "starter" }],
+  });
+  const request = new Request("https://worker.example/installations", {
+    method: "GET",
+    headers: {
+      "X-Tenant-Id": "acme",
+    },
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 403);
+  const errorText = JSON.stringify(body);
+  assert.match(errorText, /tenant inactivo/i);
   assert.equal(db.calls.length, 1);
-  assert.ok(db.calls[0].sql.startsWith("SELECT * FROM installations"));
+  assert.ok(db.calls[0].sql.includes("FROM tenants"));
+});
+
+test("GET /installations returns only rows for requested tenant", async () => {
+  const db = createMockDB({
+    tenants: [
+      { id: "acme", name: "ACME", status: "active", plan_code: "starter" },
+      { id: "beta", name: "BETA", status: "active", plan_code: "starter" },
+    ],
+    installations: [
+      { id: 1, tenant_id: "acme", driver_brand: "Zebra", status: "success" },
+      { id: 2, tenant_id: "beta", driver_brand: "Magicard", status: "failed" },
+    ],
+  });
+  const request = new Request("https://worker.example/installations", {
+    method: "GET",
+    headers: { "X-Tenant-Id": "acme" },
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.length, 1);
+  assert.equal(body[0].id, 1);
+  assert.equal(body[0].tenant_id, "acme");
 });
 
 test("GET /installations applies filters from query params", async () => {
@@ -805,11 +1152,12 @@ test("POST /installations inserts record with defaults and returns 201", async (
 
   const insertCall = db.calls.find((c) => c.sql.startsWith("INSERT INTO installations"));
   assert.ok(insertCall);
-  assert.equal(insertCall.bound.length, 9);
-  assert.equal(insertCall.bound[1], "Magicard");
-  assert.equal(insertCall.bound[2], "2.0.0");
-  assert.equal(insertCall.bound[3], "unknown");
-  assert.equal(insertCall.bound[6], 0);
+  assert.equal(insertCall.bound.length, 10);
+  assert.equal(insertCall.bound[0], "default");
+  assert.equal(insertCall.bound[2], "Magicard");
+  assert.equal(insertCall.bound[3], "2.0.0");
+  assert.equal(insertCall.bound[4], "unknown");
+  assert.equal(insertCall.bound[7], 0);
 });
 
 test("POST /installations with empty payload uses fallback defaults", async () => {
@@ -828,16 +1176,17 @@ test("POST /installations with empty payload uses fallback defaults", async () =
 
   const insertCall = db.calls.find((c) => c.sql.startsWith("INSERT INTO installations"));
   assert.ok(insertCall);
-  assert.equal(typeof insertCall.bound[0], "string");
-  assert.notEqual(insertCall.bound[0].length, 0);
-  assert.equal(insertCall.bound[1], "");
+  assert.equal(insertCall.bound[0], "default");
+  assert.equal(typeof insertCall.bound[1], "string");
+  assert.notEqual(insertCall.bound[1].length, 0);
   assert.equal(insertCall.bound[2], "");
-  assert.equal(insertCall.bound[3], "unknown");
-  assert.equal(insertCall.bound[4], "");
+  assert.equal(insertCall.bound[3], "");
+  assert.equal(insertCall.bound[4], "unknown");
   assert.equal(insertCall.bound[5], "");
-  assert.equal(insertCall.bound[6], 0);
-  assert.equal(insertCall.bound[7], "");
+  assert.equal(insertCall.bound[6], "");
+  assert.equal(insertCall.bound[7], 0);
   assert.equal(insertCall.bound[8], "");
+  assert.equal(insertCall.bound[9], "");
 });
 
 test("POST /records creates manual record with explicit defaults", async () => {
@@ -910,7 +1259,7 @@ test("PUT /installations/:id updates notes and installation time", async () => {
 
   const updateCall = db.calls.find((c) => c.sql.startsWith("UPDATE installations"));
   assert.ok(updateCall);
-  assert.deepEqual(updateCall.bound, ["Actualizado", 150, "42"]);
+  assert.deepEqual(updateCall.bound, ["Actualizado", 150, "42", "default"]);
 });
 
 test("PUT /installations/:id with missing fields binds null values", async () => {
@@ -929,7 +1278,7 @@ test("PUT /installations/:id with missing fields binds null values", async () =>
 
   const updateCall = db.calls.find((c) => c.sql.startsWith("UPDATE installations"));
   assert.ok(updateCall);
-  assert.deepEqual(updateCall.bound, [null, null, "77"]);
+  assert.deepEqual(updateCall.bound, [null, null, "77", "default"]);
 });
 
 test("DELETE /installations/:id deletes record and returns message", async () => {
@@ -944,9 +1293,9 @@ test("DELETE /installations/:id deletes record and returns message", async () =>
   assert.equal(response.status, 200);
   assert.equal(body.message, "Registro 10 eliminado.");
 
-  const deleteCall = db.calls.find((c) => c.sql === "DELETE FROM installations WHERE id = ?");
+  const deleteCall = db.calls.find((c) => c.sql.startsWith("DELETE FROM installations WHERE id = ?"));
   assert.ok(deleteCall);
-  assert.deepEqual(deleteCall.bound, ["10"]);
+  assert.deepEqual(deleteCall.bound, ["10", "default"]);
 });
 
 test("POST /installations/:id/incidents creates incident and can apply installation update", async () => {
@@ -979,10 +1328,37 @@ test("POST /installations/:id/incidents creates incident and can apply installat
   assert.ok(incidentInsert);
 
   const installationUpdate = db.calls.find(
-    (c) => c.sql === "UPDATE installations SET notes = ?, installation_time_seconds = ? WHERE id = ?",
+    (c) => c.sql.startsWith("UPDATE installations SET notes = ?, installation_time_seconds = ? WHERE id = ?"),
   );
   assert.ok(installationUpdate);
   assert.equal(installationUpdate.bound[2], 45);
+  assert.equal(installationUpdate.bound[3], "default");
+});
+
+test("POST /installations/:id/incidents rejects cross-tenant write access", async () => {
+  const db = createMockDB({
+    tenants: [
+      { id: "acme", name: "ACME", status: "active", plan_code: "starter" },
+      { id: "beta", name: "BETA", status: "active", plan_code: "starter" },
+    ],
+    installations: [{ id: 45, tenant_id: "acme", notes: "", installation_time_seconds: 0 }],
+  });
+  const request = new Request("https://worker.example/installations/45/incidents", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Tenant-Id": "beta",
+    },
+    body: JSON.stringify({
+      note: "Intento cruzado",
+    }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 404);
+  assert.match(JSON.stringify(body), /instalaci/i);
 });
 
 test("POST /installations/:id/incidents with severity critical sends FCM push to admin devices", async () => {
@@ -1239,6 +1615,7 @@ test("POST /incidents/:id/photos uploads to R2 and persists metadata", async () 
   assert.equal(uploaded.length, 1);
   assert.match(uploaded[0].key, /^incidents\/45\/11\//);
   assert.equal(uploaded[0].options.httpMetadata.contentType, "image/png");
+  assert.equal(db.state.tenantAuditEvents.some((event) => event.action === "photo_uploaded"), true);
 });
 
 test("GET /photos/:id returns binary content from R2", async () => {
@@ -1629,6 +2006,30 @@ test("GET /audit-logs returns latest rows sorted desc and respects limit", async
   assert.equal(body[0].id, 2);
 });
 
+test("GET /audit-logs is tenant-scoped", async () => {
+  const db = createMockDB({
+    tenants: [
+      { id: "acme", name: "ACME", status: "active", plan_code: "starter" },
+      { id: "beta", name: "BETA", status: "active", plan_code: "starter" },
+    ],
+    auditLogs: [
+      { id: 1, tenant_id: "acme", timestamp: "2026-08-01T10:00:00.000Z", action: "a", username: "u1", success: 1, details: "{}" },
+      { id: 2, tenant_id: "beta", timestamp: "2026-08-02T10:00:00.000Z", action: "b", username: "u2", success: 1, details: "{}" },
+      { id: 3, tenant_id: "acme", timestamp: "2026-08-03T10:00:00.000Z", action: "c", username: "u3", success: 1, details: "{}" },
+    ],
+  });
+  const request = new Request("https://worker.example/audit-logs?limit=10", {
+    method: "GET",
+    headers: { "X-Tenant-Id": "acme" },
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(body.map((row) => row.id), [3, 1]);
+});
+
 test("unsupported method on /installations returns 404", async () => {
   const db = createMockDB();
   const request = new Request("https://worker.example/installations", {
@@ -1896,7 +2297,7 @@ test("POST /web/auth/login issues access token for web routes", async () => {
   const listBody = await listResponse.json();
 
   assert.equal(listResponse.status, 200);
-  assert.deepEqual(listBody, [{ id: 1, driver_brand: "Zebra", status: "success" }]);
+  assert.deepEqual(listBody, [{ id: 1, driver_brand: "Zebra", status: "success", tenant_id: "default" }]);
 });
 
 test("POST /web/auth/bootstrap creates first web user with hashed password", async () => {
@@ -1924,6 +2325,9 @@ test("POST /web/auth/bootstrap creates first web user with hashed password", asy
   assert.equal(body.bootstrapped, true);
   assert.equal(body.user.username, "admin_root");
   assert.equal(db.state.webUsers.length, 1);
+  assert.equal(db.state.tenantUserRoles.length, 1);
+  assert.equal(db.state.tenantUserRoles[0].tenant_id, "default");
+  assert.equal(db.state.tenantUserRoles[0].role, "admin");
   assert.notEqual(db.state.webUsers[0].password_hash, "StrongPass#2026");
   assert.match(db.state.webUsers[0].password_hash, /^pbkdf2_sha256\$/);
 });
@@ -1994,6 +2398,10 @@ test("POST /web/auth/login accepts username/password after bootstrap", async () 
   assert.equal(loginBody.success, true);
   assert.equal(loginBody.user.username, "admin_root");
   assert.equal(typeof loginBody.access_token, "string");
+  assert.equal(
+    db.state.tenantAuditEvents.some((event) => event.action === "login_success" && event.tenant_id === "default"),
+    true,
+  );
 
   const meRequest = new Request("https://worker.example/web/auth/me", {
     method: "GET",
@@ -2011,6 +2419,7 @@ test("POST /web/auth/login accepts username/password after bootstrap", async () 
   assert.equal(meResponse.status, 200);
   assert.equal(meBody.username, "admin_root");
   assert.equal(meBody.role, "admin");
+  assert.equal(meBody.tenant_role, "admin");
 });
 
 test("POST /web/installations/:id/incidents uses web session user as reporter by default", async () => {
@@ -2057,6 +2466,7 @@ test("POST /web/installations/:id/incidents uses web session user as reporter by
   assert.equal(createIncidentBody.success, true);
   assert.equal(createIncidentBody.incident.reporter_username, "admin_root");
   assert.equal(createIncidentBody.incident.source, "web");
+  assert.equal(db.state.tenantAuditEvents.some((event) => event.action === "incident_created"), true);
 });
 
 test("POST /web/devices registers fcm token for authenticated web user", async () => {
@@ -2105,6 +2515,7 @@ test("POST /web/devices registers fcm token for authenticated web user", async (
   assert.equal(registerDeviceBody.registered, true);
   assert.equal(db.state.deviceTokens.length, 1);
   assert.equal(db.state.deviceTokens[0].user_id, 3000);
+  assert.equal(db.state.deviceTokens[0].tenant_id, "default");
   assert.equal(db.state.deviceTokens[0].fcm_token, "fcm-device-token-12345");
 });
 
@@ -2147,7 +2558,7 @@ test("POST /web/auth/users creates additional users when caller is admin", async
   });
   const createUserBody = await createUserResponse.json();
 
-  assert.equal(createUserResponse.status, 201);
+  assert.equal(createUserResponse.status, 201, JSON.stringify(createUserBody));
   assert.equal(createUserBody.success, true);
   assert.equal(createUserBody.user.username, "viewer_1");
   assert.equal(createUserBody.user.role, "viewer");
@@ -2278,6 +2689,107 @@ test("PATCH /web/auth/users/:id updates role and active status", async () => {
   assert.equal(patchUserBody.success, true);
   assert.equal(patchUserBody.user.role, "admin");
   assert.equal(patchUserBody.user.is_active, false);
+  assert.equal(
+    db.state.tenantAuditEvents.some((event) => event.action === "tenant_user_role_status_changed"),
+    true,
+  );
+});
+
+test("GET /web/auth/tenant-users lists tenant assignments for current tenant", async () => {
+  const secret = "web-session-secret";
+  const db = createMockDB({
+    webUsers: [
+      { id: 9100, username: "tenant_admin", role: "admin", is_active: 1 },
+      { id: 9101, username: "tech_1", role: "viewer", is_active: 1 },
+    ],
+    tenantUserRoles: [
+      { tenant_id: "default", user_id: 9100, role: "admin", is_active: 1 },
+      { tenant_id: "default", user_id: 9101, role: "tecnico", is_active: 1 },
+    ],
+  });
+  const token = createWebAccessTokenForTest(secret, {
+    sub: "tenant_admin",
+    role: "admin",
+    user_id: 9100,
+    tenant_id: "default",
+  });
+
+  const request = new Request("https://worker.example/web/auth/tenant-users", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const response = await workerFetch(request, {
+    DB: db,
+    WEB_SESSION_SECRET: secret,
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.success, true);
+  assert.equal(body.tenant_id, "default");
+  const tech = body.users.find((item) => item.user_id === 9101);
+  assert.equal(tech.username, "tech_1");
+  assert.equal(tech.tenant_role, "tecnico");
+  assert.equal(tech.tenant_role_is_active, true);
+});
+
+test("PATCH /web/auth/users/:id/tenant-role assigns tenant role without changing global web role", async () => {
+  const secret = "web-session-secret";
+  const db = createMockDB({
+    webUsers: [
+      { id: 9200, username: "tenant_admin", role: "admin", is_active: 1 },
+      { id: 9201, username: "viewer_1", role: "viewer", is_active: 1 },
+    ],
+    tenantUserRoles: [
+      { tenant_id: "default", user_id: 9200, role: "admin", is_active: 1 },
+    ],
+  });
+  const token = createWebAccessTokenForTest(secret, {
+    sub: "tenant_admin",
+    role: "admin",
+    user_id: 9200,
+    tenant_id: "default",
+  });
+
+  const request = new Request("https://worker.example/web/auth/users/9201/tenant-role", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      role: "supervisor",
+      is_active: true,
+    }),
+  });
+
+  const response = await workerFetch(request, {
+    DB: db,
+    WEB_SESSION_SECRET: secret,
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.success, true);
+  assert.equal(body.assignment.user_id, 9201);
+  assert.equal(body.assignment.role, "supervisor");
+  assert.equal(body.assignment.is_active, true);
+
+  const tenantRoleRow = db.state.tenantUserRoles.find(
+    (item) => item.tenant_id === "default" && Number(item.user_id) === 9201,
+  );
+  assert.equal(tenantRoleRow.role, "supervisor");
+  assert.equal(tenantRoleRow.is_active, 1);
+
+  const globalUser = db.state.webUsers.find((item) => Number(item.id) === 9201);
+  assert.equal(globalUser.role, "viewer");
+  assert.equal(
+    db.state.tenantAuditEvents.some((event) => event.action === "tenant_user_role_assigned"),
+    true,
+  );
 });
 
 test("POST /web/auth/users/:id/force-password resets password and allows login", async () => {
@@ -2478,6 +2990,304 @@ test("GET /web/installations rejects request without Bearer token", async () => 
   assert.equal(response.status, 401);
   assert.equal(body.success, false);
   assert.match(body.error.message, /bearer/i);
+});
+
+test("web tenant RBAC blocks non-admin access to /web/auth/users* management endpoints", async () => {
+  const secret = "web-session-secret";
+  const db = createMockDB({
+    webUsers: [
+      { id: 9300, username: "supervisor_1", role: "viewer", is_active: 1 },
+      { id: 9301, username: "target_user", role: "viewer", is_active: 1 },
+    ],
+    tenantUserRoles: [
+      { tenant_id: "default", user_id: 9300, role: "supervisor", is_active: 1 },
+      { tenant_id: "default", user_id: 9301, role: "tecnico", is_active: 1 },
+    ],
+  });
+  const token = createWebAccessTokenForTest(secret, {
+    sub: "supervisor_1",
+    role: "viewer",
+    user_id: 9300,
+    tenant_id: "default",
+  });
+
+  const cases = [
+    { method: "GET", url: "https://worker.example/web/auth/users" },
+    {
+      method: "POST",
+      url: "https://worker.example/web/auth/users",
+      body: { username: "new_user", password: "StrongPass#2026", role: "viewer" },
+    },
+    {
+      method: "PATCH",
+      url: "https://worker.example/web/auth/users/9301",
+      body: { role: "admin" },
+    },
+    {
+      method: "POST",
+      url: "https://worker.example/web/auth/users/9301/force-password",
+      body: { new_password: "AnotherPass#2026" },
+    },
+    { method: "GET", url: "https://worker.example/web/auth/tenant-users" },
+    {
+      method: "PATCH",
+      url: "https://worker.example/web/auth/users/9301/tenant-role",
+      body: { role: "tecnico" },
+    },
+    {
+      method: "POST",
+      url: "https://worker.example/web/auth/import-users",
+      body: { users: [{ username: "x1", password_hash: bcrypt.hashSync("TmpPass#2026", 4), role: "viewer" }] },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const headers = { Authorization: `Bearer ${token}` };
+    if (testCase.body) headers["Content-Type"] = "application/json";
+    const request = new Request(testCase.url, {
+      method: testCase.method,
+      headers,
+      body: testCase.body ? JSON.stringify(testCase.body) : undefined,
+    });
+
+    const response = await workerFetch(request, {
+      DB: db,
+      WEB_SESSION_SECRET: secret,
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 403, `${testCase.method} ${testCase.url}`);
+    assert.match(JSON.stringify(body), /tenant|permisos/i);
+  }
+});
+
+test("web tenant RBAC allows all tenant roles to GET /web/installations", async () => {
+  const secret = "web-session-secret";
+  const roles = ["admin", "supervisor", "tecnico", "solo_lectura"];
+
+  for (const tenantRole of roles) {
+    const db = createMockDB({
+      installations: [{ id: 1, tenant_id: "default", driver_brand: "Zebra", status: "success" }],
+      tenantUserRoles: [{ tenant_id: "default", user_id: 9001, role: tenantRole, is_active: 1 }],
+    });
+    const token = createWebAccessTokenForTest(secret, {
+      sub: `user_${tenantRole}`,
+      role: "viewer",
+      user_id: 9001,
+      tenant_id: "default",
+    });
+
+    const request = new Request("https://worker.example/web/installations", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const response = await workerFetch(request, {
+      DB: db,
+      WEB_SESSION_SECRET: secret,
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200, `tenant role ${tenantRole} should be allowed to read`);
+    assert.equal(Array.isArray(body), true);
+  }
+});
+
+test("web tenant RBAC enforces mutation permissions on POST /web/installations", async () => {
+  const secret = "web-session-secret";
+  const cases = [
+    { tenantRole: "admin", expectedStatus: 201 },
+    { tenantRole: "supervisor", expectedStatus: 201 },
+    { tenantRole: "tecnico", expectedStatus: 201 },
+    { tenantRole: "solo_lectura", expectedStatus: 403 },
+  ];
+
+  for (const testCase of cases) {
+    const db = createMockDB({
+      tenantUserRoles: [
+        { tenant_id: "default", user_id: 9002, role: testCase.tenantRole, is_active: 1 },
+      ],
+    });
+    const token = createWebAccessTokenForTest(secret, {
+      sub: `mut_${testCase.tenantRole}`,
+      role: "viewer",
+      user_id: 9002,
+      tenant_id: "default",
+    });
+    const request = new Request("https://worker.example/web/installations", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        driver_brand: "Magicard",
+        driver_version: "1.0.0",
+      }),
+    });
+
+    const response = await workerFetch(request, {
+      DB: db,
+      WEB_SESSION_SECRET: secret,
+    });
+    const body = await response.json();
+
+    assert.equal(
+      response.status,
+      testCase.expectedStatus,
+      `tenant role ${testCase.tenantRole} expected ${testCase.expectedStatus}`,
+    );
+    if (testCase.expectedStatus === 403) {
+      assert.match(JSON.stringify(body), /permisos/i);
+    }
+  }
+});
+
+test("web tenant RBAC matrix for /web/installations/:id/incidents (GET/POST)", async () => {
+  const secret = "web-session-secret";
+  const roles = ["admin", "supervisor", "tecnico", "solo_lectura"];
+
+  for (const tenantRole of roles) {
+    const db = createMockDB({
+      installations: [{ id: 45, tenant_id: "default", notes: "", installation_time_seconds: 0 }],
+      incidents: [{ id: 501, tenant_id: "default", installation_id: 45, reporter_username: "u", note: "n", time_adjustment_seconds: 0, severity: "low", source: "web", created_at: "2026-01-01T00:00:00Z" }],
+      tenantUserRoles: [{ tenant_id: "default", user_id: 9400, role: tenantRole, is_active: 1 }],
+    });
+    const token = createWebAccessTokenForTest(secret, {
+      sub: `inc_${tenantRole}`,
+      role: "viewer",
+      user_id: 9400,
+      tenant_id: "default",
+    });
+
+    const getReq = new Request("https://worker.example/web/installations/45/incidents", {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const getResp = await workerFetch(getReq, { DB: db, WEB_SESSION_SECRET: secret });
+    assert.equal(getResp.status, 200, `GET incidents should allow ${tenantRole}`);
+
+    const postReq = new Request("https://worker.example/web/installations/45/incidents", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ note: `incident by ${tenantRole}` }),
+    });
+    const postResp = await workerFetch(postReq, { DB: db, WEB_SESSION_SECRET: secret });
+    const expectedPost = tenantRole === "solo_lectura" ? 403 : 201;
+    assert.equal(postResp.status, expectedPost, `POST incidents role=${tenantRole}`);
+  }
+});
+
+test("web tenant RBAC matrix for /web/audit-logs (GET/POST)", async () => {
+  const secret = "web-session-secret";
+  const roles = ["admin", "supervisor", "tecnico", "solo_lectura"];
+
+  for (const tenantRole of roles) {
+    const db = createMockDB({
+      auditLogs: [{ id: 1, tenant_id: "default", timestamp: "2026-01-01T00:00:00Z", action: "x", username: "u", success: 1, details: "{}" }],
+      tenantUserRoles: [{ tenant_id: "default", user_id: 9500, role: tenantRole, is_active: 1 }],
+    });
+    const token = createWebAccessTokenForTest(secret, {
+      sub: `audit_${tenantRole}`,
+      role: "viewer",
+      user_id: 9500,
+      tenant_id: "default",
+    });
+
+    const getReq = new Request("https://worker.example/web/audit-logs?limit=10", {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const getResp = await workerFetch(getReq, { DB: db, WEB_SESSION_SECRET: secret });
+    assert.equal(getResp.status, 200, `GET audit-logs should allow ${tenantRole}`);
+
+    const postReq = new Request("https://worker.example/web/audit-logs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ action: "manual_event", username: "tester", success: true }),
+    });
+    const postResp = await workerFetch(postReq, { DB: db, WEB_SESSION_SECRET: secret });
+    const expectedPost = tenantRole === "solo_lectura" ? 403 : 201;
+    assert.equal(postResp.status, expectedPost, `POST audit-logs role=${tenantRole}`);
+  }
+});
+
+test("web tenant RBAC matrix for incident photos (GET/POST)", async () => {
+  const secret = "web-session-secret";
+  const roles = ["admin", "supervisor", "tecnico", "solo_lectura"];
+
+  for (const tenantRole of roles) {
+    const db = createMockDB({
+      incidents: [{ id: 77, tenant_id: "default", installation_id: 45 }],
+      incidentPhotos: [{
+        id: 88,
+        tenant_id: "default",
+        incident_id: 77,
+        r2_key: "incidents/45/77/photo.png",
+        file_name: "photo.png",
+        content_type: "image/png",
+        size_bytes: 4,
+        sha256: "abc",
+        created_at: "2026-01-01T00:00:00Z",
+      }],
+      tenantUserRoles: [{ tenant_id: "default", user_id: 9600, role: tenantRole, is_active: 1 }],
+    });
+    const token = createWebAccessTokenForTest(secret, {
+      sub: `photo_${tenantRole}`,
+      role: "viewer",
+      user_id: 9600,
+      tenant_id: "default",
+    });
+    const bucket = {
+      async get() {
+        return {
+          body: new Uint8Array([1, 2, 3, 4]),
+          httpMetadata: { contentType: "image/png" },
+        };
+      },
+      async put() {
+        return;
+      },
+    };
+
+    const getReq = new Request("https://worker.example/web/photos/88", {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const getResp = await workerFetch(getReq, {
+      DB: db,
+      WEB_SESSION_SECRET: secret,
+      INCIDENTS_BUCKET: bucket,
+    });
+    assert.equal(getResp.status, 200, `GET photo should allow ${tenantRole}`);
+
+    const payload = new Uint8Array(1500);
+    payload.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    const postReq = new Request("https://worker.example/web/incidents/77/photos", {
+      method: "POST",
+      headers: {
+        "Content-Type": "image/png",
+        "X-File-Name": "evidence.png",
+        Authorization: `Bearer ${token}`,
+      },
+      body: payload,
+    });
+    const postResp = await workerFetch(postReq, {
+      DB: db,
+      WEB_SESSION_SECRET: secret,
+      INCIDENTS_BUCKET: bucket,
+    });
+    const expectedPost = tenantRole === "solo_lectura" ? 403 : 201;
+    assert.equal(postResp.status, expectedPost, `POST photo role=${tenantRole}`);
+  }
 });
 
 test("POST /web/auth/login rejects wrong password", async () => {
@@ -2687,5 +3497,5 @@ test("accepts signed requests when auth secrets are configured", async () => {
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.deepEqual(body, [{ id: 1, driver_brand: "Zebra", status: "success" }]);
+  assert.deepEqual(body, [{ id: 1, driver_brand: "Zebra", status: "success", tenant_id: "default" }]);
 });
