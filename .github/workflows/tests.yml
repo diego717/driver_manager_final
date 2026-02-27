@@ -70,13 +70,25 @@ jobs:
         run: npm run test:api-quality
 
   remote-smoke-tests:
-    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && secrets.REMOTE_SMOKE_BASE_URL != '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-latest
+    env:
+      REMOTE_SMOKE_BASE_URL: ${{ secrets.REMOTE_SMOKE_BASE_URL }}
+      REMOTE_SMOKE_API_TOKEN: ${{ secrets.REMOTE_SMOKE_API_TOKEN }}
+      REMOTE_SMOKE_API_SECRET: ${{ secrets.REMOTE_SMOKE_API_SECRET }}
+      REMOTE_SMOKE_WEB_USERNAME: ${{ secrets.REMOTE_SMOKE_WEB_USERNAME }}
+      REMOTE_SMOKE_WEB_PASSWORD: ${{ secrets.REMOTE_SMOKE_WEB_PASSWORD }}
     steps:
+      - name: Skip remote smoke (missing REMOTE_SMOKE_BASE_URL)
+        if: ${{ env.REMOTE_SMOKE_BASE_URL == '' }}
+        run: echo "Skipping remote smoke tests because REMOTE_SMOKE_BASE_URL is not configured."
+
       - name: Checkout
+        if: ${{ env.REMOTE_SMOKE_BASE_URL != '' }}
         uses: actions/checkout@v4
 
       - name: Setup Node
+        if: ${{ env.REMOTE_SMOKE_BASE_URL != '' }}
         uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -84,15 +96,11 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install Worker Dependencies
+        if: ${{ env.REMOTE_SMOKE_BASE_URL != '' }}
         run: npm ci
 
       - name: Run Remote Smoke Tests
-        env:
-          REMOTE_SMOKE_BASE_URL: ${{ secrets.REMOTE_SMOKE_BASE_URL }}
-          REMOTE_SMOKE_API_TOKEN: ${{ secrets.REMOTE_SMOKE_API_TOKEN }}
-          REMOTE_SMOKE_API_SECRET: ${{ secrets.REMOTE_SMOKE_API_SECRET }}
-          REMOTE_SMOKE_WEB_USERNAME: ${{ secrets.REMOTE_SMOKE_WEB_USERNAME }}
-          REMOTE_SMOKE_WEB_PASSWORD: ${{ secrets.REMOTE_SMOKE_WEB_PASSWORD }}
+        if: ${{ env.REMOTE_SMOKE_BASE_URL != '' }}
         run: npm run test:smoke:remote
 
   mobile-app-tests:
