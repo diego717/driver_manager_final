@@ -13,6 +13,7 @@ let currentUser = null;
 let charts = {};
 let searchDebounceTimer = null;
 let currentInstallationsData = [];
+let lastFocusedBeforeLogin = null;
 
 // WebSocket/SSE State
 let eventSource = null;
@@ -24,7 +25,7 @@ const SSE_RECONNECT_DELAY = 3000; // 3 seconds
 
 // Chart.js default configuration
 function isChartAvailable() {
-    return typeof Chart !== 'undefined' && Chart && Chart.defaults;
+    return typeof Chart === 'function' && Chart && Chart.defaults;
 }
 
 function applyChartDefaults(theme = 'dark') {
@@ -100,14 +101,26 @@ const api = {
 };
 
 function showLogin() {
+    const activeElement = document.activeElement;
+    if (activeElement && typeof activeElement.focus === 'function') {
+        lastFocusedBeforeLogin = activeElement;
+    }
     document.getElementById('loginModal').classList.add('active');
     document.body.style.overflow = 'hidden';
+    const firstInput = document.getElementById('loginUsername');
+    if (firstInput && typeof firstInput.focus === 'function') {
+        firstInput.focus();
+    }
 }
 
 function hideLogin() {
     document.getElementById('loginModal').classList.remove('active');
     document.body.style.overflow = '';
     document.getElementById('loginError').textContent = '';
+    if (lastFocusedBeforeLogin && document.contains(lastFocusedBeforeLogin) && typeof lastFocusedBeforeLogin.focus === 'function') {
+        lastFocusedBeforeLogin.focus();
+    }
+    lastFocusedBeforeLogin = null;
 }
 
 function updateStats(stats) {
@@ -119,6 +132,7 @@ function updateStats(stats) {
 
 function animateNumber(elementId, value) {
     const element = document.getElementById(elementId);
+    if (!element) return;
     element.style.opacity = '0';
     element.style.transform = 'translateY(10px)';
     
@@ -1252,6 +1266,33 @@ document.getElementById('photoModal').addEventListener('click', (e) => {
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
+    const loginModal = document.getElementById('loginModal');
+    if (loginModal && loginModal.classList.contains('active')) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            hideLogin();
+            return;
+        }
+
+        if (e.key === 'Tab') {
+            const focusable = loginModal.querySelectorAll('input, button, [href], select, textarea, [tabindex]:not([tabindex="-1"])');
+            if (focusable.length > 0) {
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (e.shiftKey && document.activeElement === first) {
+                    e.preventDefault();
+                    last.focus();
+                    return;
+                }
+                if (!e.shiftKey && document.activeElement === last) {
+                    e.preventDefault();
+                    first.focus();
+                    return;
+                }
+            }
+        }
+    }
+
     if (e.key === 'Escape') {
         document.getElementById('photoModal').classList.remove('active');
     }

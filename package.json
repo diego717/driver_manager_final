@@ -11,8 +11,17 @@
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
     "test:dashboard-embed": "node --test tests_js/dashboard.embed.test.mjs",
+    "test:dashboard-unit": "node --test tests_js/dashboard.unit.test.mjs",
+    "test:dashboard-xss": "node --test tests_js/dashboard.xss.unit.test.mjs",
+    "test:dashboard-accessibility": "node --test tests_js/dashboard.accessibility.test.mjs",
+    "test:dashboard": "npm run test:dashboard-embed && npm run test:dashboard-unit && npm run test:dashboard-xss && npm run test:dashboard-accessibility",
     "test:worker": "node --test tests_js/worker.contract.test.mjs",
-    "test:web": "npm run test:dashboard-embed && npm run test:worker",
+    "test:smoke:api": "node --test tests_js/worker.smoke.test.mjs",
+    "test:smoke:remote": "node --test tests_js/worker.remote.smoke.test.mjs",
+    "test:contract:openapi": "node --test tests_js/openapi.contract.test.mjs",
+    "test:smoke:migrations": "node --test tests_js/migrations.smoke.test.mjs",
+    "test:api-quality": "npm run test:smoke:api && npm run test:contract:openapi && npm run test:smoke:migrations",
+    "test:web": "npm run test:dashboard && npm run test:worker",
     "d1:migrate": "wrangler d1 migrations apply driver-manager-db",
     "d1:migrate:remote": "wrangler d1 migrations apply driver-manager-db --remote",
     "d1:studio": "wrangler d1 execute driver-manager-db --local --command=\"SELECT 1;\"",
@@ -20,7 +29,8 @@
   },
   "devDependencies": {
     "jsdom": "^28.1.0",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.0.0",
+    "yaml": "^2.8.2"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3"

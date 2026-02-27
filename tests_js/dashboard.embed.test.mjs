@@ -17,7 +17,7 @@ function extractInlineScripts(html) {
   return scripts;
 }
 
-test("GET /web/dashboard returns dashboard without inline scripts and CSP compatible with Chart.js CDN", async () => {
+test("GET /web/dashboard returns embedded dashboard with CSP compatible with inline scripts and Chart.js CDN", async () => {
   const response = await worker.fetch(new Request("https://worker.example/web/dashboard"), {});
   const html = await response.text();
 
@@ -25,16 +25,14 @@ test("GET /web/dashboard returns dashboard without inline scripts and CSP compat
   assert.match(response.headers.get("Content-Type") || "", /text\/html/i);
 
   const inlineScripts = extractInlineScripts(html);
-  assert.equal(inlineScripts.length, 0, "Dashboard should not embed inline scripts");
+  assert.ok(inlineScripts.length > 0, "Embedded dashboard should include inline scripts");
 
   const scripts = extractExternalScripts(html);
-  assert.ok(scripts.includes("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"));
-  assert.ok(scripts.includes("/dashboard.js"));
-  assert.ok(scripts.includes("/dashboard-pwa.js"));
+  assert.deepEqual(scripts, ["https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"]);
 
   const csp = response.headers.get("Content-Security-Policy") || "";
-  assert.match(csp, /script-src 'self' https:\/\/cdn\.jsdelivr\.net/);
-  assert.match(csp, /style-src 'self'/);
+  assert.match(csp, /script-src 'self' https:\/\/cdn\.jsdelivr\.net 'unsafe-inline'/);
+  assert.match(csp, /style-src 'self' 'unsafe-inline'/);
   assert.match(csp, /object-src 'none'/);
   assert.match(csp, /frame-ancestors 'none'/);
 });

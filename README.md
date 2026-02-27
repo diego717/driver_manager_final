@@ -307,7 +307,24 @@ python -m unittest discover -s tests -v
 ### Worker contract tests
 
 ```powershell
-node --test tests_js/*.test.mjs
+npm run test:web
+```
+
+### API quality tests (smoke + OpenAPI + migrations)
+
+```powershell
+npm run test:api-quality
+```
+
+### Remote smoke tests (Worker desplegado)
+
+```powershell
+$env:REMOTE_SMOKE_BASE_URL="https://tu-worker.workers.dev"
+$env:REMOTE_SMOKE_API_TOKEN="tu_api_token"          # opcional, habilita prueba firmada /installations
+$env:REMOTE_SMOKE_API_SECRET="tu_api_secret"        # opcional, habilita prueba firmada /installations
+$env:REMOTE_SMOKE_WEB_USERNAME="admin_root"         # opcional, habilita login web smoke
+$env:REMOTE_SMOKE_WEB_PASSWORD="TuPass#Segura2026"  # opcional, habilita login web smoke
+npm run test:smoke:remote
 ```
 
 ### Mobile tests
@@ -317,7 +334,20 @@ cd mobile-app
 npm test
 ```
 
-CI (`.github/workflows/tests.yml`) ejecuta estas tres suites.
+CI (`.github/workflows/tests.yml`) ejecuta cuatro suites:
+- Python unit tests (desktop)
+- Web + Worker tests
+- API quality tests (smoke + OpenAPI + migrations)
+- Mobile unit tests
+
+Adicionalmente, CI ejecuta `remote-smoke-tests` cuando:
+- El evento es `push` a `main` o `workflow_dispatch`.
+- Existe el secret `REMOTE_SMOKE_BASE_URL`.
+
+Secrets esperados para `remote-smoke-tests`:
+- `REMOTE_SMOKE_BASE_URL` (obligatorio para correr el job)
+- `REMOTE_SMOKE_API_TOKEN` y `REMOTE_SMOKE_API_SECRET` (opcionales para prueba HMAC)
+- `REMOTE_SMOKE_WEB_USERNAME` y `REMOTE_SMOKE_WEB_PASSWORD` (opcionales para login web)
 
 ## Documentacion API
 
