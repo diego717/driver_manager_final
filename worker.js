@@ -1,4 +1,21 @@
-﻿﻿﻿﻿﻿﻿﻿﻿import bcrypt from "bcryptjs";
+﻿import {
+  HttpError,
+  nowIso,
+  nowUnixSeconds,
+  normalizeOptionalString,
+  normalizeWebUsername,
+} from "./worker_modules/core.js";
+import {
+  sha256Hex,
+  hmacSha256Hex,
+  timingSafeEqual,
+  bytesToBase64Url,
+  base64UrlEncodeUtf8,
+  base64UrlDecodeUtf8,
+  pemToArrayBuffer,
+} from "./worker_modules/crypto.js";
+import { createWebAuthUtils } from "./worker_modules/web_auth_utils.js";
+import { createOperationalUtils } from "./worker_modules/operational_utils.js";
 
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const MIN_PHOTO_BYTES = 1024;
@@ -41,14 +58,68 @@ const TENANT_ALLOWED_ROLES = new Set([
   TENANT_ROLE_SOLO_LECTURA,
 ]);
 
-let fcmAccessTokenCache = null;
+const {
+  isLikelyLegacyPbkdf2Hex,
+  detectWebPasswordHashType,
+  normalizeWebHashType,
+  validateWebUsername,
+  validateWebPassword,
+  parseWebPasswordHash,
+  deriveWebPasswordKey,
+  hashWebPassword,
+  verifyLegacyPbkdf2HexPassword,
+  verifyBcryptPassword,
+  verifyWebPassword,
+  normalizeWebRole,
+  normalizeTenantRole,
+  mapWebRoleToTenantRole,
+  requireTenantRole,
+  parseBooleanOrNull,
+  requireAdminRole,
+  normalizeActiveFlag,
+} = createWebAuthUtils({
+  WEB_USERNAME_PATTERN,
+  WEB_PASSWORD_MIN_LENGTH,
+  WEB_PASSWORD_SPECIAL_CHARS,
+  WEB_PASSWORD_PBKDF2_ITERATIONS,
+  WEB_PASSWORD_KEY_LENGTH_BYTES,
+  WEB_DEFAULT_ROLE,
+  WEB_HASH_TYPE_PBKDF2,
+  WEB_HASH_TYPE_BCRYPT,
+  WEB_HASH_TYPE_LEGACY_PBKDF2,
+  WEB_ALLOWED_HASH_TYPES,
+  TENANT_ALLOWED_ROLES,
+  TENANT_ROLE_SOLO_LECTURA,
+  TENANT_ROLE_ADMIN,
+});
 
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
+const {
+  parsePositiveInt,
+  normalizeContentType,
+  sanitizeFileName,
+  extensionFromType,
+  validateAndProcessPhoto,
+  getRateLimitKv,
+  getClientIpForRateLimit,
+  buildWebLoginRateLimitIdentifier,
+  checkWebLoginRateLimit,
+  recordFailedWebLoginAttempt,
+  clearWebLoginRateLimit,
+  normalizeInstallationPayload,
+  parseDateOrNull,
+  parseOptionalPositiveInt,
+  applyInstallationFilters,
+  computeStatistics,
+  normalizeNotificationData,
+} = createOperationalUtils({
+  MIN_PHOTO_BYTES,
+  MAX_PHOTO_BYTES,
+  ALLOWED_PHOTO_TYPES,
+  WEB_LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
+  WEB_LOGIN_RATE_LIMIT_LOCKOUT_SECONDS,
+});
+
+let fcmAccessTokenCache = null;
 
 const CONTROLLED_DASHBOARD_ORIGINS = [
   "https://dashboard.driver-manager.app",
@@ -191,427 +262,6 @@ function dashboardAssetSecurityHeaders() {
       "manifest-src 'self'",
     ].join("; "),
   };
-}
-
-function parsePositiveInt(value, label) {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new HttpError(400, `${label} invÃ¡lido.`);
-  }
-  return parsed;
-}
-
-function normalizeContentType(headerValue) {
-  if (!headerValue) return "";
-  return headerValue.split(";")[0].trim().toLowerCase();
-}
-
-function sanitizeFileName(input, fallbackBase) {
-  const candidate = (input || `${fallbackBase}.jpg`).trim();
-  const normalized = candidate.replace(/[^a-zA-Z0-9._-]/g, "_");
-  return normalized || `${fallbackBase}.jpg`;
-}
-
-function extensionFromType(contentType) {
-  if (contentType === "image/png") return "png";
-  if (contentType === "image/webp") return "webp";
-  return "jpg";
-}
-
-function detectPhotoContentTypeFromMagicBytes(bodyBuffer) {
-  const bytes = new Uint8Array(bodyBuffer);
-  if (bytes.length < 12) return "";
-
-  const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
-  const isPng =
-    bytes[0] === 0x89 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x4e &&
-    bytes[3] === 0x47 &&
-    bytes[4] === 0x0d &&
-    bytes[5] === 0x0a &&
-    bytes[6] === 0x1a &&
-    bytes[7] === 0x0a;
-  const isWebp =
-    bytes[0] === 0x52 &&
-    bytes[1] === 0x49 &&
-    bytes[2] === 0x46 &&
-    bytes[3] === 0x46 &&
-    bytes[8] === 0x57 &&
-    bytes[9] === 0x45 &&
-    bytes[10] === 0x42 &&
-    bytes[11] === 0x50;
-
-  if (isJpeg) return "image/jpeg";
-  if (isPng) return "image/png";
-  if (isWebp) return "image/webp";
-  return "";
-}
-
-function validateAndProcessPhoto(bodyBuffer, declaredContentType) {
-  const sizeBytes = bodyBuffer.byteLength;
-  if (!sizeBytes) {
-    throw new HttpError(400, "La imagen esta vacia.");
-  }
-  if (sizeBytes < MIN_PHOTO_BYTES) {
-    throw new HttpError(400, "Imagen demasiado pequena o corrupta.");
-  }
-  if (sizeBytes > MAX_PHOTO_BYTES) {
-    throw new HttpError(
-      413,
-      `Imagen demasiado grande (${(sizeBytes / (1024 * 1024)).toFixed(1)}MB). Maximo: 5MB.`,
-    );
-  }
-
-  const detectedContentType = detectPhotoContentTypeFromMagicBytes(bodyBuffer);
-  if (!detectedContentType) {
-    throw new HttpError(400, "El archivo no es una imagen valida.");
-  }
-
-  if (!ALLOWED_PHOTO_TYPES.has(detectedContentType)) {
-    throw new HttpError(400, "Tipo de imagen no permitido.");
-  }
-
-  if (declaredContentType && declaredContentType !== detectedContentType) {
-    throw new HttpError(400, "El Content-Type no coincide con el archivo de imagen.");
-  }
-
-  return {
-    sizeBytes,
-    contentType: detectedContentType,
-  };
-}
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function nowUnixSeconds() {
-  return Math.floor(Date.now() / 1000);
-}
-
-function normalizeOptionalString(value, fallback = "") {
-  if (value === null || value === undefined) return fallback;
-  return String(value).trim();
-}
-
-function normalizeWebUsername(value) {
-  return normalizeOptionalString(value, "").toLowerCase();
-}
-
-function containsAnyChar(input, allowedChars) {
-  for (let i = 0; i < input.length; i += 1) {
-    if (allowedChars.includes(input[i])) return true;
-  }
-  return false;
-}
-
-function normalizeRateLimitCounter(value) {
-  const parsed = Number.parseInt(String(value ?? ""), 10);
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    return 0;
-  }
-  return parsed;
-}
-
-function getRateLimitKv(env) {
-  const kv = env.RATE_LIMIT_KV;
-  if (!kv) return null;
-  if (
-    typeof kv.get !== "function" ||
-    typeof kv.put !== "function" ||
-    typeof kv.delete !== "function"
-  ) {
-    return null;
-  }
-  return kv;
-}
-
-function getClientIpForRateLimit(request) {
-  const cfIp = normalizeOptionalString(request.headers.get("CF-Connecting-IP"), "");
-  if (cfIp) return cfIp;
-
-  const forwardedFor = normalizeOptionalString(request.headers.get("X-Forwarded-For"), "");
-  if (forwardedFor) {
-    const first = forwardedFor.split(",", 1)[0]?.trim();
-    if (first) return first;
-  }
-
-  return "unknown";
-}
-
-function buildWebLoginRateLimitKey(identifier) {
-  return `web_login_attempts:${identifier}`;
-}
-
-function buildWebLoginRateLimitIdentifier(request, username) {
-  return `${getClientIpForRateLimit(request)}:${normalizeWebUsername(username)}`;
-}
-
-async function checkWebLoginRateLimit(env, identifier) {
-  const kv = getRateLimitKv(env);
-  if (!kv) return;
-
-  const key = buildWebLoginRateLimitKey(identifier);
-  const attempts = normalizeRateLimitCounter(await kv.get(key));
-  if (attempts >= WEB_LOGIN_RATE_LIMIT_MAX_ATTEMPTS) {
-    throw new HttpError(429, "Demasiados intentos fallidos. Intenta en 15 minutos.");
-  }
-}
-
-async function recordFailedWebLoginAttempt(env, identifier) {
-  const kv = getRateLimitKv(env);
-  if (!kv) return;
-
-  const key = buildWebLoginRateLimitKey(identifier);
-  const currentAttempts = normalizeRateLimitCounter(await kv.get(key));
-  await kv.put(key, String(currentAttempts + 1), {
-    expirationTtl: WEB_LOGIN_RATE_LIMIT_LOCKOUT_SECONDS,
-  });
-}
-
-async function clearWebLoginRateLimit(env, identifier) {
-  const kv = getRateLimitKv(env);
-  if (!kv) return;
-
-  const key = buildWebLoginRateLimitKey(identifier);
-  await kv.delete(key);
-}
-
-function normalizeNonNegativeInteger(value, fallback = 0) {
-  if (value === null || value === undefined || value === "") return fallback;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(0, Math.trunc(parsed));
-}
-
-function normalizeInstallationPayload(data, defaultStatus = "unknown") {
-  const source = data && typeof data === "object" ? data : {};
-
-  return {
-    timestamp: normalizeOptionalString(source.timestamp, nowIso()),
-    driver_brand: normalizeOptionalString(source.driver_brand || source.brand, ""),
-    driver_version: normalizeOptionalString(source.driver_version || source.version, ""),
-    status: normalizeOptionalString(source.status, defaultStatus) || defaultStatus,
-    client_name: normalizeOptionalString(source.client_name || source.client, ""),
-    driver_description: normalizeOptionalString(
-      source.driver_description || source.description,
-      "",
-    ),
-    installation_time_seconds: normalizeNonNegativeInteger(
-      source.installation_time_seconds ?? source.installation_time ?? source.time_seconds,
-      0,
-    ),
-    os_info: normalizeOptionalString(source.os_info, ""),
-    notes: normalizeOptionalString(source.notes || source.error_message, ""),
-  };
-}
-
-function parseDateOrNull(value) {
-  if (!value) return null;
-  const parsed = new Date(String(value));
-  if (Number.isNaN(parsed.getTime())) {
-    throw new HttpError(400, "Fecha invalida en filtros.");
-  }
-  return parsed;
-}
-
-function parseOptionalPositiveInt(value, label) {
-  if (value === null || value === undefined || value === "") return null;
-  return parsePositiveInt(value, label);
-}
-
-function applyInstallationFilters(installations, searchParams) {
-  const clientName = normalizeOptionalString(searchParams.get("client_name"), "").toLowerCase();
-  const brand = normalizeOptionalString(searchParams.get("brand"), "").toLowerCase();
-  const status = normalizeOptionalString(searchParams.get("status"), "").toLowerCase();
-  const startDate = parseDateOrNull(searchParams.get("start_date"));
-  const endDate = parseDateOrNull(searchParams.get("end_date"));
-  const limit = parseOptionalPositiveInt(searchParams.get("limit"), "limit");
-
-  const filtered = (installations || []).filter((row) => {
-    if (clientName) {
-      const currentClient = normalizeOptionalString(row.client_name, "").toLowerCase();
-      if (!currentClient.includes(clientName)) return false;
-    }
-
-    if (brand) {
-      const currentBrand = normalizeOptionalString(row.driver_brand, "").toLowerCase();
-      if (currentBrand !== brand) return false;
-    }
-
-    if (status) {
-      const currentStatus = normalizeOptionalString(row.status, "").toLowerCase();
-      if (currentStatus !== status) return false;
-    }
-
-    if (startDate || endDate) {
-      const rawTimestamp = normalizeOptionalString(row.timestamp, "");
-      const rowDate = rawTimestamp ? new Date(rawTimestamp) : null;
-      if (!rowDate || Number.isNaN(rowDate.getTime())) return false;
-
-      if (startDate && rowDate < startDate) return false;
-      // Rango semiclosed [start_date, end_date)
-      if (endDate && rowDate >= endDate) return false;
-    }
-
-    return true;
-  });
-
-  if (limit) {
-    return filtered.slice(0, limit);
-  }
-
-  return filtered;
-}
-
-function computeStatistics(installations) {
-  const rows = installations || [];
-  const total = rows.length;
-
-  let success = 0;
-  let failed = 0;
-  let totalSeconds = 0;
-  let timedRows = 0;
-  const uniqueClients = new Set();
-  const topDrivers = {};
-  const byBrand = {};
-
-  for (const row of rows) {
-    const rowStatus = normalizeOptionalString(row.status, "").toLowerCase();
-    if (rowStatus === "success") success += 1;
-    if (rowStatus === "failed") failed += 1;
-
-    const seconds = Number(row.installation_time_seconds);
-    if (Number.isFinite(seconds) && seconds >= 0) {
-      totalSeconds += seconds;
-      timedRows += 1;
-    }
-
-    const client = normalizeOptionalString(row.client_name, "");
-    if (client) uniqueClients.add(client);
-
-    const brand = normalizeOptionalString(row.driver_brand, "");
-    const version = normalizeOptionalString(row.driver_version, "");
-
-    if (brand) {
-      byBrand[brand] = (byBrand[brand] || 0) + 1;
-    }
-
-    const driverKey = `${brand} ${version}`.trim();
-    if (driverKey) {
-      topDrivers[driverKey] = (topDrivers[driverKey] || 0) + 1;
-    }
-  }
-
-  return {
-    total_installations: total,
-    successful_installations: success,
-    failed_installations: failed,
-    success_rate: total > 0 ? Number(((success / total) * 100).toFixed(2)) : 0,
-    average_time_minutes: timedRows > 0 ? Number(((totalSeconds / timedRows) / 60).toFixed(2)) : 0,
-    unique_clients: uniqueClients.size,
-    top_drivers: topDrivers,
-    by_brand: byBrand,
-  };
-}
-
-async function sha256Hex(bytes) {
-  if (!globalThis.crypto?.subtle) {
-    return null;
-  }
-
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-async function hmacSha256Hex(secret, message) {
-  const keyData = new TextEncoder().encode(secret);
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    keyData,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(message));
-  return [...new Uint8Array(signature)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-function timingSafeEqual(a, b) {
-  if (typeof a !== "string" || typeof b !== "string") return false;
-
-  // Evitar salida temprana por longitud para reducir leaks por timing.
-  const maxLen = Math.max(a.length, b.length);
-  const paddedA = a.padEnd(maxLen, "\0");
-  const paddedB = b.padEnd(maxLen, "\0");
-
-  let mismatch = a.length !== b.length ? 1 : 0;
-  for (let i = 0; i < maxLen; i += 1) {
-    mismatch |= paddedA.charCodeAt(i) ^ paddedB.charCodeAt(i);
-  }
-  return mismatch === 0;
-}
-
-function bytesToBase64Url(bytes) {
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 1) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-function base64UrlToBytes(input) {
-  const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
-  const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4));
-  const decoded = atob(`${normalized}${padding}`);
-  const bytes = new Uint8Array(decoded.length);
-  for (let i = 0; i < decoded.length; i += 1) {
-    bytes[i] = decoded.charCodeAt(i);
-  }
-  return bytes;
-}
-
-function base64UrlEncodeUtf8(text) {
-  return bytesToBase64Url(new TextEncoder().encode(text));
-}
-
-function base64UrlDecodeUtf8(input) {
-  return new TextDecoder().decode(base64UrlToBytes(input));
-}
-
-function pemToArrayBuffer(pemText) {
-  const normalizedPem = normalizeOptionalString(pemText, "").replace(/\\n/g, "\n");
-  const base64Body = normalizedPem
-    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
-    .replace(/-----END PRIVATE KEY-----/g, "")
-    .replace(/\s+/g, "");
-
-  if (!base64Body) {
-    throw new HttpError(500, "FCM service account invalido: private_key vacia.");
-  }
-
-  const binary = atob(base64Body);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
-
-function normalizeNotificationData(rawData) {
-  if (!rawData || typeof rawData !== "object") {
-    return {};
-  }
-
-  const normalized = {};
-  for (const [key, value] of Object.entries(rawData)) {
-    const normalizedKey = normalizeOptionalString(key, "");
-    if (!normalizedKey) continue;
-    if (value === null || value === undefined) continue;
-    normalized[normalizedKey] = String(value);
-  }
-  return normalized;
 }
 
 // AUDIT LOGGING FUNCTION
@@ -849,31 +499,6 @@ async function getFcmAccessToken(env) {
   };
 }
 
-function bytesToHex(bytes) {
-  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-function isLikelyLegacyPbkdf2Hex(hash) {
-  return /^[a-f0-9]{128,}$/i.test(normalizeOptionalString(hash, ""));
-}
-
-function detectWebPasswordHashType(storedHashRaw) {
-  const storedHash = normalizeOptionalString(storedHashRaw, "");
-  if (!storedHash) return WEB_HASH_TYPE_PBKDF2;
-  if (storedHash.startsWith(`${WEB_HASH_TYPE_PBKDF2}$`)) return WEB_HASH_TYPE_PBKDF2;
-  if (storedHash.startsWith("$2a$") || storedHash.startsWith("$2b$") || storedHash.startsWith("$2y$")) {
-    return WEB_HASH_TYPE_BCRYPT;
-  }
-  if (isLikelyLegacyPbkdf2Hex(storedHash)) return WEB_HASH_TYPE_LEGACY_PBKDF2;
-  return WEB_HASH_TYPE_PBKDF2;
-}
-
-function normalizeWebHashType(input, storedHashRaw = "") {
-  const requested = normalizeOptionalString(input, "").toLowerCase();
-  if (WEB_ALLOWED_HASH_TYPES.has(requested)) return requested;
-  return detectWebPasswordHashType(storedHashRaw);
-}
-
 function getBearerToken(request) {
   const authorization = request.headers.get("Authorization") || "";
   const [scheme, token] = authorization.trim().split(/\s+/, 2);
@@ -1066,204 +691,6 @@ function normalizeFcmToken(value) {
   return token;
 }
 
-function validateWebUsername(usernameRaw) {
-  const username = normalizeWebUsername(usernameRaw);
-  if (!WEB_USERNAME_PATTERN.test(username)) {
-    throw new HttpError(
-      400,
-      "Username invalido. Usa 3-64 caracteres: letras, numeros, punto, guion o guion bajo.",
-    );
-  }
-  return username;
-}
-
-function validateWebPassword(passwordRaw, fieldName = "password") {
-  const password = normalizeOptionalString(passwordRaw, "");
-  const errors = [];
-
-  if (password.length < WEB_PASSWORD_MIN_LENGTH) {
-    errors.push(`Debe tener al menos ${WEB_PASSWORD_MIN_LENGTH} caracteres.`);
-  }
-  if (!/[A-Z]/.test(password)) {
-    errors.push("Debe contener al menos una letra mayuscula.");
-  }
-  if (!/[a-z]/.test(password)) {
-    errors.push("Debe contener al menos una letra minuscula.");
-  }
-  if (!/\d/.test(password)) {
-    errors.push("Debe contener al menos un numero.");
-  }
-  if (!containsAnyChar(password, WEB_PASSWORD_SPECIAL_CHARS)) {
-    errors.push("Debe contener al menos un caracter especial.");
-  }
-
-  if (errors.length > 0) {
-    throw new HttpError(400, `Campo '${fieldName}' invalido. ${errors.join(" ")}`);
-  }
-
-  return password;
-}
-
-function parseWebPasswordHash(storedHash) {
-  const [algorithm, iterationsRaw, saltEncoded, keyEncoded] = normalizeOptionalString(
-    storedHash,
-    "",
-  ).split("$", 4);
-
-  const iterations = Number.parseInt(iterationsRaw, 10);
-  if (
-    algorithm !== WEB_HASH_TYPE_PBKDF2 ||
-    !Number.isInteger(iterations) ||
-    iterations < 10000 ||
-    !saltEncoded ||
-    !keyEncoded
-  ) {
-    return null;
-  }
-
-  try {
-    return {
-      iterations,
-      saltBytes: base64UrlToBytes(saltEncoded),
-      keyEncoded,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function deriveWebPasswordKey(password, saltBytes, iterations, keyLengthBytes = WEB_PASSWORD_KEY_LENGTH_BYTES) {
-  if (!globalThis.crypto?.subtle) {
-    throw new HttpError(500, "No hay soporte crypto para autenticacion web.");
-  }
-
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(password),
-    { name: "PBKDF2" },
-    false,
-    ["deriveBits"],
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      hash: "SHA-256",
-      salt: saltBytes,
-      iterations,
-    },
-    keyMaterial,
-    keyLengthBytes * 8,
-  );
-  return new Uint8Array(bits);
-}
-
-async function hashWebPassword(password) {
-  if (!globalThis.crypto?.getRandomValues) {
-    throw new HttpError(500, "No hay soporte crypto para autenticacion web.");
-  }
-
-  const saltBytes = crypto.getRandomValues(new Uint8Array(16));
-  const derivedBytes = await deriveWebPasswordKey(
-    password,
-    saltBytes,
-    WEB_PASSWORD_PBKDF2_ITERATIONS,
-  );
-  return `${WEB_HASH_TYPE_PBKDF2}$${WEB_PASSWORD_PBKDF2_ITERATIONS}$${bytesToBase64Url(saltBytes)}$${bytesToBase64Url(derivedBytes)}`;
-}
-
-async function verifyLegacyPbkdf2HexPassword(password, storedHashRaw) {
-  const storedHash = normalizeOptionalString(storedHashRaw, "").toLowerCase();
-  if (!isLikelyLegacyPbkdf2Hex(storedHash) || storedHash.length < 128) return false;
-
-  const saltText = storedHash.slice(0, 64);
-  const expectedKeyHex = storedHash.slice(64);
-  const keyLengthBytes = Math.max(1, Math.floor(expectedKeyHex.length / 2));
-  const derivedBytes = await deriveWebPasswordKey(
-    password,
-    new TextEncoder().encode(saltText),
-    100000,
-    keyLengthBytes,
-  );
-  const candidateHex = bytesToHex(derivedBytes);
-  return timingSafeEqual(candidateHex, expectedKeyHex);
-}
-
-async function verifyBcryptPassword(password, storedHashRaw) {
-  const storedHash = normalizeOptionalString(storedHashRaw, "");
-  if (!storedHash) return false;
-  try {
-    return await bcrypt.compare(password, storedHash);
-  } catch {
-    return false;
-  }
-}
-
-async function verifyWebPassword(password, storedHash, hashTypeRaw = "") {
-  const hashType = normalizeWebHashType(hashTypeRaw, storedHash);
-  if (hashType === WEB_HASH_TYPE_BCRYPT) {
-    return verifyBcryptPassword(password, storedHash);
-  }
-  if (hashType === WEB_HASH_TYPE_LEGACY_PBKDF2) {
-    return verifyLegacyPbkdf2HexPassword(password, storedHash);
-  }
-
-  const parsed = parseWebPasswordHash(storedHash);
-  if (!parsed) return false;
-
-  const derivedBytes = await deriveWebPasswordKey(password, parsed.saltBytes, parsed.iterations);
-  const candidateKey = bytesToBase64Url(derivedBytes);
-  return timingSafeEqual(candidateKey, parsed.keyEncoded);
-}
-
-function normalizeWebRole(roleRaw) {
-  const role = normalizeOptionalString(roleRaw, WEB_DEFAULT_ROLE).toLowerCase();
-  if (!["admin", "viewer", "super_admin"].includes(role)) {
-    throw new HttpError(400, "Rol web invalido.");
-  }
-  return role;
-}
-
-function normalizeTenantRole(roleRaw, fallback = TENANT_ROLE_SOLO_LECTURA) {
-  const role = normalizeOptionalString(roleRaw, fallback).toLowerCase();
-  if (!TENANT_ALLOWED_ROLES.has(role)) {
-    throw new HttpError(400, "Rol tenant invalido.");
-  }
-  return role;
-}
-
-function mapWebRoleToTenantRole(webRoleRaw) {
-  const webRole = normalizeWebRole(webRoleRaw || WEB_DEFAULT_ROLE);
-  if (webRole === "viewer") return TENANT_ROLE_SOLO_LECTURA;
-  return TENANT_ROLE_ADMIN;
-}
-
-function requireTenantRole(actualRoleRaw, allowedRoles = [], message = "No tienes permisos para esta operacion en el tenant.") {
-  const actualRole = normalizeOptionalString(actualRoleRaw, "").toLowerCase();
-  const normalizedAllowed = (allowedRoles || [])
-    .map((role) => normalizeOptionalString(role, "").toLowerCase())
-    .filter((role) => role);
-  if (!normalizedAllowed.includes(actualRole)) {
-    throw new HttpError(403, message);
-  }
-}
-
-function parseBooleanOrNull(value) {
-  if (value === null || value === undefined) return null;
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  const normalized = normalizeOptionalString(value, "").toLowerCase();
-  if (!normalized) return null;
-  if (["1", "true", "yes", "active", "on"].includes(normalized)) return true;
-  if (["0", "false", "no", "inactive", "off"].includes(normalized)) return false;
-  return null;
-}
-
-function requireAdminRole(role) {
-  if (!["admin", "super_admin"].includes(normalizeOptionalString(role, "").toLowerCase())) {
-    throw new HttpError(403, "No tienes permisos para administrar usuarios web.");
-  }
-}
-
 async function countWebUsers(env) {
   try {
     const { results } = await env.DB.prepare("SELECT COUNT(*) AS total FROM web_users").all();
@@ -1363,15 +790,6 @@ async function createWebUser(env, { username, password, role }) {
     if (error instanceof HttpError) throw error;
     ensureWebUsersTableAvailable(error);
   }
-}
-
-function normalizeActiveFlag(value, fallback = 1) {
-  if (value === null || value === undefined) return fallback;
-  if (typeof value === "boolean") return value ? 1 : 0;
-  const normalized = normalizeOptionalString(value, "").toLowerCase();
-  if (["1", "true", "yes", "active"].includes(normalized)) return 1;
-  if (["0", "false", "no", "inactive"].includes(normalized)) return 0;
-  return fallback;
 }
 
 function normalizeImportedWebUser(rawUser) {
@@ -6665,3 +6083,4 @@ console.log('[SW] Service Worker loaded');`;
     }
   },
 };
+
