@@ -16,6 +16,7 @@ export default class Incident extends Model {
   @field('time_adjustment_seconds') timeAdjustmentSeconds!: number
   @field('severity') severity!: string
   @field('source') source!: string
+  @text('checklist_applied_json') checklistAppliedJson!: string | null
   @readonly @date('created_at') createdAt!: Date
   
   @field('is_synced') isSynced!: boolean
@@ -23,13 +24,28 @@ export default class Incident extends Model {
 
   @children('photos') photos!: Photo[]
 
-  @writer async addPhoto(localPath: string, fileName: string, contentType: string, size: number) {
+  @writer async addPhoto(
+    localPath: string,
+    fileName: string,
+    contentType: string,
+    size: number,
+    capture: {
+      capturedAtEpochMs: number
+      latitude?: number | null
+      longitude?: number | null
+      accuracyM?: number | null
+    },
+  ) {
     const newPhoto = await this.collections.get<Photo>('photos').create(photo => {
       photo.incident.set(this)
       photo.localPath = localPath
       photo.fileName = fileName
       photo.contentType = contentType
       photo.sizeBytes = size
+      photo.capturedAt = capture.capturedAtEpochMs
+      photo.latitude = capture.latitude ?? null
+      photo.longitude = capture.longitude ?? null
+      photo.accuracyM = capture.accuracyM ?? null
       photo.isSynced = false
     })
     return newPhoto
@@ -39,6 +55,12 @@ export default class Incident extends Model {
     await this.update(incident => {
       incident.isSynced = true
       incident.remoteId = remoteId
+    })
+  }
+
+  @writer async setChecklistApplied(items: unknown[]) {
+    await this.update(incident => {
+      incident.checklistAppliedJson = JSON.stringify(items || [])
     })
   }
 }

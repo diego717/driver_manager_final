@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb'
 
 export const mySchema = appSchema({
-  version: 1,
+  version: 2,
   tables: [
     tableSchema({
       name: 'incidents',
@@ -12,6 +12,7 @@ export const mySchema = appSchema({
         { name: 'time_adjustment_seconds', type: 'number' },
         { name: 'severity', type: 'string' },
         { name: 'source', type: 'string' },
+        { name: 'checklist_applied_json', type: 'string', isOptional: true },
         { name: 'created_at', type: 'number' }, // WatermelonDB expects numbers for dates
         // Local-only fields
         { name: 'is_synced', type: 'boolean', isIndexed: true, isOptional: false },
@@ -28,6 +29,10 @@ export const mySchema = appSchema({
         { name: 'size_bytes', type: 'number' },
         { name: 'sha256', type: 'string', isOptional: true },
         { name: 'created_at', type: 'number' },
+        { name: 'captured_at', type: 'number', isOptional: true },
+        { name: 'latitude', type: 'number', isOptional: true },
+        { name: 'longitude', type: 'number', isOptional: true },
+        { name: 'accuracy_m', type: 'number', isOptional: true },
         // Local-only fields
         { name: 'is_synced', type: 'boolean', isIndexed: true, isOptional: false },
         { name: 'local_path', type: 'string' },

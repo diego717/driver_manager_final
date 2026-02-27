@@ -1,6 +1,14 @@
 export type IncidentSeverity = "low" | "medium" | "high" | "critical";
 export type IncidentSource = "desktop" | "mobile" | "web";
 
+export interface IncidentChecklistAppliedItem {
+  item_id?: number | null;
+  item_code?: string | null;
+  label: string;
+  checked: boolean;
+  note?: string | null;
+}
+
 export interface CreateIncidentInput {
   note: string;
   time_adjustment_seconds?: number;
@@ -8,6 +16,7 @@ export interface CreateIncidentInput {
   source?: IncidentSource;
   apply_to_installation?: boolean;
   reporter_username?: string;
+  checklist_applied?: IncidentChecklistAppliedItem[];
 }
 
 export interface IncidentPhoto {
@@ -19,6 +28,10 @@ export interface IncidentPhoto {
   size_bytes: number;
   sha256: string | null;
   created_at: string;
+  captured_at?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  accuracy_m?: number | null;
 }
 
 export interface Incident {
@@ -30,6 +43,7 @@ export interface Incident {
   severity: IncidentSeverity;
   source: IncidentSource;
   created_at: string;
+  checklist_applied?: IncidentChecklistAppliedItem[];
   photos: IncidentPhoto[];
 }
 

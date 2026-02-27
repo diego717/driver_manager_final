@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Driver Manager Incidents API (v1)
-  version: 1.0.0
+  version: 1.1.0
 servers:
   - url: https://tu-worker.example.workers.dev
 security:
@@ -27,6 +27,10 @@ paths:
       responses:
         '200':
           description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListIncidentsResponse'
     post:
       summary: Create incident
       parameters:
@@ -47,21 +51,18 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [note]
-              properties:
-                note: { type: string, maxLength: 5000 }
-                time_adjustment_seconds: { type: integer, default: 0 }
-                severity: { type: string, enum: [low, medium, high, critical], default: medium }
-                source: { type: string, enum: [desktop, mobile, web], default: mobile }
-                apply_to_installation: { type: boolean, default: false }
+              $ref: '#/components/schemas/CreateIncidentRequest'
       responses:
         '201':
           description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateIncidentResponse'
 
   /incidents/{incidentId}/photos:
     post:
-      summary: Upload photo
+      summary: Upload photo with capture metadata
       parameters:
         - in: path
           name: incidentId
@@ -79,6 +80,23 @@ paths:
           name: X-File-Name
           required: true
           schema: { type: string }
+        - in: header
+          name: X-Captured-At
+          required: false
+          schema: { type: string, format: date-time }
+          description: Device timestamp when evidence was confirmed.
+        - in: header
+          name: X-Captured-Latitude
+          required: false
+          schema: { type: number, format: double, minimum: -90, maximum: 90 }
+        - in: header
+          name: X-Captured-Longitude
+          required: false
+          schema: { type: number, format: double, minimum: -180, maximum: 180 }
+        - in: header
+          name: X-Captured-Accuracy-M
+          required: false
+          schema: { type: number, format: double, minimum: 0 }
       requestBody:
         required: true
         content:
@@ -88,6 +106,10 @@ paths:
       responses:
         '201':
           description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadPhotoResponse'
 
 components:
   securitySchemes:
@@ -95,3 +117,121 @@ components:
       type: apiKey
       in: header
       name: X-API-Token
+  schemas:
+    IncidentChecklistAppliedItem:
+      type: object
+      required: [label, checked]
+      properties:
+        item_id: { type: integer, nullable: true }
+        item_code: { type: string, nullable: true }
+        label: { type: string, maxLength: 200 }
+        checked: { type: boolean }
+        note: { type: string, nullable: true, maxLength: 1000 }
+    IncidentPhoto:
+      type: object
+      required: [id, incident_id, r2_key, file_name, content_type, size_bytes, created_at]
+      properties:
+        id: { type: integer }
+        incident_id: { type: integer }
+        r2_key: { type: string }
+        file_name: { type: string }
+        content_type: { type: string }
+        size_bytes: { type: integer }
+        sha256: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        captured_at: { type: string, format: date-time, nullable: true }
+        latitude: { type: number, format: double, nullable: true }
+        longitude: { type: number, format: double, nullable: true }
+        accuracy_m: { type: number, format: double, nullable: true }
+    Incident:
+      type: object
+      required:
+        - id
+        - installation_id
+        - reporter_username
+        - note
+        - time_adjustment_seconds
+        - severity
+        - source
+        - created_at
+        - photos
+        - checklist_applied
+      properties:
+        id: { type: integer }
+        installation_id: { type: integer }
+        reporter_username: { type: string }
+        note: { type: string, maxLength: 5000 }
+        checklist_applied:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentChecklistAppliedItem'
+        time_adjustment_seconds: { type: integer }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        source: { type: string, enum: [desktop, mobile, web] }
+        created_at: { type: string, format: date-time }
+        photos:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentPhoto'
+    CreateIncidentRequest:
+      type: object
+      required: [note]
+      properties:
+        note: { type: string, maxLength: 5000 }
+        time_adjustment_seconds: { type: integer, default: 0 }
+        severity: { type: string, enum: [low, medium, high, critical], default: medium }
+        source: { type: string, enum: [desktop, mobile, web], default: mobile }
+        apply_to_installation: { type: boolean, default: false }
+        checklist_applied:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentChecklistAppliedItem'
+    CreateIncidentResult:
+      type: object
+      required:
+        - id
+        - installation_id
+        - reporter_username
+        - note
+        - time_adjustment_seconds
+        - severity
+        - source
+        - created_at
+        - checklist_applied
+      properties:
+        id: { type: integer }
+        installation_id: { type: integer }
+        reporter_username: { type: string }
+        note: { type: string, maxLength: 5000 }
+        checklist_applied:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentChecklistAppliedItem'
+        time_adjustment_seconds: { type: integer }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        source: { type: string, enum: [desktop, mobile, web] }
+        created_at: { type: string, format: date-time }
+    CreateIncidentResponse:
+      type: object
+      required: [success, incident]
+      properties:
+        success: { type: boolean }
+        incident:
+          $ref: '#/components/schemas/CreateIncidentResult'
+    ListIncidentsResponse:
+      type: object
+      required: [success, installation_id, incidents]
+      properties:
+        success: { type: boolean }
+        installation_id: { type: integer }
+        incidents:
+          type: array
+          items:
+            $ref: '#/components/schemas/Incident'
+    UploadPhotoResponse:
+      type: object
+      required: [success, photo]
+      properties:
+        success: { type: boolean }
+        photo:
+          $ref: '#/components/schemas/IncidentPhoto'

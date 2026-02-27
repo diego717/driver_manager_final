@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -38,6 +39,11 @@ function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatCoordinate(value?: number | null): string {
+  if (!Number.isFinite(value as number)) return "N/A";
+  return (value as number).toFixed(5);
 }
 
 async function loadWithConcurrency<T>(
@@ -202,6 +208,25 @@ export default function IncidentDetailScreen() {
     );
   };
 
+  const locationSummary = useMemo(() => {
+    if (!incident?.photos?.length) return null;
+    const withLocation = incident.photos.filter(
+      (photo) => Number.isFinite(photo.latitude as number) && Number.isFinite(photo.longitude as number),
+    );
+    if (!withLocation.length) return null;
+    const avgLat =
+      withLocation.reduce((acc, photo) => acc + (photo.latitude as number), 0) / withLocation.length;
+    const avgLon =
+      withLocation.reduce((acc, photo) => acc + (photo.longitude as number), 0) / withLocation.length;
+    const mapUrl = `https://maps.google.com/?q=${avgLat},${avgLon}`;
+    return {
+      count: withLocation.length,
+      avgLat,
+      avgLon,
+      mapUrl,
+    };
+  }, [incident]);
+
   const onOpenPhoto = (photoId: number, fileName: string) => {
     if (!incident) return;
     router.push(
@@ -275,6 +300,51 @@ export default function IncidentDetailScreen() {
           </View>
 
           <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+            <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>Checklist completado</Text>
+            {!incident.checklist_applied?.length ? (
+              <Text style={[styles.hintText, { color: palette.textMuted }]}>
+                No hay checklist aplicado registrado.
+              </Text>
+            ) : (
+              incident.checklist_applied.map((item, index) => (
+                <Text key={`${item.item_code ?? item.label}-${index}`} style={[styles.cardText, { color: palette.textSecondary }]}>
+                  {item.checked ? "✓" : "•"} {item.label}
+                </Text>
+              ))
+            )}
+          </View>
+
+          <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+            <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>
+              Ubicacion de evidencias
+            </Text>
+            {!locationSummary ? (
+              <Text style={[styles.hintText, { color: palette.textMuted }]}>
+                No hay coordenadas disponibles en las evidencias.
+              </Text>
+            ) : (
+              <>
+                <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                  Evidencias georreferenciadas: {locationSummary.count}
+                </Text>
+                <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                  Centro aproximado: {locationSummary.avgLat.toFixed(5)}, {locationSummary.avgLon.toFixed(5)}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => void Linking.openURL(locationSummary.mapUrl)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Abrir mapa de evidencias"
+                  accessibilityState={{ disabled: false }}
+                >
+                  <Text style={[styles.openPreviewText, { color: palette.previewLink }]}>
+                    Abrir mapa
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+
+          <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
             <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>Fotos ({incident.photos?.length ?? 0})</Text>
             {!incident.photos?.length ? (
               <Text style={[styles.hintText, { color: palette.textMuted }]}>Esta incidencia aun no tiene fotos adjuntas.</Text>
@@ -288,6 +358,15 @@ export default function IncidentDetailScreen() {
                   <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Tipo: {photo.content_type}</Text>
                   <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Tamano: {formatBytes(photo.size_bytes)}</Text>
                   <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Fecha: {formatDate(photo.created_at)}</Text>
+                  <Text style={[styles.photoMeta, { color: palette.textMuted }]}>
+                    Capturada: {photo.captured_at ? formatDate(photo.captured_at) : "N/A"}
+                  </Text>
+                  <Text style={[styles.photoMeta, { color: palette.textMuted }]}>
+                    Lat/Lon: {formatCoordinate(photo.latitude)} / {formatCoordinate(photo.longitude)}
+                    {Number.isFinite(photo.accuracy_m as number)
+                      ? ` (±${Math.round(photo.accuracy_m as number)} m)`
+                      : ""}
+                  </Text>
                   {photoPreviews[photo.id] ? (
                     <TouchableOpacity
                       onPress={() => onOpenPhoto(photo.id, photo.file_name)}

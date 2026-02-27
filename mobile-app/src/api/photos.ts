@@ -41,10 +41,27 @@ export interface IncidentPhotoPreviewTarget {
   headers: Record<string, string>;
 }
 
+export interface IncidentCaptureMetadataInput {
+  capturedAt?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  accuracyM?: number | null;
+}
+
 function base64FromArrayBuffer(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   const wordArray = CryptoJS.lib.WordArray.create(bytes as unknown as number[]);
   return CryptoJS.enc.Base64.stringify(wordArray);
+}
+
+function optionalNumericHeader(
+  headerName: string,
+  value: number | null | undefined,
+): Record<string, string> {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return {};
+  }
+  return { [headerName]: String(value) };
 }
 
 export async function resolveIncidentPhotoPreviewTarget(
@@ -88,11 +105,13 @@ export async function uploadIncidentPhoto({
   fileUri,
   fileName,
   contentType,
+  captureMetadata,
 }: {
   incidentId: number;
   fileUri: string;
   fileName?: string;
   contentType?: string;
+  captureMetadata?: IncidentCaptureMetadataInput;
 }): Promise<UploadPhotoResponse> {
   ensurePositiveInt(incidentId, "incidentId");
   ensureNonEmpty(fileUri, "fileUri");
@@ -130,6 +149,10 @@ export async function uploadIncidentPhoto({
     headers: {
       "Content-Type": finalContentType,
       "X-File-Name": finalFileName,
+      ...(captureMetadata?.capturedAt ? { "X-Captured-At": captureMetadata.capturedAt } : {}),
+      ...optionalNumericHeader("X-Captured-Latitude", captureMetadata?.latitude),
+      ...optionalNumericHeader("X-Captured-Longitude", captureMetadata?.longitude),
+      ...optionalNumericHeader("X-Captured-Accuracy-M", captureMetadata?.accuracyM),
       ...requestAuth.headers,
     },
     body: binaryBody as unknown as BodyInit,

@@ -177,6 +177,10 @@ function buildCorsPolicy(isWebRoute, routeParts) {
   }
   if (isPhotoUpload) {
     headers.add("X-File-Name");
+    headers.add("X-Captured-At");
+    headers.add("X-Captured-Latitude");
+    headers.add("X-Captured-Longitude");
+    headers.add("X-Captured-Accuracy-M");
   }
 
   if (["dashboard", "dashboard.css", "dashboard.js", "dashboard-pwa.js", "manifest.json", "events", "sw.js"].includes(first)) {
@@ -2106,6 +2110,123 @@ function buildIncidentR2Key(installationId, incidentId, extension) {
   return `incidents/${installationId}/${incidentId}/${timestamp}_${randomPart}.${extension}`;
 }
 
+function normalizeChecklistApplied(rawChecklist) {
+  if (rawChecklist === undefined || rawChecklist === null) {
+    return [];
+  }
+  if (!Array.isArray(rawChecklist)) {
+    throw new HttpError(400, "Campo 'checklist_applied' invalido.");
+  }
+  if (rawChecklist.length > 100) {
+    throw new HttpError(400, "Campo 'checklist_applied' supera el limite permitido.");
+  }
+
+  return rawChecklist.map((entry, index) => {
+    if (!entry || typeof entry !== "object") {
+      throw new HttpError(400, `Checklist aplicado invalido en posicion ${index}.`);
+    }
+
+    const label = normalizeOptionalString(entry.label, "").trim();
+    if (!label || label.length > 200) {
+      throw new HttpError(400, `Label de checklist invalido en posicion ${index}.`);
+    }
+
+    const itemCode = normalizeOptionalString(entry.item_code, "").trim();
+    if (itemCode.length > 120) {
+      throw new HttpError(400, `item_code de checklist invalido en posicion ${index}.`);
+    }
+
+    const note = normalizeOptionalString(entry.note, "").trim();
+    if (note.length > 1000) {
+      throw new HttpError(400, `note de checklist invalido en posicion ${index}.`);
+    }
+
+    return {
+      item_id:
+        entry.item_id === undefined || entry.item_id === null
+          ? null
+          : parsePositiveInt(String(entry.item_id), `checklist_applied[${index}].item_id`),
+      item_code: itemCode || null,
+      label,
+      checked: Boolean(entry.checked),
+      note: note || null,
+    };
+  });
+}
+
+function parseChecklistAppliedFromStorage(rawChecklistJson) {
+  if (!rawChecklistJson || typeof rawChecklistJson !== "string") {
+    return [];
+  }
+  try {
+    return normalizeChecklistApplied(JSON.parse(rawChecklistJson));
+  } catch {
+    return [];
+  }
+}
+
+function parseOptionalFiniteNumber(rawValue, fieldName, min, max) {
+  const normalized = normalizeOptionalString(rawValue, "").trim();
+  if (!normalized) {
+    return null;
+  }
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) {
+    throw new HttpError(400, `Header '${fieldName}' invalido.`);
+  }
+  if (parsed < min || parsed > max) {
+    throw new HttpError(400, `Header '${fieldName}' fuera de rango permitido.`);
+  }
+  return parsed;
+}
+
+function validateEvidenceCaptureMetadata(headers) {
+  const capturedAtRaw = normalizeOptionalString(headers.get("X-Captured-At"), "").trim();
+  let capturedAt = null;
+  if (capturedAtRaw) {
+    const parsed = new Date(capturedAtRaw);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new HttpError(400, "Header 'X-Captured-At' invalido.");
+    }
+    capturedAt = parsed.toISOString();
+  }
+
+  const latitude = parseOptionalFiniteNumber(
+    headers.get("X-Captured-Latitude"),
+    "X-Captured-Latitude",
+    -90,
+    90,
+  );
+  const longitude = parseOptionalFiniteNumber(
+    headers.get("X-Captured-Longitude"),
+    "X-Captured-Longitude",
+    -180,
+    180,
+  );
+  const accuracyM = parseOptionalFiniteNumber(
+    headers.get("X-Captured-Accuracy-M"),
+    "X-Captured-Accuracy-M",
+    0,
+    100000,
+  );
+
+  const hasLatitude = latitude !== null;
+  const hasLongitude = longitude !== null;
+  if (hasLatitude !== hasLongitude) {
+    throw new HttpError(
+      400,
+      "Headers de ubicacion invalidos: X-Captured-Latitude y X-Captured-Longitude deben enviarse juntos.",
+    );
+  }
+
+  return {
+    capturedAt,
+    latitude,
+    longitude,
+    accuracyM,
+  };
+}
+
 function validateIncidentPayload(data, options = {}) {
   if (!data || typeof data !== "object") {
     throw new HttpError(400, "Payload invÃ¡lido.");
@@ -2135,11 +2256,14 @@ function validateIncidentPayload(data, options = {}) {
     throw new HttpError(400, "Campo 'source' invÃ¡lido.");
   }
 
+  const checklistApplied = normalizeChecklistApplied(data.checklist_applied);
+
   return {
     note,
     timeAdjustment,
     severity,
     source,
+    checklistApplied,
     applyToInstallation: Boolean(data.apply_to_installation),
     reporterUsername: normalizeOptionalString(
       data.reporter_username || data.username,
@@ -5589,7 +5713,7 @@ console.log('[SW] Service Worker loaded');`;
             "No tienes permisos para consultar incidencias en este tenant.",
           );
           const { results: incidents } = await env.DB.prepare(`
-            SELECT id, installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at
+            SELECT id, installation_id, reporter_username, note, checklist_applied_json, time_adjustment_seconds, severity, source, created_at
             FROM incidents
             WHERE installation_id = ?
               AND tenant_id = ?
@@ -5599,9 +5723,13 @@ console.log('[SW] Service Worker loaded');`;
             .all();
 
           const { results: photos } = await env.DB.prepare(`
-            SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
+            SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at,
+                   m.captured_at, m.latitude, m.longitude, m.accuracy_m
             FROM incident_photos p
             INNER JOIN incidents i ON i.id = p.incident_id
+            LEFT JOIN incident_evidence_metadata m
+              ON m.photo_id = p.id
+             AND m.tenant_id = p.tenant_id
             WHERE i.installation_id = ?
               AND i.tenant_id = ?
               AND p.tenant_id = ?
@@ -5619,7 +5747,15 @@ console.log('[SW] Service Worker loaded');`;
           }
 
           const enriched = incidents.map((incident) => ({
-            ...incident,
+            id: incident.id,
+            installation_id: incident.installation_id,
+            reporter_username: incident.reporter_username,
+            note: incident.note,
+            checklist_applied: parseChecklistAppliedFromStorage(incident.checklist_applied_json),
+            time_adjustment_seconds: incident.time_adjustment_seconds,
+            severity: incident.severity,
+            source: incident.source,
+            created_at: incident.created_at,
             photos: photosByIncident[incident.id] || [],
           }));
 
@@ -5657,14 +5793,15 @@ console.log('[SW] Service Worker loaded');`;
           }
 
           const insertResult = await env.DB.prepare(`
-            INSERT INTO incidents (tenant_id, installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO incidents (tenant_id, installation_id, reporter_username, note, checklist_applied_json, time_adjustment_seconds, severity, source, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           `)
             .bind(
               tenantId,
               installationId,
               payload.reporterUsername,
               payload.note,
+              JSON.stringify(payload.checklistApplied),
               payload.timeAdjustment,
               payload.severity,
               payload.source,
@@ -5727,6 +5864,7 @@ console.log('[SW] Service Worker loaded');`;
               installation_id: installationId,
               severity: payload.severity,
               source: payload.source,
+              checklist_items_count: payload.checklistApplied.length,
               note_preview: payload.note.substring(0, 100)
             },
             computerName: "",
@@ -5744,6 +5882,7 @@ console.log('[SW] Service Worker loaded');`;
               installation_id: installationId,
               severity: payload.severity,
               source: payload.source,
+              checklist_items_count: payload.checklistApplied.length,
             },
           });
 
@@ -5756,6 +5895,7 @@ console.log('[SW] Service Worker loaded');`;
                 installation_id: installationId,
                 reporter_username: payload.reporterUsername,
                 note: payload.note,
+                checklist_applied: payload.checklistApplied,
                 time_adjustment_seconds: payload.timeAdjustment,
                 severity: payload.severity,
                 source: payload.source,
@@ -5780,6 +5920,7 @@ console.log('[SW] Service Worker loaded');`;
         );
         const incidentId = parsePositiveInt(routeParts[1], "incident_id");
         const declaredContentType = normalizeContentType(request.headers.get("content-type"));
+        const captureMetadata = validateEvidenceCaptureMetadata(request.headers);
 
         if (!ALLOWED_PHOTO_TYPES.has(declaredContentType)) {
           throw new HttpError(400, "Tipo de imagen no permitido.");
@@ -5814,6 +5955,7 @@ console.log('[SW] Service Worker loaded');`;
         const r2Key = buildIncidentR2Key(incident.installation_id, incidentId, extension);
         const sha256 = await sha256Hex(bodyBuffer);
         const createdAt = nowIso();
+        const evidenceCapturedAt = captureMetadata.capturedAt || createdAt;
 
         await env.INCIDENTS_BUCKET.put(r2Key, bodyBuffer, {
           httpMetadata: { contentType },
@@ -5826,6 +5968,27 @@ console.log('[SW] Service Worker loaded');`;
           .bind(tenantId, incidentId, r2Key, fileName, contentType, sizeBytes, sha256, createdAt)
           .run();
         const photoId = insertResult?.meta?.last_row_id || null;
+        if (!photoId) {
+          throw new Error("No se pudo obtener el ID de la foto de incidencia.");
+        }
+
+        await env.DB.prepare(`
+          INSERT INTO incident_evidence_metadata (
+            tenant_id, incident_id, photo_id, captured_at, latitude, longitude, accuracy_m, created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+          .bind(
+            tenantId,
+            incidentId,
+            photoId,
+            evidenceCapturedAt,
+            captureMetadata.latitude,
+            captureMetadata.longitude,
+            captureMetadata.accuracyM,
+            createdAt,
+          )
+          .run();
         await logTenantAuditEvent(env, {
           tenantId,
           actorUserId: Number(webSession?.user_id || 0) || null,
@@ -5838,6 +6001,10 @@ console.log('[SW] Service Worker loaded');`;
             r2_key: r2Key,
             size_bytes: sizeBytes,
             content_type: contentType,
+            captured_at: evidenceCapturedAt,
+            latitude: captureMetadata.latitude,
+            longitude: captureMetadata.longitude,
+            accuracy_m: captureMetadata.accuracyM,
           },
         });
 
@@ -5854,6 +6021,10 @@ console.log('[SW] Service Worker loaded');`;
               size_bytes: sizeBytes,
               sha256,
               created_at: createdAt,
+              captured_at: evidenceCapturedAt,
+              latitude: captureMetadata.latitude,
+              longitude: captureMetadata.longitude,
+              accuracy_m: captureMetadata.accuracyM,
             },
           },
           201,

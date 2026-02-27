@@ -12,6 +12,10 @@ export default class Photo extends Model {
   @field('size_bytes') sizeBytes!: number
   @text('sha256') sha256!: string | null
   @readonly @date('created_at') createdAt!: Date
+  @field('captured_at') capturedAt!: number | null
+  @field('latitude') latitude!: number | null
+  @field('longitude') longitude!: number | null
+  @field('accuracy_m') accuracyM!: number | null
 
   @field('is_synced') isSynced!: boolean
   @text('local_path') localPath!: string

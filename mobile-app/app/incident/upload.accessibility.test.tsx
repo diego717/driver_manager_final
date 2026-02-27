@@ -4,6 +4,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const routerMocks = vi.hoisted(() => ({
   replace: vi.fn(),
+  back: vi.fn(),
 }));
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -53,16 +54,14 @@ afterAll(() => {
   (Module as any)._load = originalModuleLoad;
 });
 
-vi.mock("react-native", () => {
-  return createReactNativeMock();
-});
+vi.mock("react-native", () => createReactNativeMock());
 
 vi.mock("expo-router", () => {
   const Stack = ({ children }: { children?: React.ReactNode }) => <>{children}</>;
   Stack.Screen = ({ children }: { children?: React.ReactNode }) => <>{children}</>;
   return {
     Stack,
-    useLocalSearchParams: () => ({ incidentId: "25", installationId: "7" }),
+    useLocalSearchParams: () => ({ installationId: "7" }),
     useRouter: () => routerMocks,
   };
 });
@@ -81,8 +80,9 @@ vi.mock("expo-file-system/legacy", () => ({
   deleteAsync: vi.fn(),
   getInfoAsync: vi.fn(async () => ({ size: 2048 })),
 }));
-vi.mock("@/src/api/photos", () => ({
-  uploadIncidentPhoto: vi.fn(),
+vi.mock("@/src/services/incident-evidence", () => ({
+  persistIncidentEvidenceLocally: vi.fn(),
+  syncIncidentEvidence: vi.fn(),
 }));
 vi.mock("@/src/api/client", () => ({
   extractApiError: (error: unknown) =>
@@ -97,54 +97,41 @@ vi.mock("@/src/theme/theme-preference", () => ({
   }),
 }));
 
-import UploadIncidentPhotoScreen from "./upload";
+import UploadIncidentEvidenceWizardScreen from "./upload";
 
-describe("UploadIncidentPhotoScreen accessibility", () => {
+describe("UploadIncidentEvidenceWizardScreen accessibility", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("renders critical controls with accessibility labels, roles and states", async () => {
+  it("renders step 1 controls with labels, roles and touch sizes", async () => {
     const { render } = await import("@testing-library/react-native/pure");
-    const view = render(<UploadIncidentPhotoScreen />);
+    const view = render(<UploadIncidentEvidenceWizardScreen />);
 
-    expect(view.getByLabelText("ID de incidencia para subir evidencia")).toBeTruthy();
+    expect(view.getByLabelText("ID de instalacion para el asistente")).toBeTruthy();
 
-    const galleryButton = view.getByLabelText("Seleccionar foto desde la galeria");
-    expect(galleryButton.props.accessibilityRole).toBe("button");
-    expect(galleryButton.props.accessibilityState).toEqual(
-      expect.objectContaining({ disabled: false, busy: false }),
+    const checklistItem = view.getByLabelText("Checklist Driver verificado");
+    expect(checklistItem.props.accessibilityRole).toBe("checkbox");
+    expect(checklistItem.props.accessibilityState).toEqual(
+      expect.objectContaining({ checked: false }),
     );
-    expect(flattenStyle(galleryButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
 
-    const cameraButton = view.getByLabelText("Tomar foto con la camara");
-    expect(cameraButton.props.accessibilityRole).toBe("button");
-    expect(cameraButton.props.accessibilityState).toEqual(
-      expect.objectContaining({ disabled: false, busy: false }),
-    );
-    expect(flattenStyle(cameraButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
+    const previousButton = view.getByLabelText("Paso anterior del asistente");
+    expect(previousButton.props.accessibilityRole).toBe("button");
+    expect(flattenStyle(previousButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
 
-    const uploadButton = view.getByLabelText("Subir foto de la incidencia");
-    expect(uploadButton.props.accessibilityRole).toBe("button");
-    expect(uploadButton.props.accessibilityState).toEqual(
-      expect.objectContaining({ disabled: false, busy: false }),
-    );
-    expect(flattenStyle(uploadButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
+    const nextButton = view.getByLabelText("Siguiente paso del asistente");
+    expect(nextButton.props.accessibilityRole).toBe("button");
+    expect(flattenStyle(nextButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
   });
 
-  it("keeps action focus order: gallery, camera, upload", async () => {
-    const { render } = await import("@testing-library/react-native/pure");
-    const view = render(<UploadIncidentPhotoScreen />);
-    const labels = view
-      .UNSAFE_getAllByType("TouchableOpacity")
-      .map((node) => node.props.accessibilityLabel);
+  it("moves to note step and exposes note input label", async () => {
+    const { fireEvent, render } = await import("@testing-library/react-native/pure");
+    const view = render(<UploadIncidentEvidenceWizardScreen />);
 
-    expect(labels.indexOf("Seleccionar foto desde la galeria")).toBeGreaterThanOrEqual(0);
-    expect(labels.indexOf("Tomar foto con la camara")).toBeGreaterThan(
-      labels.indexOf("Seleccionar foto desde la galeria"),
-    );
-    expect(labels.indexOf("Subir foto de la incidencia")).toBeGreaterThan(
-      labels.indexOf("Tomar foto con la camara"),
-    );
+    fireEvent.press(view.getByLabelText("Checklist Driver verificado"));
+    fireEvent.press(view.getByLabelText("Siguiente paso del asistente"));
+
+    expect(view.getByLabelText("Nota de incidencia")).toBeTruthy();
   });
 });

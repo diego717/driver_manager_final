@@ -81,6 +81,39 @@ describe("photos api", () => {
     expect((requestInit?.headers as Record<string, string>)["X-File-Name"]).toBe("photo.jpg");
   });
 
+  it("adds capture metadata headers when provided", async () => {
+    const payload = new Uint8Array(1500);
+    payload.set([0xff, 0xd8, 0xff], 0);
+    fileSystemMock.getInfoAsync.mockResolvedValue({ exists: true, size: payload.byteLength });
+    fileSystemMock.readAsStringAsync.mockResolvedValue(toBase64(payload));
+
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, photo: { id: 22 } }),
+    } as Response);
+
+    await uploadIncidentPhoto({
+      incidentId: 11,
+      fileUri: "file://photo.jpg",
+      fileName: "photo.jpg",
+      contentType: "image/jpeg",
+      captureMetadata: {
+        capturedAt: "2026-02-26T16:20:00.000Z",
+        latitude: -34.6037,
+        longitude: -58.3816,
+        accuracyM: 8.3,
+      },
+    });
+
+    const [, requestInit] = fetchMock.mock.calls[0];
+    const headers = requestInit?.headers as Record<string, string>;
+    expect(headers["X-Captured-At"]).toBe("2026-02-26T16:20:00.000Z");
+    expect(headers["X-Captured-Latitude"]).toBe("-34.6037");
+    expect(headers["X-Captured-Longitude"]).toBe("-58.3816");
+    expect(headers["X-Captured-Accuracy-M"]).toBe("8.3");
+  });
+
   it("downloads incident photo as data URI with resolved auth headers", async () => {
     clientMock.resolveRequestAuth.mockResolvedValueOnce({
       path: "/photos/44",
