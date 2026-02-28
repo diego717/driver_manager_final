@@ -25,6 +25,7 @@ import {
   syncIncidentEvidence,
   type EvidenceCaptureDraft,
 } from "@/src/services/incident-evidence";
+import { getAppPalette } from "@/src/theme/design-tokens";
 import { useThemePreference } from "@/src/theme/theme-preference";
 
 type WizardStepKey = "checklist" | "note" | "photos" | "confirm";
@@ -65,11 +66,13 @@ const BASE_CHECKLIST: ChecklistDraftItem[] = [
   { id: "safety", label: "Condiciones seguras", checked: false },
 ];
 
-const IMAGE_PICK_QUALITY = 1;
+const IMAGE_PICK_QUALITY = 0.82;
 const MAX_UPLOAD_PHOTO_BYTES = 5 * 1024 * 1024;
+const OPTIMAL_UPLOAD_PHOTO_BYTES = 1 * 1024 * 1024;
 const MIN_UPLOAD_PHOTO_BYTES = 1024;
 const MAX_IMAGE_DIMENSION = 1920;
-const COMPRESS_QUALITIES = [0.85, 0.75, 0.65, 0.55, 0.45];
+const MAX_SIZE_INFLATION_RATIO = 1.25;
+const COMPRESS_QUALITIES = [0.82, 0.72, 0.62, 0.52, 0.42, 0.34];
 const MIN_TOUCH_TARGET_SIZE = 44;
 
 function normalizeParam(value: string | string[] | undefined): string {
@@ -96,8 +99,34 @@ async function deleteFileIfExists(uri: string): Promise<void> {
 }
 
 async function getFileSizeBytes(uri: string): Promise<number> {
-  const info = await FileSystem.getInfoAsync(uri);
-  return "size" in info && typeof info.size === "number" ? info.size : 0;
+  try {
+    const info = await FileSystem.getInfoAsync(uri);
+    if ("size" in info && typeof info.size === "number" && info.size > 0) {
+      return info.size;
+    }
+  } catch {
+    // Continue with web/data-uri fallbacks.
+  }
+
+  const dataUriMatch = uri.match(/^data:.*;base64,(.+)$/);
+  if (dataUriMatch?.[1]) {
+    const base64 = dataUriMatch[1];
+    const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+    return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+  }
+
+  if (typeof fetch === "function") {
+    try {
+      const response = await fetch(uri);
+      if (!response.ok) return 0;
+      const buffer = await response.arrayBuffer();
+      return buffer.byteLength;
+    } catch {
+      return 0;
+    }
+  }
+
+  return 0;
 }
 
 function formatBytes(bytes: number): string {
@@ -111,6 +140,24 @@ function formatBytes(bytes: number): string {
 function formatCapturedAt(epochMs?: number): string {
   if (!epochMs) return "Sin confirmar";
   return new Date(epochMs).toLocaleString();
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 async function processAssetForUpload(
@@ -147,24 +194,44 @@ async function processAssetForUpload(
 
     let bestUri = workingUri;
     let bestSize = await getFileSizeBytes(workingUri);
+    const sourceSizeHint =
+      typeof asset.fileSize === "number" && asset.fileSize > 0 ? asset.fileSize : null;
+    const inflatedComparedToSource =
+      sourceSizeHint != null &&
+      bestSize > 0 &&
+      bestSize > sourceSizeHint * MAX_SIZE_INFLATION_RATIO;
 
-    for (const [index, quality] of COMPRESS_QUALITIES.entries()) {
-      onProgress(`Comprimiendo (${index + 1}/${COMPRESS_QUALITIES.length})...`);
-      const compressed = await ImageManipulator.manipulateAsync(
-        workingUri,
-        [],
-        { compress: quality, format: ImageManipulator.SaveFormat.JPEG },
-      );
-      if (compressed.uri !== sourceUri) generatedUris.push(compressed.uri);
-      const compressedSize = await getFileSizeBytes(compressed.uri);
-      if (compressedSize > 0 && (bestSize <= 0 || compressedSize < bestSize)) {
-        bestUri = compressed.uri;
-        bestSize = compressedSize;
-      }
-      if (compressedSize >= MIN_UPLOAD_PHOTO_BYTES && compressedSize <= MAX_UPLOAD_PHOTO_BYTES) {
-        bestUri = compressed.uri;
-        bestSize = compressedSize;
-        break;
+    const targetSizeBytes =
+      sourceSizeHint != null
+        ? Math.max(
+            MIN_UPLOAD_PHOTO_BYTES,
+            Math.min(MAX_UPLOAD_PHOTO_BYTES, Math.round(sourceSizeHint * 1.1)),
+          )
+        : OPTIMAL_UPLOAD_PHOTO_BYTES;
+
+    const needsCompression =
+      bestSize <= 0 ||
+      bestSize > OPTIMAL_UPLOAD_PHOTO_BYTES ||
+      inflatedComparedToSource;
+    if (needsCompression) {
+      for (const [index, quality] of COMPRESS_QUALITIES.entries()) {
+        onProgress(`Comprimiendo (${index + 1}/${COMPRESS_QUALITIES.length})...`);
+        const compressed = await ImageManipulator.manipulateAsync(
+          workingUri,
+          [],
+          { compress: quality, format: ImageManipulator.SaveFormat.JPEG },
+        );
+        if (compressed.uri !== sourceUri) generatedUris.push(compressed.uri);
+        const compressedSize = await getFileSizeBytes(compressed.uri);
+        if (compressedSize > 0 && (bestSize <= 0 || compressedSize < bestSize)) {
+          bestUri = compressed.uri;
+          bestSize = compressedSize;
+        }
+        if (compressedSize >= MIN_UPLOAD_PHOTO_BYTES && compressedSize <= targetSizeBytes) {
+          bestUri = compressed.uri;
+          bestSize = compressedSize;
+          break;
+        }
       }
     }
 
@@ -253,7 +320,6 @@ function checklistToApplied(items: ChecklistDraftItem[]): IncidentChecklistAppli
 
 export default function UploadIncidentEvidenceWizardScreen() {
   const { resolvedScheme } = useThemePreference();
-  const isDark = resolvedScheme === "dark";
   const router = useRouter();
   const params = useLocalSearchParams<{
     incidentId?: string | string[];
@@ -275,33 +341,15 @@ export default function UploadIncidentEvidenceWizardScreen() {
   const [processingImage, setProcessingImage] = useState(false);
   const [processingMessage, setProcessingMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [feedbackMessage, setFeedbackMessage] = useState("");
   const evidencesRef = useRef<EvidenceDraft[]>([]);
+  const palette = getAppPalette(resolvedScheme);
 
-  const palette = useMemo(
-    () => ({
-      screenBg: isDark ? "#020617" : "#f8fafc",
-      textPrimary: isDark ? "#e2e8f0" : "#0f172a",
-      textSecondary: isDark ? "#94a3b8" : "#475569",
-      textMuted: isDark ? "#94a3b8" : "#64748b",
-      cardBg: isDark ? "#0f172a" : "#ffffff",
-      cardBorder: isDark ? "#334155" : "#cbd5e1",
-      inputBg: isDark ? "#111827" : "#ffffff",
-      inputBorder: isDark ? "#334155" : "#cbd5e1",
-      chipBg: isDark ? "#0f172a" : "#ffffff",
-      chipBorder: isDark ? "#334155" : "#cbd5e1",
-      chipSelectedBg: isDark ? "#115e59" : "#ccfbf1",
-      chipSelectedBorder: isDark ? "#14b8a6" : "#0f766e",
-      hint: isDark ? "#94a3b8" : "#64748b",
-      secondaryBg: isDark ? "#0f172a" : "#ffffff",
-      secondaryText: isDark ? "#cbd5e1" : "#0f172a",
-      primaryButtonBg: isDark ? "#0f766e" : "#0b7a75",
-      primaryButtonText: "#ffffff",
-      subtleBg: isDark ? "#1e293b" : "#e2e8f0",
-      warning: isDark ? "#fca5a5" : "#b91c1c",
-      success: isDark ? "#34d399" : "#047857",
-    }),
-    [isDark],
-  );
+  const notify = (title: string, message: string) => {
+    const composed = `${title}: ${message}`;
+    setFeedbackMessage(composed);
+    Alert.alert(title, message);
+  };
 
   useEffect(() => {
     evidencesRef.current = evidences;
@@ -357,7 +405,7 @@ export default function UploadIncidentEvidenceWizardScreen() {
       };
       setEvidences((prev) => [...prev, evidence]);
     } catch (error) {
-      Alert.alert("Imagen invalida", extractApiError(error));
+      notify("Imagen invalida", extractApiError(error));
     } finally {
       setProcessingImage(false);
       setProcessingMessage("");
@@ -367,7 +415,7 @@ export default function UploadIncidentEvidenceWizardScreen() {
   const pickFromGallery = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert("Permiso requerido", "Debes permitir acceso a galeria.");
+      notify("Permiso requerido", "Debes permitir acceso a galeria.");
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -381,7 +429,7 @@ export default function UploadIncidentEvidenceWizardScreen() {
   const takePhoto = async () => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert("Permiso requerido", "Debes permitir acceso a camara.");
+      notify("Permiso requerido", "Debes permitir acceso a camara.");
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
@@ -424,15 +472,15 @@ export default function UploadIncidentEvidenceWizardScreen() {
   const ensureStepReady = (): boolean => {
     if (canContinue) return true;
     if (currentStep.key === "checklist") {
-      Alert.alert("Checklist requerido", "Marca al menos un item aplicado.");
+      notify("Checklist requerido", "Marca al menos un item aplicado.");
       return false;
     }
     if (currentStep.key === "note") {
-      Alert.alert("Nota requerida", "Debes cargar una nota operativa.");
+      notify("Nota requerida", "Debes cargar una nota operativa.");
       return false;
     }
     if (currentStep.key === "photos") {
-      Alert.alert(
+      notify(
         "Evidencias pendientes",
         "Agrega fotos y confirma la captura de cada evidencia antes de continuar.",
       );
@@ -453,7 +501,7 @@ export default function UploadIncidentEvidenceWizardScreen() {
   const onConfirmWizard = async () => {
     const parsedInstallationId = Number.parseInt(installationId, 10);
     if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) {
-      Alert.alert("Dato invalido", "installation_id debe ser un numero positivo.");
+      notify("Dato invalido", "installation_id debe ser un numero positivo.");
       return;
     }
     if (!ensureStepReady()) return;
@@ -476,22 +524,32 @@ export default function UploadIncidentEvidenceWizardScreen() {
 
     try {
       setSaving(true);
-      const localIncident = await persistIncidentEvidenceLocally({
-        installationId: parsedInstallationId,
-        existingRemoteIncidentId: hasExistingIncident ? existingRemoteIncidentId : null,
-        reporterUsername: "mobile_user",
-        note: note.trim(),
-        checklistApplied,
-        severity,
-        evidences: evidenceDrafts,
-      });
+      setFeedbackMessage("Guardando evidencia localmente...");
+      const localIncident = await withTimeout(
+        persistIncidentEvidenceLocally({
+          installationId: parsedInstallationId,
+          existingRemoteIncidentId: hasExistingIncident ? existingRemoteIncidentId : null,
+          reporterUsername: "mobile_user",
+          note: note.trim(),
+          checklistApplied,
+          severity,
+          evidences: evidenceDrafts,
+        }),
+        12000,
+        "Timeout al guardar evidencia localmente.",
+      );
 
       try {
-        const syncResult = await syncIncidentEvidence(localIncident);
+        setFeedbackMessage("Sincronizando evidencias con servidor...");
+        const syncResult = await withTimeout(
+          syncIncidentEvidence(localIncident),
+          30000,
+          "Timeout sincronizando evidencias. Quedaron guardadas localmente.",
+        );
         const tempUrisToCleanup = evidences.filter((item) => item.isTemporary).map((item) => item.uri);
         await Promise.all(tempUrisToCleanup.map((uri) => deleteFileIfExists(uri)));
         setEvidences([]);
-        Alert.alert(
+        notify(
           "Evidencias sincronizadas",
           `Incidencia #${syncResult.remoteIncidentId}\nFotos subidas: ${syncResult.uploadedCount}`,
         );
@@ -500,7 +558,7 @@ export default function UploadIncidentEvidenceWizardScreen() {
         );
       } catch (syncError) {
         const fallbackIncidentId = hasExistingIncident ? existingRemoteIncidentId : null;
-        Alert.alert(
+        notify(
           "Guardado local",
           `Se guardo localmente para sincronizar despues.\n${extractApiError(syncError)}`,
         );
@@ -513,7 +571,7 @@ export default function UploadIncidentEvidenceWizardScreen() {
         router.back();
       }
     } catch (error) {
-      Alert.alert("Error", extractApiError(error));
+      notify("Error", extractApiError(error));
     } finally {
       setSaving(false);
     }
@@ -527,6 +585,16 @@ export default function UploadIncidentEvidenceWizardScreen() {
       <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
         Paso {stepIndex + 1} de {WIZARD_STEPS.length}: {currentStep.title}
       </Text>
+      {feedbackMessage ? (
+        <View
+          style={[
+            styles.feedbackBox,
+            { backgroundColor: palette.feedbackBg, borderColor: palette.feedbackBorder },
+          ]}
+        >
+          <Text style={[styles.feedbackText, { color: palette.feedbackText }]}>{feedbackMessage}</Text>
+        </View>
+      ) : null}
       {incidentIdText ? (
         <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
           Incidencia objetivo: #{incidentIdText}
@@ -774,6 +842,15 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 13,
+  },
+  feedbackBox: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  feedbackText: {
+    fontSize: 12,
   },
   label: {
     fontSize: 13,

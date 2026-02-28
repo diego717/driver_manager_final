@@ -12,6 +12,7 @@ import {
   createInstallationRecord,
   listIncidentsByInstallation,
   listInstallations,
+  updateIncident,
 } from "./incidents";
 
 describe("incidents api", () => {
@@ -69,6 +70,27 @@ describe("incidents api", () => {
 
   it("rejects invalid installation id when creating incident", async () => {
     await expect(createIncident(0, { note: "x" })).rejects.toThrow(/positive integer/i);
+  });
+
+  it("updates incident note/checklist using /incidents/:id", async () => {
+    clientMocks.signedJsonRequest.mockResolvedValue({
+      success: true,
+      incident: { id: 9 },
+    });
+
+    await updateIncident(9, {
+      note: "nota actualizada",
+      checklist_applied: [{ label: "Driver verificado", checked: true }],
+    });
+
+    expect(clientMocks.signedJsonRequest).toHaveBeenCalledWith({
+      method: "PATCH",
+      path: "/incidents/9",
+      data: {
+        note: "nota actualizada",
+        checklist_applied: [{ label: "Driver verificado", checked: true }],
+      },
+    });
   });
 
   it("lists installations and incidents using expected routes", async () => {

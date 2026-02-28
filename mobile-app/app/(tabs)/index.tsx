@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
@@ -18,6 +18,7 @@ import {
 } from "@/src/api/incidents";
 import { extractApiError } from "@/src/api/client";
 import { getStoredWebAccessUsername } from "@/src/storage/secure";
+import { getAppPalette } from "@/src/theme/design-tokens";
 import { useThemePreference } from "@/src/theme/theme-preference";
 import { type IncidentSeverity, type InstallationRecord } from "@/src/types/api";
 
@@ -51,7 +52,6 @@ const MIN_TOUCH_TARGET_SIZE = 44;
 
 export default function CreateIncidentScreen() {
   const { resolvedScheme } = useThemePreference();
-  const isDark = resolvedScheme === "dark";
   const [installationId, setInstallationId] = useState("1");
   const [reporterUsername, setReporterUsername] = useState("");
   const [note, setNote] = useState("");
@@ -66,49 +66,7 @@ export default function CreateIncidentScreen() {
   const [creatingManualRecord, setCreatingManualRecord] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const palette = useMemo(
-    () => ({
-      screenBg: isDark ? "#020617" : "#f8fafc",
-      textPrimary: isDark ? "#e2e8f0" : "#0f172a",
-      textSecondary: isDark ? "#94a3b8" : "#475569",
-      textMuted: isDark ? "#94a3b8" : "#64748b",
-      label: isDark ? "#cbd5e1" : "#1e293b",
-      inputBg: isDark ? "#111827" : "#ffffff",
-      inputBorder: isDark ? "#334155" : "#cbd5e1",
-      placeholder: isDark ? "#64748b" : "#808080",
-      feedbackBg: isDark ? "#082f49" : "#f0f9ff",
-      feedbackBorder: isDark ? "#0369a1" : "#bae6fd",
-      feedbackText: isDark ? "#bae6fd" : "#0c4a6e",
-      chipBg: isDark ? "#111827" : "#f8fafc",
-      chipBorder: isDark ? "#334155" : "#cbd5e1",
-      chipText: isDark ? "#cbd5e1" : "#334155",
-      refreshBg: isDark ? "#0f172a" : "#ffffff",
-      refreshText: isDark ? "#cbd5e1" : "#0f172a",
-      severityBg: isDark ? "#0f172a" : "#ffffff",
-      severityBorder: isDark ? "#334155" : "#cbd5e1",
-      severityLabel: isDark ? "#e2e8f0" : "#0f172a",
-      severityCriteria: isDark ? "#94a3b8" : "#475569",
-      optionalCardBg: isDark ? "#0f172a" : "#f8fafc",
-      optionalCardBorder: isDark ? "#334155" : "#cbd5e1",
-      optionalCardTitle: isDark ? "#e2e8f0" : "#0f172a",
-      optionalCardBody: isDark ? "#94a3b8" : "#475569",
-      optionalToggleBg: isDark ? "#1e293b" : "#ffffff",
-      optionalToggleBorder: isDark ? "#334155" : "#cbd5e1",
-      optionalToggleText: isDark ? "#cbd5e1" : "#0f172a",
-      secondaryButtonBg: isDark ? "#2563eb" : "#2563eb",
-      secondaryButtonText: "#ffffff",
-      primaryButtonBg: isDark ? "#0b7a75" : "#0b7a75",
-      primaryButtonText: "#ffffff",
-      chipSelectedBg: isDark ? "#0b7a75" : "#0b7a75",
-      chipSelectedBorder: isDark ? "#0b7a75" : "#0b7a75",
-      chipSelectedText: "#ffffff",
-      severitySelectedBg: isDark ? "#0c4a4a" : "#ecfeff",
-      severitySelectedBorder: isDark ? "#0ea5a4" : "#0b7a75",
-      severitySelectedLabel: isDark ? "#99f6e4" : "#0f766e",
-      severitySelectedCriteria: isDark ? "#67e8f9" : "#155e75",
-    }),
-    [isDark],
-  );
+  const palette = getAppPalette(resolvedScheme);
 
   const notify = (title: string, message: string) => {
     setFeedbackMessage(`${title}: ${message}`);

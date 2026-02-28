@@ -48,6 +48,10 @@ export interface IncidentCaptureMetadataInput {
   accuracyM?: number | null;
 }
 
+function isLikelyWebRuntime(): boolean {
+  return typeof window !== "undefined" && typeof document !== "undefined";
+}
+
 function base64FromArrayBuffer(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   const wordArray = CryptoJS.lib.WordArray.create(bytes as unknown as number[]);
@@ -64,6 +68,25 @@ function optionalNumericHeader(
   return { [headerName]: String(value) };
 }
 
+async function readFileUriAsBytes(fileUri: string): Promise<Uint8Array> {
+  try {
+    const base64 = await FileSystem.readAsStringAsync(fileUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    return bytesFromBase64(base64);
+  } catch {
+    if (typeof fetch !== "function") {
+      throw new Error("No se pudo leer el archivo seleccionado.");
+    }
+    const response = await fetch(fileUri);
+    if (!response.ok) {
+      throw new Error("No se pudo leer el archivo seleccionado.");
+    }
+    const buffer = await response.arrayBuffer();
+    return new Uint8Array(buffer);
+  }
+}
+
 export async function resolveIncidentPhotoPreviewTarget(
   photoId: number,
 ): Promise<IncidentPhotoPreviewTarget> {
@@ -77,9 +100,30 @@ export async function resolveIncidentPhotoPreviewTarget(
     bodyHash: sha256HexFromString(""),
   });
 
-  return {
+  const target = {
     uri: joinUrl(apiBaseUrl, requestAuth.path),
     headers: requestAuth.headers,
+  };
+
+  if (!isLikelyWebRuntime()) {
+    return target;
+  }
+
+  const response = await fetch(target.uri, {
+    method: "GET",
+    headers: target.headers,
+  });
+
+  if (!response.ok) {
+    throw new Error(`No se pudo descargar foto #${photoId} (HTTP ${response.status}).`);
+  }
+
+  const contentType = response.headers.get("Content-Type") || "image/jpeg";
+  const buffer = await response.arrayBuffer();
+  const base64 = base64FromArrayBuffer(buffer);
+  return {
+    uri: `data:${contentType};base64,${base64}`,
+    headers: {},
   };
 }
 
@@ -122,10 +166,7 @@ export async function uploadIncidentPhoto({
   const finalContentType = contentType ?? contentTypeFromFileName(finalFileName);
   const path = `/incidents/${incidentId}/photos`;
 
-  const base64 = await FileSystem.readAsStringAsync(fileUri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-  const bytes = bytesFromBase64(base64);
+  const bytes = await readFileUriAsBytes(fileUri);
   if (bytes.byteLength < MIN_UPLOAD_PHOTO_BYTES) {
     throw new Error("Imagen demasiado pequena o corrupta.");
   }

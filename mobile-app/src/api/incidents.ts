@@ -5,6 +5,8 @@ import {
   type CreateIncidentResponse,
   type InstallationRecord,
   type ListIncidentsResponse,
+  type UpdateIncidentInput,
+  type UpdateIncidentResponse,
 } from "../types/api";
 import { ensurePositiveInt } from "../utils/validation";
 import { signedJsonRequest } from "./client";
@@ -66,6 +68,18 @@ export async function listIncidentsByInstallation(
   return signedJsonRequest<ListIncidentsResponse>({
     method: "GET",
     path: `/installations/${installationId}/incidents`,
+  });
+}
+
+export async function updateIncident(
+  incidentId: number,
+  payload: UpdateIncidentInput,
+): Promise<UpdateIncidentResponse> {
+  ensurePositiveInt(incidentId, "incidentId");
+  return signedJsonRequest<UpdateIncidentResponse>({
+    method: "PATCH",
+    path: `/incidents/${incidentId}`,
+    data: payload,
   });
 }
 

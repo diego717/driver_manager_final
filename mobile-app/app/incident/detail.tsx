@@ -19,6 +19,7 @@ import {
   resolveIncidentPhotoPreviewTarget,
   type IncidentPhotoPreviewTarget,
 } from "@/src/api/photos";
+import { getAppPalette } from "@/src/theme/design-tokens";
 import { useThemePreference } from "@/src/theme/theme-preference";
 import { type Incident } from "@/src/types/api";
 
@@ -60,7 +61,6 @@ async function loadWithConcurrency<T>(
 
 export default function IncidentDetailScreen() {
   const { resolvedScheme } = useThemePreference();
-  const isDark = resolvedScheme === "dark";
   const router = useRouter();
   const params = useLocalSearchParams<{
     incidentId?: string | string[];
@@ -84,31 +84,7 @@ export default function IncidentDetailScreen() {
   );
   const [failedPhotoIds, setFailedPhotoIds] = useState<Record<number, boolean>>({});
   const [loadingPhotoPreviews, setLoadingPhotoPreviews] = useState(false);
-  const palette = useMemo(
-    () => ({
-      screenBg: isDark ? "#020617" : "#f8fafc",
-      textPrimary: isDark ? "#e2e8f0" : "#0f172a",
-      textSecondary: isDark ? "#cbd5e1" : "#1e293b",
-      textMuted: isDark ? "#94a3b8" : "#64748b",
-      cardBg: isDark ? "#0f172a" : "#ffffff",
-      cardBorder: isDark ? "#334155" : "#cbd5e1",
-      itemBg: isDark ? "#111827" : "#f8fafc",
-      itemBorder: isDark ? "#334155" : "#e2e8f0",
-      buttonBg: isDark ? "#0f172a" : "#ffffff",
-      buttonBorder: isDark ? "#334155" : "#cbd5e1",
-      buttonText: isDark ? "#cbd5e1" : "#0f172a",
-      backBg: isDark ? "#1e293b" : "#e2e8f0",
-      feedbackBg: isDark ? "#450a0a" : "#fef2f2",
-      feedbackBorder: isDark ? "#7f1d1d" : "#fecaca",
-      feedbackText: isDark ? "#fecaca" : "#7f1d1d",
-      loadingSpinner: isDark ? "#0ea5a4" : "#0b7a75",
-      previewLink: isDark ? "#2dd4bf" : "#0b7a75",
-      previewPlaceholder: isDark ? "#334155" : "#cbd5e1",
-      primaryButtonBg: isDark ? "#0f766e" : "#0b7a75",
-      primaryButtonText: "#ffffff",
-    }),
-    [isDark],
-  );
+  const palette = getAppPalette(resolvedScheme);
 
   const loadIncident = useCallback(async () => {
     if (!Number.isInteger(installationId) || installationId <= 0) {

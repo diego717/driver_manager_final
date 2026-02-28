@@ -1,19 +1,21 @@
-const tintColorLight = '#2f95dc';
-const tintColorDark = '#fff';
+import { getAppPalette } from "@/src/theme/design-tokens";
+
+const light = getAppPalette("light");
+const dark = getAppPalette("dark");
 
 export default {
   light: {
-    text: '#000',
-    background: '#fff',
-    tint: tintColorLight,
-    tabIconDefault: '#ccc',
-    tabIconSelected: tintColorLight,
+    text: light.textPrimary,
+    background: light.screenBg,
+    tint: light.primaryButtonBg,
+    tabIconDefault: light.textMuted,
+    tabIconSelected: light.primaryButtonBg,
   },
   dark: {
-    text: '#fff',
-    background: '#000',
-    tint: tintColorDark,
-    tabIconDefault: '#ccc',
-    tabIconSelected: tintColorDark,
+    text: dark.textPrimary,
+    background: dark.screenBg,
+    tint: dark.primaryButtonBg,
+    tabIconDefault: dark.textMuted,
+    tabIconSelected: dark.primaryButtonBg,
   },
 };

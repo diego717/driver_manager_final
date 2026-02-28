@@ -1,6 +1,6 @@
 import { Q } from '@nozbe/watermelondb'
 
-import { createIncident } from '@/src/api/incidents'
+import { createIncident, updateIncident } from '@/src/api/incidents'
 import { uploadIncidentPhoto } from '@/src/api/photos'
 import { database } from '@/src/db'
 import Incident from '@/src/db/models/Incident'
@@ -106,6 +106,7 @@ export async function syncIncidentEvidence(localIncident: Incident): Promise<{
   uploadedCount: number
 }> {
   let remoteIncidentId = localIncident.remoteId || null
+  const shouldPatchExistingIncident = Boolean(remoteIncidentId && remoteIncidentId > 0)
   const checklistApplied = safeParseChecklist(localIncident.checklistAppliedJson)
 
   if (!remoteIncidentId) {
@@ -120,6 +121,13 @@ export async function syncIncidentEvidence(localIncident: Incident): Promise<{
     })
     remoteIncidentId = created.incident.id
     await localIncident.markAsSynced(remoteIncidentId)
+  }
+
+  if (shouldPatchExistingIncident && remoteIncidentId) {
+    await updateIncident(remoteIncidentId, {
+      note: localIncident.note || "",
+      checklist_applied: checklistApplied,
+    })
   }
 
   const photosCollection = database.collections.get<Photo>('photos')

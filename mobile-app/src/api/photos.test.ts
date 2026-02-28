@@ -16,6 +16,7 @@ vi.mock("./client", () => clientMock);
 
 import { uploadIncidentPhoto } from "./photos";
 import { fetchIncidentPhotoDataUri } from "./photos";
+import { resolveIncidentPhotoPreviewTarget } from "./photos";
 
 function toBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
@@ -114,6 +115,35 @@ describe("photos api", () => {
     expect(headers["X-Captured-Accuracy-M"]).toBe("8.3");
   });
 
+  it("uploads using fetch fallback when FileSystem cannot read blob uri", async () => {
+    const payload = new Uint8Array(1500);
+    payload.set([0xff, 0xd8, 0xff], 0);
+    fileSystemMock.readAsStringAsync.mockRejectedValueOnce(new Error("unsupported uri"));
+
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => payload.buffer,
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true, photo: { id: 31 } }),
+      } as Response);
+
+    const response = await uploadIncidentPhoto({
+      incidentId: 11,
+      fileUri: "blob:http://localhost/abc",
+      fileName: "photo.jpg",
+      contentType: "image/jpeg",
+    });
+
+    expect(response.photo.id).toBe(31);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe("blob:http://localhost/abc");
+    expect(fetchMock.mock.calls[1][0]).toBe("https://worker.example/incidents/11/photos");
+  });
+
   it("downloads incident photo as data URI with resolved auth headers", async () => {
     clientMock.resolveRequestAuth.mockResolvedValueOnce({
       path: "/photos/44",
@@ -148,6 +178,38 @@ describe("photos api", () => {
         Authorization: "Bearer web-token",
       },
     });
+  });
+
+  it("resolves preview as data URI on web runtime", async () => {
+    clientMock.resolveRequestAuth.mockResolvedValueOnce({
+      path: "/photos/55",
+      headers: {
+        Authorization: "Bearer web-token",
+      },
+    });
+
+    const jpegBytes = Uint8Array.from([0xff, 0xd8, 0xff, 0xdb]);
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({
+        "Content-Type": "image/jpeg",
+      }),
+      arrayBuffer: async () => jpegBytes.buffer,
+    } as Response);
+
+    (globalThis as any).window = {};
+    (globalThis as any).document = {};
+    try {
+      const preview = await resolveIncidentPhotoPreviewTarget(55);
+
+      expect(preview.uri).toBe("data:image/jpeg;base64,/9j/2w==");
+      expect(preview.headers).toEqual({});
+    } finally {
+      delete (globalThis as any).window;
+      delete (globalThis as any).document;
+    }
   });
 
   it("throws explicit HTTP error when photo download fails", async () => {

@@ -100,7 +100,7 @@ vi.mock("@/src/services/biometric", () => biometricMocks);
 vi.mock("@/src/storage/app-preferences", () => appPreferencesMocks);
 vi.mock("@/src/hooks/useNotifications", () => notificationsHookMocks);
 
-import { RootLayoutNav } from "./_layout";
+import { RootLayoutNav } from "@/app/_layout";
 
 function flushAsync(): Promise<void> {
   return act(async () => {

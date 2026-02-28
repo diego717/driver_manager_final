@@ -97,7 +97,7 @@ vi.mock("@/src/theme/theme-preference", () => ({
   }),
 }));
 
-import UploadIncidentEvidenceWizardScreen from "./upload";
+import UploadIncidentEvidenceWizardScreen from "@/app/incident/upload";
 
 describe("UploadIncidentEvidenceWizardScreen accessibility", () => {
   beforeEach(() => {

@@ -53,6 +53,7 @@
   },
   "devDependencies": {
     "@babel/plugin-proposal-decorators": "^7.29.0",
+    "@babel/plugin-transform-class-properties": "^7.28.6",
     "@testing-library/react-native": "^13.3.3",
     "@types/crypto-js": "^4.2.2",
     "@types/react": "~19.1.0",

@@ -107,6 +107,41 @@ describe("api client", () => {
     expect(headers["X-Request-Signature"]).toBeUndefined();
   });
 
+  it("falls back to signed API path when /web route fails with 404", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1700000000000);
+    secureStoreMocks.getStoredWebAccessToken.mockResolvedValueOnce("web-access-token");
+    secureStoreMocks.getStoredWebAccessExpiresAt.mockResolvedValueOnce("2030-01-01T00:00:00.000Z");
+
+    const requestSpy = vi
+      .spyOn(apiClient, "request")
+      .mockRejectedValueOnce({
+        isAxiosError: true,
+        message: "Not Found",
+        response: { status: 404 },
+      })
+      .mockResolvedValueOnce({ data: [{ id: 10 }] });
+
+    const response = await signedJsonRequest<Array<{ id: number }>>({
+      method: "GET",
+      path: "/installations",
+    });
+
+    expect(response).toEqual([{ id: 10 }]);
+    expect(requestSpy).toHaveBeenCalledTimes(2);
+
+    const firstCall = requestSpy.mock.calls[0][0];
+    const firstHeaders = (firstCall.headers ?? {}) as Record<string, unknown>;
+    expect(firstCall.url).toBe("/web/installations");
+    expect(firstHeaders.Authorization).toBe("Bearer web-access-token");
+
+    const secondCall = requestSpy.mock.calls[1][0];
+    const secondHeaders = (secondCall.headers ?? {}) as Record<string, unknown>;
+    expect(secondCall.url).toBe("/installations");
+    expect(secondHeaders.Authorization).toBeUndefined();
+    expect(secondHeaders["X-API-Token"]).toBe("token-123");
+    expect(typeof secondHeaders["X-Request-Signature"]).toBe("string");
+  });
+
   it("extracts message from axios-like API error payload", () => {
     const err = {
       isAxiosError: true,
@@ -125,6 +160,19 @@ describe("api client", () => {
 
   it("extracts message from generic error instances", () => {
     expect(extractApiError(new Error("boom"))).toBe("boom");
+  });
+
+  it("returns actionable hint for axios network errors without response", () => {
+    const err = {
+      isAxiosError: true,
+      message: "Network Error",
+      code: "ERR_NETWORK",
+      response: undefined,
+    };
+
+    expect(extractApiError(err)).toBe(
+      "Network Error. Verifica API Base URL y CORS_ALLOWED_ORIGINS en el Worker.",
+    );
   });
 
   it("normalizes base URL when /web is included by mistake", () => {

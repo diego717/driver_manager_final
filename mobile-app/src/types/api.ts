@@ -19,6 +19,11 @@ export interface CreateIncidentInput {
   checklist_applied?: IncidentChecklistAppliedItem[];
 }
 
+export interface UpdateIncidentInput {
+  note?: string;
+  checklist_applied?: IncidentChecklistAppliedItem[];
+}
+
 export interface IncidentPhoto {
   id: number;
   incident_id: number;
@@ -71,6 +76,11 @@ export interface ApiErrorResponse {
 }
 
 export interface CreateIncidentResponse {
+  success: boolean;
+  incident: Omit<Incident, "photos">;
+}
+
+export interface UpdateIncidentResponse {
   success: boolean;
   incident: Omit<Incident, "photos">;
 }

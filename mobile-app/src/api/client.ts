@@ -147,20 +147,51 @@ export async function signedJsonRequest<T>({
     bodyHash,
   });
 
-  const response = await apiClient.request<T>({
-    baseURL,
-    method,
-    url: requestAuth.path,
-    data,
-    ...config,
-    headers: {
-      "Content-Type": "application/json",
-      ...(config?.headers ?? {}),
-      ...requestAuth.headers,
-    },
-  });
+  const makeRequest = (requestPath: string, headers: Record<string, string>) =>
+    apiClient.request<T>({
+      baseURL,
+      method,
+      url: requestPath,
+      data,
+      ...config,
+      headers: {
+        "Content-Type": "application/json",
+        ...(config?.headers ?? {}),
+        ...headers,
+      },
+    });
 
-  return response.data;
+  try {
+    const response = await makeRequest(requestAuth.path, requestAuth.headers);
+    return response.data;
+  } catch (error) {
+    const axiosErr = error as AxiosError;
+    const status = axiosErr?.response?.status;
+    const shouldRetryWithHmac =
+      requestAuth.mode === "web" &&
+      axiosErr?.isAxiosError === true &&
+      (status === 404 || status === 405 || status === 500);
+
+    if (!shouldRetryWithHmac) {
+      throw error;
+    }
+
+    const hmacAuth = await resolveAuth();
+    if (!hmacAuth.token || !hmacAuth.secret) {
+      throw error;
+    }
+
+    const normalizedPath = normalizePath(path);
+    const hmacHeaders = buildAuthHeaders({
+      method,
+      path: normalizedPath,
+      bodyHash,
+      token: hmacAuth.token,
+      secret: hmacAuth.secret,
+    });
+    const fallbackResponse = await makeRequest(normalizedPath, hmacHeaders);
+    return fallbackResponse.data;
+  }
 }
 
 export function getApiBaseUrl(): string {
@@ -176,7 +207,11 @@ export function extractApiError(error: unknown): string {
   if ((error as AxiosError).isAxiosError) {
     const axiosErr = error as AxiosError<{ error?: { message?: string } }>;
     const apiMsg = axiosErr.response?.data?.error?.message;
-    return apiMsg || axiosErr.message;
+    if (apiMsg) return apiMsg;
+    if (!axiosErr.response) {
+      return "Network Error. Verifica API Base URL y CORS_ALLOWED_ORIGINS en el Worker.";
+    }
+    return axiosErr.message;
   }
   if (error instanceof Error) return error.message;
   return String(error);

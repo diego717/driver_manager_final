@@ -131,6 +131,19 @@ const CONTROLLED_MOBILE_ORIGINS = [
   "capacitor://localhost",
 ];
 
+function isLocalDevelopmentOrigin(origin) {
+  try {
+    const parsed = new URL(origin);
+    const host = parsed.hostname.toLowerCase();
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return false;
+    }
+    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
 function getAllowedCorsOrigins(request, env) {
   const allowed = new Set([...CONTROLLED_DASHBOARD_ORIGINS, ...CONTROLLED_MOBILE_ORIGINS]);
   if (request?.url) {
@@ -200,6 +213,7 @@ function buildCorsPolicy(isWebRoute, routeParts) {
   } else if (first === "incidents") {
     methods.add("GET");
     methods.add("POST");
+    methods.add("PATCH");
   } else if (first === "auth") {
     methods.add("GET");
     methods.add("POST");
@@ -217,7 +231,7 @@ function corsHeaders(request, env, corsPolicy = { methods: ["OPTIONS"], headers:
   if (!origin) return {};
 
   const allowedOrigins = getAllowedCorsOrigins(request, env);
-  if (!allowedOrigins.has(origin)) {
+  if (!allowedOrigins.has(origin) && !isLocalDevelopmentOrigin(origin)) {
     return {};
   }
 
@@ -2269,6 +2283,41 @@ function validateIncidentPayload(data, options = {}) {
       data.reporter_username || data.username,
       normalizeOptionalString(options.defaultReporterUsername, "unknown"),
     ),
+  };
+}
+
+function validateIncidentPatchPayload(data) {
+  if (!data || typeof data !== "object") {
+    throw new HttpError(400, "Payload invÃ¡lido.");
+  }
+
+  const hasNote = Object.prototype.hasOwnProperty.call(data, "note");
+  const hasChecklistApplied = Object.prototype.hasOwnProperty.call(data, "checklist_applied");
+  if (!hasNote && !hasChecklistApplied) {
+    throw new HttpError(400, "Debes enviar al menos 'note' o 'checklist_applied'.");
+  }
+
+  let note = null;
+  if (hasNote) {
+    note = typeof data.note === "string" ? data.note.trim() : "";
+    if (!note) {
+      throw new HttpError(400, "Campo 'note' es obligatorio cuando se envia.");
+    }
+    if (note.length > 5000) {
+      throw new HttpError(400, "Campo 'note' supera el lÃ­mite permitido.");
+    }
+  }
+
+  let checklistApplied = null;
+  if (hasChecklistApplied) {
+    checklistApplied = normalizeChecklistApplied(data.checklist_applied);
+  }
+
+  return {
+    hasNote,
+    note,
+    hasChecklistApplied,
+    checklistApplied,
   };
 }
 
@@ -6029,6 +6078,60 @@ console.log('[SW] Service Worker loaded');`;
           },
           201,
         );
+      }
+
+      if (routeParts.length === 2 && routeParts[0] === "incidents" && request.method === "PATCH") {
+        requireWebTenantRole(
+          [TENANT_ROLE_ADMIN, TENANT_ROLE_SUPERVISOR, TENANT_ROLE_TECNICO],
+          "No tienes permisos para actualizar incidencias en este tenant.",
+        );
+        const incidentId = parsePositiveInt(routeParts[1], "incident_id");
+        const data = await request.json();
+        const payload = validateIncidentPatchPayload(data);
+
+        const { results: incidentRows } = await env.DB.prepare(`
+          SELECT id, installation_id, reporter_username, note, checklist_applied_json, time_adjustment_seconds, severity, source, created_at
+          FROM incidents
+          WHERE id = ?
+            AND tenant_id = ?
+          LIMIT 1
+        `)
+          .bind(incidentId, tenantId)
+          .all();
+
+        const incident = incidentRows?.[0];
+        if (!incident) {
+          throw new HttpError(404, "Incidencia no encontrada.");
+        }
+
+        const nextNote = payload.hasNote ? payload.note : incident.note;
+        const nextChecklistAppliedJson = payload.hasChecklistApplied
+          ? JSON.stringify(payload.checklistApplied)
+          : incident.checklist_applied_json || "[]";
+
+        await env.DB.prepare(`
+          UPDATE incidents
+          SET note = ?, checklist_applied_json = ?
+          WHERE id = ?
+            AND tenant_id = ?
+        `)
+          .bind(nextNote, nextChecklistAppliedJson, incidentId, tenantId)
+          .run();
+
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          incident: {
+            id: incident.id,
+            installation_id: incident.installation_id,
+            reporter_username: incident.reporter_username,
+            note: nextNote,
+            checklist_applied: parseChecklistAppliedFromStorage(nextChecklistAppliedJson),
+            time_adjustment_seconds: incident.time_adjustment_seconds,
+            severity: incident.severity,
+            source: incident.source,
+            created_at: incident.created_at,
+          },
+        });
       }
 
       if (routeParts.length === 2 && routeParts[0] === "photos" && request.method === "GET") {

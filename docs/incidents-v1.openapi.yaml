@@ -8,6 +8,36 @@ security:
   - ApiToken: []
 
 paths:
+  /incidents/{incidentId}:
+    patch:
+      summary: Update incident note/checklist
+      parameters:
+        - in: path
+          name: incidentId
+          required: true
+          schema: { type: integer }
+        - in: header
+          name: X-Request-Timestamp
+          required: true
+          schema: { type: integer }
+        - in: header
+          name: X-Request-Signature
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateIncidentRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateIncidentResponse'
+
   /installations/{installationId}/incidents:
     get:
       summary: List incidents by installation
@@ -186,6 +216,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/IncidentChecklistAppliedItem'
+    UpdateIncidentRequest:
+      type: object
+      minProperties: 1
+      properties:
+        note: { type: string, maxLength: 5000 }
+        checklist_applied:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentChecklistAppliedItem'
     CreateIncidentResult:
       type: object
       required:
@@ -212,6 +251,13 @@ components:
         source: { type: string, enum: [desktop, mobile, web] }
         created_at: { type: string, format: date-time }
     CreateIncidentResponse:
+      type: object
+      required: [success, incident]
+      properties:
+        success: { type: boolean }
+        incident:
+          $ref: '#/components/schemas/CreateIncidentResult'
+    UpdateIncidentResponse:
       type: object
       required: [success, incident]
       properties:

@@ -1,17 +1,15 @@
 import { Database } from '@nozbe/watermelondb'
-import LokiJSAdapter from '@nozbe/watermelondb/adapters/lokijs'
+import SQLiteAdapter from '@nozbe/watermelondb/adapters/sqlite'
 
 import { mySchema } from './schema'
 import { migrations } from './migrations'
 import Incident from './models/Incident'
 import Photo from './models/Photo'
 
-const adapter = new LokiJSAdapter({
+const adapter = new SQLiteAdapter({
   schema: mySchema,
   migrations,
-  useWebWorker: false,
-  useIncrementalIndexedDB: true,
-  dbName: 'driver-manager-web',
+  // (You might want to provide jsi: true here for improved performance.)
 })
 
 export const database = new Database({

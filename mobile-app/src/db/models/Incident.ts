@@ -10,19 +10,19 @@ export default class Incident extends Model {
     photos: { type: 'has_many', foreignKey: 'incident_id' },
   }
 
-  @field('installation_id') installationId!: number
-  @field('reporter_username') reporterUsername!: string
-  @text('note') note!: string
-  @field('time_adjustment_seconds') timeAdjustmentSeconds!: number
-  @field('severity') severity!: string
-  @field('source') source!: string
-  @text('checklist_applied_json') checklistAppliedJson!: string | null
-  @readonly @date('created_at') createdAt!: Date
+  @field('installation_id') installationId: number
+  @field('reporter_username') reporterUsername: string
+  @text('note') note: string
+  @field('time_adjustment_seconds') timeAdjustmentSeconds: number
+  @field('severity') severity: string
+  @field('source') source: string
+  @text('checklist_applied_json') checklistAppliedJson: string | null
+  @readonly @date('created_at') createdAt: Date
   
-  @field('is_synced') isSynced!: boolean
-  @field('remote_id') remoteId!: number | null
+  @field('is_synced') isSynced: boolean
+  @field('remote_id') remoteId: number | null
 
-  @children('photos') photos!: Photo[]
+  @children('photos') photos: Photo[]
 
   @writer async addPhoto(
     localPath: string,
