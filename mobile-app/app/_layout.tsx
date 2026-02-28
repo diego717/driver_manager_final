@@ -202,6 +202,7 @@ export function RootLayoutNav() {
             options={{ title: "Detalle incidencia" }}
           />
           <Stack.Screen name="incident/upload" options={{ title: "Subir foto" }} />
+          <Stack.Screen name="scan/index" options={{ title: "Escaner" }} />
           <Stack.Screen name="incident/photo-viewer" options={{ title: "Foto" }} />
           <Stack.Screen
             name="modal"
