@@ -396,9 +396,30 @@ function normalizeRealtimeTenantId(value) {
 function resolveRealtimeTenantId(request, webSession = null) {
   const sessionTenant = normalizeOptionalString(webSession?.tenant_id, "");
   if (sessionTenant) return normalizeRealtimeTenantId(sessionTenant);
+  try {
+    const path = new URL(request?.url || "https://invalid.local").pathname;
+    if (path.startsWith("/web/")) {
+      return DEFAULT_REALTIME_TENANT_ID;
+    }
+  } catch {
+    // ignore malformed url
+  }
   const headerTenant = normalizeOptionalString(request?.headers?.get("X-Tenant-Id"), "");
   if (headerTenant) return normalizeRealtimeTenantId(headerTenant);
   return DEFAULT_REALTIME_TENANT_ID;
+}
+
+function canManageAllTenants(role) {
+  return normalizeOptionalString(role, "") === "super_admin";
+}
+
+function assertSameTenantOrSuperAdmin(session, targetTenantId) {
+  if (canManageAllTenants(session?.role)) return;
+  const actorTenant = normalizeRealtimeTenantId(session?.tenant_id);
+  const targetTenant = normalizeRealtimeTenantId(targetTenantId);
+  if (actorTenant !== targetTenant) {
+    throw new HttpError(403, "No tienes permisos para operar sobre otro tenant.");
+  }
 }
 
 function normalizeWebUsername(value) {
@@ -622,15 +643,22 @@ function computeStatistics(installations) {
   };
 }
 
-async function getSseLatestState(env) {
+async function getSseLatestState(env, tenantId = DEFAULT_REALTIME_TENANT_ID) {
+  const normalizedTenantId = normalizeRealtimeTenantId(tenantId);
   const { results: installationRows } = await env.DB.prepare(`
     SELECT COALESCE(MAX(id), 0) AS max_id
     FROM installations
-  `).all();
+    WHERE tenant_id = ?
+  `)
+    .bind(normalizedTenantId)
+    .all();
   const { results: incidentRows } = await env.DB.prepare(`
     SELECT COALESCE(MAX(id), 0) AS max_id
     FROM incidents
-  `).all();
+    WHERE tenant_id = ?
+  `)
+    .bind(normalizedTenantId)
+    .all();
 
   return {
     lastInstallationId: Number(installationRows?.[0]?.max_id || 0),
@@ -638,7 +666,13 @@ async function getSseLatestState(env) {
   };
 }
 
-async function getInstallationsAfterId(env, lastId, limit = 25) {
+async function getInstallationsAfterId(
+  env,
+  lastId,
+  limit = 25,
+  tenantId = DEFAULT_REALTIME_TENANT_ID,
+) {
+  const normalizedTenantId = normalizeRealtimeTenantId(tenantId);
   const { results } = await env.DB.prepare(`
     SELECT
       id,
@@ -652,17 +686,24 @@ async function getInstallationsAfterId(env, lastId, limit = 25) {
       os_info,
       notes
     FROM installations
-    WHERE id > ?
+    WHERE tenant_id = ?
+      AND id > ?
     ORDER BY id ASC
     LIMIT ?
   `)
-    .bind(lastId, limit)
+    .bind(normalizedTenantId, lastId, limit)
     .all();
 
   return results || [];
 }
 
-async function getIncidentsAfterId(env, lastId, limit = 25) {
+async function getIncidentsAfterId(
+  env,
+  lastId,
+  limit = 25,
+  tenantId = DEFAULT_REALTIME_TENANT_ID,
+) {
+  const normalizedTenantId = normalizeRealtimeTenantId(tenantId);
   const { results } = await env.DB.prepare(`
     SELECT
       id,
@@ -674,17 +715,19 @@ async function getIncidentsAfterId(env, lastId, limit = 25) {
       source,
       created_at
     FROM incidents
-    WHERE id > ?
+    WHERE tenant_id = ?
+      AND id > ?
     ORDER BY id ASC
     LIMIT ?
   `)
-    .bind(lastId, limit)
+    .bind(normalizedTenantId, lastId, limit)
     .all();
 
   return results || [];
 }
 
-async function getSseStatisticsSnapshot(env) {
+async function getSseStatisticsSnapshot(env, tenantId = DEFAULT_REALTIME_TENANT_ID) {
+  const normalizedTenantId = normalizeRealtimeTenantId(tenantId);
   const { results: installations } = await env.DB.prepare(`
     SELECT
       timestamp,
@@ -694,7 +737,10 @@ async function getSseStatisticsSnapshot(env) {
       client_name,
       installation_time_seconds
     FROM installations
-  `).all();
+    WHERE tenant_id = ?
+  `)
+    .bind(normalizedTenantId)
+    .all();
   return computeStatistics(installations || []);
 }
 
@@ -762,7 +808,7 @@ async function publishRealtimeStatsUpdate(env, tenantId = DEFAULT_REALTIME_TENAN
   const broker = getRealtimeBrokerStub(env);
   if (!broker || typeof broker.fetch !== "function") return;
   try {
-    const statistics = await getSseStatisticsSnapshot(env);
+    const statistics = await getSseStatisticsSnapshot(env, tenantId);
     await publishRealtimeEvent(env, {
       type: "stats_update",
       statistics,
@@ -1302,7 +1348,8 @@ function ensureWebUsersTableAvailable(error) {
   const message = normalizeOptionalString(error?.message, "").toLowerCase();
   if (
     (message.includes("no such table") && message.includes("web_users")) ||
-    (message.includes("no such column") && message.includes("password_hash_type"))
+    (message.includes("no such column") && message.includes("password_hash_type")) ||
+    (message.includes("no such column") && message.includes("tenant_id"))
   ) {
     throw new HttpError(
       500,
@@ -1520,7 +1567,7 @@ async function countWebUsers(env) {
 async function getWebUserByUsername(env, username) {
   try {
     const { results } = await env.DB.prepare(`
-      SELECT id, username, password_hash, password_hash_type, role, is_active, created_at, updated_at, last_login_at
+      SELECT id, username, password_hash, password_hash_type, role, is_active, created_at, updated_at, last_login_at, tenant_id
       FROM web_users
       WHERE username = ?
       LIMIT 1
@@ -1536,7 +1583,7 @@ async function getWebUserByUsername(env, username) {
 async function getWebUserById(env, userId) {
   try {
     const { results } = await env.DB.prepare(`
-      SELECT id, username, password_hash, password_hash_type, role, is_active, created_at, updated_at, last_login_at
+      SELECT id, username, password_hash, password_hash_type, role, is_active, created_at, updated_at, last_login_at, tenant_id
       FROM web_users
       WHERE id = ?
       LIMIT 1
@@ -1555,6 +1602,7 @@ function serializeWebUser(rawUser) {
     id: Number(rawUser.id),
     username: rawUser.username,
     role: normalizeWebRole(rawUser.role || WEB_DEFAULT_ROLE),
+    tenant_id: normalizeRealtimeTenantId(rawUser.tenant_id),
     is_active: normalizeActiveFlag(rawUser.is_active, 1) === 1,
     created_at: normalizeOptionalString(rawUser.created_at, ""),
     updated_at: normalizeOptionalString(rawUser.updated_at, ""),
@@ -1562,23 +1610,39 @@ function serializeWebUser(rawUser) {
   };
 }
 
-async function listWebUsers(env) {
+async function listWebUsers(env, options = {}) {
+  const tenantId = normalizeOptionalString(options?.tenantId, "");
   try {
-    const { results } = await env.DB.prepare(`
-      SELECT id, username, role, is_active, created_at, updated_at, last_login_at
-      FROM web_users
-      ORDER BY username ASC
-    `).all();
+    let results = [];
+    if (tenantId) {
+      const query = await env.DB.prepare(`
+        SELECT id, username, role, is_active, created_at, updated_at, last_login_at, tenant_id
+        FROM web_users
+        WHERE tenant_id = ?
+        ORDER BY username ASC
+      `)
+        .bind(normalizeRealtimeTenantId(tenantId))
+        .all();
+      results = query.results || [];
+    } else {
+      const query = await env.DB.prepare(`
+        SELECT id, username, role, is_active, created_at, updated_at, last_login_at, tenant_id
+        FROM web_users
+        ORDER BY username ASC
+      `).all();
+      results = query.results || [];
+    }
     return (results || []).map((row) => serializeWebUser(row));
   } catch (error) {
     ensureWebUsersTableAvailable(error);
   }
 }
 
-async function createWebUser(env, { username, password, role }) {
+async function createWebUser(env, { username, password, role, tenantId }) {
   const createdAt = nowIso();
   const passwordHash = await hashWebPassword(password);
   const passwordHashType = WEB_HASH_TYPE_PBKDF2;
+  const normalizedTenantId = normalizeRealtimeTenantId(tenantId);
 
   try {
     const existing = await getWebUserByUsername(env, username);
@@ -1587,10 +1651,10 @@ async function createWebUser(env, { username, password, role }) {
     }
 
     const insertResult = await env.DB.prepare(`
-      INSERT INTO web_users (username, password_hash, password_hash_type, role, is_active, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 1, ?, ?)
+      INSERT INTO web_users (username, password_hash, password_hash_type, role, tenant_id, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 1, ?, ?)
     `)
-      .bind(username, passwordHash, passwordHashType, role, createdAt, createdAt)
+      .bind(username, passwordHash, passwordHashType, role, normalizedTenantId, createdAt, createdAt)
       .run();
 
     return {
@@ -1598,6 +1662,7 @@ async function createWebUser(env, { username, password, role }) {
       username,
       password_hash_type: passwordHashType,
       role,
+      tenant_id: normalizedTenantId,
       is_active: 1,
       created_at: createdAt,
       updated_at: createdAt,
@@ -1640,6 +1705,7 @@ function normalizeImportedWebUser(rawUser) {
     passwordHashType,
     role: normalizeWebRole(rawUser.role || WEB_DEFAULT_ROLE),
     isActive: normalizeActiveFlag(rawUser.is_active, 1),
+    tenantId: normalizeRealtimeTenantId(rawUser.tenant_id),
   };
 }
 
@@ -1650,13 +1716,14 @@ async function upsertWebUserFromImport(env, importedUser) {
   if (existing) {
     await env.DB.prepare(`
       UPDATE web_users
-      SET password_hash = ?, password_hash_type = ?, role = ?, is_active = ?, updated_at = ?
+      SET password_hash = ?, password_hash_type = ?, role = ?, tenant_id = ?, is_active = ?, updated_at = ?
       WHERE id = ?
     `)
       .bind(
         importedUser.passwordHash,
         importedUser.passwordHashType,
         importedUser.role,
+        importedUser.tenantId,
         importedUser.isActive,
         now,
         Number(existing.id),
@@ -1667,14 +1734,15 @@ async function upsertWebUserFromImport(env, importedUser) {
   }
 
   await env.DB.prepare(`
-    INSERT INTO web_users (username, password_hash, password_hash_type, role, is_active, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO web_users (username, password_hash, password_hash_type, role, tenant_id, is_active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `)
     .bind(
       importedUser.username,
       importedUser.passwordHash,
       importedUser.passwordHashType,
       importedUser.role,
+      importedUser.tenantId,
       importedUser.isActive,
       now,
       now,
@@ -2086,6 +2154,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       role: user.role,
       user_id: Number(user.id),
       session_version: sessionVersion,
+      tenant_id: user.tenant_id,
     });
 
     const response = jsonResponse(
@@ -2102,6 +2171,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
           id: Number(user.id),
           username: user.username,
           role: user.role,
+          tenant_id: normalizeRealtimeTenantId(user.tenant_id),
         },
       },
       200,
@@ -2143,7 +2213,8 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     const username = validateWebUsername(body?.username);
     const password = validateWebPassword(body?.password);
     const role = normalizeWebRole(body?.role || WEB_DEFAULT_ROLE);
-    const createdUser = await createWebUser(env, { username, password, role });
+    const tenantId = normalizeRealtimeTenantId(body?.tenant_id);
+    const createdUser = await createWebUser(env, { username, password, role, tenantId });
 
     const sessionVersion = await rotateWebSessionVersion(env, Number(createdUser.id));
     const token = await buildWebAccessToken(env, {
@@ -2151,6 +2222,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       role: createdUser.role,
       user_id: Number(createdUser.id),
       session_version: sessionVersion,
+      tenant_id: createdUser.tenant_id,
     });
 
     const response = jsonResponse(
@@ -2164,6 +2236,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
           id: createdUser.id,
           username: createdUser.username,
           role: createdUser.role,
+          tenant_id: createdUser.tenant_id,
         },
         access_token: token.token,
         token_type: "Bearer",
@@ -2182,7 +2255,15 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     const session = await verifyWebAccessToken(request, env);
     requireAdminRole(session.role);
 
-    const users = await listWebUsers(env);
+    const requestTenantFilter = normalizeOptionalString(
+      new URL(request.url).searchParams.get("tenant_id"),
+      "",
+    );
+    const users = await listWebUsers(env, {
+      tenantId: canManageAllTenants(session.role)
+        ? requestTenantFilter || null
+        : normalizeRealtimeTenantId(session.tenant_id),
+    });
     return jsonResponse(request, env, corsPolicy,
       {
         success: true,
@@ -2208,7 +2289,19 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     const username = validateWebUsername(body?.username);
     const password = validateWebPassword(body?.password);
     const role = normalizeWebRole(body?.role || "viewer");
-    const createdUser = await createWebUser(env, { username, password, role });
+    const sessionTenantId = normalizeRealtimeTenantId(session.tenant_id);
+    const requestedTenantId = normalizeOptionalString(body?.tenant_id, "");
+    const targetTenantId = requestedTenantId
+      ? normalizeRealtimeTenantId(requestedTenantId)
+      : sessionTenantId;
+    assertSameTenantOrSuperAdmin(session, targetTenantId);
+
+    const createdUser = await createWebUser(env, {
+      username,
+      password,
+      role,
+      tenantId: targetTenantId,
+    });
 
     // Log audit event for user creation
     await logAuditEvent(env, {
@@ -2233,6 +2326,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
           id: createdUser.id,
           username: createdUser.username,
           role: createdUser.role,
+          tenant_id: createdUser.tenant_id,
         },
       },
       201,
@@ -2250,6 +2344,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     if (!existingUser) {
       throw new HttpError(404, "Usuario web no encontrado.");
     }
+    assertSameTenantOrSuperAdmin(session, existingUser.tenant_id);
 
     let body = {};
     try {
@@ -2330,6 +2425,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     if (!existingUser) {
       throw new HttpError(404, "Usuario web no encontrado.");
     }
+    assertSameTenantOrSuperAdmin(session, existingUser.tenant_id);
 
     let body = {};
     try {
@@ -2391,15 +2487,20 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
 
     let created = 0;
     let updated = 0;
+    const sessionTenantId = normalizeRealtimeTenantId(session.tenant_id);
     const processedUsers = [];
     for (const rawUser of users) {
       const imported = normalizeImportedWebUser(rawUser);
+      const targetTenantId = imported.tenantId || sessionTenantId;
+      assertSameTenantOrSuperAdmin(session, targetTenantId);
+      imported.tenantId = normalizeRealtimeTenantId(targetTenantId);
       const result = await upsertWebUserFromImport(env, imported);
       if (result === "created") created += 1;
       if (result === "updated") updated += 1;
       processedUsers.push({
         username: imported.username,
         role: imported.role,
+        tenant_id: imported.tenantId,
         is_active: imported.isActive,
         password_hash_type: imported.passwordHashType,
       });
@@ -2455,6 +2556,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       scope: payload.scope,
       username: payload.sub,
       role: payload.role,
+      tenant_id: normalizeRealtimeTenantId(payload.tenant_id),
       expires_at: new Date(Number(payload.exp) * 1000).toISOString(),
     });
   }
@@ -2659,7 +2761,7 @@ export default {
               controller.enqueue(encoder.encode(`:${comment}\n\n`));
             };
 
-            const sseState = await getSseLatestState(env);
+            const sseState = await getSseLatestState(env, sseTenantId);
 
             // Send initial connection message
             sendEvent({
@@ -2680,7 +2782,12 @@ export default {
               try {
                 let emittedMutation = false;
 
-                const newInstallations = await getInstallationsAfterId(env, sseState.lastInstallationId);
+                const newInstallations = await getInstallationsAfterId(
+                  env,
+                  sseState.lastInstallationId,
+                  25,
+                  sseTenantId,
+                );
                 for (const installation of newInstallations) {
                   sseState.lastInstallationId = Math.max(sseState.lastInstallationId, Number(installation.id || 0));
                   sendEvent({
@@ -2691,7 +2798,12 @@ export default {
                   emittedMutation = true;
                 }
 
-                const newIncidents = await getIncidentsAfterId(env, sseState.lastIncidentId);
+                const newIncidents = await getIncidentsAfterId(
+                  env,
+                  sseState.lastIncidentId,
+                  25,
+                  sseTenantId,
+                );
                 for (const incident of newIncidents) {
                   sseState.lastIncidentId = Math.max(sseState.lastIncidentId, Number(incident.id || 0));
                   sendEvent({
@@ -2703,7 +2815,7 @@ export default {
                 }
 
                 if (emittedMutation) {
-                  const statistics = await getSseStatisticsSnapshot(env);
+                  const statistics = await getSseStatisticsSnapshot(env, sseTenantId);
                   sendEvent({
                     type: "stats_update",
                     statistics,

@@ -104,6 +104,7 @@ function createMockDB({
     webUsers: webUsers.map((row) => ({
       password_hash_type: "pbkdf2_sha256",
       is_active: 1,
+      tenant_id: "default",
       ...row,
     })),
     deviceTokens: deviceTokens.map((row) => ({ ...row })),
@@ -308,7 +309,7 @@ function createMockDB({
 
           if (
             normalized.startsWith(
-              "SELECT id, username, password_hash, password_hash_type, role, is_active, created_at, updated_at, last_login_at FROM web_users WHERE username = ? LIMIT 1",
+              "SELECT id, username, password_hash, password_hash_type, role, is_active, created_at, updated_at, last_login_at, tenant_id FROM web_users WHERE username = ? LIMIT 1",
             )
           ) {
             const username = String(call.bound?.[0] ?? "");
@@ -318,7 +319,7 @@ function createMockDB({
 
           if (
             normalized.startsWith(
-              "SELECT id, username, password_hash, password_hash_type, role, is_active, created_at, updated_at, last_login_at FROM web_users WHERE id = ? LIMIT 1",
+              "SELECT id, username, password_hash, password_hash_type, role, is_active, created_at, updated_at, last_login_at, tenant_id FROM web_users WHERE id = ? LIMIT 1",
             )
           ) {
             const userId = Number(call.bound?.[0]);
@@ -328,7 +329,7 @@ function createMockDB({
 
           if (
             normalized.startsWith(
-              "SELECT id, username, role, is_active, created_at, updated_at, last_login_at FROM web_users ORDER BY username ASC",
+              "SELECT id, username, role, is_active, created_at, updated_at, last_login_at, tenant_id FROM web_users ORDER BY username ASC",
             )
           ) {
             const rows = [...state.webUsers].sort((a, b) =>
@@ -343,6 +344,30 @@ function createMockDB({
                 created_at: row.created_at,
                 updated_at: row.updated_at,
                 last_login_at: row.last_login_at ?? null,
+                tenant_id: row.tenant_id ?? "default",
+              })),
+            };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT id, username, role, is_active, created_at, updated_at, last_login_at, tenant_id FROM web_users WHERE tenant_id = ? ORDER BY username ASC",
+            )
+          ) {
+            const tenantId = String(call.bound?.[0] ?? "default");
+            const rows = [...state.webUsers]
+              .filter((row) => String(row.tenant_id ?? "default") === tenantId)
+              .sort((a, b) => String(a.username).localeCompare(String(b.username)));
+            return {
+              results: rows.map((row) => ({
+                id: row.id,
+                username: row.username,
+                role: row.role,
+                is_active: row.is_active,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                last_login_at: row.last_login_at ?? null,
+                tenant_id: row.tenant_id ?? "default",
               })),
             };
           }
@@ -471,17 +496,18 @@ function createMockDB({
 
           if (
             normalized.startsWith(
-              "INSERT INTO web_users (username, password_hash, password_hash_type, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
+              "INSERT INTO web_users (username, password_hash, password_hash_type, role, tenant_id, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
             )
           ) {
             const id = nextWebUserId++;
-            const [username, passwordHash, passwordHashType, role, createdAt, updatedAt] = call.bound;
+            const [username, passwordHash, passwordHashType, role, tenantId, createdAt, updatedAt] = call.bound;
             state.webUsers.push({
               id,
               username,
               password_hash: passwordHash,
               password_hash_type: passwordHashType,
               role,
+              tenant_id: tenantId,
               is_active: 1,
               created_at: createdAt,
               updated_at: updatedAt,
@@ -492,17 +518,18 @@ function createMockDB({
 
           if (
             normalized.startsWith(
-              "INSERT INTO web_users (username, password_hash, password_hash_type, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+              "INSERT INTO web_users (username, password_hash, password_hash_type, role, tenant_id, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
           ) {
             const id = nextWebUserId++;
-            const [username, passwordHash, passwordHashType, role, isActive, createdAt, updatedAt] = call.bound;
+            const [username, passwordHash, passwordHashType, role, tenantId, isActive, createdAt, updatedAt] = call.bound;
             state.webUsers.push({
               id,
               username,
               password_hash: passwordHash,
               password_hash_type: passwordHashType,
               role,
+              tenant_id: tenantId,
               is_active: isActive,
               created_at: createdAt,
               updated_at: updatedAt,
@@ -513,15 +540,16 @@ function createMockDB({
 
           if (
             normalized.startsWith(
-              "UPDATE web_users SET password_hash = ?, password_hash_type = ?, role = ?, is_active = ?, updated_at = ? WHERE id = ?",
+              "UPDATE web_users SET password_hash = ?, password_hash_type = ?, role = ?, tenant_id = ?, is_active = ?, updated_at = ? WHERE id = ?",
             )
           ) {
-            const [passwordHash, passwordHashType, role, isActive, updatedAt, id] = call.bound;
+            const [passwordHash, passwordHashType, role, tenantId, isActive, updatedAt, id] = call.bound;
             const row = state.webUsers.find((item) => Number(item.id) === Number(id));
             if (row) {
               row.password_hash = passwordHash;
               row.password_hash_type = passwordHashType;
               row.role = role;
+              row.tenant_id = tenantId;
               row.is_active = isActive;
               row.updated_at = updatedAt;
             }
@@ -2154,6 +2182,107 @@ test("POST /web/auth/users creates additional users when caller is admin", async
   assert.equal(createUserBody.user.username, "viewer_1");
   assert.equal(createUserBody.user.role, "viewer");
   assert.equal(db.state.webUsers.length, 2);
+});
+
+test("web auth preserves tenant_id in bootstrap, login and me", async () => {
+  const db = createMockDB();
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "tenant_admin",
+      password: "StrongPass#2026",
+      tenant_id: "acme-logistics",
+    }),
+  });
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const bootstrapBody = await bootstrapResponse.json();
+
+  assert.equal(bootstrapResponse.status, 201);
+  assert.equal(bootstrapBody.user.tenant_id, "acme-logistics");
+
+  const loginRequest = new Request("https://worker.example/web/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "tenant_admin",
+      password: "StrongPass#2026",
+    }),
+  });
+  const loginResponse = await workerFetch(loginRequest, {
+    DB: db,
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const loginBody = await loginResponse.json();
+
+  assert.equal(loginResponse.status, 200);
+  assert.equal(loginBody.user.tenant_id, "acme-logistics");
+
+  const meRequest = new Request("https://worker.example/web/auth/me", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${loginBody.access_token}`,
+    },
+  });
+  const meResponse = await workerFetch(meRequest, {
+    DB: db,
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const meBody = await meResponse.json();
+
+  assert.equal(meResponse.status, 200);
+  assert.equal(meBody.tenant_id, "acme-logistics");
+});
+
+test("admin cannot create users in a different tenant", async () => {
+  const db = createMockDB();
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+      tenant_id: "tenant-a",
+    }),
+  });
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const bootstrapBody = await bootstrapResponse.json();
+  assert.equal(bootstrapResponse.status, 201);
+
+  const createUserRequest = new Request("https://worker.example/web/auth/users", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bootstrapBody.access_token}`,
+    },
+    body: JSON.stringify({
+      username: "viewer_other_tenant",
+      password: "ViewerPass#2026",
+      role: "viewer",
+      tenant_id: "tenant-b",
+    }),
+  });
+  const createUserResponse = await workerFetch(createUserRequest, {
+    DB: db,
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const createUserBody = await createUserResponse.json();
+
+  assert.equal(createUserResponse.status, 403);
+  assert.equal(createUserBody.success, false);
+  assert.match(createUserBody.error.message, /otro tenant/i);
 });
 
 test("GET /web/auth/users lists users with active status and last login", async () => {
