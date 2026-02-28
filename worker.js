@@ -1,4 +1,4 @@
-import bcrypt from "bcryptjs";
+﻿import bcrypt from "bcryptjs";
 
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const MIN_PHOTO_BYTES = 1024;
@@ -30,6 +30,11 @@ const WEB_ALLOWED_HASH_TYPES = new Set([
 ]);
 
 let fcmAccessTokenCache = null;
+const SSE_POLL_INTERVAL_MS = 4000;
+const SSE_KEEP_ALIVE_INTERVAL_MS = 30000;
+const SSE_MAX_CONNECTION_MS = 5 * 60 * 1000;
+const REALTIME_BROKER_INSTANCE = "global";
+const DEFAULT_REALTIME_TENANT_ID = "default";
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -225,7 +230,7 @@ function dashboardFallbackHtml() {
 <body>
   <main>
     <h1>Driver Manager Dashboard</h1>
-    <p>No se encontr� el binding de assets est�ticos. Revisa wrangler.toml ([assets]).</p>
+    <p>No se encontró el binding de assets estáticos. Revisa wrangler.toml ([assets]).</p>
   </main>
 </body>
 </html>`;
@@ -282,7 +287,7 @@ async function serveDashboardStaticAsset(request, env, corsPolicy, routeParts) {
 function parsePositiveInt(value, label) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new HttpError(400, `${label} inválido.`);
+    throw new HttpError(400, `${label} invÃ¡lido.`);
   }
   return parsed;
 }
@@ -379,6 +384,21 @@ function nowUnixSeconds() {
 function normalizeOptionalString(value, fallback = "") {
   if (value === null || value === undefined) return fallback;
   return String(value).trim();
+}
+
+function normalizeRealtimeTenantId(value) {
+  const raw = normalizeOptionalString(value, "").toLowerCase();
+  if (!raw) return DEFAULT_REALTIME_TENANT_ID;
+  const normalized = raw.replace(/[^a-z0-9._-]/g, "_").slice(0, 64);
+  return normalized || DEFAULT_REALTIME_TENANT_ID;
+}
+
+function resolveRealtimeTenantId(request, webSession = null) {
+  const sessionTenant = normalizeOptionalString(webSession?.tenant_id, "");
+  if (sessionTenant) return normalizeRealtimeTenantId(sessionTenant);
+  const headerTenant = normalizeOptionalString(request?.headers?.get("X-Tenant-Id"), "");
+  if (headerTenant) return normalizeRealtimeTenantId(headerTenant);
+  return DEFAULT_REALTIME_TENANT_ID;
 }
 
 function normalizeWebUsername(value) {
@@ -600,6 +620,301 @@ function computeStatistics(installations) {
     top_drivers: topDrivers,
     by_brand: byBrand,
   };
+}
+
+async function getSseLatestState(env) {
+  const { results: installationRows } = await env.DB.prepare(`
+    SELECT COALESCE(MAX(id), 0) AS max_id
+    FROM installations
+  `).all();
+  const { results: incidentRows } = await env.DB.prepare(`
+    SELECT COALESCE(MAX(id), 0) AS max_id
+    FROM incidents
+  `).all();
+
+  return {
+    lastInstallationId: Number(installationRows?.[0]?.max_id || 0),
+    lastIncidentId: Number(incidentRows?.[0]?.max_id || 0),
+  };
+}
+
+async function getInstallationsAfterId(env, lastId, limit = 25) {
+  const { results } = await env.DB.prepare(`
+    SELECT
+      id,
+      timestamp,
+      driver_brand,
+      driver_version,
+      status,
+      client_name,
+      driver_description,
+      installation_time_seconds,
+      os_info,
+      notes
+    FROM installations
+    WHERE id > ?
+    ORDER BY id ASC
+    LIMIT ?
+  `)
+    .bind(lastId, limit)
+    .all();
+
+  return results || [];
+}
+
+async function getIncidentsAfterId(env, lastId, limit = 25) {
+  const { results } = await env.DB.prepare(`
+    SELECT
+      id,
+      installation_id,
+      reporter_username,
+      note,
+      time_adjustment_seconds,
+      severity,
+      source,
+      created_at
+    FROM incidents
+    WHERE id > ?
+    ORDER BY id ASC
+    LIMIT ?
+  `)
+    .bind(lastId, limit)
+    .all();
+
+  return results || [];
+}
+
+async function getSseStatisticsSnapshot(env) {
+  const { results: installations } = await env.DB.prepare(`
+    SELECT
+      timestamp,
+      driver_brand,
+      driver_version,
+      status,
+      client_name,
+      installation_time_seconds
+    FROM installations
+  `).all();
+  return computeStatistics(installations || []);
+}
+
+function getRealtimeBrokerStub(env) {
+  if (!env?.REALTIME_EVENTS || typeof env.REALTIME_EVENTS.idFromName !== "function") {
+    return null;
+  }
+  try {
+    const id = env.REALTIME_EVENTS.idFromName(REALTIME_BROKER_INSTANCE);
+    return env.REALTIME_EVENTS.get(id);
+  } catch {
+    return null;
+  }
+}
+
+async function connectRealtimeBrokerStream(request, env, corsPolicy, tenantId = DEFAULT_REALTIME_TENANT_ID) {
+  const broker = getRealtimeBrokerStub(env);
+  if (!broker || typeof broker.fetch !== "function") return null;
+
+  const brokerUrl = new URL("https://realtime/connect");
+  brokerUrl.searchParams.set("tenant_id", normalizeRealtimeTenantId(tenantId));
+  const brokerResponse = await broker.fetch(brokerUrl.toString(), {
+    method: "GET",
+  });
+  if (!brokerResponse?.body) return null;
+
+  const headers = new Headers(brokerResponse.headers);
+  for (const [key, value] of Object.entries(corsHeaders(request, env, corsPolicy))) {
+    headers.set(key, value);
+  }
+  headers.set("Content-Type", "text/event-stream");
+  headers.set("Cache-Control", "no-cache");
+  headers.set("Connection", "keep-alive");
+
+  return new Response(brokerResponse.body, {
+    status: brokerResponse.status,
+    headers,
+  });
+}
+
+async function publishRealtimeEvent(env, payload, tenantId = DEFAULT_REALTIME_TENANT_ID) {
+  const broker = getRealtimeBrokerStub(env);
+  if (!broker || typeof broker.fetch !== "function") return;
+
+  const eventPayload = {
+    tenant_id: normalizeRealtimeTenantId(payload?.tenant_id || tenantId),
+    ...payload,
+    timestamp: payload?.timestamp || nowIso(),
+  };
+
+  try {
+    await broker.fetch("https://realtime/publish", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(eventPayload),
+    });
+  } catch (err) {
+    console.error("[SSE-BROKER] publish failed:", err);
+  }
+}
+
+async function publishRealtimeStatsUpdate(env, tenantId = DEFAULT_REALTIME_TENANT_ID) {
+  const broker = getRealtimeBrokerStub(env);
+  if (!broker || typeof broker.fetch !== "function") return;
+  try {
+    const statistics = await getSseStatisticsSnapshot(env);
+    await publishRealtimeEvent(env, {
+      type: "stats_update",
+      statistics,
+    }, tenantId);
+  } catch (err) {
+    console.error("[SSE-BROKER] stats update failed:", err);
+  }
+}
+
+export class RealtimeEventsBroker {
+  constructor(state) {
+    this.state = state;
+    this.encoder = new TextEncoder();
+    this.clients = new Map();
+
+    this.keepAliveTimer = setInterval(() => {
+      this.broadcastComment("ping").catch(() => {});
+    }, SSE_KEEP_ALIVE_INTERVAL_MS);
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/connect") {
+      return this.handleConnect(request);
+    }
+    if (request.method === "POST" && url.pathname === "/publish") {
+      return this.handlePublish(request);
+    }
+    return new Response("Not found", { status: 404 });
+  }
+
+  async handleConnect(request) {
+    const url = new URL(request.url);
+    const tenantId = normalizeRealtimeTenantId(url.searchParams.get("tenant_id"));
+    return this.handleConnectWithTenant(tenantId);
+  }
+
+  async handleConnectWithTenant(tenantId) {
+    const clientId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const stream = new TransformStream();
+    const writer = stream.writable.getWriter();
+
+    const reconnectTimer = setTimeout(() => {
+      this.closeClient(clientId, {
+        type: "reconnect",
+        message: "Reconexión requerida",
+        timestamp: nowIso(),
+      }).catch(() => {});
+    }, SSE_MAX_CONNECTION_MS);
+
+    this.clients.set(clientId, {
+      writer,
+      reconnectTimer,
+      tenantId: normalizeRealtimeTenantId(tenantId),
+      connectedAt: Date.now(),
+    });
+
+    await this.writeData(writer, {
+      type: "connected",
+      message: "Conexión en tiempo real establecida",
+      tenant_id: normalizeRealtimeTenantId(tenantId),
+      timestamp: nowIso(),
+    });
+
+    return new Response(stream.readable, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
+  async handlePublish(request) {
+    let payload = {};
+    try {
+      payload = await request.json();
+    } catch {
+      return new Response(JSON.stringify({ success: false, error: "invalid_json" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (!payload || typeof payload !== "object" || !payload.type) {
+      return new Response(JSON.stringify({ success: false, error: "missing_type" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const tenantId = normalizeRealtimeTenantId(payload.tenant_id);
+    const delivered = await this.broadcastData(payload, tenantId);
+    return new Response(JSON.stringify({ success: true, delivered }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  async broadcastData(payload, tenantId = DEFAULT_REALTIME_TENANT_ID) {
+    const staleClientIds = [];
+    let delivered = 0;
+    for (const [clientId, client] of this.clients.entries()) {
+      if (normalizeRealtimeTenantId(client.tenantId) !== normalizeRealtimeTenantId(tenantId)) {
+        continue;
+      }
+      try {
+        await this.writeData(client.writer, payload);
+        delivered += 1;
+      } catch {
+        staleClientIds.push(clientId);
+      }
+    }
+    for (const clientId of staleClientIds) {
+      await this.closeClient(clientId);
+    }
+    return delivered;
+  }
+
+  async broadcastComment(comment) {
+    const staleClientIds = [];
+    for (const [clientId, client] of this.clients.entries()) {
+      try {
+        await client.writer.write(this.encoder.encode(`:${comment}\n\n`));
+      } catch {
+        staleClientIds.push(clientId);
+      }
+    }
+    for (const clientId of staleClientIds) {
+      await this.closeClient(clientId);
+    }
+  }
+
+  async writeData(writer, payload) {
+    await writer.write(this.encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+  }
+
+  async closeClient(clientId, finalPayload = null) {
+    const client = this.clients.get(clientId);
+    if (!client) return;
+    this.clients.delete(clientId);
+    if (client.reconnectTimer) clearTimeout(client.reconnectTimer);
+    try {
+      if (finalPayload) {
+        await this.writeData(client.writer, finalPayload);
+      }
+    } catch {}
+    try {
+      await client.writer.close();
+    } catch {}
+  }
 }
 
 async function sha256Hex(bytes) {
@@ -1453,6 +1768,9 @@ async function buildWebAccessToken(env, sessionUser = {}) {
   if (Number.isInteger(sessionUser.session_version) && sessionUser.session_version > 0) {
     payload.sv = sessionUser.session_version;
   }
+  if (normalizeOptionalString(sessionUser.tenant_id, "")) {
+    payload.tenant_id = normalizeRealtimeTenantId(sessionUser.tenant_id);
+  }
 
   const encodedPayload = base64UrlEncodeUtf8(JSON.stringify(payload));
   const signature = await hmacSha256Hex(env.WEB_SESSION_SECRET, encodedPayload);
@@ -1463,6 +1781,7 @@ async function buildWebAccessToken(env, sessionUser = {}) {
     expires_at: new Date(exp * 1000).toISOString(),
     sub,
     role,
+    tenant_id: payload.tenant_id || DEFAULT_REALTIME_TENANT_ID,
   };
 }
 
@@ -1518,6 +1837,7 @@ async function verifyWebAccessToken(request, env) {
     scope: "web",
     sub: normalizeWebUsername(payload.sub || payload.username || "web-user") || "web-user",
     role: normalizeOptionalString(payload.role, WEB_DEFAULT_ROLE) || WEB_DEFAULT_ROLE,
+    tenant_id: normalizeRealtimeTenantId(payload.tenant_id),
     user_id: userId,
     session_version: Number.isInteger(tokenSessionVersion) ? tokenSessionVersion : null,
     iat: Number(payload.iat || 0),
@@ -2167,16 +2487,16 @@ async function verifyAuth(request, env, url) {
   const signature = request.headers.get("X-Request-Signature");
 
   if (!token || !timestampRaw || !signature) {
-    throw new HttpError(401, "Faltan headers de autenticación.");
+    throw new HttpError(401, "Faltan headers de autenticaciÃ³n.");
   }
 
   if (!timingSafeEqual(token, expectedToken)) {
-    throw new HttpError(401, "Token inválido.");
+    throw new HttpError(401, "Token invÃ¡lido.");
   }
 
   const timestamp = Number.parseInt(timestampRaw, 10);
   if (!Number.isInteger(timestamp)) {
-    throw new HttpError(401, "Timestamp inválido.");
+    throw new HttpError(401, "Timestamp invÃ¡lido.");
   }
 
   const drift = Math.abs(nowUnixSeconds() - timestamp);
@@ -2190,7 +2510,7 @@ async function verifyAuth(request, env, url) {
   const expectedSignature = await hmacSha256Hex(expectedSecret, canonical);
 
   if (!timingSafeEqual(signature.toLowerCase(), expectedSignature.toLowerCase())) {
-    throw new HttpError(401, "Firma inválida.");
+    throw new HttpError(401, "Firma invÃ¡lida.");
   }
 }
 
@@ -2202,7 +2522,7 @@ function buildIncidentR2Key(installationId, incidentId, extension) {
 
 function validateIncidentPayload(data, options = {}) {
   if (!data || typeof data !== "object") {
-    throw new HttpError(400, "Payload inválido.");
+    throw new HttpError(400, "Payload invÃ¡lido.");
   }
 
   const note = typeof data.note === "string" ? data.note.trim() : "";
@@ -2210,23 +2530,23 @@ function validateIncidentPayload(data, options = {}) {
     throw new HttpError(400, "Campo 'note' es obligatorio.");
   }
   if (note.length > 5000) {
-    throw new HttpError(400, "Campo 'note' supera el límite permitido.");
+    throw new HttpError(400, "Campo 'note' supera el lÃ­mite permitido.");
   }
 
   const timeAdjustment =
     data.time_adjustment_seconds === undefined ? 0 : Number(data.time_adjustment_seconds);
   if (!Number.isInteger(timeAdjustment) || timeAdjustment < -86400 || timeAdjustment > 86400) {
-    throw new HttpError(400, "Campo 'time_adjustment_seconds' inválido.");
+    throw new HttpError(400, "Campo 'time_adjustment_seconds' invÃ¡lido.");
   }
 
   const severity = data.severity || "medium";
   if (!["low", "medium", "high", "critical"].includes(severity)) {
-    throw new HttpError(400, "Campo 'severity' inválido.");
+    throw new HttpError(400, "Campo 'severity' invÃ¡lido.");
   }
 
   const source = data.source || options.defaultSource || "mobile";
   if (!["desktop", "mobile", "web"].includes(source)) {
-    throw new HttpError(400, "Campo 'source' inválido.");
+    throw new HttpError(400, "Campo 'source' invÃ¡lido.");
   }
 
   return {
@@ -2296,56 +2616,153 @@ export default {
       // SSE endpoint for real-time updates
       if (routeParts.length === 1 && routeParts[0] === "events" && request.method === "GET") {
         // Verify authentication
+        let sseWebSession = null;
         try {
-          await verifyWebAccessToken(request, env);
+          sseWebSession = await verifyWebAccessToken(request, env);
         } catch (err) {
           return jsonResponse(request, env, corsPolicy,{ error: "Unauthorized" }, 401);
+        }
+        const sseTenantId = resolveRealtimeTenantId(request, sseWebSession);
+
+        const brokerStreamResponse = await connectRealtimeBrokerStream(
+          request,
+          env,
+          corsPolicy,
+          sseTenantId,
+        );
+        if (brokerStreamResponse) {
+          return brokerStreamResponse;
+        }
+        if (!env.DB) {
+          throw new Error("La base de datos (D1) no esta vinculada a este Worker.");
         }
 
         const encoder = new TextEncoder();
         let closed = false;
+        let pollingInFlight = false;
+        let pollTimer = null;
+        let keepAlive = null;
+        let forceCloseTimer = null;
 
         const stream = new ReadableStream({
-          start(controller) {
-            // Send initial connection message
-            const data = {
-              type: "connected",
-              message: "Conexi�n en tiempo real establecida",
-              timestamp: nowIso()
+          async start(controller) {
+            const sendEvent = (payload) => {
+              if (closed) return;
+              const withTenant = {
+                tenant_id: sseTenantId,
+                ...payload,
+              };
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(withTenant)}\n\n`));
             };
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+            const sendComment = (comment) => {
+              if (closed) return;
+              controller.enqueue(encoder.encode(`:${comment}\n\n`));
+            };
+
+            const sseState = await getSseLatestState(env);
+
+            // Send initial connection message
+            sendEvent({
+              type: "connected",
+              message: "Conexión en tiempo real establecida",
+              timestamp: nowIso()
+            });
+            sendEvent({
+              type: "cursor",
+              last_installation_id: sseState.lastInstallationId,
+              last_incident_id: sseState.lastIncidentId,
+              timestamp: nowIso(),
+            });
+
+            const pollAndEmit = async () => {
+              if (closed || pollingInFlight) return;
+              pollingInFlight = true;
+              try {
+                let emittedMutation = false;
+
+                const newInstallations = await getInstallationsAfterId(env, sseState.lastInstallationId);
+                for (const installation of newInstallations) {
+                  sseState.lastInstallationId = Math.max(sseState.lastInstallationId, Number(installation.id || 0));
+                  sendEvent({
+                    type: "installation_created",
+                    installation,
+                    timestamp: nowIso(),
+                  });
+                  emittedMutation = true;
+                }
+
+                const newIncidents = await getIncidentsAfterId(env, sseState.lastIncidentId);
+                for (const incident of newIncidents) {
+                  sseState.lastIncidentId = Math.max(sseState.lastIncidentId, Number(incident.id || 0));
+                  sendEvent({
+                    type: "incident_created",
+                    incident,
+                    timestamp: nowIso(),
+                  });
+                  emittedMutation = true;
+                }
+
+                if (emittedMutation) {
+                  const statistics = await getSseStatisticsSnapshot(env);
+                  sendEvent({
+                    type: "stats_update",
+                    statistics,
+                    timestamp: nowIso(),
+                  });
+                }
+              } catch (pollErr) {
+                sendEvent({
+                  type: "error",
+                  message: "Error en sondeo de cambios SSE",
+                  timestamp: nowIso(),
+                });
+                console.error("[SSE] poll failed:", pollErr);
+              } finally {
+                pollingInFlight = false;
+              }
+            };
+
+            // Try immediately so clients don't wait a full interval after connect.
+            await pollAndEmit();
+            pollTimer = setInterval(() => {
+              pollAndEmit().catch(() => {});
+            }, SSE_POLL_INTERVAL_MS);
 
             // Keep connection alive with ping every 30 seconds
-            const keepAlive = setInterval(() => {
+            keepAlive = setInterval(() => {
               if (closed) {
                 clearInterval(keepAlive);
                 return;
               }
               try {
-                controller.enqueue(encoder.encode(`:ping\n\n`));
+                sendComment("ping");
               } catch {
                 clearInterval(keepAlive);
               }
-            }, 30000);
+            }, SSE_KEEP_ALIVE_INTERVAL_MS);
 
             // Close after 5 minutes (clients should reconnect)
-            setTimeout(() => {
+            forceCloseTimer = setTimeout(() => {
               if (!closed) {
                 closed = true;
                 try {
-                  const data = {
+                  clearInterval(keepAlive);
+                  clearInterval(pollTimer);
+                  sendEvent({
                     type: "reconnect",
-                    message: "Reconexi�n requerida",
+                    message: "Reconexión requerida",
                     timestamp: nowIso()
-                  };
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+                  });
                   controller.close();
                 } catch {}
               }
-            }, 5 * 60 * 1000);
+            }, SSE_MAX_CONNECTION_MS);
           },
           cancel() {
             closed = true;
+            if (keepAlive) clearInterval(keepAlive);
+            if (pollTimer) clearInterval(pollTimer);
+            if (forceCloseTimer) clearTimeout(forceCloseTimer);
           }
         });
 
@@ -2375,6 +2792,7 @@ export default {
       } else {
         await verifyAuth(request, env, url);
       }
+      const realtimeTenantId = resolveRealtimeTenantId(request, webSession);
 
       if (routeParts.length === 1 && routeParts[0] === "installations") {
         if (request.method === "GET") {
@@ -2389,7 +2807,7 @@ export default {
           const data = await request.json();
           const payload = normalizeInstallationPayload(data, "unknown");
 
-          await env.DB.prepare(`
+          const insertResult = await env.DB.prepare(`
             INSERT INTO installations (timestamp, driver_brand, driver_version, status, client_name, driver_description, installation_time_seconds, os_info, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           `)
@@ -2405,6 +2823,11 @@ export default {
               payload.notes,
             )
             .run();
+          const installationId = insertResult?.meta?.last_row_id || null;
+          const installationEventPayload = {
+            id: installationId,
+            ...payload,
+          };
 
           // Log audit event for installation creation
           await logAuditEvent(env, {
@@ -2420,6 +2843,12 @@ export default {
             ipAddress: getClientIpForRateLimit(request),
             platform: isWebRoute ? "web" : "api"
           });
+
+          await publishRealtimeEvent(env, {
+            type: "installation_created",
+            installation: installationEventPayload,
+          }, realtimeTenantId);
+          await publishRealtimeStatsUpdate(env, realtimeTenantId);
 
           return jsonResponse(request, env, corsPolicy,{ success: true }, 201);
         }
@@ -2539,14 +2968,21 @@ export default {
             payload.notes,
           )
           .run();
+        const record = {
+          id: insertResult?.meta?.last_row_id || null,
+          ...payload,
+        };
+
+        await publishRealtimeEvent(env, {
+          type: "installation_created",
+          installation: record,
+        }, realtimeTenantId);
+        await publishRealtimeStatsUpdate(env, realtimeTenantId);
 
         return jsonResponse(request, env, corsPolicy,
           {
             success: true,
-            record: {
-              id: insertResult?.meta?.last_row_id || null,
-              ...payload,
-            },
+            record,
           },
           201,
         );
@@ -2617,7 +3053,7 @@ export default {
 
           const installation = installationRows?.[0];
           if (!installation) {
-            throw new HttpError(404, "Instalación no encontrada.");
+            throw new HttpError(404, "InstalaciÃ³n no encontrada.");
           }
 
           const insertResult = await env.DB.prepare(`
@@ -2694,19 +3130,42 @@ export default {
             platform: payload.source
           });
 
+          const incidentEventPayload = {
+            id: incidentId,
+            installation_id: installationId,
+            reporter_username: payload.reporterUsername,
+            note: payload.note,
+            time_adjustment_seconds: payload.timeAdjustment,
+            severity: payload.severity,
+            source: payload.source,
+            created_at: createdAt,
+          };
+
+          await publishRealtimeEvent(env, {
+            type: "incident_created",
+            incident: incidentEventPayload,
+          }, realtimeTenantId);
+          if (payload.applyToInstallation) {
+            await publishRealtimeEvent(env, {
+              type: "installation_updated",
+              installation: {
+                id: installationId,
+                notes: (installation.notes || "").toString()
+                  ? `${(installation.notes || "").toString()}\n[INCIDENT] ${payload.note}`
+                  : payload.note,
+                installation_time_seconds: Math.max(
+                  0,
+                  Number(installation.installation_time_seconds || 0) + payload.timeAdjustment,
+                ),
+              },
+            }, realtimeTenantId);
+          }
+          await publishRealtimeStatsUpdate(env, realtimeTenantId);
+
           return jsonResponse(request, env, corsPolicy,
             {
               success: true,
-              incident: {
-                id: incidentId,
-                installation_id: installationId,
-                reporter_username: payload.reporterUsername,
-                note: payload.note,
-                time_adjustment_seconds: payload.timeAdjustment,
-                severity: payload.severity,
-                source: payload.source,
-                created_at: createdAt,
-              },
+              incident: incidentEventPayload,
             },
             201,
           );
@@ -2731,7 +3190,7 @@ export default {
         const { sizeBytes, contentType } = validateAndProcessPhoto(bodyBuffer, declaredContentType);
 
         if (!env.INCIDENTS_BUCKET || typeof env.INCIDENTS_BUCKET.put !== "function") {
-          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no está configurado.");
+          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no estÃ¡ configurado.");
         }
 
         const { results: incidentRows } = await env.DB.prepare(`
@@ -2789,7 +3248,7 @@ export default {
         const photoId = parsePositiveInt(routeParts[1], "photo_id");
 
         if (!env.INCIDENTS_BUCKET || typeof env.INCIDENTS_BUCKET.get !== "function") {
-          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no está configurado.");
+          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no estÃ¡ configurado.");
         }
 
         const { results: photoRows } = await env.DB.prepare(`
@@ -2852,6 +3311,16 @@ export default {
             .bind(data.notes ?? null, data.installation_time_seconds ?? null, recordId)
             .run();
 
+          await publishRealtimeEvent(env, {
+            type: "installation_updated",
+            installation: {
+              id: Number(recordId),
+              notes: data.notes ?? null,
+              installation_time_seconds: data.installation_time_seconds ?? null,
+            },
+          }, realtimeTenantId);
+          await publishRealtimeStatsUpdate(env, realtimeTenantId);
+
           return jsonResponse(request, env, corsPolicy,{ success: true, updated: recordId });
         }
 
@@ -2873,6 +3342,13 @@ export default {
           });
 
           await env.DB.prepare("DELETE FROM installations WHERE id = ?").bind(recordId).run();
+          await publishRealtimeEvent(env, {
+            type: "installation_deleted",
+            installation: {
+              id: Number(recordId),
+            },
+          }, realtimeTenantId);
+          await publishRealtimeStatsUpdate(env, realtimeTenantId);
           return jsonResponse(request, env, corsPolicy,{ message: `Registro ${recordId} eliminado.` });
         }
       }
@@ -2980,3 +3456,4 @@ export default {
     }
   },
 };
+

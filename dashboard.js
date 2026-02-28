@@ -1367,6 +1367,10 @@ function handleSSEMessage(data) {
         case 'installation_updated':
             handleRealtimeInstallationUpdate(data.installation);
             break;
+
+        case 'installation_deleted':
+            handleRealtimeInstallationDeleted(data.installation);
+            break;
             
         case 'incident_created':
             handleRealtimeIncident(data.incident);
@@ -1428,6 +1432,17 @@ function handleRealtimeInstallationUpdate(installation) {
             }
         }
     }
+}
+
+function handleRealtimeInstallationDeleted(installation) {
+    if (!installation || !installation.id) return;
+    if (currentInstallationsData) {
+        currentInstallationsData = currentInstallationsData.filter((i) => i.id !== installation.id);
+        if (document.getElementById('installationsSection')?.classList.contains('active')) {
+            renderInstallationsTable(currentInstallationsData);
+        }
+    }
+    showNotification(`🗑️ Instalación #${installation.id} eliminada`, 'info');
 }
 
 function handleRealtimeIncident(incident) {
