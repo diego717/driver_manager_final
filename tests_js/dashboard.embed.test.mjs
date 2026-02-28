@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import worker from "../worker.js";
+import { createAssetsBinding } from "./helpers/assets.mock.mjs";
 
 function extractExternalScripts(html) {
   return [...html.matchAll(/<script\s+[^>]*src="([^"]+)"[^>]*><\/script>/gi)].map((match) => match[1]);
@@ -17,8 +18,10 @@ function extractInlineScripts(html) {
   return scripts;
 }
 
-test("GET /web/dashboard returns dashboard without inline scripts and CSP compatible with Chart.js CDN", async () => {
-  const response = await worker.fetch(new Request("https://worker.example/web/dashboard"), {});
+test("GET /web/dashboard returns versioned static dashboard and strict CSP", async () => {
+  const response = await worker.fetch(new Request("https://worker.example/web/dashboard"), {
+    ASSETS: createAssetsBinding(),
+  });
   const html = await response.text();
 
   assert.equal(response.status, 200);
@@ -29,8 +32,10 @@ test("GET /web/dashboard returns dashboard without inline scripts and CSP compat
 
   const scripts = extractExternalScripts(html);
   assert.ok(scripts.includes("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"));
-  assert.ok(scripts.includes("/dashboard.js"));
-  assert.ok(scripts.includes("/dashboard-pwa.js"));
+  assert.ok(scripts.some((src) => /^\/dashboard\.js\?v=[a-f0-9]{10}$/.test(src)));
+  assert.ok(scripts.some((src) => /^\/dashboard-pwa\.js\?v=[a-f0-9]{10}$/.test(src)));
+  assert.match(html, /href="\/dashboard\.css\?v=[a-f0-9]{10}"/);
+  assert.match(html, /href="\/manifest\.json\?v=[a-f0-9]{10}"/);
 
   const csp = response.headers.get("Content-Security-Policy") || "";
   assert.match(csp, /script-src 'self' https:\/\/cdn\.jsdelivr\.net/);

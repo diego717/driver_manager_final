@@ -2,6 +2,10 @@ name = "driver-manager-db"
 main = "worker.js"
 compatibility_date = "2026-02-13"
 
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
 [[d1_databases]]
 binding = "DB" # El nombre que usas en el worker: env.DB
 database_name = "driver-manager-db"
