@@ -27,7 +27,3 @@ class_name = "RealtimeEventsBroker"
 [[migrations]]
 tag = "realtime-events-v1"
 new_sqlite_classes = ["RealtimeEventsBroker"]
-
-[vars]
-API_TOKEN = "test-token"
-API_SECRET = "test-secret"

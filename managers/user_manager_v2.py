@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import socket
 import platform
+import requests
 
 from core.logger import get_logger
 from core.password_policy import PasswordPolicy
@@ -384,6 +385,21 @@ class UserManagerV2:
                 "platform": entry.get("platform"),
             },
         }
+
+    def _extract_http_error_message(self, response):
+        """Obtener mensaje de error desde una respuesta HTTP."""
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                error_obj = payload.get("error")
+                if isinstance(error_obj, dict) and error_obj.get("message"):
+                    return str(error_obj.get("message"))
+                if payload.get("message"):
+                    return str(payload.get("message"))
+        except Exception:
+            pass
+        text = (response.text or "").strip()
+        return text or f"HTTP {response.status_code}"
     
     @returns_result_tuple("initialize_system")
     def initialize_system(self, first_user_username, first_user_password):
@@ -1169,12 +1185,15 @@ class UserManagerV2:
                 permissions = ["read", "write"]
             else:
                 permissions = ["read"]
+
+            tenant_id = kwargs.get("tenant_id")
             
             new_user = {
                 "username": username,
                 "password_hash": self._hash_password(password),
                 "password_history": [],
                 "role": role,
+                "tenant_id": tenant_id,
                 "created_at": datetime.now().isoformat(),
                 "created_by": created_by or self.current_user.get("username"),
                 "last_login": None,
@@ -1220,6 +1239,183 @@ class UserManagerV2:
             self.logger.error(f"Unexpected error creating user: {e}", exc_info=True, username=username, role=role)
             self.logger.operation_end("create_user", success=False, reason=str(e))
             raise
+
+    @returns_result_tuple("create_tenant_web_user")
+    def create_tenant_web_user(self, username, password, role, tenant_id, admin_web_password):
+        """Crear usuario en API web por tenant usando /web/auth/users."""
+        self.logger.operation_start(
+            "create_tenant_web_user",
+            username=username,
+            role=role,
+            tenant_id=tenant_id,
+        )
+
+        if not self.current_user or self.current_user.get("role") != "super_admin":
+            raise AuthenticationError("Solo super_admin puede crear usuarios por tenant.")
+
+        validate_min_length(username, 3, "username")
+        if not re.match(r'^[a-zA-Z0-9_-]+$', username):
+            raise ValidationError(
+                "Nombre de usuario inválido (solo letras, números, guiones y guiones bajos).",
+                details={'username': username},
+            )
+
+        tenant_id = str(tenant_id or "").strip()
+        if not tenant_id:
+            raise ValidationError("Tenant ID es obligatorio.")
+
+        is_valid, message, score = PasswordValidator.validate_password_strength(password, username)
+        if not is_valid:
+            raise ValidationError(
+                f"La contraseña no cumple con los requisitos de seguridad:\n{message}",
+                details={'username': username, 'password_score': score},
+            )
+
+        if not self.audit_api_client or not hasattr(self.audit_api_client, "_get_api_url"):
+            raise ConfigurationError("No hay cliente API disponible para creación por tenant.")
+
+        base_url = self.audit_api_client._get_api_url().rstrip("/")
+        if not base_url:
+            raise ConfigurationError("URL de API no configurada.")
+
+        admin_username = self.current_user.get("username")
+        if not admin_username:
+            raise AuthenticationError("No hay usuario actual para autenticación web.")
+        if not admin_web_password:
+            raise ValidationError("Debes ingresar la contraseña web del super_admin.")
+
+        login_response = requests.post(
+            f"{base_url}/web/auth/login",
+            json={
+                "username": admin_username,
+                "password": admin_web_password,
+            },
+            timeout=20,
+        )
+        if not login_response.ok:
+            detail = self._extract_http_error_message(login_response)
+            raise AuthenticationError(f"Falló login web de super_admin. {detail}")
+
+        login_payload = login_response.json() if login_response.content else {}
+        access_token = str(login_payload.get("access_token") or "").strip()
+        if not access_token:
+            raise ConfigurationError("Login web exitoso pero sin access_token.")
+
+        create_response = requests.post(
+            f"{base_url}/web/auth/users",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "username": username,
+                "password": password,
+                "role": role,
+                "tenant_id": tenant_id,
+            },
+            timeout=20,
+        )
+        if not create_response.ok:
+            detail = self._extract_http_error_message(create_response)
+            raise ValidationError(
+                f"No se pudo crear usuario web en tenant '{tenant_id}'. {detail}"
+            )
+
+        self._log_access(
+            "user_created_tenant_web",
+            admin_username,
+            True,
+            {
+                "new_user": username,
+                "role": role,
+                "tenant_id": tenant_id,
+                "password_strength": score,
+            },
+        )
+
+        self.logger.operation_end("create_tenant_web_user", success=True)
+        return True, (
+            f"Usuario web creado en tenant '{tenant_id}'.\n"
+            "Nota: este usuario se gestiona en D1/web y puede no aparecer en la lista local."
+        )
+
+    @handle_errors("fetch_tenant_web_users", reraise=True, default_return=[])
+    def fetch_tenant_web_users(self, admin_web_password, tenant_id=None):
+        """Listar usuarios web de D1 (opcionalmente filtrados por tenant_id)."""
+        self.logger.operation_start("fetch_tenant_web_users", tenant_id=tenant_id or "")
+
+        if not self.current_user or self.current_user.get("role") != "super_admin":
+            raise AuthenticationError("Solo super_admin puede consultar usuarios web por tenant.")
+
+        if not self.audit_api_client or not hasattr(self.audit_api_client, "_get_api_url"):
+            raise ConfigurationError("No hay cliente API disponible para consultar usuarios web.")
+
+        base_url = self.audit_api_client._get_api_url().rstrip("/")
+        if not base_url:
+            raise ConfigurationError("URL de API no configurada.")
+
+        admin_username = self.current_user.get("username")
+        if not admin_username:
+            raise AuthenticationError("No hay usuario actual para autenticación web.")
+        if not admin_web_password:
+            raise ValidationError("Debes ingresar la contraseña web del super_admin.")
+
+        login_response = requests.post(
+            f"{base_url}/web/auth/login",
+            json={
+                "username": admin_username,
+                "password": admin_web_password,
+            },
+            timeout=20,
+        )
+        if not login_response.ok:
+            detail = self._extract_http_error_message(login_response)
+            raise AuthenticationError(f"Falló login web de super_admin. {detail}")
+
+        login_payload = login_response.json() if login_response.content else {}
+        access_token = str(login_payload.get("access_token") or "").strip()
+        if not access_token:
+            raise ConfigurationError("Login web exitoso pero sin access_token.")
+
+        params = {}
+        normalized_tenant_id = str(tenant_id or "").strip()
+        if normalized_tenant_id:
+            params["tenant_id"] = normalized_tenant_id
+
+        users_response = requests.get(
+            f"{base_url}/web/auth/users",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+            },
+            params=params,
+            timeout=20,
+        )
+        if not users_response.ok:
+            detail = self._extract_http_error_message(users_response)
+            raise ValidationError(f"No se pudo consultar usuarios web. {detail}")
+
+        payload = users_response.json() if users_response.content else {}
+        raw_users = payload.get("users") if isinstance(payload, dict) else []
+        if not isinstance(raw_users, list):
+            raw_users = []
+
+        normalized = []
+        for item in raw_users:
+            if not isinstance(item, dict):
+                continue
+            normalized.append({
+                "username": item.get("username"),
+                "role": item.get("role", "viewer"),
+                "tenant_id": item.get("tenant_id"),
+                "active": bool(item.get("is_active", True)),
+                "last_login": item.get("last_login_at"),
+                "created_at": item.get("created_at"),
+                "created_by": "web-api",
+                "source": "web",
+            })
+
+        self.logger.operation_end("fetch_tenant_web_users", success=True, count=len(normalized))
+        return normalized
     
     @returns_result_tuple("change_password")
     def change_password(self, username, old_password, new_password):
@@ -1321,6 +1517,7 @@ class UserManagerV2:
             users_list.append({
                 "username": username,
                 "role": user.get("role", "admin"),
+                "tenant_id": user.get("tenant_id"),
                 "created_at": user.get("created_at"),
                 "last_login": user.get("last_login"),
                 "active": user.get("active", True),
@@ -1477,5 +1674,3 @@ class UserManagerV2:
     def needs_initialization(self):
         """Verificar si el sistema necesita inicialización"""
         return not self.has_users()
-
-

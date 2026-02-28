@@ -667,6 +667,10 @@ class AdminTab(QWidget):
         self.admin_history_api_url_input.setPlaceholderText("URL de tu Worker para el historial")
         history_api_layout.addWidget(self.admin_history_api_url_input)
         r2_layout.addLayout(history_api_layout)
+
+        # API auth para D1 history/audit endpoints (HMAC)
+        self._create_config_field(r2_layout, "API Token:", "admin_api_token_input", "show_api_token_btn")
+        self._create_config_field(r2_layout, "API Secret:", "admin_api_secret_input", "show_api_secret_btn")
         
         # Botones R2
         r2_buttons = QHBoxLayout()
@@ -874,4 +878,3 @@ class EditInstallationDialog(QDialog):
             'notes': self.notes_edit.toPlainText(),
             'time_seconds': self.time_spinbox.value() * 60
         }
-

@@ -2573,14 +2573,14 @@ async function verifyAuth(request, env, url) {
     );
   }
 
-  const expectedToken = env.API_TOKEN;
-  const expectedSecret = env.API_SECRET;
+  const expectedToken = env.DRIVER_MANAGER_API_TOKEN || env.API_TOKEN;
+  const expectedSecret = env.DRIVER_MANAGER_API_SECRET || env.API_SECRET;
 
   // Nunca permitir acceso sin credenciales de API configuradas.
   if (!expectedToken || !expectedSecret) {
     throw new HttpError(
       503,
-      "API no configurada correctamente. Define API_TOKEN y API_SECRET.",
+      "API no configurada correctamente. Define DRIVER_MANAGER_API_TOKEN y DRIVER_MANAGER_API_SECRET.",
     );
   }
 

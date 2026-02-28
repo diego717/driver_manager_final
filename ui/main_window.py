@@ -300,6 +300,20 @@ class MainWindow(QMainWindow):
                 self.admin_tab.show_secret_btn
             )
         )
+        if hasattr(self.admin_tab, "show_api_token_btn"):
+            self.admin_tab.show_api_token_btn.clicked.connect(
+                lambda: self.event_handlers.toggle_visibility(
+                    self.admin_tab.admin_api_token_input,
+                    self.admin_tab.show_api_token_btn
+                )
+            )
+        if hasattr(self.admin_tab, "show_api_secret_btn"):
+            self.admin_tab.show_api_secret_btn.clicked.connect(
+                lambda: self.event_handlers.toggle_visibility(
+                    self.admin_tab.admin_api_secret_input,
+                    self.admin_tab.show_api_secret_btn
+                )
+            )
         
         # CONEXIONES FALTANTES - Admin tab botones R2
         # Buscar y conectar botones por texto
@@ -1261,4 +1275,3 @@ class MainWindow(QMainWindow):
         if self.theme_manager.set_theme(theme_name):
             self.apply_theme()
             self.statusBar().showMessage(f"✨ Tema cambiado a: {theme_text}")
-

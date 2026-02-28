@@ -18,6 +18,8 @@ class UserManagementDialog(QDialog):
     def __init__(self, user_manager, parent=None):
         super().__init__(parent)
         self.user_manager = user_manager
+        self.user_source_mode = "local"
+        self._cached_admin_web_password = ""
         self.setWindowTitle("GestiÃ³n de Usuarios")
         self.setGeometry(200, 200, 800, 600)
         
@@ -64,6 +66,19 @@ class UserManagementDialog(QDialog):
                 }
             """)
             buttons_layout.addWidget(create_btn)
+
+            self.tenant_filter_input = QLineEdit()
+            self.tenant_filter_input.setPlaceholderText("tenant_id (opcional)")
+            self.tenant_filter_input.setMaximumWidth(180)
+            buttons_layout.addWidget(self.tenant_filter_input)
+
+            web_users_btn = QPushButton("ðŸŒ Ver Usuarios Web")
+            web_users_btn.clicked.connect(self.show_web_users)
+            buttons_layout.addWidget(web_users_btn)
+
+            local_users_btn = QPushButton("ðŸ’¾ Ver Usuarios Locales")
+            local_users_btn.clicked.connect(self.show_local_users)
+            buttons_layout.addWidget(local_users_btn)
         
         change_pass_btn = QPushButton("ðŸ”‘ Cambiar Mi ContraseÃ±a")
         change_pass_btn.clicked.connect(self.change_password)
@@ -91,9 +106,9 @@ class UserManagementDialog(QDialog):
         layout.addWidget(users_label)
         
         self.users_table = QTableWidget()
-        self.users_table.setColumnCount(6)
+        self.users_table.setColumnCount(7)
         self.users_table.setHorizontalHeaderLabels([
-            "Usuario", "Rol", "Estado", "Ãšltimo Login", "Creado", "Creado Por"
+            "Usuario", "Rol", "Tenant", "Estado", "Ãšltimo Login", "Creado", "Creado Por"
         ])
         
         # Ajustar columnas
@@ -101,9 +116,10 @@ class UserManagementDialog(QDialog):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
         
         layout.addWidget(self.users_table)
         
@@ -150,55 +166,113 @@ class UserManagementDialog(QDialog):
     
     def refresh_users(self):
         """Actualizar tabla de usuarios"""
+        if self.user_source_mode == "web":
+            self.refresh_web_users()
+            return
+
         users = self.user_manager.get_users()
+        self.populate_users_table(users)
+        self.refresh_logs()
+
+    def refresh_web_users(self):
+        """Actualizar tabla de usuarios desde API web."""
+        if not self.user_manager.is_super_admin():
+            QMessageBox.warning(self, "Error", "Solo super_admin puede ver usuarios web.")
+            return
+
+        admin_web_password = self._cached_admin_web_password
+        if not admin_web_password:
+            admin_web_password, ok = QInputDialog.getText(
+                self,
+                "Usuarios Web",
+                "Ingresa tu contraseÃ±a web de super_admin:",
+                QLineEdit.EchoMode.Password,
+            )
+            if not ok or not admin_web_password:
+                return
+            self._cached_admin_web_password = admin_web_password
+
+        tenant_id = ""
+        if hasattr(self, "tenant_filter_input"):
+            tenant_id = self.tenant_filter_input.text().strip()
+
+        try:
+            users = self.user_manager.fetch_tenant_web_users(
+                admin_web_password=admin_web_password,
+                tenant_id=tenant_id or None,
+            )
+        except Exception as error:
+            # Si falla autenticaciÃ³n, limpiar cache para pedir password nuevamente.
+            self._cached_admin_web_password = ""
+            QMessageBox.warning(self, "Error", str(error))
+            return
+
+        self.populate_users_table(users)
+        self.refresh_logs()
+
+    def populate_users_table(self, users):
+        """Poblar tabla con lista normalizada de usuarios."""
         self.users_table.setRowCount(len(users))
-        
+
         for row, user in enumerate(users):
-            self.users_table.setItem(row, 0, QTableWidgetItem(user["username"]))
-            
-            # Rol con color
-            role_item = QTableWidgetItem(user["role"])
-            if user["role"] == "super_admin":
+            username = str(user.get("username") or "")
+            role = str(user.get("role") or "viewer")
+            active = bool(user.get("active", True))
+            tenant_id = user.get("tenant_id") or "-"
+            last_login = user.get("last_login")
+            created = user.get("created_at")
+            created_by = user.get("created_by", "N/A")
+
+            self.users_table.setItem(row, 0, QTableWidgetItem(username))
+
+            role_item = QTableWidgetItem(role)
+            if role == "super_admin":
                 role_item.setBackground(Qt.GlobalColor.red)
                 role_item.setForeground(Qt.GlobalColor.white)
-            elif user["role"] == "admin":
+            elif role == "admin":
                 role_item.setBackground(Qt.GlobalColor.blue)
                 role_item.setForeground(Qt.GlobalColor.white)
             self.users_table.setItem(row, 1, role_item)
-            
-            # Estado
-            status = "âœ… Activo" if user["active"] else "âŒ Inactivo"
+
+            self.users_table.setItem(row, 2, QTableWidgetItem(str(tenant_id)))
+
+            status = "âœ… Activo" if active else "âŒ Inactivo"
             status_item = QTableWidgetItem(status)
-            if not user["active"]:
+            if not active:
                 status_item.setBackground(Qt.GlobalColor.lightGray)
-            self.users_table.setItem(row, 2, status_item)
-            
-            # Ãšltimo login
-            last_login = user["last_login"]
+            self.users_table.setItem(row, 3, status_item)
+
             if last_login:
                 try:
-                    dt = datetime.fromisoformat(last_login)
+                    dt = datetime.fromisoformat(str(last_login))
                     last_login = dt.strftime("%d/%m/%Y %H:%M")
-                except:
+                except Exception:
                     pass
             else:
                 last_login = "Nunca"
-            self.users_table.setItem(row, 3, QTableWidgetItem(last_login))
-            
-            # Creado
-            created = user["created_at"]
+            self.users_table.setItem(row, 4, QTableWidgetItem(str(last_login)))
+
             if created:
                 try:
-                    dt = datetime.fromisoformat(created)
+                    dt = datetime.fromisoformat(str(created))
                     created = dt.strftime("%d/%m/%Y")
-                except:
+                except Exception:
                     pass
-            self.users_table.setItem(row, 4, QTableWidgetItem(created))
-            
-            # Creado por
-            self.users_table.setItem(row, 5, QTableWidgetItem(user.get("created_by", "N/A")))
-        
-        self.refresh_logs()
+            else:
+                created = ""
+            self.users_table.setItem(row, 5, QTableWidgetItem(str(created)))
+
+            self.users_table.setItem(row, 6, QTableWidgetItem(str(created_by)))
+
+    def show_web_users(self):
+        """Cambiar a modo de visualizaciÃ³n de usuarios web."""
+        self.user_source_mode = "web"
+        self.refresh_users()
+
+    def show_local_users(self):
+        """Cambiar a modo de visualizaciÃ³n de usuarios locales."""
+        self.user_source_mode = "local"
+        self.refresh_users()
     
     def refresh_logs(self):
         """Actualizar logs de acceso"""
@@ -233,7 +307,7 @@ class UserManagementDialog(QDialog):
         """Crear nuevo usuario"""
         dialog = CreateUserDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            username, password, confirm_password, role = dialog.get_data()
+            username, password, confirm_password, role, tenant_id, admin_web_password = dialog.get_data()
             
             # Validar que las contraseÃ±as coincidan
             if password != confirm_password:
@@ -244,10 +318,35 @@ class UserManagementDialog(QDialog):
                 QMessageBox.warning(self, "Error", "Usuario y contraseÃ±a son obligatorios")
                 return
             
-            success, message = self.user_manager.create_user(username, password, role)
+            tenant_id = (tenant_id or "").strip()
+            if tenant_id:
+                if not admin_web_password:
+                    QMessageBox.warning(
+                        self,
+                        "Error",
+                        "Para crear por tenant debes ingresar tu contraseÃ±a web de super_admin.",
+                    )
+                    return
+                success, message = self.user_manager.create_tenant_web_user(
+                    username=username,
+                    password=password,
+                    role=role,
+                    tenant_id=tenant_id,
+                    admin_web_password=admin_web_password,
+                )
+            else:
+                success, message = self.user_manager.create_user(
+                    username,
+                    password,
+                    role,
+                    tenant_id=tenant_id or None,
+                )
             
             if success:
                 QMessageBox.information(self, "Ã‰xito", message)
+                if tenant_id:
+                    self._cached_admin_web_password = admin_web_password
+                    self.user_source_mode = "web"
                 self.refresh_users()
             else:
                 QMessageBox.warning(self, "Error", message)
@@ -313,6 +412,13 @@ class UserManagementDialog(QDialog):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
+            if self.user_source_mode == "web":
+                QMessageBox.warning(
+                    self,
+                    "No soportado",
+                    "La desactivaciÃ³n desde esta vista solo aplica a usuarios locales.",
+                )
+                return
             success, message = self.user_manager.deactivate_user(username)
             
             if success:
@@ -351,6 +457,15 @@ class CreateUserDialog(QDialog):
         self.role_combo = QComboBox()
         self.role_combo.addItems(["admin", "viewer"])
         layout.addRow("Rol:", self.role_combo)
+
+        self.tenant_input = QLineEdit()
+        self.tenant_input.setPlaceholderText("tenant-a (opcional, crea usuario en API web por tenant)")
+        layout.addRow("Tenant ID:", self.tenant_input)
+
+        self.admin_web_password_input = QLineEdit()
+        self.admin_web_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.admin_web_password_input.setPlaceholderText("Tu contraseÃ±a web super_admin (solo si usas Tenant ID)")
+        layout.addRow("Pass Web Admin:", self.admin_web_password_input)
         
         # Botones
         button_box = QDialogButtonBox(
@@ -365,7 +480,9 @@ class CreateUserDialog(QDialog):
             self.username_input.text(),
             self.password_input.text(),
             self.confirm_password_input.text(),
-            self.role_combo.currentText()
+            self.role_combo.currentText(),
+            self.tenant_input.text(),
+            self.admin_web_password_input.text(),
         )
 
 

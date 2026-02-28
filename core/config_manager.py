@@ -385,6 +385,10 @@ class ConfigManager:
                 self.main.admin_tab.admin_bucket_name_input.setText(portable_config.get('bucket_name', ''))
                 api = portable_config.get('api_url') or portable_config.get('history_api_url', '')
                 self.main.admin_tab.admin_history_api_url_input.setText(api)
+                if hasattr(self.main.admin_tab, 'admin_api_token_input'):
+                    self.main.admin_tab.admin_api_token_input.setText(portable_config.get('api_token', ''))
+                if hasattr(self.main.admin_tab, 'admin_api_secret_input'):
+                    self.main.admin_tab.admin_api_secret_input.setText(portable_config.get('api_secret', ''))
             except:
                 pass
 

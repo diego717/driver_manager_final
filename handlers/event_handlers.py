@@ -287,6 +287,12 @@ class EventHandlers:
         self.toggle_visibility(self.main.admin_tab.admin_account_id_input, self.main.admin_tab.show_account_btn)
         self.toggle_visibility(self.main.admin_tab.admin_access_key_input, self.main.admin_tab.show_access_btn)
         self.toggle_visibility(self.main.admin_tab.admin_secret_key_input, self.main.admin_tab.show_secret_btn)
+        if hasattr(self.main.admin_tab, "show_api_token_btn"):
+            self.main.admin_tab.show_api_token_btn.setChecked(False)
+            self.toggle_visibility(self.main.admin_tab.admin_api_token_input, self.main.admin_tab.show_api_token_btn)
+        if hasattr(self.main.admin_tab, "show_api_secret_btn"):
+            self.main.admin_tab.show_api_secret_btn.setChecked(False)
+            self.toggle_visibility(self.main.admin_tab.admin_api_secret_input, self.main.admin_tab.show_api_secret_btn)
         
         # Actualizar (limpiar) la vista de logs
         self.main.refresh_audit_logs()
@@ -340,18 +346,36 @@ class EventHandlers:
             'access_key_id': self.main.admin_tab.admin_access_key_input.text(),
             'secret_access_key': self.main.admin_tab.admin_secret_key_input.text(),
             'bucket_name': self.main.admin_tab.admin_bucket_name_input.text(),
-            'history_api_url': self.main.admin_tab.admin_history_api_url_input.text()
+            'history_api_url': self.main.admin_tab.admin_history_api_url_input.text(),
+            'api_url': self.main.admin_tab.admin_history_api_url_input.text(),
+            'api_token': getattr(self.main.admin_tab, 'admin_api_token_input', None).text()
+            if hasattr(self.main.admin_tab, 'admin_api_token_input')
+            else '',
+            'api_secret': getattr(self.main.admin_tab, 'admin_api_secret_input', None).text()
+            if hasattr(self.main.admin_tab, 'admin_api_secret_input')
+            else '',
         }
-        
-        if not all(config.values()):
+
+        required_keys = ['account_id', 'access_key_id', 'secret_access_key', 'bucket_name', 'history_api_url']
+        missing_required = [key for key in required_keys if not config.get(key)]
+        if missing_required:
             logger.warning("Intento de guardar R2 con campos vacíos")
             QMessageBox.warning(
                 self.main,
                 "Campos Vacíos",
-                "Por favor completa todos los campos de configuración R2."
+                "Por favor completa Account ID, Access Key ID, Secret Access Key, Bucket y History API URL."
             )
             logger.operation_end("save_r2_config", success=False, reason="empty_fields")
             return
+
+        if not config.get("api_token") or not config.get("api_secret"):
+            logger.warning("Configuración guardada sin API token/secret para historial.")
+            QMessageBox.warning(
+                self.main,
+                "Advertencia",
+                "Se guardará la configuración sin API Token/API Secret.\n"
+                "Los endpoints de historial/auditoría pueden devolver 401 hasta configurarlos."
+            )
         
         # Guardar usando el sistema de cifrado
         if self.main.config_manager.save_config_data(config):
@@ -443,7 +467,13 @@ class EventHandlers:
             self.main.admin_tab.admin_access_key_input.setText(config.get('access_key_id', ''))
             self.main.admin_tab.admin_secret_key_input.setText(config.get('secret_access_key', ''))
             self.main.admin_tab.admin_bucket_name_input.setText(config.get('bucket_name', ''))
-            self.main.admin_tab.admin_history_api_url_input.setText(config.get('history_api_url', ''))
+            self.main.admin_tab.admin_history_api_url_input.setText(
+                config.get('history_api_url', '') or config.get('api_url', '')
+            )
+            if hasattr(self.main.admin_tab, 'admin_api_token_input'):
+                self.main.admin_tab.admin_api_token_input.setText(config.get('api_token', ''))
+            if hasattr(self.main.admin_tab, 'admin_api_secret_input'):
+                self.main.admin_tab.admin_api_secret_input.setText(config.get('api_secret', ''))
             
             # Evento de seguridad: credenciales accedidas
             logger.security_event(
