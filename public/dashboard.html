@@ -3,12 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#06b6d4">
+    <meta name="theme-color" content="#0f756d">
     <meta name="description" content="Dashboard de gestión de instalaciones de drivers">
     <title>Driver Manager Dashboard</title>
-    <link rel="stylesheet" href="/dashboard.css?v=337df81f66">
+    <link rel="stylesheet" href="/dashboard.css?v=7929728d34">
     <link rel="manifest" href="/manifest.json?v=c0f933f797">
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
 </head>
 
@@ -16,18 +20,23 @@
     <div id="app">
         <nav class="sidebar">
             <div class="logo">
-                <h1>📊 Driver Manager</h1>
+                <h1><span class="material-symbols-outlined">speed</span> Driver Manager</h1>
             </div>
             <ul class="nav-links">
-                <li><a href="#" class="active" data-section="dashboard">📈 Dashboard</a></li>
-                <li><a href="#" data-section="installations">💻 Instalaciones</a></li>
-                <li><a href="#" data-section="incidents">⚠️ Incidencias</a></li>
-                <li><a href="#" data-section="audit">📋 Auditoría</a></li>
+                <li><a href="#" class="active" data-section="dashboard"><span class="material-symbols-outlined">dashboard</span> Dashboard</a></li>
+                <li><a href="#" data-section="installations"><span class="material-symbols-outlined">dns</span> Instalaciones</a></li>
+                <li><a href="#" data-section="incidents"><span class="material-symbols-outlined">warning</span> Incidencias</a></li>
+                <li><a href="#" data-section="audit"><span class="material-symbols-outlined">description</span> Auditoría</a></li>
             </ul>
             <div class="user-info">
-                <span id="username">Usuario</span>
-                <span id="userRole" class="role-badge">admin</span>
-                <button id="logoutBtn" class="btn-secondary">Cerrar sesión</button>
+                <div class="user-avatar">
+                    <div class="avatar-circle" id="userInitial">U</div>
+                    <div>
+                        <span id="username">Usuario</span>
+                        <span id="userRole" class="role-badge">admin</span>
+                    </div>
+                </div>
+                <button id="logoutBtn" class="btn-secondary"><span class="material-symbols-outlined" style="font-size: 1rem;">logout</span> Cerrar sesión</button>
             </div>
         </nav>
         
@@ -36,10 +45,10 @@
                 <h2 id="pageTitle">Dashboard</h2>
                 <div class="header-actions">
                     <button id="themeToggle" class="theme-toggle" type="button" title="Cambiar tema" aria-label="Cambiar tema" aria-pressed="false">
-                        <span class="icon-sun" aria-hidden="true">☀️</span>
-                        <span class="icon-moon" aria-hidden="true">🌙</span>
+                        <span class="icon-sun" aria-hidden="true"><span class="material-symbols-outlined">light_mode</span></span>
+                        <span class="icon-moon" aria-hidden="true"><span class="material-symbols-outlined">dark_mode</span></span>
                     </button>
-                    <button id="refreshBtn" class="btn-icon" type="button" title="Actualizar" aria-label="Actualizar dashboard">↻</button>
+                    <button id="refreshBtn" class="btn-icon" type="button" title="Actualizar" aria-label="Actualizar dashboard"><span class="material-symbols-outlined">refresh</span></button>
                 </div>
             </header>
 
@@ -48,28 +57,28 @@
                 <!-- Stats Cards -->
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <div class="stat-icon total">📦</div>
+                        <div class="stat-icon total"><span class="material-symbols-outlined">inventory_2</span></div>
                         <div class="stat-info">
                             <h3>Total Instalaciones</h3>
                             <p id="totalInstallations">-</p>
                         </div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-icon success">✅</div>
+                        <div class="stat-icon success"><span class="material-symbols-outlined">check_circle</span></div>
                         <div class="stat-info">
                             <h3>Tasa de Éxito</h3>
                             <p id="successRate">-</p>
                         </div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-icon time">⏱️</div>
+                        <div class="stat-icon time"><span class="material-symbols-outlined">timer</span></div>
                         <div class="stat-info">
                             <h3>Tiempo Promedio</h3>
                             <p id="avgTime">-</p>
                         </div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-icon clients">👥</div>
+                        <div class="stat-icon clients"><span class="material-symbols-outlined">group</span></div>
                         <div class="stat-info">
                             <h3>Clientes Únicos</h3>
                             <p id="uniqueClients">-</p>
@@ -80,22 +89,22 @@
                 <!-- Charts Grid -->
                 <div class="charts-grid">
                     <div class="chart-card">
-                        <h3>📊 Tasa de Éxito</h3>
+                        <h3><span class="material-symbols-outlined">pie_chart</span> Tasa de Éxito</h3>
                         <canvas id="successChart"></canvas>
                     </div>
                     <div class="chart-card">
-                        <h3>🏷️ Instalaciones por Marca</h3>
+                        <h3><span class="material-symbols-outlined">sell</span> Instalaciones por Marca</h3>
                         <canvas id="brandChart"></canvas>
                     </div>
                     <div class="chart-card wide">
-                        <h3>📈 Tendencia de Instalaciones (Últimos 7 días)</h3>
+                        <h3><span class="material-symbols-outlined">trending_up</span> Tendencia de Instalaciones (Últimos 7 días)</h3>
                         <canvas id="trendChart"></canvas>
                     </div>
                 </div>
                 
                 <!-- Recent Activity -->
                 <div class="recent-section">
-                    <h3>🕐 Instalaciones Recientes</h3>
+                    <h3><span class="material-symbols-outlined">schedule</span> Instalaciones Recientes</h3>
                     <div id="recentInstallations" class="table-container">
                         <p class="loading">Cargando...</p>
                     </div>
@@ -106,8 +115,8 @@
                 <div class="filters">
                     <!-- Real-time search -->
                     <div class="search-wrapper">
-                        <input type="text" id="searchInput" class="search-input" placeholder="🔍 Búsqueda en tiempo real..." autocomplete="off">
-                        <span class="search-icon">🔍</span>
+                        <input type="text" id="searchInput" class="search-input" placeholder="Búsqueda en tiempo real..." autocomplete="off">
+                        <span class="search-icon"><span class="material-symbols-outlined" style="font-size: 1.125rem;">search</span></span>
                     </div>
                     
                     <!-- Filter row -->
@@ -132,9 +141,9 @@
                     
                     <!-- Action buttons -->
                     <div class="filter-actions">
-                        <button id="clearFilters" class="btn-secondary is-hidden">🗑️ Limpiar Filtros</button>
-                        <button id="applyFilters" class="btn-primary">🔄 Aplicar</button>
-                        <button id="exportBtn" class="btn-secondary">📥 Exportar</button>
+                        <button id="clearFilters" class="btn-secondary is-hidden"><span class="material-symbols-outlined" style="font-size: 1rem;">delete</span> Limpiar Filtros</button>
+                        <button id="applyFilters" class="btn-primary"><span class="material-symbols-outlined" style="font-size: 1rem;">filter_alt</span> Aplicar</button>
+                        <button id="exportBtn" class="btn-secondary"><span class="material-symbols-outlined" style="font-size: 1rem;">download</span> Exportar</button>
                     </div>
                 </div>
                 
@@ -165,7 +174,7 @@
                         <option value="create_incident">⚠️ Crear incidencia</option>
                         <option value="create_installation">💻 Crear instalación</option>
                     </select>
-                    <button id="refreshAudit" class="btn-secondary">🔄 Actualizar</button>
+                    <button id="refreshAudit" class="btn-secondary"><span class="material-symbols-outlined" style="font-size: 1rem;">refresh</span> Actualizar</button>
                 </div>
                 <div id="auditLogs" class="table-container">
                     <p class="loading">Cargando logs...</p>
@@ -177,7 +186,7 @@
     <div id="loginModal" class="modal">
         <div class="modal-content">
             <div class="login-header">
-                <h2>🔐 Driver Manager</h2>
+                <h2><span class="material-symbols-outlined" style="font-size: 1.5rem; vertical-align: middle;">lock</span> Driver Manager</h2>
                 <p>Iniciar Sesión</p>
             </div>
             <form id="loginForm">
@@ -202,7 +211,7 @@
         </div>
     </div>
     
-    <script src="/dashboard.js?v=c15ac6426f" defer></script>
+    <script src="/dashboard.js?v=c3e3bd3367" defer></script>
     <script src="/dashboard-pwa.js?v=f2230f4810" defer></script>
 </body>
 </html>

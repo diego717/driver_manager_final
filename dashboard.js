@@ -27,19 +27,19 @@ function isChartAvailable() {
     return typeof Chart !== 'undefined' && Chart && Chart.defaults;
 }
 
-function applyChartDefaults(theme = 'dark') {
+function applyChartDefaults(theme = 'light') {
     if (!isChartAvailable()) return;
-    if (theme === 'light') {
-        Chart.defaults.color = '#475569';
-        Chart.defaults.borderColor = '#cbd5e1';
+    if (theme === 'dark') {
+        Chart.defaults.color = '#8b93a5';
+        Chart.defaults.borderColor = '#2e3240';
     } else {
-        Chart.defaults.color = '#94a3b8';
-        Chart.defaults.borderColor = '#334155';
+        Chart.defaults.color = '#5f6b7a';
+        Chart.defaults.borderColor = '#dce1e8';
     }
     Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
 }
 
-applyChartDefaults('dark');
+applyChartDefaults('light');
 
 const api = {
     async request(endpoint, options = {}) {
@@ -1165,6 +1165,9 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         
         document.getElementById('username').textContent = result.user.username;
         document.getElementById('userRole').textContent = result.user.role;
+        const initial = (result.user.username || 'U').charAt(0).toUpperCase();
+        const avatarEl = document.getElementById('userInitial');
+        if (avatarEl) avatarEl.textContent = initial;
         
         hideLogin();
         loadDashboard();
@@ -1215,10 +1218,10 @@ document.querySelectorAll('.nav-links a').forEach(link => {
         document.getElementById(section + 'Section').classList.add('active');
         
         const titles = {
-            dashboard: '📈 Dashboard',
-            installations: '💻 Instalaciones',
-            incidents: '⚠️ Incidencias',
-            audit: '📋 Auditoría'
+            dashboard: 'Dashboard',
+            installations: 'Instalaciones',
+            incidents: 'Incidencias',
+            audit: 'Auditoría'
         };
         document.getElementById('pageTitle').textContent = titles[section] || 'Dashboard';
         
@@ -1545,6 +1548,9 @@ async function init() {
         currentUser = me;
         document.getElementById('username').textContent = me.username || 'Usuario';
         document.getElementById('userRole').textContent = me.role || 'admin';
+        const initial = (me.username || 'U').charAt(0).toUpperCase();
+        const avatarEl = document.getElementById('userInitial');
+        if (avatarEl) avatarEl.textContent = initial;
         loadDashboard();
 
         // Initialize SSE connection for real-time updates
@@ -1578,25 +1584,25 @@ async function init() {
 
 // Theme Management Functions
 function getCurrentTheme() {
-    // Check localStorage first, then system preference, default to dark
+    // Check localStorage first, then system preference, default to light
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme) {
         return savedTheme;
     }
     
     // Check system preference
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
-        return 'light';
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        return 'dark';
     }
     
-    return 'dark';
+    return 'light';
 }
 
 function setTheme(theme) {
     const html = document.documentElement;
     
-    if (theme === 'light') {
-        html.setAttribute('data-theme', 'light');
+    if (theme === 'dark') {
+        html.setAttribute('data-theme', 'dark');
     } else {
         html.removeAttribute('data-theme');
     }
