@@ -1,21 +1,17 @@
 import axios, { AxiosError, type AxiosRequestConfig } from "axios";
 
-import {
-  buildAuthHeaders,
-  getAuthMaterial,
-  sha256HexFromString,
-} from "./auth";
+import { sha256HexFromString } from "./auth";
 import {
   clearStoredWebSession,
   getStoredApiBaseUrl,
-  getStoredApiSecret,
-  getStoredApiToken,
   getStoredWebAccessExpiresAt,
   getStoredWebAccessToken,
 } from "../storage/secure";
 import { resolveWebSession } from "./webSession";
 
 const envBaseURL = normalizeApiBaseUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? "");
+const allowHttpApiBaseUrlInDebug =
+  process.env.EXPO_PUBLIC_ALLOW_HTTP_API_BASE_URL === "true";
 
 if (!envBaseURL) {
   // Keep an explicit warning for dev builds; requests will fail if baseURL stays empty.
@@ -43,6 +39,48 @@ export function normalizeApiBaseUrl(value: string): string {
   }
 }
 
+function isLocalDebugHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "10.0.2.2";
+}
+
+export function assertSecureApiBaseUrl(
+  value: string,
+  options?: {
+    isDevRuntime?: boolean;
+    allowHttpInDebug?: boolean;
+  },
+): string {
+  if (!value) return "";
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(
+      "API Base URL invalida. Configura una URL completa (https://...) en Configuracion y acceso.",
+    );
+  }
+
+  const isDevRuntime = options?.isDevRuntime ?? (typeof __DEV__ !== "undefined" && __DEV__);
+  const allowHttpInDebug = options?.allowHttpInDebug ?? allowHttpApiBaseUrlInDebug;
+  const canUseLocalHttp =
+    isDevRuntime && allowHttpInDebug && isLocalDebugHostname(parsed.hostname);
+
+  if (parsed.protocol === "http:" && !canUseLocalHttp) {
+    throw new Error(
+      "API Base URL insegura: se requiere https en release. Para debug local usa localhost/127.0.0.1/10.0.2.2 y habilita EXPO_PUBLIC_ALLOW_HTTP_API_BASE_URL=true solo en desarrollo.",
+    );
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(
+      "API Base URL invalida: solo se permiten esquemas https:// (o http:// local en debug).",
+    );
+  }
+
+  return value;
+}
+
 function normalizePath(path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) {
     return new URL(path).pathname;
@@ -67,23 +105,9 @@ async function resolveValidWebAccessToken(): Promise<string | null> {
 async function resolveApiBaseUrl(): Promise<string> {
   const storedBaseUrl = await getStoredApiBaseUrl();
   if (storedBaseUrl) {
-    return normalizeApiBaseUrl(storedBaseUrl);
+    return assertSecureApiBaseUrl(normalizeApiBaseUrl(storedBaseUrl));
   }
-  return envBaseURL;
-}
-
-async function resolveAuth() {
-  const envAuth = getAuthMaterial();
-  if (envAuth.token && envAuth.secret) return envAuth;
-
-  const [storedToken, storedSecret] = await Promise.all([
-    getStoredApiToken(),
-    getStoredApiSecret(),
-  ]);
-  return {
-    token: storedToken || envAuth.token,
-    secret: storedSecret || envAuth.secret,
-  };
+  return assertSecureApiBaseUrl(envBaseURL);
 }
 
 export async function resolveRequestAuth({
@@ -94,32 +118,24 @@ export async function resolveRequestAuth({
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   bodyHash: string;
-}): Promise<{ path: string; headers: Record<string, string>; mode: "hmac" | "web" }> {
+}): Promise<{ path: string; headers: Record<string, string>; mode: "web" }> {
+  void method;
+  void bodyHash;
   const normalizedPath = normalizePath(path);
   const webAccessToken = await resolveValidWebAccessToken();
-  if (webAccessToken) {
-    return {
-      path: ensureWebPath(normalizedPath),
-      headers: {
-        Authorization: `Bearer ${webAccessToken}`,
-      },
-      mode: "web",
-    };
+  if (!webAccessToken) {
+    throw new Error(
+      "Sesion web requerida. Inicia sesion para continuar (Bearer) y vuelve a intentar.",
+    );
   }
 
-  const auth = await resolveAuth();
-  const authHeaders = buildAuthHeaders({
-    method,
-    path: normalizedPath,
-    bodyHash,
-    token: auth.token,
-    secret: auth.secret,
-  });
-
   return {
-    path: normalizedPath,
-    headers: authHeaders,
-    mode: "hmac",
+    path: ensureWebPath(normalizedPath),
+    headers: {
+      Authorization: `Bearer ${webAccessToken}`,
+      "X-Client-Platform": "mobile",
+    },
+    mode: "web",
   };
 }
 

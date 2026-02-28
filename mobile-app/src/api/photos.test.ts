@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const fileSystemMock = vi.hoisted(() => ({
   readAsStringAsync: vi.fn(),
+  getInfoAsync: vi.fn(),
   EncodingType: { Base64: "base64" },
 }));
 
@@ -25,11 +26,10 @@ describe("photos api", () => {
     vi.clearAllMocks();
     clientMock.getResolvedApiBaseUrl.mockResolvedValue("https://worker.example");
     clientMock.resolveRequestAuth.mockResolvedValue({
-      path: "/incidents/11/photos",
+      path: "/web/incidents/11/photos",
       headers: {
-        "X-API-Token": "token",
-        "X-Request-Timestamp": "1",
-        "X-Request-Signature": "sig",
+        Authorization: "Bearer web-token",
+        "X-Client-Platform": "mobile",
       },
     });
     vi.stubGlobal("fetch", vi.fn());
@@ -71,7 +71,7 @@ describe("photos api", () => {
     expect(response.photo.id).toBe(21);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, requestInit] = fetchMock.mock.calls[0];
-    expect(url).toBe("https://worker.example/incidents/11/photos");
+    expect(url).toBe("https://worker.example/web/incidents/11/photos");
     expect(requestInit?.method).toBe("POST");
     expect((requestInit?.headers as Record<string, string>)["Content-Type"]).toBe("image/jpeg");
     expect((requestInit?.headers as Record<string, string>)["X-File-Name"]).toBe("photo.jpg");
@@ -115,7 +115,7 @@ describe("photos api", () => {
 
   it("throws explicit HTTP error when photo download fails", async () => {
     clientMock.resolveRequestAuth.mockResolvedValueOnce({
-      path: "/photos/99",
+      path: "/web/photos/99",
       headers: {},
     });
 

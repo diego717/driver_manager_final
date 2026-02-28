@@ -2691,3 +2691,38 @@ test("accepts signed requests when auth secrets are configured", async () => {
   assert.equal(response.status, 200);
   assert.deepEqual(body, [{ id: 1, driver_brand: "Zebra", status: "success" }]);
 });
+
+
+test("rejects signed auth for mobile platform header", async () => {
+  const db = createMockDB({
+    installations: [{ id: 1, driver_brand: "Zebra", status: "success" }],
+  });
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = signRequest({
+    method: "GET",
+    path: "/installations",
+    timestamp,
+    bodyBuffer: Buffer.alloc(0),
+    secret: "secret-abc",
+  });
+
+  const request = new Request("https://worker.example/installations", {
+    method: "GET",
+    headers: {
+      "X-API-Token": "token-123",
+      "X-Request-Timestamp": timestamp,
+      "X-Request-Signature": signature,
+      "X-Client-Platform": "mobile",
+    },
+  });
+
+  const response = await workerFetch(request, {
+    DB: db,
+    API_TOKEN: "token-123",
+    API_SECRET: "secret-abc",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 410);
+  assert.match(body.error.message, /HMAC deshabilitada para clientes moviles/i);
+});
