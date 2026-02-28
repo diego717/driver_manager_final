@@ -108,7 +108,7 @@ function buildCorsPolicy(isWebRoute, routeParts) {
   } else if (["records", "devices", "audit-logs"].includes(first)) {
     methods.add(first === "audit-logs" ? "GET" : "POST");
     methods.add("POST");
-  } else if (first === "statistics" || first === "photos") {
+  } else if (first === "statistics" || first === "photos" || first === "lookup") {
     methods.add("GET");
   } else if (first === "incidents") {
     methods.add("GET");
@@ -2180,6 +2180,7 @@ export default {
             installations: "/installations",
             web_installations: "/web/installations",
             web_devices: "/web/devices",
+            web_lookup: "/web/lookup?type=asset&code=EQ-123",
             audit_logs: "/audit-logs",
             web_audit_logs: "/web/audit-logs",
           },
@@ -5347,6 +5348,85 @@ console.log('[SW] Service Worker loaded');`;
         webSession = await verifyWebAccessToken(request, env);
       } else {
         await verifyAuth(request, env, url);
+      }
+
+
+      if (routeParts.length === 1 && routeParts[0] === "lookup" && request.method === "GET") {
+        const requestedType = normalizeOptionalString(url.searchParams.get("type"), "").toLowerCase();
+        const code = normalizeOptionalString(url.searchParams.get("code"), "").trim();
+
+        if (!code) {
+          throw new HttpError(400, "Parametro 'code' es obligatorio.");
+        }
+
+        if (requestedType && requestedType !== "installation" && requestedType !== "asset") {
+          throw new HttpError(400, "Parametro 'type' invalido. Usa installation o asset.");
+        }
+
+        const normalizedCode = code.toLowerCase();
+
+        if (requestedType === "installation") {
+          const asNumber = Number.parseInt(code, 10);
+          if (!Number.isInteger(asNumber) || asNumber <= 0) {
+            throw new HttpError(400, "Codigo de instalacion invalido.");
+          }
+
+          const { results } = await env.DB.prepare(`
+            SELECT id, timestamp, status, client_name, driver_brand, driver_version
+            FROM installations
+            WHERE id = ?
+            LIMIT 1
+          `)
+            .bind(asNumber)
+            .all();
+
+          if (!results?.[0]) {
+            throw new HttpError(404, "Instalacion no encontrada.");
+          }
+
+          return jsonResponse(request, env, corsPolicy, {
+            success: true,
+            match: {
+              type: "installation",
+              installation_id: results[0].id,
+            },
+          });
+        }
+
+        const wildcard = `%${code}%`;
+        const { results: installationMatches } = await env.DB.prepare(`
+          SELECT id
+          FROM installations
+          WHERE LOWER(client_name) = ?
+             OR LOWER(driver_description) = ?
+             OR LOWER(notes) = ?
+             OR client_name LIKE ?
+             OR driver_description LIKE ?
+             OR notes LIKE ?
+          ORDER BY id DESC
+          LIMIT 1
+        `)
+          .bind(
+            normalizedCode,
+            normalizedCode,
+            normalizedCode,
+            wildcard,
+            wildcard,
+            wildcard,
+          )
+          .all();
+
+        const installationId = installationMatches?.[0]?.id || null;
+
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          match: {
+            type: "asset",
+            asset_id: code,
+            external_code: code,
+            installation_id: installationId,
+          },
+        });
       }
 
       if (routeParts.length === 1 && routeParts[0] === "installations") {

@@ -87,6 +87,7 @@ export default function UploadIncidentPhotoScreen() {
   const params = useLocalSearchParams<{
     incidentId?: string | string[];
     installationId?: string | string[];
+    assetId?: string | string[];
   }>();
 
   const initialIncidentId = useMemo(
@@ -96,6 +97,11 @@ export default function UploadIncidentPhotoScreen() {
   const installationId = useMemo(
     () => normalizeParam(params.installationId),
     [params.installationId],
+  );
+
+  const assetId = useMemo(
+    () => normalizeParam(params.assetId),
+    [params.assetId],
   );
 
   const [incidentId, setIncidentId] = useState(initialIncidentId || "");
@@ -402,6 +408,9 @@ export default function UploadIncidentPhotoScreen() {
       {installationId ? (
         <Text style={[styles.subtitle, { color: palette.textSecondary }]}>Instalacion #{installationId}</Text>
       ) : null}
+      {assetId ? (
+        <Text style={[styles.subtitle, { color: palette.textSecondary }]}>Equipo: {assetId}</Text>
+      ) : null}
 
       <Text style={[styles.label, { color: palette.label }]}>Incident ID</Text>
       <TextInput
@@ -420,6 +429,19 @@ export default function UploadIncidentPhotoScreen() {
         placeholderTextColor={palette.placeholder}
         accessibilityLabel="ID de incidencia para subir evidencia"
       />
+
+      <TouchableOpacity
+        style={[
+          styles.secondaryButton,
+          { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
+        ]}
+        onPress={() => router.push("/scan" as never)}
+        disabled={uploading || processingImage}
+        accessibilityRole="button"
+        accessibilityLabel="Escanear codigo QR o barras"
+      >
+        <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Escanear codigo</Text>
+      </TouchableOpacity>
 
       <View style={styles.row}>
         <TouchableOpacity
