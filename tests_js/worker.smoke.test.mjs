@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 
 import worker from "../worker.js";
+import { createDashboardAssetsBinding } from "./helpers/assets.mock.mjs";
 
 const DEFAULT_API_TOKEN = "token-123";
 const DEFAULT_API_SECRET = "secret-abc";
@@ -86,6 +87,7 @@ async function workerFetch(request, env = {}) {
   const mergedEnv = {
     API_TOKEN: DEFAULT_API_TOKEN,
     API_SECRET: DEFAULT_API_SECRET,
+    ASSETS: createDashboardAssetsBinding(),
     ...env,
   };
 

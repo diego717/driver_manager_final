@@ -27,6 +27,7 @@ import {
 } from "@/src/services/incident-evidence";
 import { getAppPalette } from "@/src/theme/design-tokens";
 import { useThemePreference } from "@/src/theme/theme-preference";
+import { contentTypeFromFileName } from "@/src/utils/validation";
 
 type WizardStepKey = "checklist" | "note" | "photos" | "confirm";
 type CaptureStatus = "pending" | "confirming" | "confirmed";
@@ -74,19 +75,45 @@ const MAX_IMAGE_DIMENSION = 1920;
 const MAX_SIZE_INFLATION_RATIO = 1.25;
 const COMPRESS_QUALITIES = [0.82, 0.72, 0.62, 0.52, 0.42, 0.34];
 const MIN_TOUCH_TARGET_SIZE = 44;
+const ALLOWED_UPLOAD_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 function normalizeParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
   return value ?? "";
 }
 
-function toJpegFileName(originalName: string | null | undefined, installationId: string): string {
-  const fallback = `incident_${installationId || "0"}_${Date.now()}.jpg`;
+function extensionFromContentType(contentType: string): string {
+  if (contentType === "image/png") return "png";
+  if (contentType === "image/webp") return "webp";
+  return "jpg";
+}
+
+function normalizeAssetContentType(asset: ImagePicker.ImagePickerAsset): string {
+  const rawMimeType = (asset.mimeType || "").split(";")[0].trim().toLowerCase();
+  if (rawMimeType === "image/jpg") return "image/jpeg";
+  if (rawMimeType) return rawMimeType;
+
+  if (asset.fileName?.trim()) {
+    const byFileName = contentTypeFromFileName(asset.fileName.trim()).toLowerCase();
+    if (byFileName === "image/jpg") return "image/jpeg";
+    return byFileName;
+  }
+
+  return "image/jpeg";
+}
+
+function toOutputFileName(
+  originalName: string | null | undefined,
+  installationId: string,
+  contentType: string,
+): string {
+  const extension = extensionFromContentType(contentType);
+  const fallback = `incident_${installationId || "0"}_${Date.now()}.${extension}`;
   if (!originalName || !originalName.trim()) return fallback;
   const sanitized = originalName.trim().replace(/[^a-zA-Z0-9._-]/g, "_");
   const base = sanitized.replace(/\.[a-zA-Z0-9]+$/, "");
   const finalBase = base || `incident_${installationId || "0"}_${Date.now()}`;
-  return `${finalBase}.jpg`;
+  return `${finalBase}.${extension}`;
 }
 
 async function deleteFileIfExists(uri: string): Promise<void> {
@@ -174,7 +201,10 @@ async function processAssetForUpload(
   const sourceUri = asset.uri;
   const width = asset.width ?? 0;
   const height = asset.height ?? 0;
+  const sourceContentType = normalizeAssetContentType(asset);
+  const mustConvertToJpeg = !ALLOWED_UPLOAD_CONTENT_TYPES.has(sourceContentType);
   const generatedUris: string[] = [];
+  let convertedToJpeg = false;
 
   try {
     let workingUri = sourceUri;
@@ -190,6 +220,17 @@ async function processAssetForUpload(
       );
       if (resized.uri !== sourceUri) generatedUris.push(resized.uri);
       workingUri = resized.uri;
+      convertedToJpeg = true;
+    } else if (mustConvertToJpeg) {
+      onProgress("Convirtiendo formato de imagen...");
+      const converted = await ImageManipulator.manipulateAsync(
+        sourceUri,
+        [],
+        { compress: 1, format: ImageManipulator.SaveFormat.JPEG },
+      );
+      if (converted.uri !== sourceUri) generatedUris.push(converted.uri);
+      workingUri = converted.uri;
+      convertedToJpeg = true;
     }
 
     let bestUri = workingUri;
@@ -222,6 +263,7 @@ async function processAssetForUpload(
           { compress: quality, format: ImageManipulator.SaveFormat.JPEG },
         );
         if (compressed.uri !== sourceUri) generatedUris.push(compressed.uri);
+        convertedToJpeg = true;
         const compressedSize = await getFileSizeBytes(compressed.uri);
         if (compressedSize > 0 && (bestSize <= 0 || compressedSize < bestSize)) {
           bestUri = compressed.uri;
@@ -252,8 +294,12 @@ async function processAssetForUpload(
 
     return {
       uri: bestUri,
-      fileName: toJpegFileName(asset.fileName, installationId),
-      contentType: "image/jpeg",
+      fileName: toOutputFileName(
+        asset.fileName,
+        installationId,
+        convertedToJpeg ? "image/jpeg" : sourceContentType,
+      ),
+      contentType: convertedToJpeg ? "image/jpeg" : sourceContentType,
       sizeBytes: bestSize,
       isTemporary,
     };
@@ -337,6 +383,7 @@ export default function UploadIncidentEvidenceWizardScreen() {
   const [checklistItems, setChecklistItems] = useState<ChecklistDraftItem[]>(BASE_CHECKLIST);
   const [note, setNote] = useState("");
   const [severity] = useState<IncidentSeverity>("medium");
+  const [createNewIncident, setCreateNewIncident] = useState(false);
   const [evidences, setEvidences] = useState<EvidenceDraft[]>([]);
   const [processingImage, setProcessingImage] = useState(false);
   const [processingMessage, setProcessingMessage] = useState("");
@@ -520,7 +567,9 @@ export default function UploadIncidentEvidenceWizardScreen() {
 
     const existingRemoteIncidentId = Number.parseInt(incidentIdText, 10);
     const hasExistingIncident =
-      Number.isInteger(existingRemoteIncidentId) && existingRemoteIncidentId > 0;
+      !createNewIncident &&
+      Number.isInteger(existingRemoteIncidentId) &&
+      existingRemoteIncidentId > 0;
 
     try {
       setSaving(true);
@@ -557,18 +606,14 @@ export default function UploadIncidentEvidenceWizardScreen() {
           `/incident/detail?incidentId=${syncResult.remoteIncidentId}&installationId=${parsedInstallationId}` as never,
         );
       } catch (syncError) {
-        const fallbackIncidentId = hasExistingIncident ? existingRemoteIncidentId : null;
+        const syncErrorMessage = extractApiError(syncError);
         notify(
           "Guardado local",
-          `Se guardo localmente para sincronizar despues.\n${extractApiError(syncError)}`,
+          `Se guardo localmente para sincronizar despues.\n${syncErrorMessage}`,
         );
-        if (fallbackIncidentId) {
-          router.replace(
-            `/incident/detail?incidentId=${fallbackIncidentId}&installationId=${parsedInstallationId}` as never,
-          );
-          return;
-        }
-        router.back();
+        setFeedbackMessage(
+          `Sincronizacion pendiente: ${syncErrorMessage}`,
+        );
       }
     } catch (error) {
       notify("Error", extractApiError(error));
@@ -596,9 +641,38 @@ export default function UploadIncidentEvidenceWizardScreen() {
         </View>
       ) : null}
       {incidentIdText ? (
-        <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
-          Incidencia objetivo: #{incidentIdText}
-        </Text>
+        <>
+          <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
+            Incidencia objetivo: #{incidentIdText}
+          </Text>
+          <Text style={[styles.hintText, { color: palette.textMuted }]}>
+            Por defecto se actualiza esta incidencia y se adjuntan evidencias.
+          </Text>
+          <TouchableOpacity
+            style={[
+              styles.modeToggle,
+              {
+                backgroundColor: createNewIncident ? palette.chipSelectedBg : palette.chipBg,
+                borderColor: createNewIncident ? palette.chipSelectedBorder : palette.chipBorder,
+              },
+            ]}
+            onPress={() => setCreateNewIncident((prev) => !prev)}
+            accessibilityRole="switch"
+            accessibilityLabel="Crear una incidencia nueva en lugar de actualizar la incidencia objetivo"
+            accessibilityState={{ checked: createNewIncident }}
+          >
+            <Text
+              style={[
+                styles.modeToggleText,
+                { color: createNewIncident ? palette.chipSelectedText : palette.chipText },
+              ]}
+            >
+              {createNewIncident
+                ? "Modo: crear incidencia nueva"
+                : `Modo: actualizar incidencia #${incidentIdText}`}
+            </Text>
+          </TouchableOpacity>
+        </>
       ) : null}
 
       <Text style={[styles.label, { color: palette.textPrimary }]}>Installation ID</Text>
@@ -775,6 +849,13 @@ export default function UploadIncidentEvidenceWizardScreen() {
           <Text style={[styles.metaText, { color: palette.textSecondary }]}>
             Evidencias confirmadas: {confirmedEvidenceCount}
           </Text>
+          {incidentIdText ? (
+            <Text style={[styles.metaText, { color: palette.textSecondary }]}>
+              {createNewIncident
+                ? "Se creara una incidencia nueva."
+                : `Se actualizara la incidencia #${incidentIdText}.`}
+            </Text>
+          ) : null}
           <Text style={[styles.metaText, { color: palette.textSecondary }]}>
             Cada evidencia se guarda primero localmente y luego se intenta sincronizar.
           </Text>
@@ -858,6 +939,17 @@ const styles = StyleSheet.create({
   },
   section: {
     gap: 10,
+  },
+  modeToggle: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    alignSelf: "flex-start",
+  },
+  modeToggleText: {
+    fontSize: 12,
+    fontWeight: "700",
   },
   sectionTitle: {
     fontSize: 16,

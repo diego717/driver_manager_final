@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 
-const dashboardScript = fs.readFileSync(new URL('../dashboard.js', import.meta.url), 'utf8');
+const dashboardScript = fs.readFileSync(new URL('../public/dashboard.js', import.meta.url), 'utf8');
 
 function createDashboardDom() {
   return new JSDOM(`<!DOCTYPE html><html><head></head><body>

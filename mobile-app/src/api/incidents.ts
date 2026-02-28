@@ -80,6 +80,7 @@ export async function updateIncident(
     method: "PATCH",
     path: `/incidents/${incidentId}`,
     data: payload,
+    preferHmac: true,
   });
 }
 

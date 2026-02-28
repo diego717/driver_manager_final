@@ -90,6 +90,7 @@ describe("incidents api", () => {
         note: "nota actualizada",
         checklist_applied: [{ label: "Driver verificado", checked: true }],
       },
+      preferHmac: true,
     });
   });
 

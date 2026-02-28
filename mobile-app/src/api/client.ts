@@ -90,14 +90,16 @@ export async function resolveRequestAuth({
   method,
   path,
   bodyHash,
+  preferHmac = false,
 }: {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   bodyHash: string;
+  preferHmac?: boolean;
 }): Promise<{ path: string; headers: Record<string, string>; mode: "hmac" | "web" }> {
   const normalizedPath = normalizePath(path);
-  const webAccessToken = await resolveValidWebAccessToken();
-  if (webAccessToken) {
+  const webAccessToken = preferHmac ? null : await resolveValidWebAccessToken();
+  if (webAccessToken && !preferHmac) {
     return {
       path: ensureWebPath(normalizedPath),
       headers: {
@@ -128,11 +130,13 @@ export async function signedJsonRequest<T>({
   path,
   data,
   config,
+  preferHmac = false,
 }: {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   data?: unknown;
   config?: AxiosRequestConfig;
+  preferHmac?: boolean;
 }): Promise<T> {
   const baseURL = await resolveApiBaseUrl();
   if (!baseURL) {
@@ -145,6 +149,7 @@ export async function signedJsonRequest<T>({
     method,
     path,
     bodyHash,
+    preferHmac,
   });
 
   const makeRequest = (requestPath: string, headers: Record<string, string>) =>

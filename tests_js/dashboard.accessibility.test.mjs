@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import { JSDOM } from 'jsdom';
 
 function loadDashboardHtml() {
-  const filePath = path.join(process.cwd(), 'dashboard.html');
+  const filePath = path.join(process.cwd(), 'public', 'dashboard.html');
   const raw = fs.readFileSync(filePath, 'utf-8');
   return raw.replace(/<script\s+src="https:\/\/cdn\.jsdelivr\.net[^>]*><\/script>/i, '');
 }
@@ -44,7 +44,7 @@ function setupDomWithDashboardScript() {
     close() {}
   };
 
-  const scriptPath = path.join(process.cwd(), 'dashboard.js');
+  const scriptPath = path.join(process.cwd(), 'public', 'dashboard.js');
   const scriptContent = fs.readFileSync(scriptPath, 'utf-8');
   const script = new vm.Script(scriptContent, { filename: 'dashboard.js' });
   script.runInContext(context);
