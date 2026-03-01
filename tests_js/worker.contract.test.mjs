@@ -98,8 +98,14 @@ function createMockDB({
   const state = {
     installations: installations.map((row) => ({ ...row })),
     byBrand: byBrand.map((row) => ({ ...row })),
-    incidents: incidents.map((row) => ({ ...row })),
-    incidentPhotos: incidentPhotos.map((row) => ({ ...row })),
+    incidents: incidents.map((row) => ({
+      tenant_id: "default",
+      ...row,
+    })),
+    incidentPhotos: incidentPhotos.map((row) => ({
+      tenant_id: "default",
+      ...row,
+    })),
     auditLogs: auditLogs.map((row) => ({ ...row })),
     webUsers: webUsers.map((row) => ({
       password_hash_type: "pbkdf2_sha256",
@@ -292,6 +298,23 @@ function createMockDB({
             return { results: row ? [row] : [] };
           }
 
+          if (normalized.startsWith("SELECT id FROM installations WHERE id = ? AND tenant_id = ? LIMIT 1")) {
+            const id = Number(call.bound?.[0]);
+            const tenantId = String(call.bound?.[1] ?? "default");
+            const row = state.installations.find(
+              (item) =>
+                Number(item.id) === id &&
+                String(item.tenant_id ?? "default") === tenantId,
+            );
+            return { results: row ? [{ id: row.id }] : [] };
+          }
+
+          if (normalized.startsWith("SELECT id FROM installations WHERE id = ? LIMIT 1")) {
+            const id = Number(call.bound?.[0]);
+            const row = state.installations.find((item) => Number(item.id) === id);
+            return { results: row ? [{ id: row.id }] : [] };
+          }
+
           if (
             normalized.startsWith(
               "SELECT id, installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at FROM incidents WHERE installation_id = ?",
@@ -316,6 +339,127 @@ function createMockDB({
                 .map((item) => Number(item.id)),
             );
             const rows = state.incidentPhotos.filter((item) => incidentIds.has(Number(item.incident_id)));
+            return { results: rows };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT p.r2_key FROM incident_photos p INNER JOIN incidents i ON i.id = p.incident_id WHERE i.installation_id = ? AND i.tenant_id = ?",
+            )
+          ) {
+            const installationId = Number(call.bound?.[0]);
+            const tenantId = String(call.bound?.[1] ?? "default");
+            const incidentIds = new Set(
+              state.incidents
+                .filter(
+                  (item) =>
+                    Number(item.installation_id) === installationId &&
+                    String(item.tenant_id ?? "default") === tenantId,
+                )
+                .map((item) => Number(item.id)),
+            );
+            const rows = state.incidentPhotos
+              .filter((item) => incidentIds.has(Number(item.incident_id)))
+              .map((item) => ({ r2_key: item.r2_key }));
+            return { results: rows };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT p.r2_key FROM incident_photos p INNER JOIN incidents i ON i.id = p.incident_id WHERE i.installation_id = ?",
+            )
+          ) {
+            const installationId = Number(call.bound?.[0]);
+            const incidentIds = new Set(
+              state.incidents
+                .filter((item) => Number(item.installation_id) === installationId)
+                .map((item) => Number(item.id)),
+            );
+            const rows = state.incidentPhotos
+              .filter((item) => incidentIds.has(Number(item.incident_id)))
+              .map((item) => ({ r2_key: item.r2_key }));
+            return { results: rows };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT p.id, p.r2_key FROM incident_photos p LEFT JOIN incidents i ON i.id = p.incident_id AND i.tenant_id = p.tenant_id LEFT JOIN installations ins ON ins.id = i.installation_id AND ins.tenant_id = i.tenant_id WHERE p.tenant_id = ? AND (i.id IS NULL OR ins.id IS NULL)",
+            )
+          ) {
+            const tenantId = String(call.bound?.[0] ?? "default");
+            const rows = state.incidentPhotos
+              .filter((photo) => String(photo.tenant_id ?? "default") === tenantId)
+              .filter((photo) => {
+                const incident = state.incidents.find((item) => Number(item.id) === Number(photo.incident_id));
+                if (!incident || String(incident.tenant_id ?? "default") !== tenantId) return true;
+                const installation = state.installations.find(
+                  (item) =>
+                    Number(item.id) === Number(incident.installation_id) &&
+                    String(item.tenant_id ?? "default") === tenantId,
+                );
+                return !installation;
+              })
+              .map((photo) => ({
+                id: photo.id,
+                r2_key: photo.r2_key,
+              }));
+            return { results: rows };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT p.id, p.r2_key FROM incident_photos p LEFT JOIN incidents i ON i.id = p.incident_id LEFT JOIN installations ins ON ins.id = i.installation_id WHERE i.id IS NULL OR ins.id IS NULL",
+            )
+          ) {
+            const rows = state.incidentPhotos
+              .filter((photo) => {
+                const incident = state.incidents.find((item) => Number(item.id) === Number(photo.incident_id));
+                if (!incident) return true;
+                const installation = state.installations.find(
+                  (item) => Number(item.id) === Number(incident.installation_id),
+                );
+                return !installation;
+              })
+              .map((photo) => ({
+                id: photo.id,
+                r2_key: photo.r2_key,
+              }));
+            return { results: rows };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT i.id FROM incidents i LEFT JOIN installations ins ON ins.id = i.installation_id AND ins.tenant_id = i.tenant_id WHERE i.tenant_id = ? AND ins.id IS NULL",
+            )
+          ) {
+            const tenantId = String(call.bound?.[0] ?? "default");
+            const rows = state.incidents
+              .filter((incident) => String(incident.tenant_id ?? "default") === tenantId)
+              .filter((incident) => {
+                const installation = state.installations.find(
+                  (item) =>
+                    Number(item.id) === Number(incident.installation_id) &&
+                    String(item.tenant_id ?? "default") === tenantId,
+                );
+                return !installation;
+              })
+              .map((incident) => ({ id: incident.id }));
+            return { results: rows };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT i.id FROM incidents i LEFT JOIN installations ins ON ins.id = i.installation_id WHERE ins.id IS NULL",
+            )
+          ) {
+            const rows = state.incidents
+              .filter((incident) => {
+                const installation = state.installations.find(
+                  (item) => Number(item.id) === Number(incident.installation_id),
+                );
+                return !installation;
+              })
+              .map((incident) => ({ id: incident.id }));
             return { results: rows };
           }
 
@@ -508,6 +652,114 @@ function createMockDB({
               row.notes = notes;
               row.installation_time_seconds = installationTimeSeconds;
             }
+            return { success: true };
+          }
+
+          if (
+            normalized ===
+            "DELETE FROM incident_photos WHERE incident_id IN ( SELECT id FROM incidents WHERE installation_id = ? AND tenant_id = ? )"
+          ) {
+            const [installationId, tenantId] = call.bound;
+            const incidentIds = new Set(
+              state.incidents
+                .filter(
+                  (item) =>
+                    String(item.installation_id) === String(installationId) &&
+                    String(item.tenant_id ?? "default") === String(tenantId ?? "default"),
+                )
+                .map((item) => Number(item.id)),
+            );
+            state.incidentPhotos = state.incidentPhotos.filter(
+              (item) => !incidentIds.has(Number(item.incident_id)),
+            );
+            return { success: true };
+          }
+
+          if (
+            normalized ===
+            "DELETE FROM incident_photos WHERE incident_id IN ( SELECT id FROM incidents WHERE installation_id = ? )"
+          ) {
+            const [installationId] = call.bound;
+            const incidentIds = new Set(
+              state.incidents
+                .filter((item) => String(item.installation_id) === String(installationId))
+                .map((item) => Number(item.id)),
+            );
+            state.incidentPhotos = state.incidentPhotos.filter(
+              (item) => !incidentIds.has(Number(item.incident_id)),
+            );
+            return { success: true };
+          }
+
+          if (normalized === "DELETE FROM incidents WHERE installation_id = ? AND tenant_id = ?") {
+            const [installationId, tenantId] = call.bound;
+            state.incidents = state.incidents.filter(
+              (item) =>
+                !(
+                  String(item.installation_id) === String(installationId) &&
+                  String(item.tenant_id ?? "default") === String(tenantId ?? "default")
+                ),
+            );
+            return { success: true };
+          }
+
+          if (normalized === "DELETE FROM incidents WHERE installation_id = ?") {
+            const [installationId] = call.bound;
+            state.incidents = state.incidents.filter(
+              (item) => String(item.installation_id) !== String(installationId),
+            );
+            return { success: true };
+          }
+
+          if (normalized === "DELETE FROM incident_photos WHERE id = ? AND tenant_id = ?") {
+            const [photoId, tenantId] = call.bound;
+            state.incidentPhotos = state.incidentPhotos.filter(
+              (item) =>
+                !(
+                  String(item.id) === String(photoId) &&
+                  String(item.tenant_id ?? "default") === String(tenantId ?? "default")
+                ),
+            );
+            return { success: true };
+          }
+
+          if (normalized === "DELETE FROM incident_photos WHERE id = ?") {
+            const [photoId] = call.bound;
+            state.incidentPhotos = state.incidentPhotos.filter(
+              (item) => String(item.id) !== String(photoId),
+            );
+            return { success: true };
+          }
+
+          if (normalized === "DELETE FROM incidents WHERE id = ? AND tenant_id = ?") {
+            const [incidentId, tenantId] = call.bound;
+            state.incidents = state.incidents.filter(
+              (item) =>
+                !(
+                  String(item.id) === String(incidentId) &&
+                  String(item.tenant_id ?? "default") === String(tenantId ?? "default")
+                ),
+            );
+            return { success: true };
+          }
+
+          if (normalized === "DELETE FROM incidents WHERE id = ?") {
+            const [incidentId] = call.bound;
+            state.incidents = state.incidents.filter(
+              (item) => String(item.id) !== String(incidentId),
+            );
+            return { success: true };
+          }
+
+          if (normalized === "DELETE FROM installations WHERE id = ? AND tenant_id = ?") {
+            const [id, tenantId] = call.bound;
+            state.installations = state.installations.filter(
+              (item) =>
+                !(
+                  String(item.id) === String(id) &&
+                  String(item.tenant_id ?? "default") === String(tenantId ?? "default")
+                ),
+            );
             return { success: true };
           }
 
@@ -1085,20 +1337,163 @@ test("PUT /installations/:id with missing fields binds null values", async () =>
 });
 
 test("DELETE /installations/:id deletes record and returns message", async () => {
-  const db = createMockDB();
+  const db = createMockDB({
+    installations: [{ id: 10, tenant_id: "default" }],
+    incidents: [
+      { id: 501, installation_id: 10, tenant_id: "default" },
+      { id: 777, installation_id: 55, tenant_id: "default" },
+    ],
+    incidentPhotos: [
+      { id: 900, incident_id: 501, r2_key: "incidents/10/501/photo-a.jpg" },
+      { id: 901, incident_id: 777, r2_key: "incidents/55/777/photo-b.jpg" },
+    ],
+  });
+  const deletedR2Keys = [];
+  const bucket = {
+    async delete(key) {
+      deletedR2Keys.push(String(key));
+    },
+  };
   const request = new Request("https://worker.example/installations/10", {
     method: "DELETE",
   });
 
-  const response = await workerFetch(request, { DB: db });
+  const response = await workerFetch(request, { DB: db, INCIDENTS_BUCKET: bucket });
   const body = await response.json();
 
   assert.equal(response.status, 200);
   assert.equal(body.message, "Registro 10 eliminado.");
 
-  const deleteCall = db.calls.find((c) => c.sql === "DELETE FROM installations WHERE id = ?");
-  assert.ok(deleteCall);
-  assert.deepEqual(deleteCall.bound, ["10"]);
+  const deletePhotosCall = db.calls.find(
+    (c) =>
+      c.sql ===
+      "DELETE FROM incident_photos WHERE incident_id IN ( SELECT id FROM incidents WHERE installation_id = ? AND tenant_id = ? )",
+  );
+  assert.ok(deletePhotosCall);
+  assert.deepEqual(deletePhotosCall.bound, [10, "default"]);
+
+  const deleteIncidentsCall = db.calls.find(
+    (c) => c.sql === "DELETE FROM incidents WHERE installation_id = ? AND tenant_id = ?",
+  );
+  assert.ok(deleteIncidentsCall);
+  assert.deepEqual(deleteIncidentsCall.bound, [10, "default"]);
+
+  const deleteInstallationCall = db.calls.find(
+    (c) => c.sql === "DELETE FROM installations WHERE id = ? AND tenant_id = ?",
+  );
+  assert.ok(deleteInstallationCall);
+  assert.deepEqual(deleteInstallationCall.bound, [10, "default"]);
+
+  assert.deepEqual(deletedR2Keys, ["incidents/10/501/photo-a.jpg"]);
+  assert.equal(db.state.installations.some((row) => Number(row.id) === 10), false);
+  assert.equal(db.state.incidents.some((row) => Number(row.installation_id) === 10), false);
+  assert.equal(db.state.incidentPhotos.some((row) => Number(row.incident_id) === 501), false);
+  assert.equal(db.state.incidentPhotos.some((row) => Number(row.id) === 901), true);
+});
+
+test("POST /maintenance/cleanup-orphans deletes orphan incidents/photos and R2 objects for tenant", async () => {
+  const db = createMockDB({
+    installations: [
+      { id: 1, tenant_id: "default" },
+      { id: 2, tenant_id: "other" },
+    ],
+    incidents: [
+      { id: 10, installation_id: 1, tenant_id: "default" },
+      { id: 11, installation_id: 999, tenant_id: "default" },
+      { id: 12, installation_id: 2, tenant_id: "other" },
+    ],
+    incidentPhotos: [
+      { id: 100, incident_id: 10, tenant_id: "default", r2_key: "incidents/1/10/ok.jpg" },
+      { id: 101, incident_id: 11, tenant_id: "default", r2_key: "incidents/999/11/orphan-installation.jpg" },
+      { id: 102, incident_id: 9999, tenant_id: "default", r2_key: "incidents/ghost/orphan-incident.jpg" },
+      { id: 103, incident_id: 12, tenant_id: "other", r2_key: "incidents/2/12/ok-other.jpg" },
+    ],
+  });
+
+  const deletedR2Keys = [];
+  const bucket = {
+    async delete(key) {
+      deletedR2Keys.push(String(key));
+    },
+  };
+
+  const request = new Request("https://worker.example/maintenance/cleanup-orphans", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Tenant-Id": "default",
+    },
+    body: JSON.stringify({}),
+  });
+  const response = await workerFetch(request, {
+    DB: db,
+    INCIDENTS_BUCKET: bucket,
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.success, true);
+  assert.equal(body.tenant_id, "default");
+  assert.equal(body.dry_run, false);
+  assert.equal(body.summary.scanned_orphan_photo_rows, 2);
+  assert.equal(body.summary.scanned_orphan_incidents, 1);
+  assert.equal(body.summary.deleted_photo_rows, 2);
+  assert.equal(body.summary.deleted_incidents, 1);
+  assert.equal(body.summary.r2_deleted, 2);
+  assert.equal(body.summary.r2_errors, 0);
+
+  assert.deepEqual(
+    new Set(deletedR2Keys),
+    new Set(["incidents/999/11/orphan-installation.jpg", "incidents/ghost/orphan-incident.jpg"]),
+  );
+  assert.equal(db.state.incidents.some((row) => Number(row.id) === 11), false);
+  assert.equal(db.state.incidents.some((row) => Number(row.id) === 10), true);
+  assert.equal(db.state.incidents.some((row) => Number(row.id) === 12), true);
+  assert.equal(db.state.incidentPhotos.some((row) => Number(row.id) === 101), false);
+  assert.equal(db.state.incidentPhotos.some((row) => Number(row.id) === 102), false);
+  assert.equal(db.state.incidentPhotos.some((row) => Number(row.id) === 100), true);
+  assert.equal(db.state.incidentPhotos.some((row) => Number(row.id) === 103), true);
+});
+
+test("POST /maintenance/cleanup-orphans with dry_run reports without deleting", async () => {
+  const db = createMockDB({
+    installations: [{ id: 1, tenant_id: "default" }],
+    incidents: [{ id: 10, installation_id: 999, tenant_id: "default" }],
+    incidentPhotos: [{ id: 100, incident_id: 10, tenant_id: "default", r2_key: "incidents/999/10/orphan.jpg" }],
+  });
+
+  const deletedR2Keys = [];
+  const bucket = {
+    async delete(key) {
+      deletedR2Keys.push(String(key));
+    },
+  };
+
+  const request = new Request("https://worker.example/maintenance/cleanup-orphans", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Tenant-Id": "default",
+    },
+    body: JSON.stringify({ dry_run: true }),
+  });
+  const response = await workerFetch(request, {
+    DB: db,
+    INCIDENTS_BUCKET: bucket,
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.success, true);
+  assert.equal(body.dry_run, true);
+  assert.equal(body.summary.scanned_orphan_photo_rows, 1);
+  assert.equal(body.summary.scanned_orphan_incidents, 1);
+  assert.equal(body.summary.deleted_photo_rows, 0);
+  assert.equal(body.summary.deleted_incidents, 0);
+  assert.equal(body.summary.r2_attempted, 1);
+  assert.deepEqual(deletedR2Keys, []);
+  assert.equal(db.state.incidents.some((row) => Number(row.id) === 10), true);
+  assert.equal(db.state.incidentPhotos.some((row) => Number(row.id) === 100), true);
 });
 
 test("POST /installations/:id/incidents creates incident and can apply installation update", async () => {

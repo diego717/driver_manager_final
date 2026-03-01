@@ -30,6 +30,7 @@ const WEB_ALLOWED_HASH_TYPES = new Set([
 ]);
 
 let fcmAccessTokenCache = null;
+let fcmAccessTokenRefreshState = null;
 const SSE_POLL_INTERVAL_MS = 4000;
 const SSE_KEEP_ALIVE_INTERVAL_MS = 30000;
 const SSE_MAX_CONNECTION_MS = 5 * 60 * 1000;
@@ -106,7 +107,15 @@ function buildCorsPolicy(isWebRoute, routeParts) {
     headers.add("X-Request-Signature");
   }
 
-  if (isPhotoUpload || first === "records" || first === "devices" || first === "audit-logs" || first === "auth" || first === "installations") {
+  if (
+    isPhotoUpload ||
+    first === "records" ||
+    first === "devices" ||
+    first === "audit-logs" ||
+    first === "auth" ||
+    first === "installations" ||
+    first === "maintenance"
+  ) {
     headers.add("Content-Type");
   }
   if (isPhotoUpload) {
@@ -138,6 +147,8 @@ function buildCorsPolicy(isWebRoute, routeParts) {
     methods.add("GET");
     methods.add("POST");
     methods.add("PATCH");
+  } else if (first === "maintenance") {
+    methods.add("POST");
   }
 
   return {
@@ -1256,6 +1267,29 @@ function normalizeFcmServiceAccount(env) {
   };
 }
 
+function buildFcmServiceAccountFingerprint(serviceAccount) {
+  if (!serviceAccount) return "";
+  return [
+    normalizeOptionalString(serviceAccount.projectId, ""),
+    normalizeOptionalString(serviceAccount.clientEmail, ""),
+    normalizeOptionalString(serviceAccount.tokenUri, ""),
+    normalizeOptionalString(serviceAccount.privateKey, ""),
+  ].join("|");
+}
+
+function readCachedFcmAccessToken(fingerprint, nowSeconds) {
+  if (!fcmAccessTokenCache || !fingerprint) return null;
+  if (normalizeOptionalString(fcmAccessTokenCache.fingerprint, "") !== fingerprint) return null;
+  if (!normalizeOptionalString(fcmAccessTokenCache.accessToken, "")) return null;
+  if (!Number.isInteger(fcmAccessTokenCache.expiresAt)) return null;
+  if (fcmAccessTokenCache.expiresAt <= nowSeconds + 60) return null;
+
+  return {
+    accessToken: fcmAccessTokenCache.accessToken,
+    projectId: fcmAccessTokenCache.projectId,
+  };
+}
+
 async function signFcmAssertion(privateKeyPem, unsignedToken) {
   if (!globalThis.crypto?.subtle) {
     throw new HttpError(500, "No hay soporte crypto para firmar push FCM.");
@@ -1286,81 +1320,107 @@ async function getFcmAccessToken(env) {
     return null;
   }
 
+  const serviceAccountFingerprint = buildFcmServiceAccountFingerprint(serviceAccount);
   const nowSeconds = nowUnixSeconds();
   if (
     fcmAccessTokenCache &&
-    fcmAccessTokenCache.projectId === serviceAccount.projectId &&
-    normalizeOptionalString(fcmAccessTokenCache.accessToken, "") &&
-    Number.isInteger(fcmAccessTokenCache.expiresAt) &&
-    fcmAccessTokenCache.expiresAt > nowSeconds + 60
+    normalizeOptionalString(fcmAccessTokenCache.fingerprint, "") !== serviceAccountFingerprint
   ) {
+    // Secret rotado/cambiado: invalidar cache previo.
+    fcmAccessTokenCache = null;
+  }
+
+  const cachedToken = readCachedFcmAccessToken(serviceAccountFingerprint, nowSeconds);
+  if (cachedToken) {
+    return cachedToken;
+  }
+
+  if (
+    fcmAccessTokenRefreshState &&
+    fcmAccessTokenRefreshState.fingerprint === serviceAccountFingerprint &&
+    fcmAccessTokenRefreshState.promise
+  ) {
+    return fcmAccessTokenRefreshState.promise;
+  }
+
+  const refreshPromise = (async () => {
+    const tokenRequestNow = nowUnixSeconds();
+    const header = {
+      alg: "RS256",
+      typ: "JWT",
+    };
+    const payload = {
+      iss: serviceAccount.clientEmail,
+      scope: FCM_OAUTH_SCOPE,
+      aud: serviceAccount.tokenUri,
+      iat: tokenRequestNow,
+      exp: tokenRequestNow + 3600,
+    };
+
+    const encodedHeader = base64UrlEncodeUtf8(JSON.stringify(header));
+    const encodedPayload = base64UrlEncodeUtf8(JSON.stringify(payload));
+    const unsignedToken = `${encodedHeader}.${encodedPayload}`;
+    const signature = await signFcmAssertion(serviceAccount.privateKey, unsignedToken);
+    const assertion = `${unsignedToken}.${signature}`;
+
+    const tokenResponse = await fetch(serviceAccount.tokenUri, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: FCM_OAUTH_GRANT_TYPE,
+        assertion,
+      }).toString(),
+    });
+
+    let tokenJson = {};
+    try {
+      tokenJson = await tokenResponse.json();
+    } catch {
+      tokenJson = {};
+    }
+
+    if (!tokenResponse.ok) {
+      const description =
+        normalizeOptionalString(tokenJson?.error_description, "") ||
+        normalizeOptionalString(tokenJson?.error, "") ||
+        `HTTP ${tokenResponse.status}`;
+      throw new HttpError(500, `No se pudo obtener access token FCM: ${description}`);
+    }
+
+    const accessToken = normalizeOptionalString(tokenJson?.access_token, "");
+    const expiresIn = Number.parseInt(String(tokenJson?.expires_in ?? "0"), 10);
+
+    if (!accessToken || !Number.isInteger(expiresIn) || expiresIn <= 0) {
+      throw new HttpError(500, "Respuesta invalida al solicitar access token FCM.");
+    }
+
+    fcmAccessTokenCache = {
+      fingerprint: serviceAccountFingerprint,
+      projectId: serviceAccount.projectId,
+      accessToken,
+      expiresAt: tokenRequestNow + expiresIn,
+    };
+
     return {
-      accessToken: fcmAccessTokenCache.accessToken,
+      accessToken,
       projectId: serviceAccount.projectId,
     };
-  }
+  })();
 
-  const header = {
-    alg: "RS256",
-    typ: "JWT",
-  };
-  const payload = {
-    iss: serviceAccount.clientEmail,
-    scope: FCM_OAUTH_SCOPE,
-    aud: serviceAccount.tokenUri,
-    iat: nowSeconds,
-    exp: nowSeconds + 3600,
+  fcmAccessTokenRefreshState = {
+    fingerprint: serviceAccountFingerprint,
+    promise: refreshPromise,
   };
 
-  const encodedHeader = base64UrlEncodeUtf8(JSON.stringify(header));
-  const encodedPayload = base64UrlEncodeUtf8(JSON.stringify(payload));
-  const unsignedToken = `${encodedHeader}.${encodedPayload}`;
-  const signature = await signFcmAssertion(serviceAccount.privateKey, unsignedToken);
-  const assertion = `${unsignedToken}.${signature}`;
-
-  const tokenResponse = await fetch(serviceAccount.tokenUri, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      grant_type: FCM_OAUTH_GRANT_TYPE,
-      assertion,
-    }).toString(),
-  });
-
-  let tokenJson = {};
   try {
-    tokenJson = await tokenResponse.json();
-  } catch {
-    tokenJson = {};
+    return await refreshPromise;
+  } finally {
+    if (fcmAccessTokenRefreshState?.promise === refreshPromise) {
+      fcmAccessTokenRefreshState = null;
+    }
   }
-
-  if (!tokenResponse.ok) {
-    const description =
-      normalizeOptionalString(tokenJson?.error_description, "") ||
-      normalizeOptionalString(tokenJson?.error, "") ||
-      `HTTP ${tokenResponse.status}`;
-    throw new HttpError(500, `No se pudo obtener access token FCM: ${description}`);
-  }
-
-  const accessToken = normalizeOptionalString(tokenJson?.access_token, "");
-  const expiresIn = Number.parseInt(String(tokenJson?.expires_in ?? "0"), 10);
-
-  if (!accessToken || !Number.isInteger(expiresIn) || expiresIn <= 0) {
-    throw new HttpError(500, "Respuesta invalida al solicitar access token FCM.");
-  }
-
-  fcmAccessTokenCache = {
-    projectId: serviceAccount.projectId,
-    accessToken,
-    expiresAt: nowSeconds + expiresIn,
-  };
-
-  return {
-    accessToken,
-    projectId: serviceAccount.projectId,
-  };
 }
 
 function bytesToHex(bytes) {
@@ -1504,6 +1564,383 @@ function ensureDeviceTokensTableAvailable(error) {
     );
   }
   throw error;
+}
+
+function isMissingTenantColumnError(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  return message.includes("no such column") && message.includes("tenant_id");
+}
+
+async function ensureInstallationExistsForDelete(env, installationId, tenantId) {
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT id
+      FROM installations
+      WHERE id = ?
+        AND tenant_id = ?
+      LIMIT 1
+    `)
+      .bind(installationId, tenantId)
+      .all();
+    if (results?.length) return true;
+    return false;
+  } catch (error) {
+    if (!isMissingTenantColumnError(error)) {
+      throw error;
+    }
+  }
+
+  const { results } = await env.DB.prepare(`
+    SELECT id
+    FROM installations
+    WHERE id = ?
+    LIMIT 1
+  `)
+    .bind(installationId)
+    .all();
+  return Boolean(results?.length);
+}
+
+async function listIncidentPhotoR2KeysForInstallation(env, installationId, tenantId) {
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT p.r2_key
+      FROM incident_photos p
+      INNER JOIN incidents i ON i.id = p.incident_id
+      WHERE i.installation_id = ?
+        AND i.tenant_id = ?
+    `)
+      .bind(installationId, tenantId)
+      .all();
+    return (results || [])
+      .map((row) => normalizeOptionalString(row?.r2_key, ""))
+      .filter((key) => key);
+  } catch (error) {
+    if (!isMissingTenantColumnError(error)) {
+      throw error;
+    }
+  }
+
+  const { results } = await env.DB.prepare(`
+    SELECT p.r2_key
+    FROM incident_photos p
+    INNER JOIN incidents i ON i.id = p.incident_id
+    WHERE i.installation_id = ?
+  `)
+    .bind(installationId)
+    .all();
+  return (results || [])
+    .map((row) => normalizeOptionalString(row?.r2_key, ""))
+    .filter((key) => key);
+}
+
+async function deleteIncidentPhotoObjectsFromR2(env, r2Keys) {
+  const uniqueKeys = [...new Set((r2Keys || []).map((key) => normalizeOptionalString(key, "")).filter((key) => key))];
+  if (uniqueKeys.length === 0) {
+    return {
+      attempted_count: 0,
+      deleted_count: 0,
+      error_count: 0,
+      skipped: true,
+    };
+  }
+  if (!env.INCIDENTS_BUCKET || typeof env.INCIDENTS_BUCKET.delete !== "function") {
+    return {
+      attempted_count: uniqueKeys.length,
+      deleted_count: 0,
+      error_count: 0,
+      skipped: true,
+    };
+  }
+
+  let deletedCount = 0;
+  let errorCount = 0;
+  for (const key of uniqueKeys) {
+    if (!key) continue;
+    try {
+      await env.INCIDENTS_BUCKET.delete(key);
+      deletedCount += 1;
+    } catch (error) {
+      errorCount += 1;
+      console.error("[R2] failed to delete incident photo object", { key, error: String(error) });
+    }
+  }
+  return {
+    attempted_count: uniqueKeys.length,
+    deleted_count: deletedCount,
+    error_count: errorCount,
+    skipped: false,
+  };
+}
+
+async function deleteInstallationCascade(env, installationId, tenantId) {
+  try {
+    await env.DB.prepare(`
+      DELETE FROM incident_photos
+      WHERE incident_id IN (
+        SELECT id
+        FROM incidents
+        WHERE installation_id = ?
+          AND tenant_id = ?
+      )
+    `)
+      .bind(installationId, tenantId)
+      .run();
+
+    await env.DB.prepare(`
+      DELETE FROM incidents
+      WHERE installation_id = ?
+        AND tenant_id = ?
+    `)
+      .bind(installationId, tenantId)
+      .run();
+
+    await env.DB.prepare(`
+      DELETE FROM installations
+      WHERE id = ?
+        AND tenant_id = ?
+    `)
+      .bind(installationId, tenantId)
+      .run();
+    return;
+  } catch (error) {
+    if (!isMissingTenantColumnError(error)) {
+      throw error;
+    }
+  }
+
+  await env.DB.prepare(`
+    DELETE FROM incident_photos
+    WHERE incident_id IN (
+      SELECT id
+      FROM incidents
+      WHERE installation_id = ?
+    )
+  `)
+    .bind(installationId)
+    .run();
+
+  await env.DB.prepare(`
+    DELETE FROM incidents
+    WHERE installation_id = ?
+  `)
+    .bind(installationId)
+    .run();
+
+  await env.DB.prepare(`
+    DELETE FROM installations
+    WHERE id = ?
+  `)
+    .bind(installationId)
+    .run();
+}
+
+async function listOrphanIncidentPhotoRows(env, tenantId) {
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT p.id, p.r2_key
+      FROM incident_photos p
+      LEFT JOIN incidents i ON i.id = p.incident_id
+        AND i.tenant_id = p.tenant_id
+      LEFT JOIN installations ins ON ins.id = i.installation_id
+        AND ins.tenant_id = i.tenant_id
+      WHERE p.tenant_id = ?
+        AND (i.id IS NULL OR ins.id IS NULL)
+    `)
+      .bind(tenantId)
+      .all();
+    return {
+      tenantScoped: true,
+      rows: (results || [])
+        .map((row) => ({
+          id: Number.parseInt(String(row?.id ?? ""), 10),
+          r2_key: normalizeOptionalString(row?.r2_key, ""),
+        }))
+        .filter((row) => Number.isInteger(row.id) && row.id > 0),
+    };
+  } catch (error) {
+    if (!isMissingTenantColumnError(error)) {
+      throw error;
+    }
+  }
+
+  const { results } = await env.DB.prepare(`
+    SELECT p.id, p.r2_key
+    FROM incident_photos p
+    LEFT JOIN incidents i ON i.id = p.incident_id
+    LEFT JOIN installations ins ON ins.id = i.installation_id
+    WHERE i.id IS NULL OR ins.id IS NULL
+  `).all();
+  return {
+    tenantScoped: false,
+    rows: (results || [])
+      .map((row) => ({
+        id: Number.parseInt(String(row?.id ?? ""), 10),
+        r2_key: normalizeOptionalString(row?.r2_key, ""),
+      }))
+      .filter((row) => Number.isInteger(row.id) && row.id > 0),
+  };
+}
+
+async function listOrphanIncidentIds(env, tenantId) {
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT i.id
+      FROM incidents i
+      LEFT JOIN installations ins ON ins.id = i.installation_id
+        AND ins.tenant_id = i.tenant_id
+      WHERE i.tenant_id = ?
+        AND ins.id IS NULL
+    `)
+      .bind(tenantId)
+      .all();
+    return {
+      tenantScoped: true,
+      ids: (results || [])
+        .map((row) => Number.parseInt(String(row?.id ?? ""), 10))
+        .filter((id) => Number.isInteger(id) && id > 0),
+    };
+  } catch (error) {
+    if (!isMissingTenantColumnError(error)) {
+      throw error;
+    }
+  }
+
+  const { results } = await env.DB.prepare(`
+    SELECT i.id
+    FROM incidents i
+    LEFT JOIN installations ins ON ins.id = i.installation_id
+    WHERE ins.id IS NULL
+  `).all();
+  return {
+    tenantScoped: false,
+    ids: (results || [])
+      .map((row) => Number.parseInt(String(row?.id ?? ""), 10))
+      .filter((id) => Number.isInteger(id) && id > 0),
+  };
+}
+
+async function deleteIncidentPhotoRowsById(env, photoIds, tenantId, tenantScoped = true) {
+  const uniqueIds = [...new Set((photoIds || []).map((value) => Number.parseInt(String(value), 10)).filter((id) => Number.isInteger(id) && id > 0))];
+  if (uniqueIds.length === 0) return 0;
+
+  let deletedCount = 0;
+  if (tenantScoped) {
+    try {
+      for (const photoId of uniqueIds) {
+        await env.DB.prepare(`
+          DELETE FROM incident_photos
+          WHERE id = ?
+            AND tenant_id = ?
+        `)
+          .bind(photoId, tenantId)
+          .run();
+        deletedCount += 1;
+      }
+      return deletedCount;
+    } catch (error) {
+      if (!isMissingTenantColumnError(error)) {
+        throw error;
+      }
+      deletedCount = 0;
+    }
+  }
+
+  for (const photoId of uniqueIds) {
+    await env.DB.prepare(`
+      DELETE FROM incident_photos
+      WHERE id = ?
+    `)
+      .bind(photoId)
+      .run();
+    deletedCount += 1;
+  }
+  return deletedCount;
+}
+
+async function deleteIncidentsById(env, incidentIds, tenantId, tenantScoped = true) {
+  const uniqueIds = [...new Set((incidentIds || []).map((value) => Number.parseInt(String(value), 10)).filter((id) => Number.isInteger(id) && id > 0))];
+  if (uniqueIds.length === 0) return 0;
+
+  let deletedCount = 0;
+  if (tenantScoped) {
+    try {
+      for (const incidentId of uniqueIds) {
+        await env.DB.prepare(`
+          DELETE FROM incidents
+          WHERE id = ?
+            AND tenant_id = ?
+        `)
+          .bind(incidentId, tenantId)
+          .run();
+        deletedCount += 1;
+      }
+      return deletedCount;
+    } catch (error) {
+      if (!isMissingTenantColumnError(error)) {
+        throw error;
+      }
+      deletedCount = 0;
+    }
+  }
+
+  for (const incidentId of uniqueIds) {
+    await env.DB.prepare(`
+      DELETE FROM incidents
+      WHERE id = ?
+    `)
+      .bind(incidentId)
+      .run();
+    deletedCount += 1;
+  }
+  return deletedCount;
+}
+
+async function cleanupOrphanInstallationArtifacts(env, tenantId, options = {}) {
+  const dryRun = Boolean(options?.dryRun);
+  const orphanPhotoResult = await listOrphanIncidentPhotoRows(env, tenantId);
+  const orphanIncidentResult = await listOrphanIncidentIds(env, tenantId);
+  const orphanPhotoRows = orphanPhotoResult.rows || [];
+  const orphanIncidentIds = orphanIncidentResult.ids || [];
+  const r2Keys = orphanPhotoRows.map((row) => row.r2_key).filter((key) => key);
+
+  if (dryRun) {
+    return {
+      scanned_orphan_photo_rows: orphanPhotoRows.length,
+      scanned_orphan_incidents: orphanIncidentIds.length,
+      deleted_photo_rows: 0,
+      deleted_incidents: 0,
+      r2_attempted: r2Keys.length,
+      r2_deleted: 0,
+      r2_errors: 0,
+      tenant_scoped: Boolean(orphanPhotoResult.tenantScoped && orphanIncidentResult.tenantScoped),
+    };
+  }
+
+  const r2Result = await deleteIncidentPhotoObjectsFromR2(env, r2Keys);
+  const deletedPhotoRows = await deleteIncidentPhotoRowsById(
+    env,
+    orphanPhotoRows.map((row) => row.id),
+    tenantId,
+    orphanPhotoResult.tenantScoped,
+  );
+  const deletedIncidents = await deleteIncidentsById(
+    env,
+    orphanIncidentIds,
+    tenantId,
+    orphanIncidentResult.tenantScoped,
+  );
+
+  return {
+    scanned_orphan_photo_rows: orphanPhotoRows.length,
+    scanned_orphan_incidents: orphanIncidentIds.length,
+    deleted_photo_rows: deletedPhotoRows,
+    deleted_incidents: deletedIncidents,
+    r2_attempted: Number(r2Result?.attempted_count || 0),
+    r2_deleted: Number(r2Result?.deleted_count || 0),
+    r2_errors: Number(r2Result?.error_count || 0),
+    tenant_scoped: Boolean(orphanPhotoResult.tenantScoped && orphanIncidentResult.tenantScoped),
+  };
 }
 
 function normalizeFcmToken(value) {
@@ -2873,6 +3310,8 @@ export default {
             web_lookup: "/web/lookup?type=asset&code=EQ-123",
             audit_logs: "/audit-logs",
             web_audit_logs: "/web/audit-logs",
+            maintenance_cleanup_orphans: "/maintenance/cleanup-orphans",
+            web_maintenance_cleanup_orphans: "/web/maintenance/cleanup-orphans",
           },
         });
       }
@@ -3266,6 +3705,55 @@ export default {
 
           return jsonResponse(request, env, corsPolicy,{ success: true }, 201);
         }
+      }
+
+      if (routeParts.length === 2 && routeParts[0] === "maintenance" && routeParts[1] === "cleanup-orphans") {
+        if (request.method !== "POST") {
+          return textResponse(request, env, corsPolicy, "Ruta no encontrada.", 404);
+        }
+
+        if (isWebRoute) {
+          requireAdminRole(webSession?.role);
+        }
+
+        const body = await readJsonOrThrowBadRequest(request);
+        const requestedTenant = normalizeOptionalString(body?.tenant_id, "");
+        const dryRunValue = parseBooleanOrNull(body?.dry_run);
+        const dryRun = dryRunValue === null ? false : dryRunValue;
+        const targetTenantId = requestedTenant
+          ? normalizeRealtimeTenantId(requestedTenant)
+          : normalizeRealtimeTenantId(realtimeTenantId);
+
+        if (isWebRoute) {
+          assertSameTenantOrSuperAdmin(webSession, targetTenantId);
+        }
+
+        const summary = await cleanupOrphanInstallationArtifacts(env, targetTenantId, {
+          dryRun,
+        });
+
+        await logAuditEvent(env, {
+          action: "maintenance_cleanup_orphans",
+          username: webSession?.sub || "api",
+          success: true,
+          details: {
+            tenant_id: targetTenantId,
+            dry_run: dryRun,
+            ...summary,
+          },
+          ipAddress: getClientIpForRateLimit(request),
+          platform: isWebRoute ? "web" : "api",
+        });
+
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          message: dryRun
+            ? "Simulacion de limpieza completada."
+            : "Limpieza de huerfanos completada.",
+          tenant_id: targetTenantId,
+          dry_run: dryRun,
+          summary,
+        });
       }
 
       if (routeParts.length === 1 && routeParts[0] === "audit-logs") {
@@ -3757,27 +4245,46 @@ export default {
             return textResponse(request, env, corsPolicy, "Error: El ID del registro es obligatorio.", 400);
           }
 
+          const installationId = parsePositiveInt(recordId, "id");
+          const normalizedTenantId = normalizeRealtimeTenantId(realtimeTenantId);
+          const installationExists = await ensureInstallationExistsForDelete(
+            env,
+            installationId,
+            normalizedTenantId,
+          );
+          if (!installationExists) {
+            throw new HttpError(404, "Registro no encontrado.");
+          }
+
+          const incidentPhotoKeys = await listIncidentPhotoR2KeysForInstallation(
+            env,
+            installationId,
+            normalizedTenantId,
+          );
+          await deleteIncidentPhotoObjectsFromR2(env, incidentPhotoKeys);
+
           // Log audit event for installation deletion
           await logAuditEvent(env, {
             action: "installation_deleted",
             username: webSession?.sub || "api",
             success: true,
             details: {
-              deleted_id: recordId
+              deleted_id: installationId,
+              deleted_incident_photos: incidentPhotoKeys.length,
             },
             ipAddress: getClientIpForRateLimit(request),
             platform: isWebRoute ? "web" : "api"
           });
 
-          await env.DB.prepare("DELETE FROM installations WHERE id = ?").bind(recordId).run();
+          await deleteInstallationCascade(env, installationId, normalizedTenantId);
           await publishRealtimeEvent(env, {
             type: "installation_deleted",
             installation: {
-              id: Number(recordId),
+              id: installationId,
             },
           }, realtimeTenantId);
           await publishRealtimeStatsUpdate(env, realtimeTenantId);
-          return jsonResponse(request, env, corsPolicy,{ message: `Registro ${recordId} eliminado.` });
+          return jsonResponse(request, env, corsPolicy,{ message: `Registro ${installationId} eliminado.` });
         }
       }
 
