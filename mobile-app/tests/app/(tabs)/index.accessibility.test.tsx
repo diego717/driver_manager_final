@@ -119,7 +119,7 @@ vi.mock("@/src/theme/theme-preference", () => ({
   }),
 }));
 
-import CreateIncidentScreen from "./index";
+import CreateIncidentScreen from "@/app/(tabs)/index";
 
 describe("CreateIncidentScreen accessibility", () => {
   beforeEach(() => {

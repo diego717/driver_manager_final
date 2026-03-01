@@ -16,6 +16,7 @@ import {
 import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 
 import {
+  fetchIncidentPhotoDataUri,
   resolveIncidentPhotoPreviewTarget,
   type IncidentPhotoPreviewTarget,
 } from "@/src/api/photos";
@@ -131,7 +132,13 @@ export default function IncidentPhotoViewerScreen() {
       try {
         setLoading(true);
         setErrorMessage("");
-        const resolved = await resolveIncidentPhotoPreviewTarget(photoId);
+        const isWebRuntime = typeof document !== "undefined";
+        const resolved = isWebRuntime
+          ? {
+              uri: await fetchIncidentPhotoDataUri(photoId),
+              headers: {},
+            }
+          : await resolveIncidentPhotoPreviewTarget(photoId);
         if (!isMounted) return;
         resetZoom();
         setPhotoTarget(resolved);

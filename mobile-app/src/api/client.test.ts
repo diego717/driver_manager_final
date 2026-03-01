@@ -109,6 +109,10 @@ describe("api client", () => {
     expect(extractApiError(new Error("boom"))).toBe("boom");
   });
 
+  it("maps network fetch errors to actionable message", () => {
+    expect(extractApiError(new Error("Failed to fetch"))).toMatch(/No se pudo conectar con la API/i);
+  });
+
   it("normalizes base URL when /web is included by mistake", () => {
     expect(normalizeApiBaseUrl("https://worker.example/web")).toBe("https://worker.example");
     expect(normalizeApiBaseUrl("https://worker.example/web/")).toBe("https://worker.example");

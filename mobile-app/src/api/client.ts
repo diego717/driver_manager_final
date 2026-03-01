@@ -192,8 +192,18 @@ export function extractApiError(error: unknown): string {
   if ((error as AxiosError).isAxiosError) {
     const axiosErr = error as AxiosError<{ error?: { message?: string } }>;
     const apiMsg = axiosErr.response?.data?.error?.message;
-    return apiMsg || axiosErr.message;
+    const status = axiosErr.response?.status;
+    if (apiMsg && status) return `${apiMsg} (HTTP ${status})`;
+    if (apiMsg) return apiMsg;
+    if (status) return `${axiosErr.message} (HTTP ${status})`;
+    return axiosErr.message;
   }
-  if (error instanceof Error) return error.message;
+  if (error instanceof Error) {
+    const message = error.message || "";
+    if (/failed to fetch|network request failed/i.test(message)) {
+      return "No se pudo conectar con la API (Failed to fetch). Revisa URL base, CORS y conectividad.";
+    }
+    return message;
+  }
   return String(error);
 }

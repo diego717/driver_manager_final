@@ -97,54 +97,59 @@ vi.mock("@/src/theme/theme-preference", () => ({
   }),
 }));
 
-import UploadIncidentPhotoScreen from "./upload";
+import * as ImagePicker from "expo-image-picker";
+import * as ImageManipulator from "expo-image-manipulator";
+import { uploadIncidentPhoto } from "@/src/api/photos";
+import UploadIncidentPhotoScreen from "@/app/incident/upload";
 
-describe("UploadIncidentPhotoScreen accessibility", () => {
+describe("UploadIncidentPhotoScreen upload flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("renders critical controls with accessibility labels, roles and states", async () => {
-    const { render } = await import("@testing-library/react-native/pure");
-    const view = render(<UploadIncidentPhotoScreen />);
+  it("completes wizard flow and uploads confirmed evidence", async () => {
+    const { fireEvent, render, waitFor } = await import("@testing-library/react-native/pure");
 
-    expect(view.getByLabelText("ID de incidencia para subir evidencia")).toBeTruthy();
+    vi.mocked(ImagePicker.requestMediaLibraryPermissionsAsync).mockResolvedValue({
+      granted: true,
+    } as any);
+    vi.mocked(ImagePicker.launchImageLibraryAsync).mockResolvedValue({
+      canceled: false,
+      assets: [
+        {
+          uri: "file:///picked.jpg",
+          fileName: "picked.jpg",
+          width: 800,
+          height: 600,
+        },
+      ],
+    } as any);
+
+    vi.mocked(ImageManipulator.manipulateAsync).mockResolvedValue({ uri: "file:///processed.jpg" } as any);
+    vi.mocked(uploadIncidentPhoto).mockResolvedValue({ photo: { id: 77 } } as any);
+
+    const view = render(<UploadIncidentPhotoScreen />);
+    fireEvent.press(view.getByText("Siguiente").parent);
+    fireEvent.press(view.getByText("Siguiente").parent);
+    expect(view.getByText("Paso 3 de 4: Fotos")).toBeTruthy();
 
     const galleryButton = view.getByLabelText("Seleccionar foto desde la galeria");
-    expect(galleryButton.props.accessibilityRole).toBe("button");
-    expect(galleryButton.props.accessibilityState).toEqual(
-      expect.objectContaining({ disabled: false, busy: false }),
-    );
-    expect(flattenStyle(galleryButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
+    fireEvent.press(galleryButton);
 
-    const cameraButton = view.getByLabelText("Tomar foto con la camara");
-    expect(cameraButton.props.accessibilityRole).toBe("button");
-    expect(cameraButton.props.accessibilityState).toEqual(
-      expect.objectContaining({ disabled: false, busy: false }),
-    );
-    expect(flattenStyle(cameraButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
+    await waitFor(() => {
+      expect(view.getByText("Archivo: picked.jpg")).toBeTruthy();
+    });
+    fireEvent.press(view.getByText("Confirmar").parent);
+    expect(view.getByText(/Captured:/)).toBeTruthy();
 
-    const uploadButton = view.getByLabelText("Subir foto de la incidencia");
-    expect(uploadButton.props.accessibilityRole).toBe("button");
-    expect(uploadButton.props.accessibilityState).toEqual(
-      expect.objectContaining({ disabled: false, busy: false }),
-    );
-    expect(flattenStyle(uploadButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
-  });
+    fireEvent.press(view.getByText("Siguiente").parent);
+    expect(view.getByText("Paso 4 de 4: Confirmacion")).toBeTruthy();
+    fireEvent.press(view.getByLabelText("Confirmar y guardar evidencia"));
 
-  it("keeps action focus order: gallery, camera, upload", async () => {
-    const { render } = await import("@testing-library/react-native/pure");
-    const view = render(<UploadIncidentPhotoScreen />);
-    const labels = view
-      .UNSAFE_getAllByType("TouchableOpacity")
-      .map((node) => node.props.accessibilityLabel);
-
-    expect(labels.indexOf("Seleccionar foto desde la galeria")).toBeGreaterThanOrEqual(0);
-    expect(labels.indexOf("Tomar foto con la camara")).toBeGreaterThan(
-      labels.indexOf("Seleccionar foto desde la galeria"),
-    );
-    expect(labels.indexOf("Subir foto de la incidencia")).toBeGreaterThan(
-      labels.indexOf("Tomar foto con la camara"),
-    );
+    await waitFor(() => {
+      expect(routerMocks.replace).toHaveBeenCalled();
+      expect(uploadIncidentPhoto).toHaveBeenCalledTimes(1);
+      expect(view.getByText("Evidencias guardadas")).toBeTruthy();
+    });
   });
 });

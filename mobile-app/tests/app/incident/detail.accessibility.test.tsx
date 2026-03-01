@@ -144,7 +144,7 @@ vi.mock("@/src/theme/theme-preference", () => ({
   }),
 }));
 
-import IncidentDetailScreen from "./detail";
+import IncidentDetailScreen from "@/app/incident/detail";
 
 describe("IncidentDetailScreen accessibility", () => {
   beforeEach(() => {

@@ -282,7 +282,7 @@ export default function ApiSettingsScreen() {
       </Text>
 
       <Text style={[styles.sourceText, { color: palette.textMuted }]}>
-        Base URL actual: {baseUrlFromStorage ? "SecureStore" : ".env"}
+        Base URL actual: {apiBaseUrl || "(vacia)"} ({baseUrlFromStorage ? "SecureStore" : ".env"})
       </Text>
       <Text style={[styles.sourceText, { color: palette.textMuted }]}>
         Sesion web: {hasWebSession ? `Activa hasta ${webSessionExpiresAt}` : "No activa"}

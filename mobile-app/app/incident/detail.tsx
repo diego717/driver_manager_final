@@ -16,6 +16,7 @@ import {
 import { extractApiError } from "@/src/api/client";
 import { listIncidentsByInstallation } from "@/src/api/incidents";
 import {
+  fetchIncidentPhotoDataUri,
   resolveIncidentPhotoPreviewTarget,
   type IncidentPhotoPreviewTarget,
 } from "@/src/api/photos";
@@ -166,7 +167,13 @@ export default function IncidentDetailScreen() {
       const resolvedEntries = await loadWithConcurrency(
         incident.photos.map((photo) => async () => {
           try {
-            const previewTarget = await resolveIncidentPhotoPreviewTarget(photo.id);
+            const isWebRuntime = typeof document !== "undefined";
+            const previewTarget = isWebRuntime
+              ? {
+                  uri: await fetchIncidentPhotoDataUri(photo.id),
+                  headers: {},
+                }
+              : await resolveIncidentPhotoPreviewTarget(photo.id);
             return [photo.id, previewTarget] as const;
           } catch {
             return [photo.id, null] as const;

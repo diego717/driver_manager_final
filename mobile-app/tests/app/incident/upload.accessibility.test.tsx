@@ -97,93 +97,45 @@ vi.mock("@/src/theme/theme-preference", () => ({
   }),
 }));
 
-import * as ImagePicker from "expo-image-picker";
-import * as ImageManipulator from "expo-image-manipulator";
-import { uploadIncidentPhoto } from "@/src/api/photos";
-import UploadIncidentPhotoScreen from "./upload";
+import UploadIncidentPhotoScreen from "@/app/incident/upload";
 
-function createDeferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
-describe("UploadIncidentPhotoScreen upload flow", () => {
+describe("UploadIncidentPhotoScreen accessibility", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("disables and re-enables action buttons during image processing and upload", async () => {
-    const { fireEvent, render, waitFor } = await import("@testing-library/react-native/pure");
-
-    vi.mocked(ImagePicker.requestMediaLibraryPermissionsAsync).mockResolvedValue({
-      granted: true,
-    } as any);
-    vi.mocked(ImagePicker.launchImageLibraryAsync).mockResolvedValue({
-      canceled: false,
-      assets: [
-        {
-          uri: "file:///picked.jpg",
-          fileName: "picked.jpg",
-          width: 800,
-          height: 600,
-        },
-      ],
-    } as any);
-
-    const processingDeferred = createDeferred<{ uri: string }>();
-    vi.mocked(ImageManipulator.manipulateAsync).mockReturnValueOnce(processingDeferred.promise as any);
-
-    const uploadDeferred = createDeferred<{ photo: { id: number } }>();
-    vi.mocked(uploadIncidentPhoto).mockReturnValueOnce(uploadDeferred.promise as any);
-
+  it("renders wizard steps and exposes photo controls on step 3", async () => {
+    const { fireEvent, render } = await import("@testing-library/react-native/pure");
     const view = render(<UploadIncidentPhotoScreen />);
 
+    expect(view.getByText("Paso 1 de 4: Checklist")).toBeTruthy();
+    expect(view.getByLabelText("ID de incidencia para subir evidencia")).toBeTruthy();
+
+    const nextButtonStep1 = view.getByText("Siguiente");
+    fireEvent.press(nextButtonStep1.parent);
+    expect(view.getByText("Paso 2 de 4: Nota")).toBeTruthy();
+
+    const nextButtonStep2 = view.getByText("Siguiente");
+    fireEvent.press(nextButtonStep2.parent);
+    expect(view.getByText("Paso 3 de 4: Fotos")).toBeTruthy();
+
     const galleryButton = view.getByLabelText("Seleccionar foto desde la galeria");
+    expect(galleryButton.props.accessibilityRole).toBe("button");
+    expect(flattenStyle(galleryButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
+
     const cameraButton = view.getByLabelText("Tomar foto con la camara");
-    const uploadButton = view.getByLabelText("Subir foto de la incidencia");
+    expect(cameraButton.props.accessibilityRole).toBe("button");
+    expect(flattenStyle(cameraButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
+  });
 
-    expect(galleryButton.props.disabled).toBe(false);
-    expect(cameraButton.props.disabled).toBe(false);
-    expect(uploadButton.props.disabled).toBe(false);
+  it("keeps logical step progression from checklist to note and photos", async () => {
+    const { fireEvent, render } = await import("@testing-library/react-native/pure");
+    const view = render(<UploadIncidentPhotoScreen />);
 
-    fireEvent.press(galleryButton);
-
-    await waitFor(() => {
-      expect(view.getByLabelText("Seleccionar foto desde la galeria").props.disabled).toBe(true);
-      expect(view.getByLabelText("Tomar foto con la camara").props.disabled).toBe(true);
-      expect(view.getByLabelText("Subir foto de la incidencia").props.disabled).toBe(true);
-    });
-
-    processingDeferred.resolve({ uri: "file:///processed.jpg" });
-
-    await waitFor(() => {
-      expect(view.getByText("Archivo: picked.jpg")).toBeTruthy();
-      expect(view.getByLabelText("Seleccionar foto desde la galeria").props.disabled).toBe(false);
-      expect(view.getByLabelText("Tomar foto con la camara").props.disabled).toBe(false);
-      expect(view.getByLabelText("Subir foto de la incidencia").props.disabled).toBe(false);
-    });
-
-    fireEvent.press(view.getByLabelText("Subir foto de la incidencia"));
-
-    await waitFor(() => {
-      expect(view.getByLabelText("Seleccionar foto desde la galeria").props.disabled).toBe(true);
-      expect(view.getByLabelText("Tomar foto con la camara").props.disabled).toBe(true);
-      expect(view.getByLabelText("Subir foto de la incidencia").props.disabled).toBe(true);
-    });
-
-    uploadDeferred.resolve({ photo: { id: 77 } });
-
-    await waitFor(() => {
-      expect(routerMocks.replace).toHaveBeenCalled();
-      expect(view.getByLabelText("Seleccionar foto desde la galeria").props.disabled).toBe(false);
-      expect(view.getByLabelText("Tomar foto con la camara").props.disabled).toBe(false);
-      expect(view.getByLabelText("Subir foto de la incidencia").props.disabled).toBe(false);
-      expect(view.getByText("Foto ID: 77")).toBeTruthy();
-    });
+    expect(view.getByText("Paso 1 de 4: Checklist")).toBeTruthy();
+    fireEvent.press(view.getByText("Siguiente").parent);
+    expect(view.getByText("Paso 2 de 4: Nota")).toBeTruthy();
+    fireEvent.press(view.getByText("Siguiente").parent);
+    expect(view.getByText("Paso 3 de 4: Fotos")).toBeTruthy();
   });
 });

@@ -53,6 +53,20 @@ const CONTROLLED_MOBILE_ORIGINS = [
   "capacitor://localhost",
 ];
 
+function isLocalhostOrigin(origin) {
+  if (!origin) return false;
+  try {
+    const parsed = new URL(origin);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return false;
+    }
+    const host = normalizeOptionalString(parsed.hostname, "").toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return false;
+  }
+}
+
 function getAllowedCorsOrigins(request, env) {
   const allowed = new Set([...CONTROLLED_DASHBOARD_ORIGINS, ...CONTROLLED_MOBILE_ORIGINS]);
   if (request?.url) {
@@ -139,7 +153,10 @@ function corsHeaders(request, env, corsPolicy = { methods: ["OPTIONS"], headers:
   if (!origin) return {};
 
   const allowedOrigins = getAllowedCorsOrigins(request, env);
-  if (!allowedOrigins.has(origin)) {
+  // Always allow localhost origins for dev tooling (Expo web / local dashboard).
+  // This avoids browser-side "Failed to fetch" caused by preflight 403 in local workflows.
+  const isAllowedLocalhostOrigin = isLocalhostOrigin(origin);
+  if (!allowedOrigins.has(origin) && !isAllowedLocalhostOrigin) {
     return {};
   }
 
@@ -3648,4 +3665,3 @@ export default {
     }
   },
 };
-

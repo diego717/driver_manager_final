@@ -12,6 +12,13 @@ interface ExpoConfigExtra {
 
 let notificationHandlerConfigured = false;
 
+function isExpoGoRuntime(): boolean {
+  const ownership = (Constants as { appOwnership?: string }).appOwnership;
+  const executionEnvironment = (Constants as { executionEnvironment?: string })
+    .executionEnvironment;
+  return ownership === "expo" || executionEnvironment === "storeClient";
+}
+
 function resolveProjectId(): string | undefined {
   const easProjectId = Constants.easConfig?.projectId;
   const extra = Constants.expoConfig?.extra as ExpoConfigExtra | undefined;
@@ -100,6 +107,16 @@ export async function registerForPushNotifications(): Promise<PushRegistrationRe
   configureNotificationHandler();
 
   if (Platform.OS === "web") {
+    return {
+      permissionStatus: Notifications.PermissionStatus.UNDETERMINED,
+      expoPushToken: null,
+      fcmToken: null,
+    };
+  }
+
+  // Since Expo SDK 53, Android remote push APIs are not available in Expo Go.
+  // Keep app flow alive by skipping token registration in this runtime.
+  if (Platform.OS === "android" && isExpoGoRuntime()) {
     return {
       permissionStatus: Notifications.PermissionStatus.UNDETERMINED,
       expoPushToken: null,

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
+import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Alert,
@@ -51,6 +52,7 @@ const SEVERITY_OPTIONS: Array<{
 const MIN_TOUCH_TARGET_SIZE = 44;
 
 export default function CreateIncidentScreen() {
+  const router = useRouter();
   const { resolvedScheme } = useThemePreference();
   const isDark = resolvedScheme === "dark";
   const [installationId, setInstallationId] = useState("1");
@@ -66,6 +68,8 @@ export default function CreateIncidentScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [creatingManualRecord, setCreatingManualRecord] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [lastCreatedIncidentId, setLastCreatedIncidentId] = useState<number | null>(null);
+  const [lastCreatedInstallationId, setLastCreatedInstallationId] = useState<number | null>(null);
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const palette = useMemo(
     () => ({
@@ -249,6 +253,8 @@ export default function CreateIncidentScreen() {
         "Incidencia creada",
         `ID: ${response.incident.id}\nInstalacion: ${response.incident.installation_id}`,
       );
+      setLastCreatedIncidentId(response.incident.id);
+      setLastCreatedInstallationId(response.incident.installation_id);
       setNote("");
       setTimeAdjustment("0");
     } catch (error) {
@@ -589,6 +595,37 @@ export default function CreateIncidentScreen() {
           <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>Crear incidencia</Text>
         )}
       </TouchableOpacity>
+
+      {lastCreatedIncidentId && lastCreatedInstallationId ? (
+        <View
+          style={[
+            styles.optionalSectionCard,
+            { backgroundColor: palette.optionalCardBg, borderColor: palette.optionalCardBorder },
+          ]}
+        >
+          <Text style={[styles.optionalSectionTitle, { color: palette.optionalCardTitle }]}>
+            Siguiente paso recomendado
+          </Text>
+          <Text style={[styles.optionalSectionDescription, { color: palette.optionalCardBody }]}>
+            Completa la evidencia guiada (checklist, nota, fotos y confirmacion) para la incidencia
+            #{lastCreatedIncidentId}.
+          </Text>
+          <TouchableOpacity
+            style={[styles.button, { backgroundColor: palette.primaryButtonBg }]}
+            onPress={() =>
+              router.push(
+                `/incident/upload?incidentId=${lastCreatedIncidentId}&installationId=${lastCreatedInstallationId}` as never,
+              )
+            }
+            accessibilityRole="button"
+            accessibilityLabel="Abrir asistente de evidencia para la incidencia creada"
+          >
+            <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>
+              Abrir asistente de evidencia
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }

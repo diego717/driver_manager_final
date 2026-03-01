@@ -27,11 +27,17 @@ type SelectedImage = {
   isTemporary: boolean;
 };
 
+type ConfirmedEvidence = SelectedImage & {
+  deviceCapturedAt: string;
+};
+
 type FeedbackState = {
   title: string;
   message: string;
   tone: "error" | "success" | "info";
 };
+
+type WizardStep = 0 | 1 | 2 | 3;
 
 const IMAGE_PICK_QUALITY = 1;
 const MAX_UPLOAD_PHOTO_BYTES = 5 * 1024 * 1024;
@@ -39,6 +45,17 @@ const MIN_UPLOAD_PHOTO_BYTES = 1024;
 const MAX_IMAGE_DIMENSION = 1920;
 const COMPRESS_QUALITIES = [0.85, 0.75, 0.65, 0.55, 0.45];
 const MIN_TOUCH_TARGET_SIZE = 44;
+
+const STEP_TITLES = ["Checklist", "Nota", "Fotos", "Confirmacion"] as const;
+
+const CHECKLIST_ITEMS = [
+  "Area segura",
+  "Equipo identificado",
+  "Cliente validado",
+  "Falla reproducida",
+  "EPP utilizado",
+  "Permiso de intervencion",
+] as const;
 
 function normalizeParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
@@ -80,6 +97,12 @@ function formatBytes(bytes: number): string {
   return `${(kb / 1024).toFixed(1)} MB`;
 }
 
+function formatDateTime(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+}
+
 export default function UploadIncidentPhotoScreen() {
   const { resolvedScheme } = useThemePreference();
   const isDark = resolvedScheme === "dark";
@@ -87,7 +110,6 @@ export default function UploadIncidentPhotoScreen() {
   const params = useLocalSearchParams<{
     incidentId?: string | string[];
     installationId?: string | string[];
-    assetId?: string | string[];
   }>();
 
   const initialIncidentId = useMemo(
@@ -99,18 +121,23 @@ export default function UploadIncidentPhotoScreen() {
     [params.installationId],
   );
 
-  const assetId = useMemo(
-    () => normalizeParam(params.assetId),
-    [params.assetId],
-  );
-
+  const [step, setStep] = useState<WizardStep>(0);
   const [incidentId, setIncidentId] = useState(initialIncidentId || "");
+  const [note, setNote] = useState("");
+  const [selectedChecklist, setSelectedChecklist] = useState<Record<string, boolean>>({});
   const [selectedImage, setSelectedImage] = useState<SelectedImage | null>(null);
+  const [confirmedEvidence, setConfirmedEvidence] = useState<ConfirmedEvidence[]>([]);
   const selectedImageRef = useRef<SelectedImage | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [processingImage, setProcessingImage] = useState(false);
   const [processingMessage, setProcessingMessage] = useState("");
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
+
+  const checklistCount = useMemo(
+    () => Object.values(selectedChecklist).filter(Boolean).length,
+    [selectedChecklist],
+  );
+
   const palette = useMemo(
     () => ({
       screenBg: isDark ? "#020617" : "#f8fafc",
@@ -126,6 +153,8 @@ export default function UploadIncidentPhotoScreen() {
       hint: isDark ? "#94a3b8" : "#64748b",
       secondaryBg: isDark ? "#0f172a" : "#ffffff",
       secondaryText: isDark ? "#cbd5e1" : "#0f172a",
+      selectedBg: isDark ? "#0b7a75" : "#0b7a75",
+      selectedText: "#ffffff",
       processingSpinner: isDark ? "#0ea5a4" : "#0b7a75",
       primaryButtonBg: isDark ? "#0f766e" : "#0b7a75",
       primaryButtonText: "#ffffff",
@@ -326,7 +355,44 @@ export default function UploadIncidentPhotoScreen() {
     await setImageFromAsset(result.assets[0]);
   };
 
-  const onUpload = async () => {
+  const onConfirmSelectedPhoto = async () => {
+    if (!selectedImage) {
+      publishFeedback({
+        title: "Sin foto",
+        message: "Primero selecciona una foto desde galeria o camara.",
+        tone: "info",
+      }, { showAlert: false });
+      return;
+    }
+
+    setConfirmedEvidence((current) => [
+      ...current,
+      {
+        ...selectedImage,
+        deviceCapturedAt: new Date().toISOString(),
+      },
+    ]);
+    setSelectedImage(null);
+  };
+
+  const onRemoveSelectedPhoto = async () => {
+    if (selectedImage?.isTemporary) {
+      await deleteFileIfExists(selectedImage.uri);
+    }
+    setSelectedImage(null);
+  };
+
+  const onRemoveConfirmedPhoto = async (index: number) => {
+    setConfirmedEvidence((current) => {
+      const target = current[index];
+      if (target?.isTemporary) {
+        void deleteFileIfExists(target.uri);
+      }
+      return current.filter((_, itemIndex) => itemIndex !== index);
+    });
+  };
+
+  const onSaveAllEvidence = async () => {
     const parsedIncidentId = Number.parseInt(incidentId, 10);
     if (!Number.isInteger(parsedIncidentId) || parsedIncidentId <= 0) {
       publishFeedback({
@@ -336,44 +402,60 @@ export default function UploadIncidentPhotoScreen() {
       });
       return;
     }
-    if (!selectedImage?.uri) {
+
+    if (confirmedEvidence.length === 0) {
       publishFeedback({
-        title: "Falta imagen",
-        message: "Selecciona o toma una foto primero.",
+        title: "Faltan fotos",
+        message: "Confirma al menos una evidencia antes de guardar.",
         tone: "error",
       });
       return;
     }
-    if (processingImage) {
-      publishFeedback({
-        title: "Procesando imagen",
-        message: "Espera a que termine la compresion.",
-        tone: "info",
-      });
-      return;
-    }
 
+    setSaving(true);
     setFeedback(null);
-    setUploading(true);
+
+    const failed: ConfirmedEvidence[] = [];
+    let successCount = 0;
+
     try {
-      const response = await uploadIncidentPhoto({
-        incidentId: parsedIncidentId,
-        fileUri: selectedImage.uri,
-        fileName: selectedImage.fileName,
-        contentType: selectedImage.contentType,
-      });
-      publishFeedback({
-        title: "Foto subida",
-        message: `Foto ID: ${response.photo.id}`,
-        tone: "success",
-      });
-      if (selectedImage.isTemporary) {
-        await deleteFileIfExists(selectedImage.uri);
+      for (const evidence of confirmedEvidence) {
+        try {
+          await uploadIncidentPhoto({
+            incidentId: parsedIncidentId,
+            fileUri: evidence.uri,
+            fileName: evidence.fileName,
+            contentType: evidence.contentType,
+          });
+          successCount += 1;
+          if (evidence.isTemporary) {
+            await deleteFileIfExists(evidence.uri);
+          }
+        } catch {
+          failed.push(evidence);
+        }
       }
-      setSelectedImage(null);
-      router.replace(
-        `/incident/detail?incidentId=${parsedIncidentId}&installationId=${installationId}` as never,
-      );
+
+      if (failed.length === 0) {
+        publishFeedback({
+          title: "Evidencias guardadas",
+          message: `Se subieron ${successCount} fotos para la incidencia #${parsedIncidentId}.`,
+          tone: "success",
+        });
+        setConfirmedEvidence([]);
+        setSelectedImage(null);
+        router.replace(
+          `/incident/detail?incidentId=${parsedIncidentId}&installationId=${installationId}` as never,
+        );
+        return;
+      }
+
+      setConfirmedEvidence(failed);
+      publishFeedback({
+        title: "Sincronizacion pendiente",
+        message: `Se subieron ${successCount}. Pendientes: ${failed.length}. Revisa conexion/permisos y vuelve a intentar confirmar.`,
+        tone: "error",
+      });
     } catch (error) {
       publishFeedback({
         title: "Error",
@@ -381,8 +463,32 @@ export default function UploadIncidentPhotoScreen() {
         tone: "error",
       });
     } finally {
-      setUploading(false);
+      setSaving(false);
     }
+  };
+
+  const onBackStep = () => {
+    setStep((current) => (current > 0 ? ((current - 1) as WizardStep) : current));
+  };
+
+  const onNextStep = () => {
+    if (step === 2 && confirmedEvidence.length === 0) {
+      publishFeedback({
+        title: "Faltan fotos",
+        message: "Confirma al menos una foto para continuar.",
+        tone: "info",
+      });
+      return;
+    }
+
+    setStep((current) => (current < 3 ? ((current + 1) as WizardStep) : current));
+  };
+
+  const toggleChecklist = (label: string) => {
+    setSelectedChecklist((current) => ({
+      ...current,
+      [label]: !current[label],
+    }));
   };
 
   const feedbackColors =
@@ -402,17 +508,14 @@ export default function UploadIncidentPhotoScreen() {
 
   return (
     <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
-      <Stack.Screen options={{ title: "Subir foto" }} />
+      <Stack.Screen options={{ title: "Evidencia guiada" }} />
 
-      <Text style={[styles.title, { color: palette.textPrimary }]}>Subir foto de incidencia</Text>
-      {installationId ? (
-        <Text style={[styles.subtitle, { color: palette.textSecondary }]}>Instalacion #{installationId}</Text>
-      ) : null}
-      {assetId ? (
-        <Text style={[styles.subtitle, { color: palette.textSecondary }]}>Equipo: {assetId}</Text>
-      ) : null}
+      <Text style={[styles.title, { color: palette.textPrimary }]}>Asistente de evidencia</Text>
+      <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
+        Paso {step + 1} de 4: {STEP_TITLES[step]}
+      </Text>
 
-      <Text style={[styles.label, { color: palette.label }]}>Incident ID</Text>
+      <Text style={[styles.label, { color: palette.label }]}>Incidencia objetivo</Text>
       <TextInput
         value={incidentId}
         onChangeText={setIncidentId}
@@ -430,60 +533,171 @@ export default function UploadIncidentPhotoScreen() {
         accessibilityLabel="ID de incidencia para subir evidencia"
       />
 
-      <TouchableOpacity
-        style={[
-          styles.secondaryButton,
-          { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
-        ]}
-        onPress={() => router.push("/scan" as never)}
-        disabled={uploading || processingImage}
-        accessibilityRole="button"
-        accessibilityLabel="Escanear codigo QR o barras"
-      >
-        <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Escanear codigo</Text>
-      </TouchableOpacity>
+      {installationId ? (
+        <Text style={[styles.subtitle, { color: palette.textSecondary }]}>Installation ID: {installationId}</Text>
+      ) : null}
 
-      <View style={styles.row}>
-        <TouchableOpacity
-          style={[
-            styles.secondaryButton,
-            { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
-          ]}
-          onPress={pickFromGallery}
-          disabled={uploading || processingImage}
-          accessibilityRole="button"
-          accessibilityLabel="Seleccionar foto desde la galeria"
-          accessibilityState={{
-            disabled: uploading || processingImage,
-            busy: uploading || processingImage,
-          }}
-        >
-          <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Galeria</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.secondaryButton,
-            { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
-          ]}
-          onPress={takePhoto}
-          disabled={uploading || processingImage}
-          accessibilityRole="button"
-          accessibilityLabel="Tomar foto con la camara"
-          accessibilityState={{
-            disabled: uploading || processingImage,
-            busy: uploading || processingImage,
-          }}
-        >
-          <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Camara</Text>
-        </TouchableOpacity>
-      </View>
+      {step === 0 ? (
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Checklist aplicado</Text>
+          <Text style={[styles.hintText, { color: palette.hint }]}>Marca las verificaciones realizadas.</Text>
+          {CHECKLIST_ITEMS.map((item) => {
+            const selected = Boolean(selectedChecklist[item]);
+            return (
+              <TouchableOpacity
+                key={item}
+                style={[
+                  styles.checkItem,
+                  { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
+                  selected && { backgroundColor: palette.selectedBg, borderColor: palette.selectedBg },
+                ]}
+                onPress={() => toggleChecklist(item)}
+              >
+                <Text
+                  style={[
+                    styles.checkItemText,
+                    { color: selected ? palette.selectedText : palette.secondaryText },
+                  ]}
+                >
+                  {selected ? "[x]" : "[ ]"} {item}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      ) : null}
 
-      {processingImage ? (
-        <View style={styles.processingRow}>
-          <ActivityIndicator color={palette.processingSpinner} />
-          <Text style={[styles.hintText, { color: palette.hint }]}>
-            {processingMessage || "Comprimiendo imagen para subir..."}
-          </Text>
+      {step === 1 ? (
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Nota operativa</Text>
+          <TextInput
+            value={note}
+            onChangeText={setNote}
+            style={[
+              styles.input,
+              styles.noteInput,
+              {
+                backgroundColor: palette.inputBg,
+                borderColor: palette.inputBorder,
+                color: palette.textPrimary,
+              },
+            ]}
+            multiline
+            placeholder="Describe contexto de la evidencia"
+            placeholderTextColor={palette.placeholder}
+            accessibilityLabel="Nota operativa de la evidencia"
+          />
+          <Text style={[styles.hintText, { color: palette.hint }]}>Caracteres: {note.trim().length}</Text>
+        </View>
+      ) : null}
+
+      {step === 2 ? (
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Fotos y captura</Text>
+          <View style={styles.row}>
+            <TouchableOpacity
+              style={[
+                styles.secondaryButton,
+                { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
+              ]}
+              onPress={pickFromGallery}
+              disabled={saving || processingImage}
+              accessibilityRole="button"
+              accessibilityLabel="Seleccionar foto desde la galeria"
+            >
+              <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Galeria</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.secondaryButton,
+                { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
+              ]}
+              onPress={takePhoto}
+              disabled={saving || processingImage}
+              accessibilityRole="button"
+              accessibilityLabel="Tomar foto con la camara"
+            >
+              <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Camara</Text>
+            </TouchableOpacity>
+          </View>
+
+          {processingImage ? (
+            <View style={styles.processingRow}>
+              <ActivityIndicator color={palette.processingSpinner} />
+              <Text style={[styles.hintText, { color: palette.hint }]}>
+                {processingMessage || "Comprimiendo imagen..."}
+              </Text>
+            </View>
+          ) : null}
+
+          {selectedImage ? (
+            <View style={[styles.previewCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+              <Image source={{ uri: selectedImage.uri }} style={[styles.previewImage, { backgroundColor: palette.subtleBg }]} />
+              <Text style={[styles.metaText, { color: palette.label }]}>Archivo: {selectedImage.fileName}</Text>
+              <Text style={[styles.metaText, { color: palette.label }]}>Tamano: {formatBytes(selectedImage.sizeBytes)}</Text>
+              <Text style={[styles.metaText, { color: palette.label }]}>Estado: Sin confirmar</Text>
+              <View style={styles.row}>
+                <TouchableOpacity
+                  style={[styles.secondaryButton, { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder }]}
+                  onPress={onRemoveSelectedPhoto}
+                >
+                  <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Quitar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
+                  onPress={onConfirmSelectedPhoto}
+                >
+                  <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>Confirmar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
+
+          {confirmedEvidence.length === 0 ? (
+            <Text style={[styles.hintText, { color: palette.hint }]}>Aun no agregaste fotos.</Text>
+          ) : (
+            confirmedEvidence.map((item, index) => (
+              <View key={`${item.uri}-${index}`} style={[styles.photoRow, { borderColor: palette.inputBorder }]}>
+                <View style={styles.photoRowTextWrap}>
+                  <Text style={[styles.metaText, { color: palette.textPrimary }]}>{item.fileName}</Text>
+                  <Text style={[styles.metaText, { color: palette.textSecondary }]}>
+                    {formatBytes(item.sizeBytes)} | Captured: {formatDateTime(item.deviceCapturedAt)}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => onRemoveConfirmedPhoto(index)}>
+                  <Text style={[styles.removeText, { color: palette.errorText }]}>Quitar</Text>
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
+        </View>
+      ) : null}
+
+      {step === 3 ? (
+        <View style={[styles.section, styles.summaryCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+          <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Resumen</Text>
+          <Text style={[styles.metaText, { color: palette.textSecondary }]}>Checklist aplicado: {checklistCount} items</Text>
+          <Text style={[styles.metaText, { color: palette.textSecondary }]}>Nota: {note.trim().length} caracteres</Text>
+          <Text style={[styles.metaText, { color: palette.textSecondary }]}>Evidencias confirmadas: {confirmedEvidence.length}</Text>
+          <Text style={[styles.hintText, { color: palette.hint }]}>Cada evidencia se sube y queda registrada por incidencia.</Text>
+
+          <TouchableOpacity
+            style={[
+              styles.primaryButton,
+              { backgroundColor: palette.primaryButtonBg },
+              saving && styles.primaryButtonDisabled,
+            ]}
+            onPress={onSaveAllEvidence}
+            disabled={saving || processingImage}
+            accessibilityRole="button"
+            accessibilityLabel="Confirmar y guardar evidencia"
+          >
+            {saving ? (
+              <ActivityIndicator color={palette.primaryButtonText} />
+            ) : (
+              <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>Confirmar y guardar</Text>
+            )}
+          </TouchableOpacity>
         </View>
       ) : null}
 
@@ -504,40 +718,26 @@ export default function UploadIncidentPhotoScreen() {
         </View>
       ) : null}
 
-      {selectedImage ? (
-        <View style={[styles.previewCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
-          <Image source={{ uri: selectedImage.uri }} style={[styles.previewImage, { backgroundColor: palette.subtleBg }]} />
-          <Text style={[styles.metaText, { color: palette.label }]}>Archivo: {selectedImage.fileName}</Text>
-          <Text style={[styles.metaText, { color: palette.label }]}>Tipo: {selectedImage.contentType}</Text>
-          <Text style={[styles.metaText, { color: palette.label }]}>Tamano: {formatBytes(selectedImage.sizeBytes)}</Text>
-        </View>
-      ) : (
-        <Text style={[styles.hintText, { color: palette.hint }]}>Todavia no seleccionaste ninguna foto.</Text>
-      )}
-
-      <TouchableOpacity
-        style={[
-          styles.primaryButton,
-          { backgroundColor: palette.primaryButtonBg },
-          uploading && styles.primaryButtonDisabled,
-        ]}
-        onPress={onUpload}
-        disabled={uploading || processingImage}
-        accessibilityRole="button"
-        accessibilityLabel="Subir foto de la incidencia"
-        accessibilityState={{
-          disabled: uploading || processingImage,
-          busy: uploading || processingImage,
-        }}
-      >
-        {uploading ? (
-          <ActivityIndicator color={palette.primaryButtonText} />
-        ) : (
-          <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
-            Subir foto
-          </Text>
-        )}
-      </TouchableOpacity>
+      <View style={styles.row}>
+        <TouchableOpacity
+          style={[styles.secondaryButton, { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder }]}
+          onPress={onBackStep}
+          disabled={step === 0 || saving}
+        >
+          <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Anterior</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.primaryButton,
+            { backgroundColor: palette.primaryButtonBg },
+            (step === 3 || saving) && styles.primaryButtonDisabled,
+          ]}
+          onPress={onNextStep}
+          disabled={step === 3 || saving}
+        >
+          <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>Siguiente</Text>
+        </TouchableOpacity>
+      </View>
     </ScrollView>
   );
 }
@@ -554,6 +754,13 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 13,
   },
+  section: {
+    gap: 8,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+  },
   label: {
     fontSize: 13,
     fontWeight: "600",
@@ -564,9 +771,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
+  noteInput: {
+    minHeight: 110,
+    textAlignVertical: "top",
+  },
   row: {
     flexDirection: "row",
     gap: 10,
+  },
+  checkItem: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  checkItemText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
   processingRow: {
     flexDirection: "row",
@@ -585,25 +806,8 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     fontWeight: "700",
   },
-  previewCard: {
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 10,
-    gap: 8,
-  },
-  previewImage: {
-    width: "100%",
-    height: 260,
-    borderRadius: 8,
-  },
-  hintText: {
-    fontSize: 13,
-  },
-  metaText: {
-    fontSize: 12,
-  },
   primaryButton: {
-    marginTop: 8,
+    flex: 1,
     borderRadius: 10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
@@ -616,6 +820,46 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     fontWeight: "700",
     fontSize: 15,
+  },
+  previewCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    gap: 8,
+  },
+  previewImage: {
+    width: "100%",
+    height: 220,
+    borderRadius: 8,
+  },
+  hintText: {
+    fontSize: 13,
+  },
+  metaText: {
+    fontSize: 12,
+  },
+  photoRow: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  photoRowTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  removeText: {
+    fontWeight: "700",
+    fontSize: 12,
+  },
+  summaryCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
   },
   feedbackBox: {
     borderWidth: 1,

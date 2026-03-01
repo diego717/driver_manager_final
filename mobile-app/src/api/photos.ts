@@ -135,14 +135,22 @@ export async function uploadIncidentPhoto({
     body: binaryBody as unknown as BodyInit,
   });
 
-  const body = (await response.json()) as UploadPhotoResponse | { error?: { message?: string } };
+  let body: UploadPhotoResponse | { error?: { message?: string } } | null = null;
+  try {
+    body = (await response.json()) as UploadPhotoResponse | { error?: { message?: string } };
+  } catch {
+    body = null;
+  }
   if (!response.ok) {
     const message =
       typeof body === "object" && body && "error" in body
         ? body.error?.message || "Photo upload failed."
         : "Photo upload failed.";
-    throw new Error(message);
+    throw new Error(`${message} (HTTP ${response.status})`);
   }
 
+  if (!body || typeof body !== "object" || !("photo" in body)) {
+    throw new Error("Respuesta invalida al subir foto.");
+  }
   return body as UploadPhotoResponse;
 }

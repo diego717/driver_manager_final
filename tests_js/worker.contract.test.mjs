@@ -696,6 +696,19 @@ test("OPTIONS rejects not allowed origins with 403", async () => {
   assert.equal(response.headers.get("Access-Control-Allow-Origin"), null);
 });
 
+test("OPTIONS allows localhost dev origins in preflight", async () => {
+  const request = new Request("https://worker.example/web/auth/login", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "http://localhost:19006",
+    },
+  });
+  const response = await workerFetch(request, { ALLOW_LOCALHOST_ORIGINS: "false" });
+
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), "http://localhost:19006");
+});
+
 test("CORS response headers are omitted for disallowed origins", async () => {
   const request = new Request("https://worker.example/health", {
     method: "GET",
