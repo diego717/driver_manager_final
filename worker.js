@@ -563,6 +563,14 @@ function parseOptionalPositiveInt(value, label) {
   return parsePositiveInt(value, label);
 }
 
+async function readJsonOrThrowBadRequest(request, message = "Payload invalido.") {
+  try {
+    return await request.json();
+  } catch {
+    throw new HttpError(400, message);
+  }
+}
+
 function parsePageLimit(searchParams, options = {}) {
   const fallback = Number.isInteger(options.fallback) ? options.fallback : 100;
   const max = Number.isInteger(options.max) ? options.max : 500;
@@ -3201,7 +3209,7 @@ export default {
         }
 
         if (request.method === "POST") {
-          const data = await request.json();
+          const data = await readJsonOrThrowBadRequest(request);
           const payload = normalizeInstallationPayload(data, "unknown");
 
           const insertResult = await env.DB.prepare(`
@@ -3354,7 +3362,7 @@ export default {
       }
 
       if (routeParts.length === 1 && routeParts[0] === "records" && request.method === "POST") {
-        const data = await request.json();
+        const data = await readJsonOrThrowBadRequest(request);
         const payload = normalizeInstallationPayload(data, "manual");
 
         if (!payload.driver_brand) payload.driver_brand = "N/A";
@@ -3447,7 +3455,7 @@ export default {
         }
 
         if (request.method === "POST") {
-          const data = await request.json();
+          const data = await readJsonOrThrowBadRequest(request);
           const payload = validateIncidentPayload(data, {
             defaultSource: isWebRoute ? "web" : "mobile",
             defaultReporterUsername: webSession?.sub || "unknown",
@@ -3713,7 +3721,7 @@ export default {
         }
 
         if (request.method === "PUT") {
-          const data = await request.json();
+          const data = await readJsonOrThrowBadRequest(request);
           await env.DB.prepare(`
             UPDATE installations
             SET notes = ?, installation_time_seconds = ?

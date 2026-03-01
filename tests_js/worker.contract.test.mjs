@@ -1865,7 +1865,7 @@ test("GET /installations/:id returns 404 when installation does not exist", asyn
   assert.match(body.error.message, /registro no encontrado/i);
 });
 
-test("invalid JSON payload returns 500 with error body", async () => {
+test("invalid JSON payload returns 400 for POST /installations", async () => {
   const db = createMockDB();
   const request = new Request("https://worker.example/installations", {
     method: "POST",
@@ -1876,9 +1876,57 @@ test("invalid JSON payload returns 500 with error body", async () => {
   const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
-  assert.equal(response.status, 500);
-  assert.equal(typeof body.error, "string");
-  assert.notEqual(body.error.length, 0);
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /payload invalido/i);
+});
+
+test("invalid JSON payload returns 400 for POST /records", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/records", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{invalid json",
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /payload invalido/i);
+});
+
+test("invalid JSON payload returns 400 for POST /installations/:id/incidents", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/installations/45/incidents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{invalid json",
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /payload invalido/i);
+});
+
+test("invalid JSON payload returns 400 for PUT /installations/:id", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/installations/45", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: "{invalid json",
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /payload invalido/i);
 });
 
 test("unknown route returns 404", async () => {
