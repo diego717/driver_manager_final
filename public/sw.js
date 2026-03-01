@@ -1,9 +1,9 @@
 // Service Worker for Driver Manager Dashboard PWA
-const CACHE_NAME = 'driver-manager-dccf8771e5';
+const CACHE_NAME = 'driver-manager-cdb3dd338e';
 const STATIC_ASSETS = [
   '/web/dashboard',
   '/dashboard.css?v=7929728d34',
-  '/dashboard.js?v=129f3e8186',
+  '/dashboard.js?v=16fa4dd97e',
   '/dashboard-pwa.js?v=f2230f4810',
   '/manifest.json?v=c0f933f797'
 ];

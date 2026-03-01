@@ -496,16 +496,31 @@ async function renderTrendChart() {
     }
     
     try {
-        // Generate last 7 days labels
+        const trendResponse = await api.getTrendData();
+        const trendPoints = Array.isArray(trendResponse?.points) ? trendResponse.points : [];
+
         const labels = [];
         const data = [];
-        const today = new Date();
-        
-        for (let i = 6; i >= 0; i--) {
-            const date = new Date(today);
-            date.setDate(date.getDate() - i);
-            labels.push(date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' }));
-            data.push(Math.floor(Math.random() * 20) + 5); // Simulated data - replace with real API
+
+        if (trendPoints.length > 0) {
+            for (const point of trendPoints) {
+                const rawDate = typeof point?.date === 'string' ? point.date : '';
+                const date = rawDate ? new Date(rawDate + 'T00:00:00Z') : null;
+                labels.push(
+                    date && !Number.isNaN(date.getTime())
+                        ? date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' })
+                        : rawDate || 'N/A'
+                );
+                data.push(Number(point?.total_installations) || 0);
+            }
+        } else {
+            const today = new Date();
+            for (let i = 6; i >= 0; i--) {
+                const date = new Date(today);
+                date.setDate(date.getDate() - i);
+                labels.push(date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' }));
+                data.push(0);
+            }
         }
         
         charts.trend = new Chart(ctx, {

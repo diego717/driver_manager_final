@@ -212,7 +212,10 @@ function createMockDB({
             return { results: rows.slice(0, limit) };
           }
 
-          if (normalized.includes("COUNT(*) AS total_installations")) {
+          if (
+            normalized.includes("COUNT(*) AS total_installations") &&
+            !normalized.includes("substr(timestamp, 1, 10) AS day")
+          ) {
             const start = call.bound?.[1] ?? call.bound?.[0] ?? null;
             const end = call.bound?.[3] ?? call.bound?.[2] ?? null;
             const filtered = applyDateRange(state.installations, start, end);
@@ -259,6 +262,42 @@ function createMockDB({
             return {
               results: [...counts.entries()].map(([brand, count]) => ({ brand, count })),
             };
+          }
+
+          if (
+            normalized.includes("SELECT substr(timestamp, 1, 10) AS day") &&
+            normalized.includes("COUNT(*) AS total_installations") &&
+            normalized.includes("GROUP BY substr(timestamp, 1, 10) ORDER BY day ASC")
+          ) {
+            const start = String(call.bound?.[0] ?? "");
+            const end = String(call.bound?.[1] ?? "");
+            const filtered = state.installations.filter((row) => {
+              const ts = String(row.timestamp ?? "");
+              return ts.localeCompare(start) >= 0 && ts.localeCompare(end) < 0;
+            });
+
+            const grouped = new Map();
+            for (const row of filtered) {
+              const timestamp = String(row.timestamp ?? "");
+              const day = timestamp.slice(0, 10);
+              if (!day) continue;
+              const current = grouped.get(day) || {
+                day,
+                total_installations: 0,
+                successful_installations: 0,
+                failed_installations: 0,
+              };
+              current.total_installations += 1;
+              if (String(row.status ?? "").toLowerCase() === "success") {
+                current.successful_installations += 1;
+              } else if (String(row.status ?? "").toLowerCase() === "failed") {
+                current.failed_installations += 1;
+              }
+              grouped.set(day, current);
+            }
+
+            const results = [...grouped.values()].sort((a, b) => String(a.day).localeCompare(String(b.day)));
+            return { results };
           }
 
           if (
@@ -2171,6 +2210,63 @@ test("GET /statistics returns full stats with brand grouping", async () => {
   assert.equal(body.failed_installations, 1);
   assert.equal(body.unique_clients, 2);
   assert.deepEqual(body.by_brand, { Zebra: 1, Magicard: 1 });
+});
+
+test("GET /statistics/trend returns daily buckets with zero-filled gaps", async () => {
+  const db = createMockDB({
+    installations: [
+      {
+        id: 1,
+        timestamp: "2026-02-01T10:00:00.000Z",
+        status: "success",
+      },
+      {
+        id: 2,
+        timestamp: "2026-02-01T18:00:00.000Z",
+        status: "failed",
+      },
+      {
+        id: 3,
+        timestamp: "2026-02-03T07:00:00.000Z",
+        status: "success",
+      },
+      {
+        id: 4,
+        timestamp: "2026-02-05T07:00:00.000Z",
+        status: "success",
+      },
+    ],
+  });
+  const request = new Request(
+    "https://worker.example/statistics/trend?start_date=2026-02-01&end_date=2026-02-04",
+    { method: "GET" },
+  );
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(Array.isArray(body.points), true);
+  assert.equal(body.points.length, 3);
+
+  assert.deepEqual(body.points[0], {
+    date: "2026-02-01",
+    total_installations: 2,
+    successful_installations: 1,
+    failed_installations: 1,
+  });
+  assert.deepEqual(body.points[1], {
+    date: "2026-02-02",
+    total_installations: 0,
+    successful_installations: 0,
+    failed_installations: 0,
+  });
+  assert.deepEqual(body.points[2], {
+    date: "2026-02-03",
+    total_installations: 1,
+    successful_installations: 1,
+    failed_installations: 0,
+  });
 });
 
 test("POST /audit-logs stores audit event in D1", async () => {

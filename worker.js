@@ -207,6 +207,41 @@ function corsHeaders(request, env, corsPolicy = { methods: ["OPTIONS"], headers:
   };
 }
 
+function appendVaryHeader(headers, varyValue) {
+  if (!headers || !varyValue) return;
+
+  const existing = normalizeOptionalString(headers.get("Vary"), "");
+  if (!existing) {
+    headers.set("Vary", String(varyValue));
+    return;
+  }
+
+  const existingValues = new Set(
+    existing
+      .split(",")
+      .map((value) => normalizeOptionalString(value, "").toLowerCase())
+      .filter((value) => value),
+  );
+
+  for (const token of String(varyValue).split(",")) {
+    const normalized = normalizeOptionalString(token, "");
+    if (!normalized) continue;
+    const lowered = normalized.toLowerCase();
+    if (!existingValues.has(lowered)) {
+      headers.set("Vary", `${headers.get("Vary")}, ${normalized}`);
+      existingValues.add(lowered);
+    }
+  }
+}
+
+function setHeaderWithVaryMerge(headers, key, value) {
+  if (String(key).toLowerCase() === "vary") {
+    appendVaryHeader(headers, value);
+    return;
+  }
+  headers.set(key, value);
+}
+
 function jsonResponse(request, env, corsPolicy, body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -329,10 +364,13 @@ async function serveDashboardStaticAsset(request, env, corsPolicy, routeParts) {
   const contentType = dashboardAssetContentType(assetPath);
   if (contentType) headers.set("Content-Type", contentType);
   headers.set("Cache-Control", dashboardAssetCacheControl(assetPath));
+  appendVaryHeader(headers, "Accept-Encoding");
 
   const cors = corsHeaders(request, env, corsPolicy);
-  for (const [key, value] of Object.entries(cors)) headers.set(key, value);
-  for (const [key, value] of Object.entries(dashboardAssetSecurityHeaders())) headers.set(key, value);
+  for (const [key, value] of Object.entries(cors)) setHeaderWithVaryMerge(headers, key, value);
+  for (const [key, value] of Object.entries(dashboardAssetSecurityHeaders())) {
+    setHeaderWithVaryMerge(headers, key, value);
+  }
 
   return new Response(request.method === "HEAD" ? null : assetResponse.body, {
     status: assetResponse.status,
@@ -644,6 +682,20 @@ function parseDateOrNull(value) {
     throw new HttpError(400, "Fecha invalida en filtros.");
   }
   return parsed;
+}
+
+function startOfUtcDay(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function addUtcDays(date, days) {
+  const copy = new Date(date.getTime());
+  copy.setUTCDate(copy.getUTCDate() + Number(days || 0));
+  return copy;
+}
+
+function toUtcDayKey(date) {
+  return date.toISOString().slice(0, 10);
 }
 
 function parseOptionalPositiveInt(value, label) {
@@ -3381,6 +3433,8 @@ export default {
             web_installations: "/web/installations",
             web_devices: "/web/devices",
             web_lookup: "/web/lookup?type=asset&code=EQ-123",
+            statistics_trend: "/statistics/trend?days=7",
+            web_statistics_trend: "/web/statistics/trend?days=7",
             audit_logs: "/audit-logs",
             web_audit_logs: "/web/audit-logs",
             maintenance_cleanup_orphans: "/maintenance/cleanup-orphans",
@@ -4369,6 +4423,81 @@ export default {
           await publishRealtimeStatsUpdate(env, realtimeTenantId);
           return jsonResponse(request, env, corsPolicy,{ message: `Registro ${installationId} eliminado.` });
         }
+      }
+
+      if (routeParts.length === 2 && routeParts[0] === "statistics" && routeParts[1] === "trend") {
+        if (request.method !== "GET") {
+          return textResponse(request, env, corsPolicy, "Ruta no encontrada.", 404);
+        }
+
+        const requestedDays = parseOptionalPositiveInt(url.searchParams.get("days"), "days");
+        const normalizedDays = requestedDays === null ? 7 : Math.min(Math.max(requestedDays, 1), 90);
+        const startDateFilter = parseDateOrNull(url.searchParams.get("start_date"));
+        const endDateFilter = parseDateOrNull(url.searchParams.get("end_date"));
+
+        const endExclusive = endDateFilter
+          ? startOfUtcDay(endDateFilter)
+          : addUtcDays(startOfUtcDay(new Date()), 1);
+        const startInclusive = startDateFilter
+          ? startOfUtcDay(startDateFilter)
+          : addUtcDays(endExclusive, -normalizedDays);
+
+        if (startInclusive.getTime() >= endExclusive.getTime()) {
+          throw new HttpError(400, "Rango de fechas invalido para trend.");
+        }
+
+        const { results: trendRows } = await env.DB.prepare(`
+          SELECT
+            substr(timestamp, 1, 10) AS day,
+            COUNT(*) AS total_installations,
+            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_installations,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_installations
+          FROM installations
+          WHERE timestamp >= ?
+            AND timestamp < ?
+          GROUP BY substr(timestamp, 1, 10)
+          ORDER BY day ASC
+        `)
+          .bind(startInclusive.toISOString(), endExclusive.toISOString())
+          .all();
+
+        const byDay = new Map();
+        for (const row of trendRows || []) {
+          const day = normalizeOptionalString(row?.day, "");
+          if (!day) continue;
+          byDay.set(day, {
+            total_installations: Number(row?.total_installations) || 0,
+            successful_installations: Number(row?.successful_installations) || 0,
+            failed_installations: Number(row?.failed_installations) || 0,
+          });
+        }
+
+        const points = [];
+        for (
+          let cursor = new Date(startInclusive.getTime());
+          cursor.getTime() < endExclusive.getTime();
+          cursor = addUtcDays(cursor, 1)
+        ) {
+          const key = toUtcDayKey(cursor);
+          const values = byDay.get(key) || {
+            total_installations: 0,
+            successful_installations: 0,
+            failed_installations: 0,
+          };
+          points.push({
+            date: key,
+            total_installations: values.total_installations,
+            successful_installations: values.successful_installations,
+            failed_installations: values.failed_installations,
+          });
+        }
+
+        return jsonResponse(request, env, corsPolicy, {
+          start_date: startInclusive.toISOString(),
+          end_date: endExclusive.toISOString(),
+          days: points.length,
+          points,
+        });
       }
 
       if (routeParts.length === 1 && routeParts[0] === "statistics") {
