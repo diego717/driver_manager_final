@@ -310,7 +310,7 @@ class UploadSuccessDialog(QDialog):
         super().__init__(parent)
         self.driver_info = driver_info
         
-        self.setWindowTitle("¡Upload Exitoso!")
+        self.setWindowTitle("¡Subida Exitosa!")
         self.setModal(True)
         self.setFixedSize(400, 250)
         

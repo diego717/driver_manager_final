@@ -410,7 +410,7 @@ class UserManagerV2:
         
         Args:
             first_user_username: Nombre de usuario del primer admin
-            first_user_password: Contraseaa del primer admin
+            first_user_password: Contraseña del primer admin
             
         Returns:
             (success: bool, message: str)
@@ -423,7 +423,7 @@ class UserManagerV2:
             if users_data and len(users_data.get('users', {})) > 0:
                 raise ConfigurationError("El sistema ya tiene usuarios configurados.")
             
-            # Validar contrasena del primer usuario con la politica vigente
+            # Validar contraseña del primer usuario con la política vigente
             is_valid, message, score = PasswordValidator.validate_password_strength(
                 first_user_password,
                 first_user_username
@@ -521,7 +521,7 @@ class UserManagerV2:
             return False
     
     def _get_system_info(self):
-        """Obtener informacian del sistema para auditoraa"""
+        """Obtener información del sistema para auditoría"""
         try:
             return {
                 'computer_name': socket.gethostname(),
@@ -613,7 +613,7 @@ class UserManagerV2:
             raise CloudStorageError(f"Error loading users: {str(e)}", original_error=e)
 
     def _normalize_users_data(self, users_data):
-        """Asegurar formato valido para base de usuarios."""
+        """Asegurar formato válido para base de usuarios."""
         if not isinstance(users_data, dict):
             return {"users": {}, "created_at": datetime.now().isoformat(), "version": "2.1"}
 
@@ -770,7 +770,7 @@ class UserManagerV2:
 
     def _normalize_logs_data(self, logs_data):
         """
-        Asegurar formato valido para logs de auditoraa.
+        Asegurar formato válido para logs de auditoría.
         """
         if not isinstance(logs_data, dict):
             self.logger.warning("Formato de logs inválido. Reinicializando estructura de logs.")
@@ -961,7 +961,7 @@ class UserManagerV2:
 
         if self._can_use_audit_api():
             self.logger.operation_end("repair_access_logs", success=True, mode="audit_api")
-            return True, "Auditoria en D1 activa. No se requiere reparacion de archivo local."
+            return True, "Auditoría en D1 activa. No se requiere reparación de archivo local."
 
         logs_data = self._load_legacy_logs_data()
         self._persist_logs_data(logs_data)
@@ -1021,7 +1021,7 @@ class UserManagerV2:
         
         Args:
             username: Nombre de usuario
-            password: Contraseaa
+            password: Contraseña
             
         Returns:
             (success: bool, message: str)
@@ -1120,7 +1120,7 @@ class UserManagerV2:
         # En login exitoso, resetear contador de intentos
         self.lockout_manager.record_successful_login(username)
         
-        # Actualizar ultimo login
+        # Actualizar último login
         user["last_login"] = datetime.now().isoformat()
         users_data["users"][username] = user
         self._save_users(users_data)
@@ -1140,7 +1140,7 @@ class UserManagerV2:
         
         Args:
             username: Nombre de usuario
-            password: Contraseaa
+            password: Contraseña
             role: Rol del usuario
             created_by: Usuario creador
             **kwargs: Parametros adicionales
@@ -1160,7 +1160,7 @@ class UserManagerV2:
         if not re.match(r'^[a-zA-Z0-9_-]+$', username):
             raise ValidationError("Nombre de usuario inválido (solo letras, números, guiones y guiones bajos).", details={'username': username})
         
-        # Validar contrasena con la politica de seguridad
+        # Validar contraseña con la política de seguridad
         is_valid, message, score = PasswordValidator.validate_password_strength(password, username)
         
         if not is_valid:
@@ -1428,7 +1428,7 @@ class UserManagerV2:
         
         Args:
             username: Usuario
-            old_password: Contraseaa actual
+            old_password: Contraseña actual
             new_password: Nueva contraseña
             
         Returns:
@@ -1447,9 +1447,9 @@ class UserManagerV2:
         # Verificar contraseña actual
         if not self._verify_password(old_password, user["password_hash"]):
             self.logger.security_event("password_change_failed", username, False, {'reason': 'Wrong old password'})
-            raise AuthenticationError("Contraseaa actual incorrecta.")
+            raise AuthenticationError("Contraseña actual incorrecta.")
         
-        # Validar nueva contrasena con la politica de seguridad
+        # Validar nueva contraseña con la política de seguridad
         is_valid, message, score = PasswordValidator.validate_password_strength(new_password, username)
         
         if not is_valid:
@@ -1500,7 +1500,7 @@ class UserManagerV2:
             {'password_strength': score}
         )
         self.logger.operation_end("change_password", success=True)
-        return True, f"Contraseaa cambiada exitosamente.\nFortaleza: {score}/100"
+        return True, f"Contraseña cambiada exitosamente.\nFortaleza: {score}/100"
     
     @handle_errors("get_users", reraise=True, default_return=[])
     def get_users(self):

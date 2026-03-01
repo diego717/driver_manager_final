@@ -9,6 +9,7 @@ const API_BASE = (() => {
 })();
 
 let currentUser = null;
+let webAccessToken = '';
 let charts = {};
 let searchDebounceTimer = null;
 let currentInstallationsData = [];
@@ -44,8 +45,12 @@ applyChartDefaults('light');
 
 const api = {
     async request(endpoint, options = {}) {
+        const authHeaders = webAccessToken
+            ? { Authorization: 'Bearer ' + webAccessToken }
+            : {};
         const headers = {
             'Content-Type': 'application/json',
+            ...authHeaders,
             ...options.headers
         };
         
@@ -56,6 +61,7 @@ const api = {
         });
         
         if (response.status === 401) {
+            webAccessToken = '';
             showLogin();
             throw new Error('No autorizado');
         }
@@ -95,9 +101,13 @@ const api = {
     },
 
     async uploadIncidentPhoto(incidentId, file) {
+        const authHeaders = webAccessToken
+            ? { Authorization: 'Bearer ' + webAccessToken }
+            : {};
         const response = await fetch(API_BASE + '/web/incidents/' + incidentId + '/photos', {
             method: 'POST',
             headers: {
+                ...authHeaders,
                 'Content-Type': file.type || 'image/jpeg',
                 'X-File-Name': file.name || ('incident_' + incidentId + '.jpg')
             },
@@ -107,6 +117,7 @@ const api = {
 
         if (response.status === 401) {
             currentUser = null;
+            webAccessToken = '';
             closeSSE();
             showLogin();
             throw new Error('No autorizado');
@@ -1170,10 +1181,21 @@ async function showIncidentsForInstallation(installationId) {
 
 async function loadPhotoWithAuth(photoId) {
     try {
+        const authHeaders = webAccessToken
+            ? { Authorization: 'Bearer ' + webAccessToken }
+            : {};
         const response = await fetch(API_BASE + '/web/photos/' + photoId, {
+            headers: authHeaders,
             credentials: 'include'
         });
-        if (!response.ok) throw new Error('Failed to load photo');
+        if (response.status === 401) {
+            currentUser = null;
+            webAccessToken = '';
+            closeSSE();
+            showLogin();
+            throw new Error('No autorizado');
+        }
+        if (!response.ok) throw new Error('Failed to load photo (HTTP ' + response.status + ')');
         const blob = await response.blob();
         return URL.createObjectURL(blob);
     } catch (err) {
@@ -1411,6 +1433,11 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     
     try {
         const result = await api.login(username, password);
+        if (typeof result?.access_token === 'string' && result.access_token.trim()) {
+            webAccessToken = result.access_token.trim();
+        } else {
+            webAccessToken = '';
+        }
         applyAuthenticatedUser(result.user);
         
         hideLogin();
@@ -1432,6 +1459,7 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
         console.error('Error during logout:', err);
     }
     currentUser = null;
+    webAccessToken = '';
     closeSSE();
     resetProtectedViews();
     showLogin();
@@ -1804,6 +1832,7 @@ async function init() {
                 // Ignorar si no habia sesion activa.
             }
             currentUser = null;
+            webAccessToken = '';
             closeSSE();
             resetProtectedViews();
             showLogin();

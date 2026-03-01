@@ -26,17 +26,35 @@ class EventHandlers:
     def __init__(self, main_window):
         self.main = main_window
     
+
     def on_driver_selected(self):
         """Cuando se selecciona un driver"""
         selected_items = self.main.drivers_tab.drivers_list.selectedItems()
         if selected_items:
             driver = selected_items[0].data(Qt.ItemDataRole.UserRole)
+
+            size_mb = driver.get('size_mb')
+            if size_mb in (None, '', 'N/A'):
+                cloud = getattr(self.main, 'cloud_manager', None)
+                if cloud:
+                    # Consulta una sola vez por key y luego usa cache en memoria.
+                    resolved_size = cloud.get_driver_size_mb(driver)
+                    if resolved_size is not None:
+                        size_mb = resolved_size
+
+            size_text = 'N/A'
+            try:
+                if size_mb not in (None, '', 'N/A'):
+                    size_text = f"{float(size_mb):.2f}"
+            except (TypeError, ValueError):
+                size_text = 'N/A'
+
             details = f"Marca: {driver['brand']}\n"
             details += f"Versión: {driver['version']}\n"
             details += f"Descripción: {driver.get('description', 'N/A')}\n"
             details += f"Fecha: {driver.get('last_modified', 'N/A')}\n"
-            details += f"Tamaño: {driver.get('size_mb', 'N/A')} MB"
-            
+            details += f"Tamaño: {size_text} MB"
+
             self.main.drivers_tab.driver_details.setText(details)
             self.main.drivers_tab.download_btn.setEnabled(True)
             self.main.drivers_tab.install_btn.setEnabled(True)
@@ -44,7 +62,7 @@ class EventHandlers:
             self.main.drivers_tab.driver_details.clear()
             self.main.drivers_tab.download_btn.setEnabled(False)
             self.main.drivers_tab.install_btn.setEnabled(False)
-    
+
     def on_driver_double_click(self, item):
         """Doble click para instalar"""
         self.download_and_install()

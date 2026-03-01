@@ -36,6 +36,13 @@ class CloudflareR2Manager:
             raise ConfigurationError("Faltan credenciales de R2 (account_id, access_key, secret_key, bucket).")
 
         self.bucket_name = bucket_name
+        # Cache en memoria para evitar pedir head_object repetidamente por driver.
+        # key -> {"size_bytes": int, "size_mb": float}
+        self._driver_size_cache = {}
+        safe_bucket_name = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(bucket_name or "default"))
+        self._driver_size_cache_file = (
+            Path.home() / ".driver_manager" / "cache" / f"driver_size_cache_{safe_bucket_name}.json"
+        )
         
         # Limpiar account_id si viene con URL completa (error común)
         if 'https://' in account_id or 'http://' in account_id:
@@ -76,6 +83,7 @@ class CloudflareR2Manager:
         # Verificar o crear manifest
         self.manifest_key = "manifest.json"
         self._ensure_manifest()
+        self._load_driver_size_cache()
         logger.operation_end("r2_manager_init", success=True)
     
     @handle_errors("_ensure_manifest", reraise=True)
@@ -109,6 +117,118 @@ class CloudflareR2Manager:
             Key=self.manifest_key
         )
         return json.loads(response['Body'].read().decode('utf-8'))
+
+    def _load_driver_size_cache(self):
+        """Cargar cache persistente de tamaños de drivers desde disco."""
+        cache_file = self._driver_size_cache_file
+        self._driver_size_cache = {}
+
+        try:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as error:
+            logger.warning("No se pudo preparar directorio de cache de tamaños", details=str(error))
+            return
+
+        if not cache_file.exists():
+            return
+
+        try:
+            with open(cache_file, 'r', encoding='utf-8') as cache_stream:
+                payload = json.load(cache_stream)
+        except Exception as error:
+            logger.warning("No se pudo cargar cache de tamaños de drivers", path=str(cache_file), details=str(error))
+            return
+
+        raw_cache = payload.get("sizes") if isinstance(payload, dict) and isinstance(payload.get("sizes"), dict) else payload
+        if not isinstance(raw_cache, dict):
+            return
+
+        normalized_cache = {}
+        for raw_key, raw_entry in raw_cache.items():
+            driver_key = str(raw_key or "").strip()
+            if not driver_key or not isinstance(raw_entry, dict):
+                continue
+
+            size_bytes = raw_entry.get("size_bytes")
+            size_mb = raw_entry.get("size_mb")
+            try:
+                if size_bytes in (None, '') and size_mb not in (None, ''):
+                    size_bytes = int(round(float(size_mb) * 1024 * 1024))
+                elif size_bytes not in (None, ''):
+                    size_bytes = max(0, int(size_bytes))
+                else:
+                    continue
+
+                normalized_cache[driver_key] = {
+                    "size_bytes": size_bytes,
+                    "size_mb": round(size_bytes / (1024 * 1024), 2),
+                }
+            except (TypeError, ValueError):
+                continue
+
+        self._driver_size_cache = normalized_cache
+
+    def _save_driver_size_cache(self):
+        """Persistir cache de tamaños de drivers en disco."""
+        cache_file = self._driver_size_cache_file
+
+        try:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "version": 1,
+                "updated_at": datetime.now().isoformat(),
+                "sizes": self._driver_size_cache,
+            }
+            temp_file = cache_file.with_suffix(cache_file.suffix + ".tmp")
+            with open(temp_file, 'w', encoding='utf-8') as cache_stream:
+                json.dump(payload, cache_stream, indent=2)
+            temp_file.replace(cache_file)
+        except Exception as error:
+            logger.warning("No se pudo guardar cache de tamaños de drivers", path=str(cache_file), details=str(error))
+
+    def _set_driver_size_cache_entry(self, driver_key, size_bytes=None, size_mb=None, save=False):
+        """Actualizar una entrada del cache con tamaño normalizado."""
+        normalized_key = str(driver_key or "").strip()
+        if not normalized_key:
+            return False
+
+        try:
+            if size_bytes in (None, ''):
+                if size_mb in (None, ''):
+                    return False
+                normalized_mb = round(float(size_mb), 2)
+                normalized_bytes = int(round(normalized_mb * 1024 * 1024))
+            else:
+                normalized_bytes = max(0, int(size_bytes))
+                normalized_mb = round(normalized_bytes / (1024 * 1024), 2)
+        except (TypeError, ValueError):
+            return False
+
+        entry = {
+            "size_bytes": normalized_bytes,
+            "size_mb": normalized_mb,
+        }
+        changed = self._driver_size_cache.get(normalized_key) != entry
+        self._driver_size_cache[normalized_key] = entry
+
+        if save and changed:
+            self._save_driver_size_cache()
+
+        return changed
+
+    def _remove_driver_size_cache_entry(self, driver_key, save=False):
+        """Eliminar una entrada del cache de tamaños."""
+        normalized_key = str(driver_key or "").strip()
+        if not normalized_key:
+            return False
+
+        if normalized_key not in self._driver_size_cache:
+            return False
+
+        self._driver_size_cache.pop(normalized_key, None)
+        if save:
+            self._save_driver_size_cache()
+        return True
     
     @handle_errors("_update_manifest", reraise=True)
     def _update_manifest(self, manifest):
@@ -134,8 +254,13 @@ class CloudflareR2Manager:
 
         # Leer metadata desde manifest para evitar N+1 requests (head_object por driver).
         drivers = []
+        cache_changed = False
+        manifest_keys = set()
         for driver_info in manifest.get('drivers', []):
             normalized = dict(driver_info or {})
+            driver_key = str(normalized.get('key') or '').strip()
+            if driver_key:
+                manifest_keys.add(driver_key)
 
             size_bytes = normalized.get('size_bytes')
             try:
@@ -144,6 +269,20 @@ class CloudflareR2Manager:
                     normalized['size_bytes'] = size_bytes
                     if normalized.get('size_mb') in (None, ''):
                         normalized['size_mb'] = round(size_bytes / (1024 * 1024), 2)
+                    if driver_key and self._set_driver_size_cache_entry(
+                        driver_key,
+                        size_bytes=size_bytes,
+                        size_mb=normalized.get('size_mb'),
+                        save=False,
+                    ):
+                        cache_changed = True
+                elif driver_key and normalized.get('size_mb') not in (None, ''):
+                    if self._set_driver_size_cache_entry(
+                        driver_key,
+                        size_mb=normalized.get('size_mb'),
+                        save=False,
+                    ):
+                        cache_changed = True
             except (TypeError, ValueError):
                 normalized.pop('size_bytes', None)
 
@@ -157,9 +296,84 @@ class CloudflareR2Manager:
                         normalized['last_modified'] = str(uploaded)
 
             drivers.append(normalized)
+
+        stale_keys = [cached_key for cached_key in list(self._driver_size_cache.keys()) if cached_key not in manifest_keys]
+        for stale_key in stale_keys:
+            if self._remove_driver_size_cache_entry(stale_key, save=False):
+                cache_changed = True
+
+        if cache_changed:
+            self._save_driver_size_cache()
         
         logger.operation_end("list_drivers", success=True, count=len(drivers))
         return drivers
+
+    def get_driver_size_mb(self, driver):
+        """
+        Obtener tamaño del driver en MB usando cache local (memoria + disco).
+
+        Flujo:
+        1) Reutiliza size_mb/size_bytes si ya vienen en el dict.
+        2) Usa cache por key si ya se consultó antes.
+        3) Si falta info, hace UN head_object para ese key y guarda cache.
+        """
+        if not isinstance(driver, dict):
+            return None
+
+        driver_key = str(driver.get('key') or '')
+        if not driver_key:
+            return None
+
+        # 1) Si ya tenemos tamaño en el dict, normalizar y cachear.
+        size_mb = driver.get('size_mb')
+        if size_mb not in (None, ''):
+            try:
+                normalized_mb = round(float(size_mb), 2)
+                size_bytes = driver.get('size_bytes')
+                if size_bytes in (None, ''):
+                    size_bytes = int(normalized_mb * 1024 * 1024)
+                else:
+                    size_bytes = max(0, int(size_bytes))
+                self._set_driver_size_cache_entry(
+                    driver_key,
+                    size_bytes=size_bytes,
+                    size_mb=normalized_mb,
+                    save=True,
+                )
+                driver['size_mb'] = normalized_mb
+                driver['size_bytes'] = size_bytes
+                return normalized_mb
+            except (TypeError, ValueError):
+                pass
+
+        # 2) Cache local.
+        cached = self._driver_size_cache.get(driver_key)
+        if cached:
+            driver['size_bytes'] = cached["size_bytes"]
+            driver['size_mb'] = cached["size_mb"]
+            return cached["size_mb"]
+
+        # 3) Consulta única a R2 para este driver.
+        try:
+            response = self.s3_client.head_object(Bucket=self.bucket_name, Key=driver_key)
+            size_bytes = max(0, int(response.get('ContentLength') or 0))
+            size_mb = round(size_bytes / (1024 * 1024), 2)
+            self._set_driver_size_cache_entry(
+                driver_key,
+                size_bytes=size_bytes,
+                size_mb=size_mb,
+                save=True,
+            )
+            driver['size_bytes'] = size_bytes
+            driver['size_mb'] = size_mb
+            return size_mb
+        except Exception as error:
+            logger.warning(
+                "No se pudo resolver tamaño de driver por head_object",
+                key=driver_key,
+                details=str(error),
+            )
+            return None
     
     @handle_errors("upload_driver", reraise=True)
     def upload_driver(self, local_file_path, brand, version, description="", progress_callback=None):
@@ -198,8 +412,12 @@ class CloudflareR2Manager:
         manifest = self._get_manifest()
         
         # Verificar si ya existe y eliminarlo
+        removed_entries = [
+            d for d in manifest['drivers']
+            if d['brand'] == brand and d['version'] == version
+        ]
         manifest['drivers'] = [
-            d for d in manifest['drivers'] 
+            d for d in manifest['drivers']
             if not (d['brand'] == brand and d['version'] == version)
         ]
         
@@ -220,6 +438,22 @@ class CloudflareR2Manager:
         
         manifest['drivers'].append(driver_entry)
         self._update_manifest(manifest)
+
+        cache_changed = False
+        for removed in removed_entries:
+            if self._remove_driver_size_cache_entry(removed.get('key'), save=False):
+                cache_changed = True
+
+        if self._set_driver_size_cache_entry(
+            driver_key,
+            size_bytes=file_size,
+            size_mb=driver_entry.get("size_mb"),
+            save=False,
+        ):
+            cache_changed = True
+
+        if cache_changed:
+            self._save_driver_size_cache()
         
         logger.operation_end("upload_driver", success=True, key=driver_key)
         return driver_key
@@ -287,6 +521,7 @@ class CloudflareR2Manager:
             if d['key'] != driver_key
         ]
         self._update_manifest(manifest)
+        self._remove_driver_size_cache_entry(driver_key, save=True)
         logger.operation_end("delete_driver", success=True)
     
     @handle_errors("get_driver_info", reraise=True)

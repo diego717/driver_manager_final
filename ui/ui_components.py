@@ -1,4 +1,4 @@
-﻿"""
+"""
 Componentes de UI para Driver Manager
 """
 
@@ -421,7 +421,7 @@ class HistoryTab(QWidget):
         self.monthly_report_btn = QPushButton("Generar Reporte del Mes Seleccionado")
         self.monthly_report_btn.setProperty("class", "success")
         reports_layout.addWidget(self.monthly_report_btn)
-        self.yearly_report_btn = QPushButton("Generar Reporte Anual (Ano Seleccionado)")
+        self.yearly_report_btn = QPushButton("Generar Reporte Anual (Año Seleccionado)")
         self.yearly_report_btn.setProperty("class", "warning")
         reports_layout.addWidget(self.yearly_report_btn)
 

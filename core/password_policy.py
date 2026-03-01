@@ -21,8 +21,8 @@ class PasswordPolicy:
     @classmethod
     def describe_requirements(cls) -> str:
         return (
-            f"Minimo {cls.MIN_LENGTH} caracteres con al menos una mayuscula, "
-            "una minuscula, un numero y un caracter especial."
+            f"Mínimo {cls.MIN_LENGTH} caracteres con al menos una mayúscula, "
+            "una minúscula, un número y un carácter especial."
         )
 
     @classmethod
@@ -44,26 +44,26 @@ class PasswordPolicy:
 
         if cls.REQUIRE_UPPER:
             if not re.search(r"[A-Z]", candidate):
-                errors.append("Debe contener al menos una letra mayuscula")
+                errors.append("Debe contener al menos una letra mayúscula")
             else:
                 score += 15
 
         if cls.REQUIRE_LOWER:
             if not re.search(r"[a-z]", candidate):
-                errors.append("Debe contener al menos una letra minuscula")
+                errors.append("Debe contener al menos una letra minúscula")
             else:
                 score += 15
 
         if cls.REQUIRE_DIGIT:
             if not re.search(r"\d", candidate):
-                errors.append("Debe contener al menos un numero")
+                errors.append("Debe contener al menos un número")
             else:
                 score += 15
 
         if cls.REQUIRE_SPECIAL:
             if not re.search(f"[{re.escape(cls.SPECIAL_CHARS)}]", candidate):
                 errors.append(
-                    f"Debe contener al menos un caracter especial ({cls.SPECIAL_CHARS[:10]}...)"
+                    f"Debe contener al menos un carácter especial ({cls.SPECIAL_CHARS[:10]}...)"
                 )
             else:
                 score += 15
@@ -91,7 +91,7 @@ class PasswordPolicy:
 
         unique_chars = len(set(candidate))
         if candidate and unique_chars < len(candidate) * 0.6:
-            errors.append("La contrasena debe tener mayor diversidad de caracteres")
+            errors.append("La contraseña debe tener mayor diversidad de caracteres")
             score -= 10
         elif candidate:
             score += 10
@@ -100,10 +100,10 @@ class PasswordPolicy:
         is_valid = len(errors) == 0 and final_score >= cls.MIN_SCORE
 
         if errors:
-            message = "Contrasena no cumple con los requisitos:\n- " + "\n- ".join(errors)
+            message = "Contraseña no cumple con los requisitos:\n- " + "\n- ".join(errors)
         else:
-            strength = "Debil" if final_score < 60 else "Media" if final_score < 80 else "Fuerte"
-            message = f"Contrasena valida. Fortaleza: {strength} ({final_score}/100)"
+            strength = "Débil" if final_score < 60 else "Media" if final_score < 80 else "Fuerte"
+            message = f"Contraseña válida. Fortaleza: {strength} ({final_score}/100)"
 
         return {
             "is_valid": is_valid,

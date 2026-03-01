@@ -1,5 +1,5 @@
-﻿"""
-Interfaz de Usuario para GestiÃ³n de Usuarios Multi-Admin
+"""
+Interfaz de Usuario para Gestión de Usuarios Multi-Admin
 """
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
@@ -13,17 +13,17 @@ from datetime import datetime
 
 
 class UserManagementDialog(QDialog):
-    """DiÃ¡logo para gestiÃ³n de usuarios"""
+    """Diálogo para gestión de usuarios"""
     
     def __init__(self, user_manager, parent=None):
         super().__init__(parent)
         self.user_manager = user_manager
         self.user_source_mode = "local"
         self._cached_admin_web_password = ""
-        self.setWindowTitle("GestiÃ³n de Usuarios")
+        self.setWindowTitle("Gestión de Usuarios")
         self.setGeometry(200, 200, 800, 600)
         
-        # Aplicar tema si estÃ¡ disponible
+        # Aplicar tema si está disponible
         if parent and hasattr(parent, 'theme_manager'):
             try:
                 stylesheet = parent.theme_manager.generate_stylesheet()
@@ -36,25 +36,22 @@ class UserManagementDialog(QDialog):
     
     def init_ui(self):
         layout = QVBoxLayout(self)
-        
-        # TÃ­tulo
-        title = QLabel("ðŸ‘¥ GestiÃ³n de Usuarios Multi-Admin")
+
+        title = QLabel("👥 Gestión de Usuarios Multi-Admin")
         title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
-        
-        # InformaciÃ³n del usuario actual
+
         current_user = self.user_manager.current_user
         if current_user:
-            info = QLabel(f"ðŸ”“ Conectado como: {current_user.get('username')} ({current_user.get('role')})")
+            info = QLabel(f"🔒 Conectado como: {current_user.get('username')} ({current_user.get('role')})")
             info.setStyleSheet("color: green; font-weight: bold; padding: 10px;")
             layout.addWidget(info)
-        
-        # Botones de acciÃ³n
+
         buttons_layout = QHBoxLayout()
-        
+
         if self.user_manager.is_super_admin():
-            create_btn = QPushButton("âž• Crear Usuario")
+            create_btn = QPushButton("➕ Crear Usuario")
             create_btn.clicked.connect(self.create_user)
             create_btn.setStyleSheet("""
                 QPushButton {
@@ -72,15 +69,15 @@ class UserManagementDialog(QDialog):
             self.tenant_filter_input.setMaximumWidth(180)
             buttons_layout.addWidget(self.tenant_filter_input)
 
-            web_users_btn = QPushButton("ðŸŒ Ver Usuarios Web")
+            web_users_btn = QPushButton("🌐 Ver Usuarios Web")
             web_users_btn.clicked.connect(self.show_web_users)
             buttons_layout.addWidget(web_users_btn)
 
-            local_users_btn = QPushButton("ðŸ’¾ Ver Usuarios Locales")
+            local_users_btn = QPushButton("💾 Ver Usuarios Locales")
             local_users_btn.clicked.connect(self.show_local_users)
             buttons_layout.addWidget(local_users_btn)
-        
-        change_pass_btn = QPushButton("ðŸ”‘ Cambiar Mi ContraseÃ±a")
+
+        change_pass_btn = QPushButton("🔑 Cambiar Mi Contraseña")
         change_pass_btn.clicked.connect(self.change_password)
         change_pass_btn.setStyleSheet("""
             QPushButton {
@@ -92,26 +89,24 @@ class UserManagementDialog(QDialog):
             }
         """)
         buttons_layout.addWidget(change_pass_btn)
-        
-        refresh_btn = QPushButton("ðŸ”„ Actualizar")
+
+        refresh_btn = QPushButton("🔄 Actualizar")
         refresh_btn.clicked.connect(self.refresh_users)
         buttons_layout.addWidget(refresh_btn)
-        
+
         buttons_layout.addStretch()
         layout.addLayout(buttons_layout)
-        
-        # Tabla de usuarios
-        users_label = QLabel("ðŸ‘¤ Usuarios Registrados:")
+
+        users_label = QLabel("👤 Usuarios Registrados:")
         users_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         layout.addWidget(users_label)
-        
+
         self.users_table = QTableWidget()
         self.users_table.setColumnCount(7)
         self.users_table.setHorizontalHeaderLabels([
-            "Usuario", "Rol", "Tenant", "Estado", "Ãšltimo Login", "Creado", "Creado Por"
+            "Usuario", "Rol", "Tenant", "Estado", "Último Login", "Creado", "Creado Por"
         ])
-        
-        # Ajustar columnas
+
         header = self.users_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -120,14 +115,11 @@ class UserManagementDialog(QDialog):
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
-        
         layout.addWidget(self.users_table)
-        
-        # Botones de usuario
+
         if self.user_manager.is_super_admin():
             user_buttons = QHBoxLayout()
-            
-            deactivate_btn = QPushButton("âŒ Desactivar Usuario")
+            deactivate_btn = QPushButton("❌ Desactivar Usuario")
             deactivate_btn.clicked.connect(self.deactivate_user)
             deactivate_btn.setStyleSheet("""
                 QPushButton {
@@ -139,30 +131,26 @@ class UserManagementDialog(QDialog):
                 }
             """)
             user_buttons.addWidget(deactivate_btn)
-            
             user_buttons.addStretch()
             layout.addLayout(user_buttons)
-        
-        # Logs de acceso
-        logs_label = QLabel("ðŸ“‹ Logs de Acceso Recientes:")
+
+        logs_label = QLabel("📋 Logs de Acceso Recientes:")
         logs_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         layout.addWidget(logs_label)
-        
+
         self.logs_text = QTextEdit()
         self.logs_text.setMaximumHeight(200)
         self.logs_text.setReadOnly(True)
         self.logs_text.setStyleSheet("background-color: #F5F5F5; font-family: monospace;")
         layout.addWidget(self.logs_text)
-        
-        # Botones del diÃ¡logo
+
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
-        
-        # Auto-refresh cada 30 segundos
+
         self.timer = QTimer()
         self.timer.timeout.connect(self.refresh_logs)
-        self.timer.start(30000)  # 30 segundos
+        self.timer.start(30000)
     
     def refresh_users(self):
         """Actualizar tabla de usuarios"""
@@ -185,7 +173,7 @@ class UserManagementDialog(QDialog):
             admin_web_password, ok = QInputDialog.getText(
                 self,
                 "Usuarios Web",
-                "Ingresa tu contraseÃ±a web de super_admin:",
+                "Ingresa tu contraseña web de super_admin:",
                 QLineEdit.EchoMode.Password,
             )
             if not ok or not admin_web_password:
@@ -202,7 +190,7 @@ class UserManagementDialog(QDialog):
                 tenant_id=tenant_id or None,
             )
         except Exception as error:
-            # Si falla autenticaciÃ³n, limpiar cache para pedir password nuevamente.
+            # Si falla autenticación, limpiar cache para pedir password nuevamente.
             self._cached_admin_web_password = ""
             QMessageBox.warning(self, "Error", str(error))
             return
@@ -236,7 +224,7 @@ class UserManagementDialog(QDialog):
 
             self.users_table.setItem(row, 2, QTableWidgetItem(str(tenant_id)))
 
-            status = "âœ… Activo" if active else "âŒ Inactivo"
+            status = "✅ Activo" if active else "❌ Inactivo"
             status_item = QTableWidgetItem(status)
             if not active:
                 status_item.setBackground(Qt.GlobalColor.lightGray)
@@ -265,12 +253,12 @@ class UserManagementDialog(QDialog):
             self.users_table.setItem(row, 6, QTableWidgetItem(str(created_by)))
 
     def show_web_users(self):
-        """Cambiar a modo de visualizaciÃ³n de usuarios web."""
+        """Cambiar a modo de visualización de usuarios web."""
         self.user_source_mode = "web"
         self.refresh_users()
 
     def show_local_users(self):
-        """Cambiar a modo de visualizaciÃ³n de usuarios locales."""
+        """Cambiar a modo de visualización de usuarios locales."""
         self.user_source_mode = "local"
         self.refresh_users()
     
@@ -279,7 +267,7 @@ class UserManagementDialog(QDialog):
         logs = self.user_manager.get_access_logs(50)
         
         log_text = ""
-        for log in reversed(logs[-20:]):  # Ãšltimos 20
+        for log in reversed(logs[-20:]):  # Ultimos 20
             timestamp = log["timestamp"]
             try:
                 dt = datetime.fromisoformat(timestamp)
@@ -289,7 +277,7 @@ class UserManagementDialog(QDialog):
             
             action = log["action"]
             username = log["username"]
-            success = "âœ…" if log["success"] else "âŒ"
+            success = "✅" if log["success"] else "❌"
             system_info = log.get("system_info", {})
             if not isinstance(system_info, dict):
                 system_info = {}
@@ -309,13 +297,13 @@ class UserManagementDialog(QDialog):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             username, password, confirm_password, role, tenant_id, admin_web_password = dialog.get_data()
             
-            # Validar que las contraseÃ±as coincidan
+            # Validar que las contraseñas coincidan
             if password != confirm_password:
-                QMessageBox.warning(self, "Error", "Las contraseÃ±as no coinciden")
+                QMessageBox.warning(self, "Error", "Las contraseñas no coinciden")
                 return
             
             if not username or not password:
-                QMessageBox.warning(self, "Error", "Usuario y contraseÃ±a son obligatorios")
+                QMessageBox.warning(self, "Error", "Usuario y contraseña son obligatorios")
                 return
             
             tenant_id = (tenant_id or "").strip()
@@ -324,7 +312,7 @@ class UserManagementDialog(QDialog):
                     QMessageBox.warning(
                         self,
                         "Error",
-                        "Para crear por tenant debes ingresar tu contraseÃ±a web de super_admin.",
+                        "Para crear por tenant debes ingresar tu contraseña web de super_admin.",
                     )
                     return
                 success, message = self.user_manager.create_tenant_web_user(
@@ -343,7 +331,7 @@ class UserManagementDialog(QDialog):
                 )
             
             if success:
-                QMessageBox.information(self, "Ã‰xito", message)
+                QMessageBox.information(self, "Éxito", message)
                 if tenant_id:
                     self._cached_admin_web_password = admin_web_password
                     self.user_source_mode = "web"
@@ -352,35 +340,35 @@ class UserManagementDialog(QDialog):
                 QMessageBox.warning(self, "Error", message)
     
     def change_password(self):
-        """Cambiar contraseÃ±a del usuario actual"""
+        """Cambiar contraseña del usuario actual"""
         current_username = self.user_manager.current_user.get("username")
         
         old_password, ok = QInputDialog.getText(
-            self, "Cambiar ContraseÃ±a", 
-            "ContraseÃ±a actual:", 
+            self, "Cambiar Contraseña", 
+            "Contraseña actual:", 
             QLineEdit.EchoMode.Password
         )
         if not ok:
             return
         
         new_password, ok = QInputDialog.getText(
-            self, "Cambiar ContraseÃ±a", 
-            "Nueva contraseÃ±a:", 
+            self, "Cambiar Contraseña", 
+            "Nueva contraseña:", 
             QLineEdit.EchoMode.Password
         )
         if not ok:
             return
         
         confirm_password, ok = QInputDialog.getText(
-            self, "Cambiar ContraseÃ±a", 
-            "Confirmar nueva contraseÃ±a:", 
+            self, "Cambiar Contraseña", 
+            "Confirmar nueva contraseña:", 
             QLineEdit.EchoMode.Password
         )
         if not ok:
             return
         
         if new_password != confirm_password:
-            QMessageBox.warning(self, "Error", "Las contraseÃ±as no coinciden")
+            QMessageBox.warning(self, "Error", "Las contraseñas no coinciden")
             return
         
         success, message = self.user_manager.change_password(
@@ -388,7 +376,7 @@ class UserManagementDialog(QDialog):
         )
         
         if success:
-            QMessageBox.information(self, "Ã‰xito", message)
+            QMessageBox.information(self, "Éxito", message)
         else:
             QMessageBox.warning(self, "Error", message)
     
@@ -407,7 +395,7 @@ class UserManagementDialog(QDialog):
         
         reply = QMessageBox.question(
             self, "Confirmar", 
-            f"Â¿Desactivar usuario '{username}'?",
+            f"¿Desactivar usuario '{username}'?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         
@@ -416,42 +404,48 @@ class UserManagementDialog(QDialog):
                 QMessageBox.warning(
                     self,
                     "No soportado",
-                    "La desactivaciÃ³n desde esta vista solo aplica a usuarios locales.",
+                    "La desactivación desde esta vista solo aplica a usuarios locales.",
                 )
                 return
             success, message = self.user_manager.deactivate_user(username)
             
             if success:
-                QMessageBox.information(self, "Ã‰xito", message)
+                QMessageBox.information(self, "Éxito", message)
                 self.refresh_users()
             else:
                 QMessageBox.warning(self, "Error", message)
 
 
 class CreateUserDialog(QDialog):
-    """DiÃ¡logo para crear usuario"""
+    """Diálogo para crear usuario"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Crear Usuario")
         self.setModal(True)
+        self.resize(560, 360)
+        self.setMinimumSize(520, 340)
         self.init_ui()
     
     def init_ui(self):
         layout = QFormLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setHorizontalSpacing(14)
+        layout.setVerticalSpacing(10)
         
         self.username_input = QLineEdit()
         self.username_input.setPlaceholderText("Nombre de usuario")
+        self.username_input.setMinimumWidth(320)
         layout.addRow("Usuario:", self.username_input)
         
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setPlaceholderText("ContraseÃ±a")
-        layout.addRow("ContraseÃ±a:", self.password_input)
+        self.password_input.setPlaceholderText("Contraseña")
+        layout.addRow("Contraseña:", self.password_input)
         
         self.confirm_password_input = QLineEdit()
         self.confirm_password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.confirm_password_input.setPlaceholderText("Confirmar contraseÃ±a")
+        self.confirm_password_input.setPlaceholderText("Confirmar contraseña")
         layout.addRow("Confirmar:", self.confirm_password_input)
         
         self.role_combo = QComboBox()
@@ -460,11 +454,13 @@ class CreateUserDialog(QDialog):
 
         self.tenant_input = QLineEdit()
         self.tenant_input.setPlaceholderText("tenant-a (opcional, crea usuario en API web por tenant)")
+        self.tenant_input.setMinimumWidth(320)
         layout.addRow("Tenant ID:", self.tenant_input)
 
         self.admin_web_password_input = QLineEdit()
         self.admin_web_password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.admin_web_password_input.setPlaceholderText("Tu contraseÃ±a web super_admin (solo si usas Tenant ID)")
+        self.admin_web_password_input.setPlaceholderText("Tu contraseña web super_admin (solo si usas Tenant ID)")
+        self.admin_web_password_input.setMinimumWidth(320)
         layout.addRow("Pass Web Admin:", self.admin_web_password_input)
         
         # Botones
@@ -487,12 +483,12 @@ class CreateUserDialog(QDialog):
 
 
 class LoginDialog(QDialog):
-    """Dialogo de login multi-usuario."""
+    """Diálogo de login multi-usuario."""
 
     def __init__(self, user_manager, parent=None):
         super().__init__(parent)
         self.user_manager = user_manager
-        self.setWindowTitle("Iniciar Sesion - Driver Manager")
+        self.setWindowTitle("Iniciar Sesión - Driver Manager")
         self.setModal(True)
         self.setFixedSize(420, 240)
 
@@ -508,7 +504,7 @@ class LoginDialog(QDialog):
     def init_ui(self):
         layout = QVBoxLayout(self)
 
-        title = QLabel("Iniciar Sesion")
+        title = QLabel("Iniciar Sesión")
         title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
@@ -522,10 +518,10 @@ class LoginDialog(QDialog):
 
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setPlaceholderText("Contrasena")
+        self.password_input.setPlaceholderText("Contraseña")
         self.password_input.returnPressed.connect(self.login)
         self.password_input.textChanged.connect(self._clear_error)
-        form_layout.addRow("Contrasena:", self.password_input)
+        form_layout.addRow("Contraseña:", self.password_input)
 
         layout.addLayout(form_layout)
 
@@ -540,7 +536,7 @@ class LoginDialog(QDialog):
 
         buttons_layout = QHBoxLayout()
 
-        self.login_btn = QPushButton("Iniciar Sesion")
+        self.login_btn = QPushButton("Iniciar Sesión")
         self.login_btn.clicked.connect(self.login)
         self.login_btn.setStyleSheet(
             """
@@ -593,7 +589,7 @@ class LoginDialog(QDialog):
         password = self.password_input.text()
 
         if not username or not password:
-            self._set_error("Ingresa usuario y contrasena")
+            self._set_error("Ingresa usuario y contraseña")
             return
 
         success, message = self.user_manager.authenticate(username, password)
@@ -603,4 +599,3 @@ class LoginDialog(QDialog):
 
         blocked = "cuenta bloqueada" in str(message).lower()
         self._set_error(message, blocked=blocked)
-

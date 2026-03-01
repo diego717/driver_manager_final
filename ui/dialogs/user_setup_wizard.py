@@ -91,7 +91,7 @@ class AdminAccountPage(QWizardPage):
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.setPlaceholderText(
-            f"Minimo {PasswordPolicy.MIN_LENGTH} caracteres"
+            f"Mínimo {PasswordPolicy.MIN_LENGTH} caracteres"
         )
         self.password_input.textChanged.connect(self._validate_fields)
         self.registerField("password*", self.password_input)
@@ -154,13 +154,13 @@ class AdminAccountPage(QWizardPage):
 
         if username:
             if len(username) < 3:
-                self.username_hint.setText("Muy corto (minimo 3 caracteres)")
+                self.username_hint.setText("Muy corto (mínimo 3 caracteres)")
                 self.username_hint.setStyleSheet("color: #D32F2F; font-size: 9pt;")
             elif not re.match(r"^[a-zA-Z0-9_-]+$", username):
-                self.username_hint.setText("Solo letras, numeros, guiones y guiones bajos")
+                self.username_hint.setText("Solo letras, números, guiones y guiones bajos")
                 self.username_hint.setStyleSheet("color: #D32F2F; font-size: 9pt;")
             else:
-                self.username_hint.setText("Nombre de usuario valido")
+                self.username_hint.setText("Nombre de usuario válido")
                 self.username_hint.setStyleSheet("color: #388E3C; font-size: 9pt;")
 
         if password:
@@ -172,7 +172,7 @@ class AdminAccountPage(QWizardPage):
                 self.password_strength.setStyleSheet(
                     "QProgressBar::chunk { background-color: #388E3C; }"
                 )
-                self.password_hint.setText("Contrasena valida")
+                self.password_hint.setText("Contraseña válida")
                 self.password_hint.setStyleSheet("color: #1B5E20; font-size: 9pt;")
             else:
                 first_error = (
@@ -195,14 +195,14 @@ class AdminAccountPage(QWizardPage):
 
         if confirm:
             if password == confirm:
-                self.confirm_hint.setText("Las contrasenas coinciden")
+                self.confirm_hint.setText("Las contraseñas coinciden")
                 self.confirm_hint.setStyleSheet("color: #388E3C; font-size: 9pt;")
             else:
-                self.confirm_hint.setText("Las contrasenas no coinciden")
+                self.confirm_hint.setText("Las contraseñas no coinciden")
                 self.confirm_hint.setStyleSheet("color: #D32F2F; font-size: 9pt;")
 
     def _calculate_password_strength(self, password):
-        """Calcular fortaleza visual (0-4) usando score de la politica compartida."""
+        """Calcular fortaleza visual (0-4) usando score de la política compartida."""
         _, _, score = PasswordPolicy.validate_with_score(
             password,
             username=self.username_input.text(),
@@ -231,17 +231,17 @@ class AdminAccountPage(QWizardPage):
             QMessageBox.warning(
                 self,
                 "Error",
-                "El nombre de usuario solo puede contener letras, numeros, guiones y guiones bajos",
+                "El nombre de usuario solo puede contener letras, números, guiones y guiones bajos",
             )
             return False
 
         if password != confirm:
-            QMessageBox.warning(self, "Error", "Las contrasenas no coinciden")
+            QMessageBox.warning(self, "Error", "Las contraseñas no coinciden")
             return False
 
         is_valid, message = PasswordPolicy.validate(password, username=username)
         if not is_valid:
-            QMessageBox.warning(self, "Contrasena debil", message)
+            QMessageBox.warning(self, "Contraseña débil", message)
             return False
 
         return True

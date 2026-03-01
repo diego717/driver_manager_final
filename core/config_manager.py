@@ -285,7 +285,7 @@ class ConfigManager:
                     if config:
                         self._apply_vault_preference(prompted_password, remember_choice)
                         self._config_loaded = True
-                        logger.info("Configuracion cargada desde 'config.enc' con contrasena manual.")
+                        logger.info("Configuración cargada desde 'config.enc' con contraseña manual.")
                         return config
                 except Exception:
                     pass

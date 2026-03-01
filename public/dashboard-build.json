@@ -1,10 +1,10 @@
 {
   "versions": {
     "css": "7929728d34",
-    "js": "cffeaf8180",
+    "js": "129f3e8186",
     "pwa": "f2230f4810",
     "manifest": "c0f933f797",
     "sw": "59f37ffa3e",
-    "build": "b200fdf7f0"
+    "build": "0fb3993fa7"
   }
 }

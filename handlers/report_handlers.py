@@ -60,7 +60,7 @@ class ReportHandlers:
 
             month_name = history_tab.report_month_combo.currentText()
             lines = [
-                "Resumen rapido para reportes",
+                "Resumen rápido para reportes",
                 "",
                 f"Hoy ({now.strftime('%d/%m/%Y')}):",
                 f"- Registros: {day_stats.get('total_installations', 0)}",
@@ -72,7 +72,7 @@ class ReportHandlers:
                 f"- Exitosas: {month_stats.get('successful_installations', 0)}",
                 f"- Fallidas: {month_stats.get('failed_installations', 0)}",
                 "",
-                f"Ano {year}:",
+                f"Año {year}:",
                 f"- Registros: {year_stats.get('total_installations', 0)}",
                 f"- Exitosas: {year_stats.get('successful_installations', 0)}",
                 f"- Fallidas: {year_stats.get('failed_installations', 0)}",
@@ -84,7 +84,7 @@ class ReportHandlers:
                 label = (report_kind or "Reporte").lower()
                 lines.extend([
                     "",
-                    f"Ultimo {label} generado:",
+                    f"Último {label} generado:",
                     str(last_report_path),
                 ])
 
@@ -93,7 +93,7 @@ class ReportHandlers:
             preview.setPlainText(f"No se pudo cargar la vista previa de reportes.\n\nDetalle: {e}")
 
     def generate_daily_report_simple(self):
-        """Generar reporte del dia actual."""
+        """Generar reporte del día actual."""
         try:
             _, QMessageBox = _qt_widgets()
             now = datetime.now()
@@ -142,8 +142,8 @@ class ReportHandlers:
             msg.setWindowTitle("Reporte Generado")
             msg.setText("Reporte diario generado exitosamente")
             msg.setInformativeText(
-                f"El reporte se guardo en:\n{report_path}\n\n"
-                "Deseas abrir el archivo ahora?"
+                f"El reporte se guardó en:\n{report_path}\n\n"
+                "¿Deseas abrir el archivo ahora?"
             )
             msg.setStandardButtons(
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
@@ -176,8 +176,8 @@ class ReportHandlers:
             msg.setWindowTitle("Reporte Generado")
             msg.setText(f"Reporte de {month_name} {year} generado")
             msg.setInformativeText(
-                f"El reporte se guardo en:\n{report_path}\n\n"
-                "Deseas abrir el archivo ahora?"
+                f"El reporte se guardó en:\n{report_path}\n\n"
+                "¿Deseas abrir el archivo ahora?"
             )
             msg.setStandardButtons(
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
@@ -191,7 +191,7 @@ class ReportHandlers:
             QMessageBox.critical(self.main, "Error", f"Error al generar reporte:\n{e}")
 
     def generate_yearly_report_simple(self):
-        """Generar reporte anual para el ano seleccionado."""
+        """Generar reporte anual para el año seleccionado."""
         try:
             _, QMessageBox = _qt_widgets()
             year = int(self.main.history_tab.report_year_combo.currentText())
@@ -206,8 +206,8 @@ class ReportHandlers:
             msg.setWindowTitle("Reporte Generado")
             msg.setText(f"Reporte anual {year} generado")
             msg.setInformativeText(
-                f"El reporte se guardo en:\n{report_path}\n\n"
-                "Deseas abrir el archivo ahora?"
+                f"El reporte se guardó en:\n{report_path}\n\n"
+                "¿Deseas abrir el archivo ahora?"
             )
             msg.setStandardButtons(
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
@@ -247,7 +247,7 @@ class ReportHandlers:
 
                 QMessageBox.information(
                     self.main,
-                    "Exportacion Completa",
+                    "Exportación Completa",
                     f"Historial exportado exitosamente\n\nArchivo: {file_path}",
                 )
 
@@ -256,7 +256,7 @@ class ReportHandlers:
             QMessageBox.critical(self.main, "Error", f"Error al exportar:\n{e}")
 
     def export_audit_log(self):
-        """Exportar log de auditoria a archivo."""
+        """Exportar log de auditoría a archivo."""
         try:
             QFileDialog, QMessageBox = _qt_widgets()
             logs = self._get_audit_logs(limit=1000)
@@ -264,8 +264,8 @@ class ReportHandlers:
             if not logs:
                 QMessageBox.information(
                     self.main,
-                    "Log Vacio",
-                    "No hay registros en el log de auditoria para exportar.",
+                    "Log Vacío",
+                    "No hay registros en el log de auditoría para exportar.",
                 )
                 return
 
@@ -273,7 +273,7 @@ class ReportHandlers:
 
             file_path, _ = QFileDialog.getSaveFileName(
                 self.main,
-                "Exportar Log de Auditoria",
+                "Exportar Log de Auditoría",
                 str(default_path),
                 "Text Files (*.txt);;All Files (*.*)",
             )
@@ -281,7 +281,7 @@ class ReportHandlers:
             if file_path:
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write("=" * 80 + "\n")
-                    f.write("LOG DE AUDITORIA - DRIVER MANAGER\n")
+                    f.write("LOG DE AUDITORÍA - DRIVER MANAGER\n")
                     f.write(f"Exportado: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n")
                     f.write("=" * 80 + "\n\n")
 
@@ -329,7 +329,7 @@ class ReportHandlers:
 
                         f.write(f"Fecha: {timestamp_text}\n")
                         f.write(f"Usuario: {username}\n")
-                        f.write(f"Accion: {action}\n")
+                        f.write(f"Acción: {action}\n")
                         f.write(f"Resultado: {success_text}\n")
                         f.write(f"Detalles: {details_text}\n")
                         f.write(f"Computadora: {computer_name}\n")
@@ -340,13 +340,13 @@ class ReportHandlers:
                 QMessageBox.information(
                     self.main,
                     "Log Exportado",
-                    f"Log de auditoria exportado\n\nArchivo: {file_path}",
+                    f"Log de auditoría exportado\n\nArchivo: {file_path}",
                 )
         except Exception as e:
             QMessageBox.critical(self.main, "Error", f"Error al exportar log:\n{e}")
 
     def _get_audit_logs(self, limit=1000):
-        """Obtener logs de auditoria desde la fuente disponible."""
+        """Obtener logs de auditoría desde la fuente disponible."""
         user_manager = getattr(self.main, "user_manager", None)
         if user_manager and hasattr(user_manager, "get_access_logs"):
             try:
@@ -384,7 +384,7 @@ class ReportHandlers:
         return None
 
     def _format_timestamp_value(self, raw_value):
-        """Formatear timestamp ISO para exportacion legible."""
+        """Formatear timestamp ISO para exportación legible."""
         if not raw_value:
             return "N/A"
         try:
@@ -394,7 +394,7 @@ class ReportHandlers:
             return str(raw_value)
 
     def _open_file(self, file_path):
-        """Abrir archivo con la aplicacion predeterminada del sistema."""
+        """Abrir archivo con la aplicación predeterminada del sistema."""
         try:
             if platform.system() == "Windows":
                 os.startfile(file_path)
@@ -407,6 +407,6 @@ class ReportHandlers:
             QMessageBox.warning(
                 self.main,
                 "Error al abrir archivo",
-                f"No se pudo abrir el archivo automaticamente:\n{e}\n\n"
-                f"Ubicacion: {file_path}",
+                f"No se pudo abrir el archivo automáticamente:\n{e}\n\n"
+                f"Ubicación: {file_path}",
             )
