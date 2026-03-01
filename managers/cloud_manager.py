@@ -118,8 +118,24 @@ class CloudflareR2Manager:
         )
         return json.loads(response['Body'].read().decode('utf-8'))
 
+    def _ensure_driver_size_cache_initialized(self):
+        """Inicializar cache de tamaños para instancias creadas sin __init__."""
+        if not hasattr(self, "_driver_size_cache") or not isinstance(self._driver_size_cache, dict):
+            self._driver_size_cache = {}
+
+        cache_file = getattr(self, "_driver_size_cache_file", None)
+        if isinstance(cache_file, Path):
+            return
+
+        bucket_name = getattr(self, "bucket_name", "default")
+        safe_bucket_name = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(bucket_name or "default"))
+        self._driver_size_cache_file = (
+            Path.home() / ".driver_manager" / "cache" / f"driver_size_cache_{safe_bucket_name}.json"
+        )
+
     def _load_driver_size_cache(self):
         """Cargar cache persistente de tamaños de drivers desde disco."""
+        self._ensure_driver_size_cache_initialized()
         cache_file = self._driver_size_cache_file
         self._driver_size_cache = {}
 
@@ -170,6 +186,7 @@ class CloudflareR2Manager:
 
     def _save_driver_size_cache(self):
         """Persistir cache de tamaños de drivers en disco."""
+        self._ensure_driver_size_cache_initialized()
         cache_file = self._driver_size_cache_file
 
         try:
@@ -188,6 +205,7 @@ class CloudflareR2Manager:
 
     def _set_driver_size_cache_entry(self, driver_key, size_bytes=None, size_mb=None, save=False):
         """Actualizar una entrada del cache con tamaño normalizado."""
+        self._ensure_driver_size_cache_initialized()
         normalized_key = str(driver_key or "").strip()
         if not normalized_key:
             return False
@@ -218,6 +236,7 @@ class CloudflareR2Manager:
 
     def _remove_driver_size_cache_entry(self, driver_key, save=False):
         """Eliminar una entrada del cache de tamaños."""
+        self._ensure_driver_size_cache_initialized()
         normalized_key = str(driver_key or "").strip()
         if not normalized_key:
             return False
@@ -249,6 +268,7 @@ class CloudflareR2Manager:
         Returns:
             Lista de diccionarios con información de drivers
         """
+        self._ensure_driver_size_cache_initialized()
         logger.operation_start("list_drivers")
         manifest = self._get_manifest()
 
@@ -317,6 +337,7 @@ class CloudflareR2Manager:
         2) Usa cache por key si ya se consultó antes.
         3) Si falta info, hace UN head_object para ese key y guarda cache.
         """
+        self._ensure_driver_size_cache_initialized()
         if not isinstance(driver, dict):
             return None
 

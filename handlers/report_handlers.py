@@ -60,7 +60,7 @@ class ReportHandlers:
 
             month_name = history_tab.report_month_combo.currentText()
             lines = [
-                "Resumen rápido para reportes",
+                "Resumen rapido para reportes",
                 "",
                 f"Hoy ({now.strftime('%d/%m/%Y')}):",
                 f"- Registros: {day_stats.get('total_installations', 0)}",
@@ -72,7 +72,7 @@ class ReportHandlers:
                 f"- Exitosas: {month_stats.get('successful_installations', 0)}",
                 f"- Fallidas: {month_stats.get('failed_installations', 0)}",
                 "",
-                f"Año {year}:",
+                f"Ano {year}:",
                 f"- Registros: {year_stats.get('total_installations', 0)}",
                 f"- Exitosas: {year_stats.get('successful_installations', 0)}",
                 f"- Fallidas: {year_stats.get('failed_installations', 0)}",

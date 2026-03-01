@@ -44,7 +44,7 @@ class PasswordPolicy:
 
         if cls.REQUIRE_UPPER:
             if not re.search(r"[A-Z]", candidate):
-                errors.append("Debe contener al menos una letra mayúscula")
+                errors.append("Debe contener al menos una letra mayuscula")
             else:
                 score += 15
 
