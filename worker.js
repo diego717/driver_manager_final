@@ -44,6 +44,36 @@ class HttpError extends Error {
   }
 }
 
+function errorCodeFromHttpStatus(status) {
+  const normalizedStatus = Number.isInteger(status) ? status : Number.parseInt(String(status || ""), 10);
+  switch (normalizedStatus) {
+    case 400:
+      return "INVALID_REQUEST";
+    case 401:
+      return "UNAUTHORIZED";
+    case 403:
+      return "FORBIDDEN";
+    case 404:
+      return "NOT_FOUND";
+    case 405:
+      return "METHOD_NOT_ALLOWED";
+    case 409:
+      return "CONFLICT";
+    case 422:
+      return "UNPROCESSABLE_ENTITY";
+    case 429:
+      return "TOO_MANY_REQUESTS";
+    default:
+      if (Number.isInteger(normalizedStatus) && normalizedStatus >= 400 && normalizedStatus <= 499) {
+        return "INVALID_REQUEST";
+      }
+      if (Number.isInteger(normalizedStatus) && normalizedStatus >= 500) {
+        return "INTERNAL_ERROR";
+      }
+      return "INVALID_REQUEST";
+  }
+}
+
 const CONTROLLED_DASHBOARD_ORIGINS = [
   "https://dashboard.driver-manager.app",
   "https://dashboard.drivermanager.app",
@@ -561,6 +591,49 @@ function normalizeInstallationPayload(data, defaultStatus = "unknown") {
     ),
     os_info: normalizeOptionalString(source.os_info, ""),
     notes: normalizeOptionalString(source.notes || source.error_message, ""),
+  };
+}
+
+function normalizeInstallationUpdatePayload(data) {
+  const source = data && typeof data === "object" ? data : {};
+  const hasNotes = Object.prototype.hasOwnProperty.call(source, "notes");
+  const hasInstallationTime = Object.prototype.hasOwnProperty.call(source, "installation_time_seconds");
+
+  let notes = null;
+  if (hasNotes) {
+    if (source.notes === null || source.notes === undefined) {
+      notes = null;
+    } else if (typeof source.notes !== "string") {
+      throw new HttpError(400, "Campo 'notes' invalido.");
+    } else if (source.notes.length > 5000) {
+      throw new HttpError(400, "Campo 'notes' excede el maximo permitido (5000 caracteres).");
+    } else {
+      notes = source.notes;
+    }
+  }
+
+  let installationTimeSeconds = null;
+  if (hasInstallationTime) {
+    const rawValue = source.installation_time_seconds;
+    if (rawValue === null || rawValue === undefined) {
+      installationTimeSeconds = null;
+    } else {
+      const asText = typeof rawValue === "string" ? rawValue.trim() : rawValue;
+      if (asText === "") {
+        installationTimeSeconds = null;
+      } else {
+        const parsed = Number(asText);
+        if (!Number.isInteger(parsed) || parsed < 0) {
+          throw new HttpError(400, "Campo 'installation_time_seconds' invalido.");
+        }
+        installationTimeSeconds = parsed;
+      }
+    }
+  }
+
+  return {
+    notes,
+    installation_time_seconds: installationTimeSeconds,
   };
 }
 
@@ -3327,6 +3400,14 @@ export default {
 
       // SSE endpoint for real-time updates
       if (routeParts.length === 1 && routeParts[0] === "events" && request.method === "GET") {
+        const tokenInQuery = normalizeOptionalString(url.searchParams.get("token"), "");
+        if (tokenInQuery) {
+          throw new HttpError(
+            400,
+            "No se permite token en query string para SSE. Usa Authorization Bearer o cookie de sesion.",
+          );
+        }
+
         // Verify authentication
         let sseWebSession = null;
         try {
@@ -4218,26 +4299,28 @@ export default {
         }
 
         if (request.method === "PUT") {
+          const installationId = parsePositiveInt(recordId, "id");
           const data = await readJsonOrThrowBadRequest(request);
+          const payload = normalizeInstallationUpdatePayload(data);
           await env.DB.prepare(`
             UPDATE installations
             SET notes = ?, installation_time_seconds = ?
             WHERE id = ?
           `)
-            .bind(data.notes ?? null, data.installation_time_seconds ?? null, recordId)
+            .bind(payload.notes, payload.installation_time_seconds, installationId)
             .run();
 
           await publishRealtimeEvent(env, {
             type: "installation_updated",
             installation: {
-              id: Number(recordId),
-              notes: data.notes ?? null,
-              installation_time_seconds: data.installation_time_seconds ?? null,
+              id: installationId,
+              notes: payload.notes,
+              installation_time_seconds: payload.installation_time_seconds,
             },
           }, realtimeTenantId);
           await publishRealtimeStatsUpdate(env, realtimeTenantId);
 
-          return jsonResponse(request, env, corsPolicy,{ success: true, updated: recordId });
+          return jsonResponse(request, env, corsPolicy,{ success: true, updated: String(installationId) });
         }
 
         if (request.method === "DELETE") {
@@ -4379,7 +4462,7 @@ export default {
           {
             success: false,
             error: {
-              code: error.status === 401 ? "UNAUTHORIZED" : "INVALID_REQUEST",
+              code: errorCodeFromHttpStatus(error.status),
               message: error.message,
             },
           },

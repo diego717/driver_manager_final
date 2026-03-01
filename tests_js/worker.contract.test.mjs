@@ -1084,6 +1084,11 @@ test("Dashboard assets include hardened security headers", async () => {
     assert.match(csp, /script-src 'self' https:\/\/cdn\.jsdelivr\.net/);
     assert.match(csp, /style-src 'self'/);
     assert.match(csp, /frame-ancestors 'none'/);
+
+    if (url.endsWith("/web/dashboard.css") || url.endsWith("/web/dashboard.js")) {
+      const bodyText = await response.text();
+      assert.ok(bodyText.length > 0, `Expected non-empty content for ${url}`);
+    }
   }
 });
 test("GET / returns service metadata", async () => {
@@ -1314,7 +1319,7 @@ test("PUT /installations/:id updates notes and installation time", async () => {
 
   const updateCall = db.calls.find((c) => c.sql.startsWith("UPDATE installations"));
   assert.ok(updateCall);
-  assert.deepEqual(updateCall.bound, ["Actualizado", 150, "42"]);
+  assert.deepEqual(updateCall.bound, ["Actualizado", 150, 42]);
 });
 
 test("PUT /installations/:id with missing fields binds null values", async () => {
@@ -1333,7 +1338,55 @@ test("PUT /installations/:id with missing fields binds null values", async () =>
 
   const updateCall = db.calls.find((c) => c.sql.startsWith("UPDATE installations"));
   assert.ok(updateCall);
-  assert.deepEqual(updateCall.bound, [null, null, "77"]);
+  assert.deepEqual(updateCall.bound, [null, null, 77]);
+});
+
+test("PUT /installations/:id rejects invalid installation id", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/installations/not-a-number", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ notes: "x" }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /id/i);
+});
+
+test("PUT /installations/:id rejects invalid notes type", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/installations/77", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ notes: 1234 }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /notes/i);
+});
+
+test("PUT /installations/:id rejects invalid installation_time_seconds", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/installations/77", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ installation_time_seconds: -1 }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /installation_time_seconds/i);
 });
 
 test("DELETE /installations/:id deletes record and returns message", async () => {
@@ -2259,6 +2312,7 @@ test("GET /installations/:id returns 404 when installation does not exist", asyn
 
   assert.equal(response.status, 404);
   assert.equal(body.success, false);
+  assert.equal(body.error.code, "NOT_FOUND");
   assert.match(body.error.message, /registro no encontrado/i);
 });
 
@@ -2275,6 +2329,7 @@ test("invalid JSON payload returns 400 for POST /installations", async () => {
 
   assert.equal(response.status, 400);
   assert.equal(body.success, false);
+  assert.equal(body.error.code, "INVALID_REQUEST");
   assert.match(body.error.message, /payload invalido/i);
 });
 
@@ -2892,6 +2947,7 @@ test("admin cannot create users in a different tenant", async () => {
 
   assert.equal(createUserResponse.status, 403);
   assert.equal(createUserBody.success, false);
+  assert.equal(createUserBody.error.code, "FORBIDDEN");
   assert.match(createUserBody.error.message, /otro tenant/i);
 });
 
@@ -3302,6 +3358,19 @@ test("GET /web/installations rejects request without Bearer token", async () => 
   assert.match(body.error.message, /bearer/i);
 });
 
+test("GET /web/events rejects token in query string", async () => {
+  const request = new Request("https://worker.example/web/events?token=leaked-token", {
+    method: "GET",
+  });
+
+  const response = await workerFetch(request, {});
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /query string/i);
+});
+
 test("POST /web/auth/login rejects wrong password", async () => {
   const db = createMockDB();
 
@@ -3554,6 +3623,7 @@ test("POST /web/auth/bootstrap returns conflict when bootstrap already executed"
 
   assert.equal(response.status, 409);
   assert.equal(body.success, false);
+  assert.equal(body.error.code, "CONFLICT");
   assert.match(body.error.message, /bootstrap ya ejecutado/i);
 });
 

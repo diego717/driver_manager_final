@@ -56,21 +56,23 @@ def build_dashboard_route_block(escaped_html: str) -> str:
       }}
 
       if (routeParts.length === 1 && routeParts[0] === "dashboard.css" && request.method === "GET") {{
-        return new Response("", {{
-          status: 200,
+        return new Response("Asset inline en /dashboard. Este endpoint no se usa.", {{
+          status: 404,
           headers: {{
             ...corsHeaders(),
             "Content-Type": "text/css",
+            "Cache-Control": "no-store",
           }},
         }});
       }}
 
       if (routeParts.length === 1 && routeParts[0] === "dashboard.js" && request.method === "GET") {{
-        return new Response("", {{
-          status: 200,
+        return new Response("Asset inline en /dashboard. Este endpoint no se usa.", {{
+          status: 404,
           headers: {{
             ...corsHeaders(),
             "Content-Type": "application/javascript",
+            "Cache-Control": "no-store",
           }},
         }});
       }}

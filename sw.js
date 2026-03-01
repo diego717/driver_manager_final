@@ -4,8 +4,53 @@ const STATIC_ASSETS = [
   '/web/dashboard',
   '/dashboard.css',
   '/dashboard.js',
+  '/dashboard-pwa.js',
   '/manifest.json'
 ];
+
+const STATIC_ASSET_PATHS = new Set([
+  '/web/dashboard',
+  '/dashboard.css',
+  '/dashboard.js',
+  '/dashboard-pwa.js',
+  '/manifest.json',
+]);
+
+function getAssetPath(input) {
+  const rawUrl = typeof input === 'string' ? input : input?.url;
+  return new URL(rawUrl, self.location.origin).pathname;
+}
+
+async function shouldCacheResponse(requestOrUrl, response) {
+  if (!response || response.status !== 200) return false;
+
+  const path = getAssetPath(requestOrUrl);
+  if (!STATIC_ASSET_PATHS.has(path)) {
+    return true;
+  }
+
+  const contentLength = response.headers.get('content-length');
+  if (contentLength !== null) {
+    const parsed = Number(contentLength);
+    if (Number.isFinite(parsed) && parsed <= 0) {
+      console.warn('[SW] Skip caching empty asset (content-length=0):', path);
+      return false;
+    }
+  }
+
+  try {
+    const body = await response.clone().arrayBuffer();
+    if (!body || body.byteLength <= 0) {
+      console.warn('[SW] Skip caching empty asset body:', path);
+      return false;
+    }
+  } catch (err) {
+    console.warn('[SW] Could not validate asset body, skip cache:', path, err);
+    return false;
+  }
+
+  return true;
+}
 
 // Install event - cache static assets
 self.addEventListener('install', (event) => {
@@ -13,9 +58,20 @@ self.addEventListener('install', (event) => {
   
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => {
+      .then(async (cache) => {
         console.log('[SW] Caching static assets');
-        return cache.addAll(STATIC_ASSETS);
+        for (const asset of STATIC_ASSETS) {
+          try {
+            const request = new Request(asset, { cache: 'no-store' });
+            const networkResponse = await fetch(request);
+            if (!(await shouldCacheResponse(request, networkResponse))) {
+              continue;
+            }
+            await cache.put(request, networkResponse.clone());
+          } catch (err) {
+            console.error('[SW] Error caching asset:', asset, err);
+          }
+        }
       })
       .then(() => {
         console.log('[SW] Static assets cached successfully');
@@ -80,8 +136,8 @@ self.addEventListener('fetch', (event) => {
         if (cachedResponse) {
           // Fetch new version in background (stale-while-revalidate)
           fetch(request)
-            .then((networkResponse) => {
-              if (networkResponse && networkResponse.status === 200) {
+            .then(async (networkResponse) => {
+              if (await shouldCacheResponse(request, networkResponse)) {
                 caches.open(CACHE_NAME)
                   .then((cache) => {
                     cache.put(request, networkResponse.clone());
@@ -97,8 +153,8 @@ self.addEventListener('fetch', (event) => {
         
         // No cache, fetch from network
         return fetch(request)
-          .then((networkResponse) => {
-            if (!networkResponse || networkResponse.status !== 200) {
+          .then(async (networkResponse) => {
+            if (!(await shouldCacheResponse(request, networkResponse))) {
               return networkResponse;
             }
             
