@@ -1,10 +1,28 @@
-// Auto-detect API base URL - use current origin in production, or fallback to worker URL
+// API base URL:
+// - By default uses same-origin (recommended and safest).
+// - Optional override via window.__DM_API_BASE__ or localStorage.dm_api_base_url.
 const API_BASE = (() => {
-    // If running on localhost, use the production worker URL
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        return 'https://driver-manager-db.diegosasen.workers.dev';
+    const normalizeBase = (value) => {
+        if (!value || typeof value !== 'string') return '';
+        const trimmed = value.trim();
+        if (!trimmed) return '';
+        return trimmed.replace(/\/+$/, '');
+    };
+
+    const globalOverride = normalizeBase(window.__DM_API_BASE__);
+    if (globalOverride) {
+        return globalOverride;
     }
-    // Otherwise use relative paths (same origin)
+
+    try {
+        const storedOverride = normalizeBase(window.localStorage.getItem('dm_api_base_url'));
+        if (storedOverride) {
+            return storedOverride;
+        }
+    } catch {
+        // localStorage unavailable (privacy mode/policies). Use same-origin.
+    }
+
     return '';
 })();
 
@@ -19,8 +37,12 @@ let currentSelectedInstallationId = null;
 let eventSource = null;
 let sseReconnectTimer = null;
 let sseReconnectAttempts = 0;
-const MAX_SSE_RECONNECT_ATTEMPTS = 5;
-const SSE_RECONNECT_DELAY = 3000; // 3 seconds
+let sseLastConnectAttemptAt = 0;
+const MAX_SSE_RECONNECT_ATTEMPTS = 6;
+const SSE_RECONNECT_BASE_DELAY = 2500;
+const SSE_RECONNECT_MAX_DELAY = 30000;
+const SSE_MIN_CONNECT_GAP_MS = 1200;
+const SSE_ACTIVE_SECTIONS = new Set(['dashboard', 'installations', 'incidents']);
 const FORCE_LOGIN_ON_OPEN = true;
 
 
@@ -43,6 +65,42 @@ function applyChartDefaults(theme = 'light') {
 
 applyChartDefaults('light');
 
+async function parseApiResponsePayload(response) {
+    const rawText = await response.text();
+    if (!rawText) return null;
+
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    const looksLikeJson = contentType.includes('application/json');
+    if (looksLikeJson) {
+        try {
+            return JSON.parse(rawText);
+        } catch {
+            return rawText;
+        }
+    }
+
+    return rawText;
+}
+
+function extractApiErrorMessage(payload, response) {
+    if (payload && typeof payload === 'object') {
+        const fromNested = payload.error && typeof payload.error === 'object'
+            ? payload.error.message
+            : undefined;
+        const fromMessage = payload.message;
+        const message = fromNested || fromMessage;
+        if (typeof message === 'string' && message.trim()) {
+            return message.trim();
+        }
+    }
+
+    if (typeof payload === 'string' && payload.trim()) {
+        return payload.trim();
+    }
+
+    return `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
+}
+
 const api = {
     async request(endpoint, options = {}) {
         const authHeaders = webAccessToken
@@ -59,14 +117,26 @@ const api = {
             headers,
             credentials: 'include'
         });
+        const payload = await parseApiResponsePayload(response);
         
         if (response.status === 401) {
+            currentUser = null;
             webAccessToken = '';
+            closeSSE();
+            resetProtectedViews();
             showLogin();
-            throw new Error('No autorizado');
+            throw new Error(extractApiErrorMessage(payload, response) || 'No autorizado');
         }
-        
-        return response.json();
+
+        if (!response.ok) {
+            throw new Error(extractApiErrorMessage(payload, response));
+        }
+
+        if (payload === null) {
+            return {};
+        }
+
+        return payload;
     },
     
     getInstallations(params = {}) {
@@ -768,6 +838,33 @@ function clearAllFilters() {
 }
 
 // Export Functions
+function sanitizeSpreadsheetCell(value) {
+    const normalized = String(value ?? '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n');
+    if (/^[\t\n\r ]*[=+\-@]/.test(normalized)) {
+        return `'${normalized}`;
+    }
+    return normalized;
+}
+
+function toCsvCell(value) {
+    const safe = sanitizeSpreadsheetCell(value);
+    return `"${safe.replace(/"/g, '""')}"`;
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function toExcelCell(value) {
+    return escapeHtml(sanitizeSpreadsheetCell(value)).replace(/\n/g, '<br>');
+}
 function exportToCSV(data, filename = 'instalaciones.csv') {
     if (!data || !data.length) {
         showNotification('❌ No hay datos para exportar', 'error');
@@ -785,14 +882,14 @@ function exportToCSV(data, filename = 'instalaciones.csv') {
         inst.driver_version || 'N/A',
         inst.status || 'unknown',
         inst.installation_time_seconds || 0,
-        (inst.notes || '').replace(/"/g, '""'), // Escape quotes
+        inst.notes || '',
         inst.timestamp
     ]);
     
     // Combine headers and rows
     const csvContent = [
-        headers.join(','),
-        ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+        headers.map(toCsvCell).join(','),
+        ...rows.map(row => row.map(toCsvCell).join(','))
     ].join('\n');
     
     // Create and download file
@@ -824,21 +921,21 @@ function exportToExcel(data, filename = 'instalaciones.xls') {
     // Headers
     html += '<tr>';
     ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo (s)', 'Notas', 'Fecha'].forEach(header => {
-        html += `<th>${header}</th>`;
+        html += `<th>${escapeHtml(header)}</th>`;
     });
     html += '</tr>';
     
     // Data rows
     data.forEach(inst => {
         html += '<tr>';
-        html += `<td>${inst.id}</td>`;
-        html += `<td>${inst.client_name || 'N/A'}</td>`;
-        html += `<td>${inst.driver_brand || 'N/A'}</td>`;
-        html += `<td>${inst.driver_version || 'N/A'}</td>`;
-        html += `<td>${inst.status || 'unknown'}</td>`;
-        html += `<td>${inst.installation_time_seconds || 0}</td>`;
-        html += `<td>${(inst.notes || '').substring(0, 100)}</td>`;
-        html += `<td>${inst.timestamp}</td>`;
+        html += `<td>${toExcelCell(inst.id)}</td>`;
+        html += `<td>${toExcelCell(inst.client_name || 'N/A')}</td>`;
+        html += `<td>${toExcelCell(inst.driver_brand || 'N/A')}</td>`;
+        html += `<td>${toExcelCell(inst.driver_version || 'N/A')}</td>`;
+        html += `<td>${toExcelCell(inst.status || 'unknown')}</td>`;
+        html += `<td>${toExcelCell(inst.installation_time_seconds || 0)}</td>`;
+        html += `<td>${toExcelCell((inst.notes || '').substring(0, 100))}</td>`;
+        html += `<td>${toExcelCell(inst.timestamp)}</td>`;
         html += '</tr>';
     });
     
@@ -1457,7 +1554,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         
         hideLogin();
         loadDashboard();
-        initSSE();
+        syncSSEForCurrentContext(true);
         
         // Show success notification
         showNotification('✅ Bienvenido, ' + result.user.username + '!', 'success');
@@ -1518,6 +1615,7 @@ document.querySelectorAll('.nav-links a').forEach(link => {
         
         if (section === 'installations') loadInstallations();
         if (section === 'audit') loadAuditLogs();
+        syncSSEForCurrentContext();
     });
 });
 
@@ -1601,13 +1699,88 @@ style.textContent = `
 document.head.appendChild(style);
 
 // WebSocket/SSE Functions
+function getActiveSectionName() {
+    const activeSection = document.querySelector('.section.active');
+    if (!activeSection?.id) return '';
+    return activeSection.id.replace(/Section$/, '');
+}
+
+function canUseRealtimeNow() {
+    if (!currentUser) return false;
+    if (document.visibilityState !== 'visible') return false;
+    const activeSection = getActiveSectionName();
+    return SSE_ACTIVE_SECTIONS.has(activeSection);
+}
+
+function scheduleSSEReconnect(preferredDelayMs = null) {
+    if (!canUseRealtimeNow()) {
+        return;
+    }
+
+    if (sseReconnectAttempts >= MAX_SSE_RECONNECT_ATTEMPTS) {
+        console.error('[SSE] Max reconnection attempts reached');
+        updateConnectionStatus('failed');
+        showNotification('⚠️ Conexión en tiempo real perdida. Recarga la página para reconectar.', 'error');
+        return;
+    }
+
+    sseReconnectAttempts++;
+    const exponentialDelay = Math.min(
+        SSE_RECONNECT_MAX_DELAY,
+        SSE_RECONNECT_BASE_DELAY * Math.pow(2, sseReconnectAttempts - 1)
+    );
+    const normalizedPreferredDelay = Number.isFinite(preferredDelayMs) && preferredDelayMs > 0
+        ? Math.min(preferredDelayMs, SSE_RECONNECT_MAX_DELAY)
+        : exponentialDelay;
+    const jitterMs = Math.floor(Math.random() * 600);
+    const delayMs = Math.max(SSE_RECONNECT_BASE_DELAY, normalizedPreferredDelay) + jitterMs;
+
+    console.log(
+        `[SSE] Reconnecting in ${delayMs}ms... Attempt ${sseReconnectAttempts}/${MAX_SSE_RECONNECT_ATTEMPTS}`
+    );
+    updateConnectionStatus('reconnecting');
+
+    if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
+    sseReconnectTimer = setTimeout(() => {
+        initSSE();
+    }, delayMs);
+}
+
+function syncSSEForCurrentContext(forceReconnect = false) {
+    if (!canUseRealtimeNow()) {
+        closeSSE();
+        updateConnectionStatus('paused');
+        return;
+    }
+
+    if (forceReconnect || !eventSource) {
+        initSSE();
+    }
+}
+
 function initSSE() {
+    if (!canUseRealtimeNow()) {
+        closeSSE();
+        return;
+    }
+
+    const now = Date.now();
+    if (now - sseLastConnectAttemptAt < SSE_MIN_CONNECT_GAP_MS) {
+        scheduleSSEReconnect(SSE_MIN_CONNECT_GAP_MS);
+        return;
+    }
+    sseLastConnectAttemptAt = now;
+
+    if (sseReconnectTimer) {
+        clearTimeout(sseReconnectTimer);
+        sseReconnectTimer = null;
+    }
     if (eventSource) {
         eventSource.close();
+        eventSource = null;
     }
 
     try {
-        // Use EventSource for Server-Sent Events
         const sseUrl = `${API_BASE}/web/events`;
         eventSource = new EventSource(sseUrl, { withCredentials: true });
 
@@ -1628,27 +1801,22 @@ function initSSE() {
 
         eventSource.onerror = (err) => {
             console.error('[SSE] Connection error:', err);
-            updateConnectionStatus('disconnected');
-            
-            // Auto-reconnect logic
-            if (sseReconnectAttempts < MAX_SSE_RECONNECT_ATTEMPTS) {
-                sseReconnectAttempts++;
-                console.log(`[SSE] Reconnecting... Attempt ${sseReconnectAttempts}/${MAX_SSE_RECONNECT_ATTEMPTS}`);
-                updateConnectionStatus('reconnecting');
-                
-                if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
-                sseReconnectTimer = setTimeout(() => {
-                    initSSE();
-                }, SSE_RECONNECT_DELAY * sseReconnectAttempts); // Exponential backoff
-            } else {
-                console.error('[SSE] Max reconnection attempts reached');
-                updateConnectionStatus('failed');
-                showNotification('⚠️ Conexión en tiempo real perdida. Recarga la página para reconectar.', 'error');
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
             }
-        };
 
+            if (!canUseRealtimeNow()) {
+                updateConnectionStatus('paused');
+                return;
+            }
+
+            updateConnectionStatus('disconnected');
+            scheduleSSEReconnect();
+        };
     } catch (err) {
         console.error('[SSE] Error initializing:', err);
+        scheduleSSEReconnect();
     }
 }
 
@@ -1658,11 +1826,11 @@ function handleSSEMessage(data) {
             console.log('[SSE]', data.message);
             showNotification('🔌 Conectado en tiempo real', 'success');
             break;
-            
+
         case 'installation_created':
             handleRealtimeInstallation(data.installation);
             break;
-            
+
         case 'installation_updated':
             handleRealtimeInstallationUpdate(data.installation);
             break;
@@ -1670,25 +1838,27 @@ function handleSSEMessage(data) {
         case 'installation_deleted':
             handleRealtimeInstallationDeleted(data.installation);
             break;
-            
+
         case 'incident_created':
             handleRealtimeIncident(data.incident);
             break;
-            
+
         case 'stats_update':
             handleRealtimeStatsUpdate(data.statistics);
             break;
-            
+
         case 'reconnect':
             console.log('[SSE] Server requested reconnect');
-            eventSource.close();
-            setTimeout(initSSE, 1000);
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            scheduleSSEReconnect(Number(data?.reconnect_after_ms) || 1000);
             break;
-            
+
         case 'ping':
-            // Keep-alive, no action needed
             break;
-            
+
         default:
             console.log('[SSE] Unknown message type:', data.type);
     }
@@ -1773,6 +1943,7 @@ function updateConnectionStatus(status) {
         connected: { icon: '🟢', text: 'En vivo', color: 'rgba(16, 185, 129, 0.9)' },
         disconnected: { icon: '🔴', text: 'Desconectado', color: 'rgba(239, 68, 68, 0.9)' },
         reconnecting: { icon: '🟡', text: 'Reconectando...', color: 'rgba(245, 158, 11, 0.9)' },
+        paused: { icon: '⏸️', text: 'En pausa', color: 'rgba(100, 116, 139, 0.9)' },
         failed: { icon: '⚫', text: 'Error de conexión', color: 'rgba(148, 163, 184, 0.9)' }
     };
     
@@ -1798,12 +1969,12 @@ function updateConnectionStatus(status) {
     `;
     indicator.innerHTML = `<span>${config.icon}</span><span>${config.text}</span>`;
     
-    // Click to reconnect if disconnected
-    if (status === 'disconnected' || status === 'failed') {
+    // Click to reconnect when reconnection is meaningful.
+    if (status === 'disconnected' || status === 'failed' || status === 'paused') {
         indicator.addEventListener('click', () => {
             showNotification('🔄 Intentando reconectar...', 'info');
             sseReconnectAttempts = 0;
-            initSSE();
+            syncSSEForCurrentContext(true);
         });
         indicator.style.cursor = 'pointer';
         indicator.title = 'Click para reconectar';
@@ -1856,7 +2027,7 @@ async function init() {
             applyAuthenticatedUser(me);
             hideLogin();
             loadDashboard();
-            initSSE();
+            syncSSEForCurrentContext(true);
         }
     } catch (err) {
         console.error('Error validating session:', err);
@@ -1875,12 +2046,15 @@ async function init() {
     // Setup theme toggle
     setupThemeToggle();
     
-    // Handle page visibility changes to reconnect SSE
+    // Handle page visibility changes to suspend/reconnect SSE.
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && currentUser && !eventSource) {
+        if (document.visibilityState === 'visible') {
             console.log('[SSE] Page visible, reconnecting...');
-            initSSE();
+            syncSSEForCurrentContext(true);
+            return;
         }
+        closeSSE();
+        updateConnectionStatus('paused');
     });
     
     // Close SSE on page unload

@@ -19,7 +19,6 @@ class UserManagementDialog(QDialog):
         super().__init__(parent)
         self.user_manager = user_manager
         self.user_source_mode = "local"
-        self._cached_admin_web_password = ""
         self.setWindowTitle("Gestión de Usuarios")
         self.setGeometry(200, 200, 800, 600)
         
@@ -168,17 +167,14 @@ class UserManagementDialog(QDialog):
             QMessageBox.warning(self, "Error", "Solo super_admin puede ver usuarios web.")
             return
 
-        admin_web_password = self._cached_admin_web_password
-        if not admin_web_password:
-            admin_web_password, ok = QInputDialog.getText(
-                self,
-                "Usuarios Web",
-                "Ingresa tu contraseña web de super_admin:",
-                QLineEdit.EchoMode.Password,
-            )
-            if not ok or not admin_web_password:
-                return
-            self._cached_admin_web_password = admin_web_password
+        admin_web_password, ok = QInputDialog.getText(
+            self,
+            "Usuarios Web",
+            "Ingresa tu contraseña web de super_admin:",
+            QLineEdit.EchoMode.Password,
+        )
+        if not ok or not admin_web_password:
+            return
 
         tenant_id = ""
         if hasattr(self, "tenant_filter_input"):
@@ -190,8 +186,6 @@ class UserManagementDialog(QDialog):
                 tenant_id=tenant_id or None,
             )
         except Exception as error:
-            # Si falla autenticación, limpiar cache para pedir password nuevamente.
-            self._cached_admin_web_password = ""
             QMessageBox.warning(self, "Error", str(error))
             return
 
@@ -333,7 +327,6 @@ class UserManagementDialog(QDialog):
             if success:
                 QMessageBox.information(self, "Éxito", message)
                 if tenant_id:
-                    self._cached_admin_web_password = admin_web_password
                     self.user_source_mode = "web"
                 self.refresh_users()
             else:

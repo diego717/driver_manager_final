@@ -72,7 +72,7 @@ export function RootLayoutNav() {
   const notifications = useNotifications();
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const [lockInitializing, setLockInitializing] = useState(true);
-  const [appLocked, setAppLocked] = useState(false);
+  const [appLocked, setAppLocked] = useState(true);
   const [authenticating, setAuthenticating] = useState(false);
   const [lockError, setLockError] = useState<string | null>(null);
   const [biometricLabel, setBiometricLabel] = useState("biometria");
@@ -107,6 +107,10 @@ export function RootLayoutNav() {
     let mounted = true;
     const initGuardTimeout = setTimeout(() => {
       if (!mounted) return;
+      setAppLocked(true);
+      setLockError(
+        "No se pudo inicializar la seguridad biometrica. Reintenta para desbloquear.",
+      );
       setLockInitializing(false);
     }, 7000);
 
@@ -138,7 +142,7 @@ export function RootLayoutNav() {
         void triggerBiometricUnlock(false);
       } catch (caughtError) {
         if (!mounted) return;
-        setAppLocked(false);
+        setAppLocked(true);
         setBiometricAvailable(false);
         setLockError(
           caughtError instanceof Error
@@ -176,25 +180,6 @@ export function RootLayoutNav() {
       subscription.remove();
     };
   }, [biometricAvailable, biometricEnabled, lockInitializing, triggerBiometricUnlock]);
-
-  useEffect(() => {
-    if (!notifications.expoPushToken) return;
-    console.log(`[notifications] expo token listo: ${notifications.expoPushToken}`);
-  }, [notifications.expoPushToken]);
-
-  useEffect(() => {
-    if (!notifications.fcmPushToken) return;
-    console.log(`[notifications] fcm token listo: ${notifications.fcmPushToken}`);
-  }, [notifications.fcmPushToken]);
-
-  useEffect(() => {
-    if (notifications.tokenRegisteredInApi === null) return;
-    if (notifications.tokenRegisteredInApi) {
-      console.log("[notifications] token registrado en API.");
-      return;
-    }
-    console.log("[notifications] token no registrado (sin sesion web activa).");
-  }, [notifications.tokenRegisteredInApi]);
 
   useEffect(() => {
     if (!notifications.error) return;

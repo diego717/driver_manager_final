@@ -30,6 +30,7 @@ async function workerFetch(request, env = {}) {
 
   if (!isWebRoute && !isPublicRoot && !isHealth && !hasHmacHeaders) {
     const bodyBuffer = Buffer.from(await request.clone().arrayBuffer());
+    const bodyHash = sha256Hex(bodyBuffer || Buffer.alloc(0));
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const signature = signRequest({
       method: request.method,
@@ -43,6 +44,7 @@ async function workerFetch(request, env = {}) {
     headers.set("X-API-Token", mergedEnv.API_TOKEN);
     headers.set("X-Request-Timestamp", timestamp);
     headers.set("X-Request-Signature", signature);
+    headers.set("X-Body-SHA256", bodyHash);
 
     signedRequest = new Request(request.url, {
       method: request.method,
@@ -1027,6 +1029,7 @@ test("OPTIONS returns CORS headers only for allowed origins", async () => {
   assert.match(response.headers.get("Access-Control-Allow-Methods"), /OPTIONS/);
   assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-API-Token/);
   assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-Request-Signature/);
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-Body-SHA256/);
   assert.match(response.headers.get("Access-Control-Allow-Headers"), /Content-Type/);
 });
 
@@ -1878,6 +1881,46 @@ test("POST /incidents/:id/photos uploads to R2 and persists metadata", async () 
   assert.equal(uploaded.length, 1);
   assert.match(uploaded[0].key, /^incidents\/45\/11\//);
   assert.equal(uploaded[0].options.httpMetadata.contentType, "image/png");
+});
+
+test("POST /incidents/:id/photos requires X-Body-SHA256 for legacy HMAC auth", async () => {
+  const db = createMockDB({
+    incidents: [{ id: 11, installation_id: 45 }],
+  });
+  const payload = new Uint8Array(1500);
+  payload.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = signRequest({
+    method: "POST",
+    path: "/incidents/11/photos",
+    timestamp,
+    bodyBuffer: Buffer.from(payload),
+    secret: DEFAULT_API_SECRET,
+  });
+
+  const request = new Request("https://worker.example/incidents/11/photos", {
+    method: "POST",
+    headers: {
+      "Content-Type": "image/png",
+      "X-File-Name": "evidencia.png",
+      "X-API-Token": DEFAULT_API_TOKEN,
+      "X-Request-Timestamp": timestamp,
+      "X-Request-Signature": signature,
+    },
+    body: payload,
+  });
+
+  const response = await workerFetch(request, {
+    DB: db,
+    INCIDENTS_BUCKET: {
+      async put() {},
+    },
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 401);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /X-Body-SHA256/i);
 });
 
 test("GET /photos/:id returns binary content from R2", async () => {

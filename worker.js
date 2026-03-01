@@ -4,6 +4,8 @@ const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const MIN_PHOTO_BYTES = 1024;
 const ALLOWED_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const AUTH_WINDOW_SECONDS = 300;
+const MAX_AUTH_INMEM_BODY_HASH_BYTES = 256 * 1024;
+const EMPTY_BODY_SHA256_HEX = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const WEB_ACCESS_TTL_SECONDS = 8 * 60 * 60;
 const WEB_SESSION_COOKIE_NAME = "__Host-web_session";
 const WEB_SESSION_STORE_TTL_SECONDS = WEB_ACCESS_TTL_SECONDS + 60;
@@ -31,9 +33,11 @@ const WEB_ALLOWED_HASH_TYPES = new Set([
 
 let fcmAccessTokenCache = null;
 let fcmAccessTokenRefreshState = null;
-const SSE_POLL_INTERVAL_MS = 4000;
+const SSE_POLL_INTERVAL_MS = 10000;
 const SSE_KEEP_ALIVE_INTERVAL_MS = 30000;
-const SSE_MAX_CONNECTION_MS = 5 * 60 * 1000;
+const SSE_MAX_CONNECTION_MS = 2 * 60 * 1000;
+const SSE_MAX_CLIENTS_PER_BROKER = 200;
+const SSE_CLIENT_KEY_PATTERN = /^[a-z0-9._:-]{1,96}$/;
 const REALTIME_BROKER_INSTANCE = "global";
 const DEFAULT_REALTIME_TENANT_ID = "default";
 
@@ -135,6 +139,7 @@ function buildCorsPolicy(isWebRoute, routeParts) {
     headers.add("X-API-Token");
     headers.add("X-Request-Timestamp");
     headers.add("X-Request-Signature");
+    headers.add("X-Body-SHA256");
   }
 
   if (
@@ -271,10 +276,10 @@ function dashboardAssetSecurityHeaders() {
       "frame-ancestors 'none'",
       "object-src 'none'",
       "img-src 'self' data: blob:",
-      "font-src 'self' data:",
-      "connect-src 'self'",
+      "font-src 'self' data: https://fonts.gstatic.com",
+      "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
       "script-src 'self' https://cdn.jsdelivr.net",
-      "style-src 'self'",
+      "style-src 'self' https://fonts.googleapis.com",
       "manifest-src 'self'",
     ].join("; "),
   };
@@ -485,6 +490,24 @@ function normalizeRealtimeTenantId(value) {
   if (!raw) return DEFAULT_REALTIME_TENANT_ID;
   const normalized = raw.replace(/[^a-z0-9._-]/g, "_").slice(0, 64);
   return normalized || DEFAULT_REALTIME_TENANT_ID;
+}
+
+function normalizeRealtimeClientKey(value) {
+  const raw = normalizeOptionalString(value, "").toLowerCase();
+  if (!raw) return "";
+  if (!SSE_CLIENT_KEY_PATTERN.test(raw)) return "";
+  return raw;
+}
+
+function buildRealtimeClientKeyFromSession(webSession) {
+  const tenantId = normalizeRealtimeTenantId(webSession?.tenant_id);
+  const userId = Number.isInteger(webSession?.user_id) ? Number(webSession.user_id) : null;
+  if (userId && userId > 0) {
+    return normalizeRealtimeClientKey(`${tenantId}:uid:${userId}`);
+  }
+  const username = normalizeWebUsername(webSession?.sub || "");
+  if (!username) return "";
+  return normalizeRealtimeClientKey(`${tenantId}:usr:${username}`);
 }
 
 function resolveRealtimeTenantId(request, webSession = null) {
@@ -1020,12 +1043,22 @@ function getRealtimeBrokerStub(env) {
   }
 }
 
-async function connectRealtimeBrokerStream(request, env, corsPolicy, tenantId = DEFAULT_REALTIME_TENANT_ID) {
+async function connectRealtimeBrokerStream(
+  request,
+  env,
+  corsPolicy,
+  tenantId = DEFAULT_REALTIME_TENANT_ID,
+  clientKey = "",
+) {
   const broker = getRealtimeBrokerStub(env);
   if (!broker || typeof broker.fetch !== "function") return null;
 
   const brokerUrl = new URL("https://realtime/connect");
   brokerUrl.searchParams.set("tenant_id", normalizeRealtimeTenantId(tenantId));
+  const normalizedClientKey = normalizeRealtimeClientKey(clientKey);
+  if (normalizedClientKey) {
+    brokerUrl.searchParams.set("client_key", normalizedClientKey);
+  }
   const brokerResponse = await broker.fetch(brokerUrl.toString(), {
     method: "GET",
   });
@@ -1087,6 +1120,7 @@ export class RealtimeEventsBroker {
     this.state = state;
     this.encoder = new TextEncoder();
     this.clients = new Map();
+    this.clientKeyToId = new Map();
 
     this.keepAliveTimer = setInterval(() => {
       this.broadcastComment("ping").catch(() => {});
@@ -1107,18 +1141,41 @@ export class RealtimeEventsBroker {
   async handleConnect(request) {
     const url = new URL(request.url);
     const tenantId = normalizeRealtimeTenantId(url.searchParams.get("tenant_id"));
-    return this.handleConnectWithTenant(tenantId);
+    const clientKey = normalizeRealtimeClientKey(url.searchParams.get("client_key"));
+    return this.handleConnectWithTenant(tenantId, clientKey);
   }
 
-  async handleConnectWithTenant(tenantId) {
+  async handleConnectWithTenant(tenantId, clientKey = "") {
+    const normalizedClientKey = normalizeRealtimeClientKey(clientKey);
+    if (normalizedClientKey) {
+      const previousClientId = this.clientKeyToId.get(normalizedClientKey);
+      if (previousClientId) {
+        await this.closeClient(previousClientId);
+      }
+    } else if (this.clients.size >= SSE_MAX_CLIENTS_PER_BROKER) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: "too_many_connections",
+        message: "Capacidad de conexiones SSE alcanzada. Intenta nuevamente en unos segundos.",
+      }), {
+        status: 503,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": "10",
+        },
+      });
+    }
+
     const clientId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const stream = new TransformStream();
     const writer = stream.writable.getWriter();
+    const reconnectAfterMs = 1000 + Math.floor(Math.random() * 4000);
 
     const reconnectTimer = setTimeout(() => {
       this.closeClient(clientId, {
         type: "reconnect",
         message: "Reconexión requerida",
+        reconnect_after_ms: reconnectAfterMs,
         timestamp: nowIso(),
       }).catch(() => {});
     }, SSE_MAX_CONNECTION_MS);
@@ -1128,12 +1185,17 @@ export class RealtimeEventsBroker {
       reconnectTimer,
       tenantId: normalizeRealtimeTenantId(tenantId),
       connectedAt: Date.now(),
+      clientKey: normalizedClientKey,
     });
+    if (normalizedClientKey) {
+      this.clientKeyToId.set(normalizedClientKey, clientId);
+    }
 
     await this.writeData(writer, {
       type: "connected",
       message: "Conexión en tiempo real establecida",
       tenant_id: normalizeRealtimeTenantId(tenantId),
+      reconnect_after_ms: reconnectAfterMs,
       timestamp: nowIso(),
     });
 
@@ -1215,6 +1277,9 @@ export class RealtimeEventsBroker {
     const client = this.clients.get(clientId);
     if (!client) return;
     this.clients.delete(clientId);
+    if (client.clientKey && this.clientKeyToId.get(client.clientKey) === clientId) {
+      this.clientKeyToId.delete(client.clientKey);
+    }
     if (client.reconnectTimer) clearTimeout(client.reconnectTimer);
     try {
       if (finalPayload) {
@@ -3319,6 +3384,7 @@ async function verifyAuth(request, env, url) {
   const token = request.headers.get("X-API-Token");
   const timestampRaw = request.headers.get("X-Request-Timestamp");
   const signature = request.headers.get("X-Request-Signature");
+  const providedBodyHash = normalizeOptionalString(request.headers.get("X-Body-SHA256"), "");
 
   if (!token || !timestampRaw || !signature) {
     throw new HttpError(401, "Faltan headers de autenticaciÃ³n.");
@@ -3337,9 +3403,48 @@ async function verifyAuth(request, env, url) {
   if (drift > AUTH_WINDOW_SECONDS) {
     throw new HttpError(401, "Timestamp fuera de ventana permitida.");
   }
+  const method = request.method.toUpperCase();
+  const isPhotoUploadRoute =
+    method === "POST" && /^\/incidents\/\d+\/photos$/i.test(url.pathname);
 
-  const bodyBytes = await request.clone().arrayBuffer();
-  const bodyHash = (await sha256Hex(bodyBytes)) || "";
+  let bodyHash = EMPTY_BODY_SHA256_HEX;
+  if (providedBodyHash) {
+    if (!/^[a-f0-9]{64}$/i.test(providedBodyHash)) {
+      throw new HttpError(401, "Header X-Body-SHA256 invalido.");
+    }
+    bodyHash = providedBodyHash.toLowerCase();
+  } else if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+    if (isPhotoUploadRoute) {
+      throw new HttpError(
+        401,
+        "Falta header X-Body-SHA256 para upload binario. Actualiza el cliente.",
+      );
+    }
+
+    const contentLengthRaw = normalizeOptionalString(request.headers.get("content-length"), "");
+    const parsedContentLength = Number.parseInt(contentLengthRaw, 10);
+    const contentLength = Number.isFinite(parsedContentLength) && parsedContentLength >= 0
+      ? parsedContentLength
+      : null;
+
+    if (contentLength !== null && contentLength > MAX_AUTH_INMEM_BODY_HASH_BYTES) {
+      throw new HttpError(
+        401,
+        "Body demasiado grande para autenticacion legacy sin X-Body-SHA256.",
+      );
+    }
+
+    const bodyBytes = await request.clone().arrayBuffer();
+    if (bodyBytes.byteLength > MAX_AUTH_INMEM_BODY_HASH_BYTES) {
+      throw new HttpError(
+        401,
+        "Body demasiado grande para autenticacion legacy sin X-Body-SHA256.",
+      );
+    }
+
+    bodyHash = (await sha256Hex(bodyBytes)) || EMPTY_BODY_SHA256_HEX;
+  }
+
   const canonical = `${request.method.toUpperCase()}|${url.pathname}|${timestamp}|${bodyHash}`;
   const expectedSignature = await hmacSha256Hex(expectedSecret, canonical);
 
@@ -3470,12 +3575,14 @@ export default {
           return jsonResponse(request, env, corsPolicy,{ error: "Unauthorized" }, 401);
         }
         const sseTenantId = resolveRealtimeTenantId(request, sseWebSession);
+        const sseClientKey = buildRealtimeClientKeyFromSession(sseWebSession);
 
         const brokerStreamResponse = await connectRealtimeBrokerStream(
           request,
           env,
           corsPolicy,
           sseTenantId,
+          sseClientKey,
         );
         if (brokerStreamResponse) {
           return brokerStreamResponse;

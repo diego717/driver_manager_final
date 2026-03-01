@@ -113,6 +113,23 @@ class TestEventHandlers(unittest.TestCase):
         mock_warning.assert_called_once()
 
     @patch("handlers.event_handlers.QMessageBox.warning")
+    def test_save_r2_config_denies_when_not_authenticated(self, mock_warning):
+        main = self._build_main()
+        handler = EventHandlers(main)
+
+        main.user_manager.current_user = None
+        main.admin_tab.admin_account_id_input.text.return_value = "a"
+        main.admin_tab.admin_access_key_input.text.return_value = "b"
+        main.admin_tab.admin_secret_key_input.text.return_value = "c"
+        main.admin_tab.admin_bucket_name_input.text.return_value = "d"
+        main.admin_tab.admin_history_api_url_input.text.return_value = "e"
+
+        handler.save_r2_config()
+
+        mock_warning.assert_called_once()
+        main.config_manager.save_config_data.assert_not_called()
+
+    @patch("handlers.event_handlers.QMessageBox.warning")
     def test_save_r2_config_denies_non_super_admin(self, mock_warning):
         main = self._build_main()
         handler = EventHandlers(main)

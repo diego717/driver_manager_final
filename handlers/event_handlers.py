@@ -331,33 +331,52 @@ class EventHandlers:
         """
         logger.operation_start("save_r2_config")
         
-        # VERIFICACIÓN: Solo super_admin puede modificar R2
-        if hasattr(self.main, 'user_manager') and self.main.user_manager and self.main.user_manager.current_user:
-            current_role = self.main.user_manager.current_user.get('role')
-            current_username = self.main.user_manager.current_user.get('username')
-            
-            if current_role != "super_admin":
-                logger.security_event(
-                    event_type="r2_config_modification_denied",
-                    username=current_username,
-                    success=False,
-                    details={'role': current_role},
-                    severity='WARNING'
-                )
-                self.main.user_manager._log_access(
-                    action="r2_config_modification_denied",
-                    username=current_username,
-                    success=False,
-                    details={'role': current_role}
-                )
-                QMessageBox.warning(
-                    self.main,
-                    "Permisos Insuficientes",
-                    "❌ Solo super_admin puede modificar la configuración de Cloudflare R2."
-                )
-                logger.operation_end("save_r2_config", success=False,
-                                    reason="insufficient_permissions")
-                return
+        # VERIFICACIÓN CRÍTICA: siempre se requiere sesión autenticada.
+        if (
+            not hasattr(self.main, "user_manager")
+            or not self.main.user_manager
+            or not self.main.user_manager.current_user
+        ):
+            logger.security_event(
+                event_type="r2_config_modification_denied",
+                username="anonymous",
+                success=False,
+                details={"reason": "not_authenticated"},
+                severity="WARNING",
+            )
+            QMessageBox.warning(
+                self.main,
+                "Autenticación requerida",
+                "❌ Debes iniciar sesión como super_admin para modificar Cloudflare R2.",
+            )
+            logger.operation_end("save_r2_config", success=False, reason="not_authenticated")
+            return
+
+        current_role = self.main.user_manager.current_user.get('role')
+        current_username = self.main.user_manager.current_user.get('username')
+        
+        if current_role != "super_admin":
+            logger.security_event(
+                event_type="r2_config_modification_denied",
+                username=current_username,
+                success=False,
+                details={'role': current_role},
+                severity='WARNING'
+            )
+            self.main.user_manager._log_access(
+                action="r2_config_modification_denied",
+                username=current_username,
+                success=False,
+                details={'role': current_role}
+            )
+            QMessageBox.warning(
+                self.main,
+                "Permisos Insuficientes",
+                "❌ Solo super_admin puede modificar la configuración de Cloudflare R2."
+            )
+            logger.operation_end("save_r2_config", success=False,
+                                reason="insufficient_permissions")
+            return
         
         config = {
             'account_id': self.main.admin_tab.admin_account_id_input.text(),

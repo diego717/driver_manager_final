@@ -1651,29 +1651,25 @@ class MainWindow(QMainWindow):
         logger.operation_start("show_login_dialog")
         
         if not self.cloud_manager:
-            # Si no hay conexión R2, permitir configurar sin login
-            self.admin_tab.admin_content.setVisible(True)
-            # Ocultar secciones que requieren login
-            for widget in self.admin_tab.findChildren(QGroupBox):
-                if "Cloudflare R2" not in widget.title():
-                    widget.setVisible(False)
-            self.admin_tab.auth_status.setText("🔓 Modo Configuración Inicial")
-            self.admin_tab.login_btn.setVisible(False)
-            logger.info("Modo configuración inicial activado (sin cloud_manager)")
-            logger.operation_end("show_login_dialog", success=True, mode="initial_config")
-            QMessageBox.information(self, "Configuración Inicial", 
-                "Configura las credenciales de Cloudflare R2 primero.\n\n"
-                "Después podrás crear usuarios y acceder al sistema completo.")
-            return
+            # Intentar levantar conexión usando configuración cifrada existente.
+            try:
+                self.init_cloud_connection()
+            except Exception as e:
+                logger.warning(f"No se pudo inicializar cloud_manager desde configuración: {e}")
         
         # Inicializar user_manager si no existe
-        if not self.user_manager:
+        desired_local_mode = self.cloud_manager is None
+        if (
+            not self.user_manager
+            or bool(getattr(self.user_manager, "local_mode", False)) != desired_local_mode
+        ):
             try:
                 if not self.history_manager:
                     self.history_manager = InstallationHistory(self.config_manager)
                 self.user_manager = UserManagerV2(
                     self.cloud_manager,
                     self.security_manager,
+                    local_mode=desired_local_mode,
                     audit_api_client=self.history_manager
                 )
             except Exception as e:
@@ -1686,6 +1682,14 @@ class MainWindow(QMainWindow):
             if not self.history_manager:
                 self.history_manager = InstallationHistory(self.config_manager)
             self.user_manager.set_audit_api_client(self.history_manager)
+
+        if self.cloud_manager is None:
+            QMessageBox.information(
+                self,
+                "Modo Seguro sin Nube",
+                "No hay conexión Cloudflare R2 activa.\n\n"
+                "Debes autenticarte como super_admin para configurar credenciales R2."
+            )
 
         try:
             if self.user_manager.needs_initialization():

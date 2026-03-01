@@ -231,6 +231,7 @@ class TestInstallationHistory(unittest.TestCase):
         self.assertEqual(headers["X-API-Token"], "token-123")
         self.assertEqual(headers["X-Request-Timestamp"], "1700000000")
         self.assertEqual(headers["X-Request-Signature"], expected_signature)
+        self.assertEqual(headers["X-Body-SHA256"], empty_hash)
 
     @patch.object(InstallationHistory, "get_installations")
     @patch.object(InstallationHistory, "_make_request")

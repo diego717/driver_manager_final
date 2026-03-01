@@ -403,7 +403,13 @@ class InstallationHistory:
         Returns:
             dict: Headers con autenticación
         """
-        headers = {'Content-Type': 'application/json'}
+        if not body_hash:
+            body_hash = self._sha256_hex(b"")
+
+        headers = {
+            'Content-Type': 'application/json',
+            'X-Body-SHA256': body_hash,
+        }
         
         # Si hay autenticación configurada, agregar headers
         if self.api_token and self.api_secret:
