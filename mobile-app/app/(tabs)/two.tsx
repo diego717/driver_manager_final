@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import {
@@ -14,45 +14,18 @@ import {
 
 import { extractApiError } from "@/src/api/client";
 import { listIncidentsByInstallation, listInstallations } from "@/src/api/incidents";
-import { useThemePreference } from "@/src/theme/theme-preference";
+import { useAppPalette } from "@/src/theme/palette";
+import { fontFamilies } from "@/src/theme/typography";
 import { type Incident, type InstallationRecord } from "@/src/types/api";
 
 export default function IncidentListScreen() {
-  const { resolvedScheme } = useThemePreference();
-  const isDark = resolvedScheme === "dark";
+  const palette = useAppPalette();
   const router = useRouter();
   const [installationId, setInstallationId] = useState("1");
   const [loading, setLoading] = useState(false);
   const [loadingInstallations, setLoadingInstallations] = useState(false);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
-  const palette = useMemo(
-    () => ({
-      screenBg: isDark ? "#020617" : "#f8fafc",
-      textPrimary: isDark ? "#e2e8f0" : "#0f172a",
-      textSecondary: isDark ? "#cbd5e1" : "#1e293b",
-      textMuted: isDark ? "#94a3b8" : "#64748b",
-      inputBg: isDark ? "#111827" : "#ffffff",
-      inputBorder: isDark ? "#334155" : "#cbd5e1",
-      placeholder: isDark ? "#64748b" : "#808080",
-      chipBg: isDark ? "#111827" : "#f8fafc",
-      chipBorder: isDark ? "#334155" : "#cbd5e1",
-      chipText: isDark ? "#cbd5e1" : "#334155",
-      refreshBg: isDark ? "#0f172a" : "#ffffff",
-      refreshText: isDark ? "#cbd5e1" : "#0f172a",
-      cardBg: isDark ? "#0f172a" : "#ffffff",
-      cardBorder: isDark ? "#334155" : "#cbd5e1",
-      primaryButtonBg: isDark ? "#2563eb" : "#1d4ed8",
-      primaryButtonText: "#ffffff",
-      chipSelectedBg: isDark ? "#2563eb" : "#1d4ed8",
-      chipSelectedBorder: isDark ? "#2563eb" : "#1d4ed8",
-      chipSelectedText: "#ffffff",
-      uploadButtonBg: isDark ? "#0f766e" : "#0b7a75",
-      uploadButtonText: "#ffffff",
-    }),
-    [isDark],
-  );
-
   const loadIncidents = useCallback(
     async (targetInstallationId: number) => {
       if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
@@ -272,11 +245,11 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 24,
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
   },
   label: {
     fontSize: 13,
-    fontWeight: "600",
+    fontFamily: fontFamilies.semibold,
   },
   input: {
     borderWidth: 1,
@@ -305,7 +278,7 @@ const styles = StyleSheet.create({
   },
   chipText: {
     fontSize: 12,
-    fontWeight: "600",
+    fontFamily: fontFamilies.semibold,
   },
   refreshButton: {
     borderWidth: 1,
@@ -314,14 +287,14 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   refreshButtonText: {
-    fontWeight: "600",
+    fontFamily: fontFamilies.semibold,
     fontSize: 12,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   buttonText: {
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 15,
   },
   section: {
@@ -337,11 +310,12 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   cardTitle: {
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
   },
   cardText: {},
   cardMeta: {
     fontSize: 12,
+    fontFamily: fontFamilies.regular,
   },
   actionsRow: {
     marginTop: 4,
@@ -356,7 +330,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   detailButtonText: {
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 12,
   },
   uploadButton: {
@@ -366,7 +340,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   uploadButtonText: {
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 12,
   },
 });

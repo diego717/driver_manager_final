@@ -21,7 +21,9 @@ import {
   setStoredApiBaseUrl,
   type ThemeMode,
 } from "@/src/storage/secure";
+import { useAppPalette } from "@/src/theme/palette";
 import { useThemePreference } from "@/src/theme/theme-preference";
+import { fontFamilies } from "@/src/theme/typography";
 
 function isLocalHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
@@ -65,7 +67,7 @@ function formatDateTime(value: string | null): string {
 
 export default function ApiSettingsScreen() {
   const { mode, resolvedScheme, setMode } = useThemePreference();
-  const isDark = resolvedScheme === "dark";
+  const palette = useAppPalette();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -87,23 +89,6 @@ export default function ApiSettingsScreen() {
     () => Boolean(webSessionExpiresAt && Date.parse(webSessionExpiresAt) > Date.now()),
     [webSessionExpiresAt],
   );
-  const palette = {
-    screenBg: isDark ? "#020617" : "#f8fafc",
-    title: isDark ? "#e2e8f0" : "#0f172a",
-    textSecondary: isDark ? "#94a3b8" : "#475569",
-    textMuted: isDark ? "#94a3b8" : "#64748b",
-    label: isDark ? "#cbd5e1" : "#1e293b",
-    inputBg: isDark ? "#111827" : "#ffffff",
-    inputBorder: isDark ? "#334155" : "#cbd5e1",
-    placeholder: isDark ? "#64748b" : "#808080",
-    cardBg: isDark ? "#082f49" : "#f0f9ff",
-    cardBorder: isDark ? "#0369a1" : "#bae6fd",
-    cardText: isDark ? "#bae6fd" : "#0c4a6e",
-    secondaryBg: isDark ? "#0f172a" : "#ffffff",
-    secondaryText: isDark ? "#cbd5e1" : "#0f172a",
-    themeChipBg: isDark ? "#0f172a" : "#ffffff",
-    themeChipBorder: isDark ? "#334155" : "#cbd5e1",
-  };
 
   const notify = (title: string, message: string) => {
     setFeedbackMessage(`${title}: ${message}`);
@@ -269,7 +254,7 @@ export default function ApiSettingsScreen() {
   if (loading) {
     return (
       <View style={[styles.loadingContainer, { backgroundColor: palette.screenBg }]}>
-        <ActivityIndicator size="large" color="#0b7a75" />
+        <ActivityIndicator size="large" color={palette.loadingSpinner} />
       </View>
     );
   }
@@ -309,7 +294,7 @@ export default function ApiSettingsScreen() {
               style={[
                 styles.themeChip,
                 { backgroundColor: palette.themeChipBg, borderColor: palette.themeChipBorder },
-                selected && styles.themeChipSelected,
+                selected && { backgroundColor: palette.selectedBg, borderColor: palette.selectedBg },
               ]}
               onPress={() => onChangeThemeMode(themeOption)}
               disabled={changingTheme || loading || saving || testing}
@@ -339,7 +324,11 @@ export default function ApiSettingsScreen() {
       </Text>
 
       <TouchableOpacity
-        style={[styles.primaryButton, saving && styles.buttonDisabled]}
+        style={[
+          styles.primaryButton,
+          { backgroundColor: palette.primaryButtonBg },
+          saving && styles.buttonDisabled,
+        ]}
         onPress={onSave}
         disabled={saving || changingTheme}
       >
@@ -367,7 +356,7 @@ export default function ApiSettingsScreen() {
         }
       >
         {testing ? (
-          <ActivityIndicator color="#0f172a" />
+          <ActivityIndicator color={palette.secondaryText} />
         ) : (
           <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Probar conexion</Text>
         )}
@@ -404,30 +393,42 @@ export default function ApiSettingsScreen() {
         disabled={webSigningIn || saving || testing || webClearing || changingTheme}
       >
         {webSigningIn ? (
-          <ActivityIndicator color="#0f172a" />
+          <ActivityIndicator color={palette.secondaryText} />
         ) : (
           <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Iniciar sesion</Text>
         )}
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={[styles.warningButton, webClearing && styles.buttonDisabled]}
+        style={[
+          styles.warningButton,
+          { backgroundColor: palette.warningBg },
+          webClearing && styles.buttonDisabled,
+        ]}
         onPress={onClearWebSession}
         disabled={webClearing || saving || testing || webSigningIn || changingTheme}
       >
         {webClearing ? (
-          <ActivityIndicator color="#7f1d1d" />
+          <ActivityIndicator color={palette.warningText} />
         ) : (
-          <Text style={styles.warningButtonText}>Cerrar sesion web</Text>
+          <Text style={[styles.warningButtonText, { color: palette.warningText }]}>
+            Cerrar sesion web
+          </Text>
         )}
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={[styles.warningButton, saving && styles.buttonDisabled]}
+        style={[
+          styles.warningButton,
+          { backgroundColor: palette.warningBg },
+          saving && styles.buttonDisabled,
+        ]}
         onPress={onResetToEnv}
         disabled={saving || testing || webSigningIn || webClearing || changingTheme}
       >
-        <Text style={styles.warningButtonText}>Restablecer URL a .env</Text>
+        <Text style={[styles.warningButtonText, { color: palette.warningText }]}>
+          Restablecer URL a .env
+        </Text>
       </TouchableOpacity>
 
       <Text style={[styles.hintText, { color: palette.textMuted }]}>
@@ -444,30 +445,31 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#f8fafc",
   },
   container: {
     padding: 20,
     gap: 10,
-    backgroundColor: "#f8fafc",
   },
   title: {
     fontSize: 24,
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     color: "#0f172a",
   },
   subtitle: {
     color: "#475569",
     fontSize: 13,
+    fontFamily: fontFamilies.regular,
     marginBottom: 8,
   },
   sourceText: {
     color: "#64748b",
     fontSize: 12,
+    fontFamily: fontFamilies.regular,
   },
   hintText: {
     color: "#64748b",
     fontSize: 12,
+    fontFamily: fontFamilies.regular,
   },
   feedbackBox: {
     marginTop: 6,
@@ -481,17 +483,18 @@ const styles = StyleSheet.create({
   feedbackText: {
     color: "#0c4a6e",
     fontSize: 12,
+    fontFamily: fontFamilies.regular,
   },
   label: {
     marginTop: 4,
     fontSize: 13,
-    fontWeight: "600",
+    fontFamily: fontFamilies.semibold,
     color: "#1e293b",
   },
   sectionLabel: {
     marginTop: 8,
     fontSize: 14,
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     color: "#0f172a",
   },
   themeSelectorRow: {
@@ -508,13 +511,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingVertical: 10,
   },
-  themeChipSelected: {
-    backgroundColor: "#0b7a75",
-    borderColor: "#0b7a75",
-  },
   themeChipText: {
     color: "#0f172a",
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 12,
   },
   themeChipTextSelected: {
@@ -531,14 +530,13 @@ const styles = StyleSheet.create({
   primaryButton: {
     marginTop: 10,
     borderRadius: 10,
-    backgroundColor: "#0b7a75",
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 14,
   },
   primaryButtonText: {
     color: "#ffffff",
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 15,
   },
   secondaryButton: {
@@ -552,7 +550,7 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     color: "#0f172a",
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 15,
   },
   warningButton: {
@@ -564,7 +562,7 @@ const styles = StyleSheet.create({
   },
   warningButtonText: {
     color: "#7f1d1d",
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 14,
   },
   buttonDisabled: {

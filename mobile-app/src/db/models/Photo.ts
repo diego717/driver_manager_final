@@ -1,11 +1,12 @@
 import { Model } from '@nozbe/watermelondb'
 import { field, text, readonly, date, relation, writer } from '@nozbe/watermelondb/decorators'
+import Relation from '@nozbe/watermelondb/Relation'
 import Incident from './Incident'
 
 export default class Photo extends Model {
   static table = 'photos'
 
-  @relation('incidents', 'incident_id') incident!: Incident
+  @relation('incidents', 'incident_id') incident!: Relation<Incident>
   @text('r2_key') r2Key!: string | null
   @text('file_name') fileName!: string
   @text('content_type') contentType!: string

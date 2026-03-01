@@ -1,21 +1,23 @@
 import FontAwesome from "@expo/vector-icons/FontAwesome";
-import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
+import { ThemeProvider } from "@react-navigation/native";
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, AppState, type AppStateStatus, StyleSheet, View } from "react-native";
 import "react-native-reanimated";
 
 import BiometricLockScreen from "@/src/components/BiometricLockScreen";
 import { useNotifications } from "@/src/hooks/useNotifications";
+import { getNavigationTheme, useAppPalette } from "@/src/theme/palette";
 import {
   authenticateWithBiometrics,
   getBiometricAvailability,
 } from "@/src/services/biometric";
 import { getBiometricEnabled } from "@/src/storage/app-preferences";
 import { ThemePreferenceProvider, useThemePreference } from "@/src/theme/theme-preference";
+import { applyGlobalTypographyDefaults, fontFamilies } from "@/src/theme/typography";
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -32,7 +34,11 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
+    Inter_400Regular: require("../assets/fonts/Inter_400Regular.ttf"),
+    Inter_500Medium: require("../assets/fonts/Inter_500Medium.ttf"),
+    Inter_600SemiBold: require("../assets/fonts/Inter_600SemiBold.ttf"),
+    Inter_700Bold: require("../assets/fonts/Inter_700Bold.ttf"),
+    SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
     ...FontAwesome.font,
   });
 
@@ -43,6 +49,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (loaded) {
+      applyGlobalTypographyDefaults();
       SplashScreen.hideAsync();
     }
   }, [loaded]);
@@ -60,6 +67,8 @@ export default function RootLayout() {
 
 export function RootLayoutNav() {
   const { resolvedScheme } = useThemePreference();
+  const palette = useAppPalette();
+  const navigationTheme = useMemo(() => getNavigationTheme(resolvedScheme), [resolvedScheme]);
   const notifications = useNotifications();
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const [lockInitializing, setLockInitializing] = useState(true);
@@ -193,9 +202,18 @@ export function RootLayoutNav() {
   }, [notifications.error]);
 
   return (
-    <ThemeProvider value={resolvedScheme === "dark" ? DarkTheme : DefaultTheme}>
+    <ThemeProvider value={navigationTheme}>
       <View style={styles.root}>
-        <Stack>
+        <Stack
+          screenOptions={{
+            headerStyle: { backgroundColor: palette.surface },
+            headerTintColor: palette.textPrimary,
+            headerTitleStyle: { fontFamily: fontFamilies.semibold },
+            headerShadowVisible: false,
+            headerBackTitleStyle: { fontFamily: fontFamilies.regular },
+            contentStyle: { backgroundColor: palette.screenBg },
+          }}
+        >
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen
             name="incident/detail"
@@ -211,8 +229,8 @@ export function RootLayoutNav() {
         </Stack>
 
         {lockInitializing ? (
-          <View style={styles.lockLoadingOverlay}>
-            <ActivityIndicator size="large" color="#ffffff" />
+          <View style={[styles.lockLoadingOverlay, { backgroundColor: palette.overlayBg }]}>
+            <ActivityIndicator size="large" color={palette.primaryButtonText} />
           </View>
         ) : null}
 
@@ -241,7 +259,6 @@ const styles = StyleSheet.create({
   lockLoadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 40,
-    backgroundColor: "rgba(15, 23, 42, 0.82)",
     alignItems: "center",
     justifyContent: "center",
   },

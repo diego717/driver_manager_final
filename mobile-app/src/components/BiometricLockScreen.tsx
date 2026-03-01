@@ -6,6 +6,9 @@ import {
   View,
 } from "react-native";
 
+import { useAppPalette } from "@/src/theme/palette";
+import { fontFamilies } from "@/src/theme/typography";
+
 interface BiometricLockScreenProps {
   busy: boolean;
   biometricLabel: string;
@@ -21,38 +24,54 @@ export default function BiometricLockScreen({
   onRetry,
   onUseFallbackCode,
 }: BiometricLockScreenProps) {
+  const palette = useAppPalette();
+
   return (
-    <View style={styles.overlay}>
-      <View style={styles.card}>
-        <Text style={styles.title}>App bloqueada</Text>
-        <Text style={styles.subtitle}>
+    <View style={[styles.overlay, { backgroundColor: palette.overlayBg }]}>
+      <View style={[styles.card, { borderColor: palette.border, backgroundColor: palette.surface }]}>
+        <Text style={[styles.title, { color: palette.title }]}>App bloqueada</Text>
+        <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
           Valida tu identidad con {biometricLabel} para continuar.
         </Text>
 
-        {errorMessage ? <Text style={styles.errorMessage}>{errorMessage}</Text> : null}
+        {errorMessage ? (
+          <Text style={[styles.errorMessage, { color: palette.error }]}>{errorMessage}</Text>
+        ) : null}
 
         <TouchableOpacity
-          style={[styles.primaryButton, busy && styles.buttonDisabled]}
+          style={[
+            styles.primaryButton,
+            { backgroundColor: palette.primaryButtonBg },
+            busy && styles.buttonDisabled,
+          ]}
           accessibilityRole="button"
           accessibilityLabel={`Reintentar autenticacion con ${biometricLabel}`}
           onPress={onRetry}
           disabled={busy}
         >
           {busy ? (
-            <ActivityIndicator color="#ffffff" />
+            <ActivityIndicator color={palette.primaryButtonText} />
           ) : (
-            <Text style={styles.primaryButtonText}>Reintentar</Text>
+            <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
+              Reintentar
+            </Text>
           )}
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.secondaryButton, busy && styles.buttonDisabled]}
+          style={[
+            styles.secondaryButton,
+            { borderColor: palette.border, backgroundColor: palette.surfaceAlt },
+            busy && styles.buttonDisabled,
+          ]}
           accessibilityRole="button"
           accessibilityLabel="Usar codigo PIN o patron del dispositivo"
           onPress={onUseFallbackCode}
           disabled={busy}
         >
-          <Text style={styles.secondaryButtonText}>Usar codigo del dispositivo</Text>
+          <Text style={[styles.secondaryButtonText, { color: palette.textPrimary }]}>
+            Usar codigo del dispositivo
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -63,7 +82,6 @@ const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 50,
-    backgroundColor: "rgba(15, 23, 42, 0.94)",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 24,
@@ -73,53 +91,45 @@ const styles = StyleSheet.create({
     maxWidth: 420,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: "#1e293b",
-    backgroundColor: "#0f172a",
     paddingHorizontal: 18,
     paddingVertical: 20,
     gap: 10,
   },
   title: {
-    color: "#ffffff",
     fontSize: 22,
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
   },
   subtitle: {
-    color: "#cbd5e1",
     fontSize: 13,
+    fontFamily: fontFamilies.regular,
     lineHeight: 19,
   },
   errorMessage: {
-    color: "#fca5a5",
     fontSize: 12,
+    fontFamily: fontFamilies.regular,
     lineHeight: 18,
     marginBottom: 4,
   },
   primaryButton: {
     marginTop: 8,
     borderRadius: 10,
-    backgroundColor: "#0b7a75",
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 13,
   },
   primaryButtonText: {
-    color: "#ffffff",
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 15,
   },
   secondaryButton: {
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "#334155",
-    backgroundColor: "#111827",
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 13,
   },
   secondaryButtonText: {
-    color: "#e2e8f0",
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 14,
   },
   buttonDisabled: {

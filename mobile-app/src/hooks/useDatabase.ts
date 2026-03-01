@@ -1,21 +1,17 @@
-import { createContext, useContext, ReactNode } from 'react'
-import { Database } from '@nozbe/watermelondb'
-import { database } from '../db'
+import { createContext, createElement, type ReactNode, useContext } from "react";
+import { Database } from "@nozbe/watermelondb";
 
-const DatabaseContext = createContext<Database | null>(null)
+import { database } from "../db";
 
-export const DatabaseProvider = ({ children }: { children: ReactNode }) => {
-  return (
-    <DatabaseContext.Provider value={database}>
-      {children}
-    </DatabaseContext.Provider>
-  )
-}
+const DatabaseContext = createContext<Database | null>(null);
+
+export const DatabaseProvider = ({ children }: { children: ReactNode }) =>
+  createElement(DatabaseContext.Provider, { value: database }, children);
 
 export const useDatabase = () => {
-  const db = useContext(DatabaseContext)
+  const db = useContext(DatabaseContext);
   if (!db) {
-    throw new Error('useDatabase must be used within a DatabaseProvider')
+    throw new Error("useDatabase must be used within a DatabaseProvider");
   }
-  return db
-}
+  return db;
+};

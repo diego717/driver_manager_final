@@ -11,6 +11,9 @@ const incidentsApiMocks = vi.hoisted(() => ({
 const secureStorageMocks = vi.hoisted(() => ({
   getStoredWebAccessUsername: vi.fn(async () => "usuario_web"),
 }));
+const routerMocks = vi.hoisted(() => ({
+  push: vi.fn(),
+}));
 
 function flattenStyle(style: unknown): Record<string, unknown> {
   if (Array.isArray(style)) {
@@ -102,6 +105,9 @@ vi.mock("@react-navigation/native", () => ({
   useFocusEffect: (callback: () => void | (() => void)) => {
     React.useEffect(() => callback(), [callback]);
   },
+}));
+vi.mock("expo-router", () => ({
+  useRouter: () => routerMocks,
 }));
 
 vi.mock("@/src/api/incidents", () => incidentsApiMocks);

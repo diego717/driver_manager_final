@@ -3,9 +3,9 @@ import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { Link, Tabs } from "expo-router";
 import { Pressable } from "react-native";
 
-import Colors from "@/constants/Colors";
 import { useClientOnlyValue } from "@/components/useClientOnlyValue";
-import { useThemePreference } from "@/src/theme/theme-preference";
+import { useAppPalette } from "@/src/theme/palette";
+import { fontFamilies } from "@/src/theme/typography";
 
 function TabBarIcon(props: {
   name: React.ComponentProps<typeof FontAwesome>["name"];
@@ -15,13 +15,29 @@ function TabBarIcon(props: {
 }
 
 export default function TabLayout() {
-  const { resolvedScheme } = useThemePreference();
-  const colorScheme = resolvedScheme;
+  const palette = useAppPalette();
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? "light"].tint,
+        tabBarActiveTintColor: palette.accent,
+        tabBarInactiveTintColor: palette.textMuted,
+        tabBarStyle: {
+          backgroundColor: palette.surface,
+          borderTopColor: palette.border,
+        },
+        tabBarLabelStyle: {
+          fontFamily: fontFamilies.medium,
+          fontSize: 12,
+        },
+        headerStyle: {
+          backgroundColor: palette.surface,
+        },
+        headerTitleStyle: {
+          color: palette.textPrimary,
+          fontFamily: fontFamilies.semibold,
+        },
+        headerTintColor: palette.textPrimary,
         headerShown: useClientOnlyValue(false, true),
       }}
     >
@@ -37,7 +53,7 @@ export default function TabLayout() {
                   <FontAwesome
                     name="cog"
                     size={25}
-                    color={Colors[colorScheme ?? "light"].text}
+                    color={palette.textPrimary}
                     style={{ marginRight: 15, opacity: pressed ? 0.5 : 1 }}
                   />
                 )}

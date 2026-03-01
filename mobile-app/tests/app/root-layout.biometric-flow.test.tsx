@@ -91,6 +91,27 @@ vi.mock("@/src/theme/theme-preference", () => ({
     setMode: async () => undefined,
   }),
 }));
+vi.mock("@/src/theme/palette", () => ({
+  useAppPalette: () => ({
+    surface: "#ffffff",
+    textPrimary: "#111111",
+    screenBg: "#f5f7fa",
+    overlayBg: "rgba(0, 0, 0, 0.4)",
+    primaryButtonText: "#ffffff",
+  }),
+  getNavigationTheme: () => ({
+    dark: false,
+    colors: {
+      primary: "#0f756d",
+      background: "#f5f7fa",
+      card: "#ffffff",
+      text: "#111111",
+      border: "#dce1e8",
+      notification: "#dc2626",
+    },
+    fonts: {},
+  }),
+}));
 
 vi.mock("@/src/components/BiometricLockScreen", () => ({
   default: (props: any) => React.createElement("BiometricLockScreenMock", props),

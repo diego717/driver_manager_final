@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { Stack, useRouter } from "expo-router";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import {
@@ -14,35 +14,16 @@ import {
 import { lookupCode } from "@/src/api/scan";
 import { extractApiError } from "@/src/api/client";
 import { parseScannedPayload } from "@/src/utils/scan";
-import { useThemePreference } from "@/src/theme/theme-preference";
+import { useAppPalette } from "@/src/theme/palette";
+import { fontFamilies } from "@/src/theme/typography";
 
 export default function ScanScreen() {
-  const { resolvedScheme } = useThemePreference();
-  const isDark = resolvedScheme === "dark";
+  const palette = useAppPalette();
   const router = useRouter();
   const [permission, requestPermission] = useCameraPermissions();
   const [locked, setLocked] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [manualCode, setManualCode] = useState("");
-
-  const palette = useMemo(
-    () => ({
-      screenBg: isDark ? "#020617" : "#f8fafc",
-      textPrimary: isDark ? "#e2e8f0" : "#0f172a",
-      textSecondary: isDark ? "#94a3b8" : "#475569",
-      cameraBorder: isDark ? "#334155" : "#cbd5e1",
-      cardBg: isDark ? "#0f172a" : "#ffffff",
-      cardBorder: isDark ? "#334155" : "#cbd5e1",
-      inputBg: isDark ? "#111827" : "#ffffff",
-      inputBorder: isDark ? "#334155" : "#cbd5e1",
-      buttonBg: "#0b7a75",
-      buttonText: "#ffffff",
-      secondaryBg: isDark ? "#1e293b" : "#e2e8f0",
-      secondaryText: isDark ? "#cbd5e1" : "#1e293b",
-      placeholder: isDark ? "#64748b" : "#808080",
-    }),
-    [isDark],
-  );
 
   const navigateToUpload = (values: { installationId?: number | null; assetId?: string | null }) => {
     const params = new URLSearchParams();
@@ -169,10 +150,11 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 22,
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
   },
   subtitle: {
     fontSize: 14,
+    fontFamily: fontFamilies.regular,
   },
   cameraFrame: {
     height: 300,
@@ -200,7 +182,7 @@ const styles = StyleSheet.create({
   },
   overlayText: {
     color: "#fff",
-    fontWeight: "600",
+    fontFamily: fontFamilies.semibold,
   },
   manualCard: {
     borderWidth: 1,
@@ -209,7 +191,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   label: {
-    fontWeight: "600",
+    fontFamily: fontFamilies.semibold,
   },
   input: {
     borderWidth: 1,
@@ -224,7 +206,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   primaryButtonText: {
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
   },
   secondaryButton: {
     borderRadius: 10,
@@ -232,6 +214,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   secondaryButtonText: {
-    fontWeight: "600",
+    fontFamily: fontFamilies.semibold,
   },
 });

@@ -17,7 +17,8 @@ import {
 
 import { uploadIncidentPhoto } from "@/src/api/photos";
 import { extractApiError } from "@/src/api/client";
-import { useThemePreference } from "@/src/theme/theme-preference";
+import { useAppPalette } from "@/src/theme/palette";
+import { fontFamilies } from "@/src/theme/typography";
 
 type SelectedImage = {
   uri: string;
@@ -104,8 +105,7 @@ function formatDateTime(value: string): string {
 }
 
 export default function UploadIncidentPhotoScreen() {
-  const { resolvedScheme } = useThemePreference();
-  const isDark = resolvedScheme === "dark";
+  const palette = useAppPalette();
   const router = useRouter();
   const params = useLocalSearchParams<{
     incidentId?: string | string[];
@@ -136,39 +136,6 @@ export default function UploadIncidentPhotoScreen() {
   const checklistCount = useMemo(
     () => Object.values(selectedChecklist).filter(Boolean).length,
     [selectedChecklist],
-  );
-
-  const palette = useMemo(
-    () => ({
-      screenBg: isDark ? "#020617" : "#f8fafc",
-      textPrimary: isDark ? "#e2e8f0" : "#0f172a",
-      textSecondary: isDark ? "#94a3b8" : "#475569",
-      label: isDark ? "#cbd5e1" : "#1e293b",
-      inputBg: isDark ? "#111827" : "#ffffff",
-      inputBorder: isDark ? "#334155" : "#cbd5e1",
-      placeholder: isDark ? "#64748b" : "#808080",
-      cardBg: isDark ? "#0f172a" : "#ffffff",
-      cardBorder: isDark ? "#334155" : "#cbd5e1",
-      subtleBg: isDark ? "#1e293b" : "#e2e8f0",
-      hint: isDark ? "#94a3b8" : "#64748b",
-      secondaryBg: isDark ? "#0f172a" : "#ffffff",
-      secondaryText: isDark ? "#cbd5e1" : "#0f172a",
-      selectedBg: isDark ? "#0b7a75" : "#0b7a75",
-      selectedText: "#ffffff",
-      processingSpinner: isDark ? "#0ea5a4" : "#0b7a75",
-      primaryButtonBg: isDark ? "#0f766e" : "#0b7a75",
-      primaryButtonText: "#ffffff",
-      errorBg: isDark ? "#450a0a" : "#fee2e2",
-      errorBorder: isDark ? "#991b1b" : "#fca5a5",
-      errorText: isDark ? "#fecaca" : "#991b1b",
-      successBg: isDark ? "#052e16" : "#dcfce7",
-      successBorder: isDark ? "#166534" : "#86efac",
-      successText: isDark ? "#bbf7d0" : "#166534",
-      infoBg: isDark ? "#082f49" : "#e0f2fe",
-      infoBorder: isDark ? "#0c4a6e" : "#7dd3fc",
-      infoText: isDark ? "#bae6fd" : "#0c4a6e",
-    }),
-    [isDark],
   );
 
   const publishFeedback = (
@@ -749,21 +716,22 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 24,
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
   },
   subtitle: {
     fontSize: 13,
+    fontFamily: fontFamilies.regular,
   },
   section: {
     gap: 8,
   },
   sectionTitle: {
     fontSize: 20,
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
   },
   label: {
     fontSize: 13,
-    fontWeight: "600",
+    fontFamily: fontFamilies.semibold,
   },
   input: {
     borderWidth: 1,
@@ -787,7 +755,7 @@ const styles = StyleSheet.create({
   },
   checkItemText: {
     fontSize: 14,
-    fontWeight: "600",
+    fontFamily: fontFamilies.semibold,
   },
   processingRow: {
     flexDirection: "row",
@@ -804,7 +772,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   secondaryButtonText: {
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
   },
   primaryButton: {
     flex: 1,
@@ -818,7 +786,7 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   primaryButtonText: {
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 15,
   },
   previewCard: {
@@ -834,9 +802,11 @@ const styles = StyleSheet.create({
   },
   hintText: {
     fontSize: 13,
+    fontFamily: fontFamilies.regular,
   },
   metaText: {
     fontSize: 12,
+    fontFamily: fontFamilies.regular,
   },
   photoRow: {
     borderWidth: 1,
@@ -853,7 +823,7 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   removeText: {
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 12,
   },
   summaryCard: {
@@ -869,10 +839,11 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   feedbackTitle: {
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 13,
   },
   feedbackMessage: {
     fontSize: 13,
+    fontFamily: fontFamilies.regular,
   },
 });

@@ -20,7 +20,8 @@ import {
   resolveIncidentPhotoPreviewTarget,
   type IncidentPhotoPreviewTarget,
 } from "@/src/api/photos";
-import { useThemePreference } from "@/src/theme/theme-preference";
+import { useAppPalette } from "@/src/theme/palette";
+import { fontFamilies } from "@/src/theme/typography";
 
 function normalizeParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
@@ -28,8 +29,7 @@ function normalizeParam(value: string | string[] | undefined): string {
 }
 
 export default function IncidentPhotoViewerScreen() {
-  const { resolvedScheme } = useThemePreference();
-  const isDark = resolvedScheme === "dark";
+  const palette = useAppPalette();
   const router = useRouter();
   const params = useLocalSearchParams<{
     photoId?: string | string[];
@@ -49,15 +49,6 @@ export default function IncidentPhotoViewerScreen() {
   const translationY = useSharedValue(0);
   const translationXAtStart = useSharedValue(0);
   const translationYAtStart = useSharedValue(0);
-  const palette = {
-    screenBg: isDark ? "#020617" : "#f8fafc",
-    textPrimary: isDark ? "#e2e8f0" : "#0f172a",
-    buttonBg: isDark ? "#0f172a" : "#ffffff",
-    buttonBorder: isDark ? "#334155" : "#cbd5e1",
-    error: isDark ? "#fca5a5" : "#b91c1c",
-    hint: isDark ? "#94a3b8" : "#475569",
-  };
-
   const resetZoom = () => {
     zoomScale.value = 1;
     zoomScaleAtStart.value = 1;
@@ -184,18 +175,18 @@ export default function IncidentPhotoViewerScreen() {
 
           {loading ? (
             <View style={styles.centered}>
-              <ActivityIndicator size="large" color="#ffffff" />
+              <ActivityIndicator size="large" color={palette.loadingSpinner} />
             </View>
           ) : errorMessage ? (
             <View style={styles.centered}>
               <Text style={[styles.errorText, { color: palette.error }]}>{errorMessage}</Text>
             </View>
           ) : photoTarget ? (
-            <View style={styles.imageViewport}>
+            <View style={[styles.imageViewport, { backgroundColor: palette.screenBg }]}>
               <GestureDetector gesture={imageGesture}>
                 <Animated.Image
                   source={{ uri: photoTarget.uri, headers: photoTarget.headers }}
-                  style={[styles.image, animatedImageStyle]}
+                  style={[styles.image, { backgroundColor: palette.screenBg }, animatedImageStyle]}
                   resizeMode="contain"
                 />
               </GestureDetector>
@@ -216,36 +207,29 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    backgroundColor: "#020617",
   },
   container: {
     flex: 1,
-    backgroundColor: "#020617",
     padding: 12,
   },
   closeButton: {
     alignSelf: "flex-start",
     borderWidth: 1,
-    borderColor: "#334155",
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
     marginBottom: 6,
-    backgroundColor: "#0f172a",
   },
   resetZoomButton: {
     alignSelf: "flex-start",
     borderWidth: 1,
-    borderColor: "#334155",
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
     marginBottom: 8,
-    backgroundColor: "#0f172a",
   },
   closeButtonText: {
-    color: "#e2e8f0",
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
   },
   centered: {
     flex: 1,
@@ -257,21 +241,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
-    backgroundColor: "#020617",
     borderRadius: 8,
   },
   image: {
     flex: 1,
     width: "100%",
-    backgroundColor: "#020617",
   },
   zoomHint: {
     marginTop: 8,
     fontSize: 12,
-    color: "#94a3b8",
+    fontFamily: fontFamilies.regular,
     textAlign: "center",
   },
-  errorText: {
-    color: "#fca5a5",
-  },
+  errorText: {},
 });

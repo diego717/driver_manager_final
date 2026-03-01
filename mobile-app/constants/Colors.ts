@@ -1,19 +1,9 @@
-const tintColorLight = '#2f95dc';
-const tintColorDark = '#fff';
+import { getExpoColorSet } from "@/src/theme/palette";
+
+const light = getExpoColorSet("light");
+const dark = getExpoColorSet("dark");
 
 export default {
-  light: {
-    text: '#000',
-    background: '#fff',
-    tint: tintColorLight,
-    tabIconDefault: '#ccc',
-    tabIconSelected: tintColorLight,
-  },
-  dark: {
-    text: '#fff',
-    background: '#000',
-    tint: tintColorDark,
-    tabIconDefault: '#ccc',
-    tabIconSelected: tintColorDark,
-  },
+  light,
+  dark,
 };

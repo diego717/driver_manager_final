@@ -2,6 +2,8 @@ import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
+import { getAppPalette } from "@/src/theme/palette";
+
 export const INCIDENTS_NOTIFICATION_CHANNEL_ID = "incidents";
 
 interface ExpoConfigExtra {
@@ -43,12 +45,13 @@ export function configureNotificationHandler(): void {
 
 export async function ensureIncidentNotificationChannel(): Promise<void> {
   if (Platform.OS !== "android") return;
+  const palette = getAppPalette("light");
 
   await Notifications.setNotificationChannelAsync(INCIDENTS_NOTIFICATION_CHANNEL_ID, {
     name: "Incidencias",
     importance: Notifications.AndroidImportance.HIGH,
     vibrationPattern: [0, 250, 250, 250],
-    lightColor: "#0b7a75",
+    lightColor: palette.accent,
     sound: "default",
   });
 }

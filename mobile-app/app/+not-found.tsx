@@ -1,23 +1,11 @@
 import { Link, Stack } from "expo-router";
-import { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
-import { useThemePreference } from "@/src/theme/theme-preference";
+import { useAppPalette } from "@/src/theme/palette";
+import { fontFamilies } from "@/src/theme/typography";
 
 export default function NotFoundScreen() {
-  const { resolvedScheme } = useThemePreference();
-  const isDark = resolvedScheme === "dark";
-  const palette = useMemo(
-    () => ({
-      screenBg: isDark ? "#020617" : "#f8fafc",
-      title: isDark ? "#e2e8f0" : "#0f172a",
-      subtitle: isDark ? "#94a3b8" : "#475569",
-      linkText: isDark ? "#7dd3fc" : "#0369a1",
-      linkBg: isDark ? "#0f172a" : "#ffffff",
-      linkBorder: isDark ? "#334155" : "#bae6fd",
-    }),
-    [isDark],
-  );
+  const palette = useAppPalette();
 
   return (
     <>
@@ -56,12 +44,13 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 20,
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     textAlign: "center",
   },
   subtitle: {
     marginTop: 8,
     fontSize: 14,
+    fontFamily: fontFamilies.regular,
     textAlign: "center",
   },
   link: {
@@ -69,7 +58,7 @@ const styles = StyleSheet.create({
   },
   linkText: {
     fontSize: 14,
-    fontWeight: "700",
+    fontFamily: fontFamilies.semibold,
     borderWidth: 1,
     borderRadius: 10,
     paddingHorizontal: 14,

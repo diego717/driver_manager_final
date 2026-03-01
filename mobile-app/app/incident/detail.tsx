@@ -20,7 +20,8 @@ import {
   resolveIncidentPhotoPreviewTarget,
   type IncidentPhotoPreviewTarget,
 } from "@/src/api/photos";
-import { useThemePreference } from "@/src/theme/theme-preference";
+import { useAppPalette } from "@/src/theme/palette";
+import { fontFamilies } from "@/src/theme/typography";
 import { type Incident } from "@/src/types/api";
 
 function normalizeParam(value: string | string[] | undefined): string {
@@ -55,8 +56,7 @@ async function loadWithConcurrency<T>(
 }
 
 export default function IncidentDetailScreen() {
-  const { resolvedScheme } = useThemePreference();
-  const isDark = resolvedScheme === "dark";
+  const palette = useAppPalette();
   const router = useRouter();
   const params = useLocalSearchParams<{
     incidentId?: string | string[];
@@ -80,32 +80,6 @@ export default function IncidentDetailScreen() {
   );
   const [failedPhotoIds, setFailedPhotoIds] = useState<Record<number, boolean>>({});
   const [loadingPhotoPreviews, setLoadingPhotoPreviews] = useState(false);
-  const palette = useMemo(
-    () => ({
-      screenBg: isDark ? "#020617" : "#f8fafc",
-      textPrimary: isDark ? "#e2e8f0" : "#0f172a",
-      textSecondary: isDark ? "#cbd5e1" : "#1e293b",
-      textMuted: isDark ? "#94a3b8" : "#64748b",
-      cardBg: isDark ? "#0f172a" : "#ffffff",
-      cardBorder: isDark ? "#334155" : "#cbd5e1",
-      itemBg: isDark ? "#111827" : "#f8fafc",
-      itemBorder: isDark ? "#334155" : "#e2e8f0",
-      buttonBg: isDark ? "#0f172a" : "#ffffff",
-      buttonBorder: isDark ? "#334155" : "#cbd5e1",
-      buttonText: isDark ? "#cbd5e1" : "#0f172a",
-      backBg: isDark ? "#1e293b" : "#e2e8f0",
-      feedbackBg: isDark ? "#450a0a" : "#fef2f2",
-      feedbackBorder: isDark ? "#7f1d1d" : "#fecaca",
-      feedbackText: isDark ? "#fecaca" : "#7f1d1d",
-      loadingSpinner: isDark ? "#0ea5a4" : "#0b7a75",
-      previewLink: isDark ? "#2dd4bf" : "#0b7a75",
-      previewPlaceholder: isDark ? "#334155" : "#cbd5e1",
-      primaryButtonBg: isDark ? "#0f766e" : "#0b7a75",
-      primaryButtonText: "#ffffff",
-    }),
-    [isDark],
-  );
-
   const loadIncident = useCallback(async () => {
     if (!Number.isInteger(installationId) || installationId <= 0) {
       setErrorMessage("installation_id invalido.");
@@ -292,10 +266,10 @@ export default function IncidentDetailScreen() {
         <View
           style={[
             styles.feedbackBox,
-            { backgroundColor: palette.feedbackBg, borderColor: palette.feedbackBorder },
+            { backgroundColor: palette.errorBg, borderColor: palette.errorBorder },
           ]}
         >
-          <Text style={[styles.feedbackText, { color: palette.feedbackText }]}>Error: {errorMessage}</Text>
+          <Text style={[styles.feedbackText, { color: palette.errorText }]}>Error: {errorMessage}</Text>
         </View>
       ) : incident ? (
         <>
@@ -359,7 +333,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 24,
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
   },
   topRow: {
     flexDirection: "row",
@@ -375,7 +349,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   refreshButtonText: {
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
   },
   backButton: {
     flex: 1,
@@ -386,7 +360,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   backButtonText: {
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
   },
   centerBox: {
     paddingVertical: 30,
@@ -401,6 +375,7 @@ const styles = StyleSheet.create({
   },
   feedbackText: {
     fontSize: 12,
+    fontFamily: fontFamilies.regular,
   },
   card: {
     borderWidth: 1,
@@ -409,14 +384,16 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   cardTitle: {
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     marginBottom: 2,
   },
   cardText: {
     fontSize: 13,
+    fontFamily: fontFamilies.regular,
   },
   hintText: {
     fontSize: 13,
+    fontFamily: fontFamilies.regular,
   },
   photoItem: {
     borderWidth: 1,
@@ -426,11 +403,12 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   photoTitle: {
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 12,
   },
   photoMeta: {
     fontSize: 12,
+    fontFamily: fontFamilies.regular,
   },
   photoPreview: {
     marginTop: 6,
@@ -440,7 +418,7 @@ const styles = StyleSheet.create({
   },
   openPreviewText: {
     marginTop: 6,
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 12,
   },
   photosList: {
@@ -455,7 +433,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   primaryButtonText: {
-    fontWeight: "700",
+    fontFamily: fontFamilies.bold,
     fontSize: 15,
   },
 });

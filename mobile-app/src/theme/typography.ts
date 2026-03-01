@@ -1,0 +1,44 @@
+import { Text, TextInput } from "react-native";
+
+export const fontFamilies = {
+  regular: "Inter_400Regular",
+  medium: "Inter_500Medium",
+  semibold: "Inter_600SemiBold",
+  bold: "Inter_700Bold",
+  mono: "SpaceMono",
+} as const;
+
+let defaultsApplied = false;
+
+function withDefaultFont(
+  style: unknown,
+  fontFamily: string,
+): Array<Record<string, string> | unknown> {
+  if (Array.isArray(style)) {
+    return [{ fontFamily }, ...style];
+  }
+  if (style) {
+    return [{ fontFamily }, style];
+  }
+  return [{ fontFamily }];
+}
+
+export function applyGlobalTypographyDefaults(): void {
+  if (defaultsApplied) return;
+
+  const textComponent = Text as unknown as { defaultProps?: { style?: unknown } };
+  textComponent.defaultProps = textComponent.defaultProps ?? {};
+  textComponent.defaultProps.style = withDefaultFont(
+    textComponent.defaultProps.style,
+    fontFamilies.regular,
+  );
+
+  const inputComponent = TextInput as unknown as { defaultProps?: { style?: unknown } };
+  inputComponent.defaultProps = inputComponent.defaultProps ?? {};
+  inputComponent.defaultProps.style = withDefaultFont(
+    inputComponent.defaultProps.style,
+    fontFamilies.regular,
+  );
+
+  defaultsApplied = true;
+}
