@@ -8,7 +8,6 @@ const API_BASE = (() => {
     return '';
 })();
 
-let authToken = localStorage.getItem('authToken');
 let currentUser = null;
 let charts = {};
 let searchDebounceTimer = null;
@@ -21,6 +20,7 @@ let sseReconnectTimer = null;
 let sseReconnectAttempts = 0;
 const MAX_SSE_RECONNECT_ATTEMPTS = 5;
 const SSE_RECONNECT_DELAY = 3000; // 3 seconds
+const FORCE_LOGIN_ON_OPEN = true;
 
 
 // Chart.js default configuration
@@ -52,7 +52,7 @@ const api = {
         const response = await fetch(API_BASE + endpoint, {
             ...options,
             headers,
-            credentials: 'same-origin'
+            credentials: 'include'
         });
         
         if (response.status === 401) {
@@ -102,10 +102,12 @@ const api = {
                 'X-File-Name': file.name || ('incident_' + incidentId + '.jpg')
             },
             body: file,
-            credentials: 'same-origin'
+            credentials: 'include'
         });
 
         if (response.status === 401) {
+            currentUser = null;
+            closeSSE();
             showLogin();
             throw new Error('No autorizado');
         }
@@ -145,6 +147,7 @@ const api = {
 };
 
 function showLogin() {
+    resetProtectedViews();
     document.getElementById('loginModal').classList.add('active');
     document.body.style.overflow = 'hidden';
 }
@@ -153,6 +156,42 @@ function hideLogin() {
     document.getElementById('loginModal').classList.remove('active');
     document.body.style.overflow = '';
     document.getElementById('loginError').textContent = '';
+}
+
+function resetProtectedViews() {
+    const ids = [
+        'recentInstallations',
+        'installationsTable',
+        'incidentsList',
+        'auditLogs',
+        'resultsCount',
+    ];
+    ids.forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.innerHTML = '<p class="loading">Inicia sesion para ver informacion.</p>';
+    });
+    currentInstallationsData = [];
+    currentSelectedInstallationId = null;
+}
+
+function hasActiveSession() {
+    return Boolean(currentUser && currentUser.username);
+}
+
+function requireActiveSession() {
+    if (hasActiveSession()) return true;
+    showLogin();
+    return false;
+}
+
+function applyAuthenticatedUser(user) {
+    currentUser = user;
+    document.getElementById('username').textContent = user.username || 'Usuario';
+    document.getElementById('userRole').textContent = user.role || 'admin';
+    const initial = (user.username || 'U').charAt(0).toUpperCase();
+    const avatarEl = document.getElementById('userInitial');
+    if (avatarEl) avatarEl.textContent = initial;
 }
 
 function normalizeSeverity(input) {
@@ -513,6 +552,7 @@ async function renderTrendChart() {
 }
 
 async function loadDashboard() {
+    if (!requireActiveSession()) return;
     try {
         const stats = await api.getStatistics();
         updateStats(stats);
@@ -996,6 +1036,7 @@ function setupAdvancedFilters() {
 }
 
 async function loadInstallations() {
+    if (!requireActiveSession()) return;
     const container = document.getElementById('installationsTable');
     const resultsCount = document.getElementById('resultsCount');
     container.innerHTML = '<p class="loading">Cargando...</p>';
@@ -1113,6 +1154,7 @@ function renderInstallationsTable(installations) {
 }
 
 async function showIncidentsForInstallation(installationId) {
+    if (!requireActiveSession()) return;
     currentSelectedInstallationId = Number.parseInt(String(installationId), 10);
     const container = document.getElementById('incidentsList');
     document.querySelector('[data-section="incidents"]').click();
@@ -1128,13 +1170,8 @@ async function showIncidentsForInstallation(installationId) {
 
 async function loadPhotoWithAuth(photoId) {
     try {
-        const headers = {};
-        if (authToken) {
-            headers['Authorization'] = 'Bearer ' + authToken;
-        }
         const response = await fetch(API_BASE + '/web/photos/' + photoId, {
-            headers,
-            credentials: 'same-origin'
+            credentials: 'include'
         });
         if (!response.ok) throw new Error('Failed to load photo');
         const blob = await response.blob();
@@ -1260,6 +1297,7 @@ async function viewPhoto(photoId) {
 }
 
 async function loadAuditLogs() {
+    if (!requireActiveSession()) return;
     const container = document.getElementById('auditLogs');
     container.innerHTML = '<p class="loading">Cargando logs...</p>';
     
@@ -1373,16 +1411,11 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     
     try {
         const result = await api.login(username, password);
-        currentUser = result.user;
-        
-        document.getElementById('username').textContent = result.user.username;
-        document.getElementById('userRole').textContent = result.user.role;
-        const initial = (result.user.username || 'U').charAt(0).toUpperCase();
-        const avatarEl = document.getElementById('userInitial');
-        if (avatarEl) avatarEl.textContent = initial;
+        applyAuthenticatedUser(result.user);
         
         hideLogin();
         loadDashboard();
+        initSSE();
         
         // Show success notification
         showNotification('✅ Bienvenido, ' + result.user.username + '!', 'success');
@@ -1400,11 +1433,13 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     }
     currentUser = null;
     closeSSE();
+    resetProtectedViews();
     showLogin();
     showNotification('👋 Sesión cerrada', 'info');
 });
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
+    if (!requireActiveSession()) return;
     const btn = document.getElementById('refreshBtn');
     btn.style.transform = 'rotate(360deg)';
     btn.style.transition = 'transform 0.5s ease';
@@ -1421,6 +1456,7 @@ document.getElementById('refreshBtn').addEventListener('click', () => {
 document.querySelectorAll('.nav-links a').forEach(link => {
     link.addEventListener('click', (e) => {
         e.preventDefault();
+        if (!requireActiveSession()) return;
         const section = link.dataset.section;
         
         document.querySelectorAll('.nav-links a').forEach(l => l.classList.remove('active'));
@@ -1443,14 +1479,19 @@ document.querySelectorAll('.nav-links a').forEach(link => {
 });
 
 document.getElementById('applyFilters').addEventListener('click', () => {
+    if (!requireActiveSession()) return;
     updateFilterChips();
     loadInstallations();
 });
 
 
-document.getElementById('refreshAudit').addEventListener('click', loadAuditLogs);
+document.getElementById('refreshAudit').addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    loadAuditLogs();
+});
 
 document.getElementById('auditActionFilter').addEventListener('change', () => {
+    if (!requireActiveSession()) return;
     loadAuditLogs();
 });
 
@@ -1756,19 +1797,28 @@ function closeSSE() {
 // Initialize
 async function init() {
     try {
-        const me = await api.getMe();
-        currentUser = me;
-        document.getElementById('username').textContent = me.username || 'Usuario';
-        document.getElementById('userRole').textContent = me.role || 'admin';
-        const initial = (me.username || 'U').charAt(0).toUpperCase();
-        const avatarEl = document.getElementById('userInitial');
-        if (avatarEl) avatarEl.textContent = initial;
-        loadDashboard();
-
-        // Initialize SSE connection for real-time updates
-        initSSE();
+        if (FORCE_LOGIN_ON_OPEN) {
+            try {
+                await api.logout();
+            } catch (_err) {
+                // Ignorar si no habia sesion activa.
+            }
+            currentUser = null;
+            closeSSE();
+            resetProtectedViews();
+            showLogin();
+        } else {
+            const me = await api.getMe();
+            applyAuthenticatedUser(me);
+            hideLogin();
+            loadDashboard();
+            initSSE();
+        }
     } catch (err) {
         console.error('Error validating session:', err);
+        currentUser = null;
+        closeSSE();
+        resetProtectedViews();
         showLogin();
     }
     

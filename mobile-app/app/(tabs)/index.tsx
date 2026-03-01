@@ -19,6 +19,9 @@ import {
   listInstallations,
 } from "@/src/api/incidents";
 import { extractApiError } from "@/src/api/client";
+import { clearWebSession, readStoredWebSession } from "@/src/api/webAuth";
+import { evaluateWebSession } from "@/src/api/webSession";
+import { consumeForceLoginOnOpenFlag } from "@/src/security/startup-session-policy";
 import { getStoredWebAccessUsername } from "@/src/storage/secure";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
@@ -68,6 +71,8 @@ export default function CreateIncidentScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [creatingManualRecord, setCreatingManualRecord] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [hasActiveSession, setHasActiveSession] = useState(false);
   const [lastCreatedIncidentId, setLastCreatedIncidentId] = useState<number | null>(null);
   const [lastCreatedInstallationId, setLastCreatedInstallationId] = useState<number | null>(null);
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -85,7 +90,35 @@ export default function CreateIncidentScreen() {
     }, 5000);
   };
 
+  const refreshSessionState = useCallback(async () => {
+    setCheckingSession(true);
+    try {
+      if (consumeForceLoginOnOpenFlag()) {
+        await clearWebSession();
+      }
+      const storedSession = await readStoredWebSession();
+      const resolved = evaluateWebSession(storedSession.accessToken, storedSession.expiresAt);
+      if (resolved.state === "expired") {
+        await clearWebSession();
+      }
+      const isActive = resolved.state === "active";
+      setHasActiveSession(isActive);
+      if (!isActive) {
+        setInstallations([]);
+        setLastCreatedIncidentId(null);
+        setLastCreatedInstallationId(null);
+      }
+      return isActive;
+    } finally {
+      setCheckingSession(false);
+    }
+  }, []);
+
   const loadInstallations = useCallback(async (options?: { forceRefresh?: boolean }) => {
+    const activeSession = await refreshSessionState();
+    if (!activeSession) {
+      return;
+    }
     try {
       setLoadingInstallations(true);
       const records = await listInstallations(options);
@@ -103,7 +136,7 @@ export default function CreateIncidentScreen() {
     } finally {
       setLoadingInstallations(false);
     }
-  }, []);
+  }, [refreshSessionState]);
 
   useFocusEffect(
     useCallback(() => {
@@ -136,6 +169,11 @@ export default function CreateIncidentScreen() {
   }, []);
 
   const onCreateManualRecord = async () => {
+    if (!(await refreshSessionState())) {
+      notify("Sesion requerida", "Inicia sesion web en Configuracion y acceso.");
+      router.push("/modal");
+      return;
+    }
     try {
       setCreatingManualRecord(true);
       const response = await createInstallationRecord({
@@ -169,6 +207,11 @@ export default function CreateIncidentScreen() {
   };
 
   const onSubmit = async () => {
+    if (!(await refreshSessionState())) {
+      notify("Sesion requerida", "Inicia sesion web en Configuracion y acceso.");
+      router.push("/modal");
+      return;
+    }
     const parsedInstallationId = Number.parseInt(installationId, 10);
     const parsedTimeAdjustment = Number.parseInt(timeAdjustment, 10);
 
@@ -299,6 +342,47 @@ export default function CreateIncidentScreen() {
     },
     [palette, severity],
   );
+
+  if (checkingSession) {
+    return (
+      <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
+        <ActivityIndicator size="large" color={palette.loadingSpinner} />
+        <Text style={[styles.authHintText, { color: palette.textSecondary }]}>
+          Verificando sesion web...
+        </Text>
+      </View>
+    );
+  }
+
+  if (!hasActiveSession) {
+    return (
+      <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
+        <View
+          style={[
+            styles.authCard,
+            { backgroundColor: palette.cardBg, borderColor: palette.cardBorder },
+          ]}
+        >
+          <Text style={[styles.authTitle, { color: palette.textPrimary }]}>
+            Sesion requerida
+          </Text>
+          <Text style={[styles.authHintText, { color: palette.textSecondary }]}>
+            Inicia sesion web para ver registros e incidencias.
+          </Text>
+          <TouchableOpacity
+            style={[styles.button, { backgroundColor: palette.primaryButtonBg }]}
+            onPress={() => router.push("/modal")}
+            accessibilityRole="button"
+            accessibilityLabel="Ir a Configuracion y acceso"
+          >
+            <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>
+              Ir a Configuracion y acceso
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
@@ -588,9 +672,30 @@ export default function CreateIncidentScreen() {
 }
 
 const styles = StyleSheet.create({
+  centerContainer: {
+    flex: 1,
+    padding: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   container: {
     padding: 20,
     gap: 10,
+  },
+  authCard: {
+    width: "100%",
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+    gap: 8,
+  },
+  authTitle: {
+    fontSize: 18,
+    fontFamily: fontFamilies.bold,
+  },
+  authHintText: {
+    fontSize: 13,
+    fontFamily: fontFamilies.regular,
   },
   rowBetween: {
     flexDirection: "row",

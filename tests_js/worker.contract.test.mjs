@@ -150,14 +150,60 @@ function createMockDB({
           return this;
         },
         async all() {
-          if (normalized.startsWith("SELECT * FROM installations ORDER BY timestamp DESC")) {
-            return { results: state.installations };
-          }
-
           if (normalized.startsWith("SELECT * FROM installations WHERE id = ? LIMIT 1")) {
             const id = Number(call.bound?.[0]);
             const row = state.installations.find((item) => Number(item.id) === id);
             return { results: row ? [row] : [] };
+          }
+
+          if (normalized.startsWith("SELECT * FROM installations WHERE 1 = 1")) {
+            let rows = [...state.installations].sort((a, b) => {
+              const byTimestamp = String(b.timestamp ?? "").localeCompare(String(a.timestamp ?? ""));
+              if (byTimestamp !== 0) return byTimestamp;
+              return Number(b.id) - Number(a.id);
+            });
+
+            let bindIndex = 0;
+            if (normalized.includes("LOWER(COALESCE(client_name, '')) LIKE ?")) {
+              const clientPattern = String(call.bound?.[bindIndex++] ?? "").toLowerCase();
+              const clientNeedle = clientPattern.replace(/%/g, "");
+              rows = rows.filter((row) =>
+                String(row.client_name ?? "").toLowerCase().includes(clientNeedle),
+              );
+            }
+            if (normalized.includes("LOWER(COALESCE(driver_brand, '')) = ?")) {
+              const brand = String(call.bound?.[bindIndex++] ?? "").toLowerCase();
+              rows = rows.filter(
+                (row) => String(row.driver_brand ?? "").toLowerCase() === brand,
+              );
+            }
+            if (normalized.includes("LOWER(COALESCE(status, '')) = ?")) {
+              const status = String(call.bound?.[bindIndex++] ?? "").toLowerCase();
+              rows = rows.filter((row) => String(row.status ?? "").toLowerCase() === status);
+            }
+            if (normalized.includes("timestamp >= ?")) {
+              const start = String(call.bound?.[bindIndex++] ?? "");
+              rows = rows.filter(
+                (row) => String(row.timestamp ?? "").localeCompare(start) >= 0,
+              );
+            }
+            if (normalized.includes("timestamp < ?")) {
+              const end = String(call.bound?.[bindIndex++] ?? "");
+              rows = rows.filter((row) => String(row.timestamp ?? "").localeCompare(end) < 0);
+            }
+            if (normalized.includes("(timestamp < ? OR (timestamp = ? AND id < ?))")) {
+              const cursorTs = String(call.bound?.[bindIndex++] ?? "");
+              const cursorTsEq = String(call.bound?.[bindIndex++] ?? "");
+              const cursorId = Number(call.bound?.[bindIndex++] ?? 0);
+              rows = rows.filter((row) => {
+                const ts = String(row.timestamp ?? "");
+                if (ts.localeCompare(cursorTs) < 0) return true;
+                return ts === cursorTsEq && Number(row.id) < cursorId;
+              });
+            }
+
+            const limit = Math.max(1, Number(call.bound?.[bindIndex] ?? rows.length));
+            return { results: rows.slice(0, limit) };
           }
 
           if (normalized.includes("COUNT(*) AS total_installations")) {
@@ -291,15 +337,28 @@ function createMockDB({
 
           if (
             normalized.startsWith(
-              "SELECT id, timestamp, action, username, success, details, computer_name, ip_address, platform FROM audit_logs ORDER BY timestamp DESC, id DESC LIMIT ?",
+              "SELECT id, timestamp, action, username, success, details, computer_name, ip_address, platform FROM audit_logs",
             )
           ) {
-            const limit = Math.max(1, Number(call.bound?.[0]) || 100);
-            const rows = [...state.auditLogs].sort((a, b) => {
+            let rows = [...state.auditLogs].sort((a, b) => {
               const byTimestamp = String(b.timestamp ?? "").localeCompare(String(a.timestamp ?? ""));
               if (byTimestamp !== 0) return byTimestamp;
               return Number(b.id) - Number(a.id);
             });
+
+            let bindIndex = 0;
+            if (normalized.includes("WHERE (timestamp < ? OR (timestamp = ? AND id < ?))")) {
+              const cursorTs = String(call.bound?.[bindIndex++] ?? "");
+              const cursorTsEq = String(call.bound?.[bindIndex++] ?? "");
+              const cursorId = Number(call.bound?.[bindIndex++] ?? 0);
+              rows = rows.filter((row) => {
+                const ts = String(row.timestamp ?? "");
+                if (ts.localeCompare(cursorTs) < 0) return true;
+                return ts === cursorTsEq && Number(row.id) < cursorId;
+              });
+            }
+
+            const limit = Math.max(1, Number(call.bound?.[bindIndex]) || 100);
             return { results: rows.slice(0, limit) };
           }
 
@@ -329,37 +388,34 @@ function createMockDB({
 
           if (
             normalized.startsWith(
-              "SELECT id, username, role, is_active, created_at, updated_at, last_login_at, tenant_id FROM web_users ORDER BY username ASC",
+              "SELECT id, username, role, is_active, created_at, updated_at, last_login_at, tenant_id FROM web_users",
             )
           ) {
-            const rows = [...state.webUsers].sort((a, b) =>
-              String(a.username).localeCompare(String(b.username)),
-            );
+            let rows = [...state.webUsers];
+            let bindIndex = 0;
+            if (normalized.includes("WHERE tenant_id = ?")) {
+              const tenantId = String(call.bound?.[bindIndex++] ?? "default");
+              rows = rows.filter((row) => String(row.tenant_id ?? "default") === tenantId);
+            }
+            if (normalized.includes("(username > ? OR (username = ? AND id > ?))")) {
+              const cursorUsername = String(call.bound?.[bindIndex++] ?? "");
+              const cursorUsernameEq = String(call.bound?.[bindIndex++] ?? "");
+              const cursorId = Number(call.bound?.[bindIndex++] ?? 0);
+              rows = rows.filter((row) => {
+                const username = String(row.username ?? "");
+                if (username.localeCompare(cursorUsername) > 0) return true;
+                return username === cursorUsernameEq && Number(row.id) > cursorId;
+              });
+            }
+            rows.sort((a, b) => {
+              const byUsername = String(a.username).localeCompare(String(b.username));
+              if (byUsername !== 0) return byUsername;
+              return Number(a.id) - Number(b.id);
+            });
+            const limit = Math.max(1, Number(call.bound?.[bindIndex]) || rows.length);
+            const limited = rows.slice(0, limit);
             return {
-              results: rows.map((row) => ({
-                id: row.id,
-                username: row.username,
-                role: row.role,
-                is_active: row.is_active,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
-                last_login_at: row.last_login_at ?? null,
-                tenant_id: row.tenant_id ?? "default",
-              })),
-            };
-          }
-
-          if (
-            normalized.startsWith(
-              "SELECT id, username, role, is_active, created_at, updated_at, last_login_at, tenant_id FROM web_users WHERE tenant_id = ? ORDER BY username ASC",
-            )
-          ) {
-            const tenantId = String(call.bound?.[0] ?? "default");
-            const rows = [...state.webUsers]
-              .filter((row) => String(row.tenant_id ?? "default") === tenantId)
-              .sort((a, b) => String(a.username).localeCompare(String(b.username)));
-            return {
-              results: rows.map((row) => ({
+              results: limited.map((row) => ({
                 id: row.id,
                 username: row.username,
                 role: row.role,
@@ -696,6 +752,19 @@ test("OPTIONS rejects not allowed origins with 403", async () => {
   assert.equal(response.headers.get("Access-Control-Allow-Origin"), null);
 });
 
+test("OPTIONS does not implicitly allow worker request origin", async () => {
+  const request = new Request("https://worker.example/installations", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://worker.example",
+    },
+  });
+  const response = await workerFetch(request, {});
+
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), null);
+});
+
 test("OPTIONS allows localhost dev origins in preflight", async () => {
   const request = new Request("https://worker.example/web/auth/login", {
     method: "OPTIONS",
@@ -827,6 +896,46 @@ test("GET /installations applies filters from query params", async () => {
   assert.equal(response.status, 200);
   assert.equal(body.length, 1);
   assert.equal(body[0].id, 1);
+});
+
+test("GET /installations paginates using cursor header", async () => {
+  const db = createMockDB({
+    installations: [
+      { id: 3, timestamp: "2026-08-03T10:00:00.000Z", driver_brand: "A" },
+      { id: 2, timestamp: "2026-08-02T10:00:00.000Z", driver_brand: "B" },
+      { id: 1, timestamp: "2026-08-01T10:00:00.000Z", driver_brand: "C" },
+    ],
+  });
+
+  const page1 = await workerFetch(
+    new Request("https://worker.example/installations?limit=2", { method: "GET" }),
+    { DB: db },
+  );
+  const page1Body = await page1.json();
+
+  assert.equal(page1.status, 200);
+  assert.equal(page1Body.length, 2);
+  assert.deepEqual(
+    page1Body.map((row) => row.id),
+    [3, 2],
+  );
+  const nextCursor = page1.headers.get("X-Next-Cursor");
+  assert.ok(nextCursor);
+
+  const page2 = await workerFetch(
+    new Request(
+      `https://worker.example/installations?limit=2&cursor=${encodeURIComponent(nextCursor)}`,
+      { method: "GET" },
+    ),
+    { DB: db },
+  );
+  const page2Body = await page2.json();
+  assert.equal(page2.status, 200);
+  assert.deepEqual(
+    page2Body.map((row) => row.id),
+    [1],
+  );
+  assert.equal(page2.headers.get("X-Next-Cursor"), null);
 });
 
 test("POST /installations inserts record with defaults and returns 201", async () => {
@@ -1637,6 +1746,10 @@ test("POST /audit-logs stores audit event in D1", async () => {
   assert.equal(body.success, true);
   assert.equal(db.state.auditLogs.length, 1);
   assert.equal(db.state.auditLogs[0].action, "login_success");
+  assert.equal(
+    db.calls.some((call) => call.sql.toLowerCase().includes("tenant_audit_events")),
+    false,
+  );
 });
 
 test("GET /audit-logs returns latest rows sorted desc and respects limit", async () => {
@@ -1670,6 +1783,43 @@ test("GET /audit-logs returns latest rows sorted desc and respects limit", async
   assert.equal(response.status, 200);
   assert.equal(body.length, 1);
   assert.equal(body[0].id, 2);
+});
+
+test("GET /audit-logs supports cursor pagination", async () => {
+  const db = createMockDB({
+    auditLogs: [
+      { id: 3, timestamp: "2026-08-03T10:00:00.000Z", action: "c", username: "u3", success: 1, details: "{}" },
+      { id: 2, timestamp: "2026-08-02T10:00:00.000Z", action: "b", username: "u2", success: 1, details: "{}" },
+      { id: 1, timestamp: "2026-08-01T10:00:00.000Z", action: "a", username: "u1", success: 1, details: "{}" },
+    ],
+  });
+
+  const page1 = await workerFetch(
+    new Request("https://worker.example/audit-logs?limit=2", { method: "GET" }),
+    { DB: db },
+  );
+  const page1Body = await page1.json();
+  assert.equal(page1.status, 200);
+  assert.deepEqual(
+    page1Body.map((row) => row.id),
+    [3, 2],
+  );
+  const nextCursor = page1.headers.get("X-Next-Cursor");
+  assert.ok(nextCursor);
+
+  const page2 = await workerFetch(
+    new Request(
+      `https://worker.example/audit-logs?limit=2&cursor=${encodeURIComponent(nextCursor)}`,
+      { method: "GET" },
+    ),
+    { DB: db },
+  );
+  const page2Body = await page2.json();
+  assert.equal(page2.status, 200);
+  assert.deepEqual(
+    page2Body.map((row) => row.id),
+    [1],
+  );
 });
 
 test("unsupported method on /installations returns 404", async () => {
@@ -2357,6 +2507,87 @@ test("GET /web/auth/users lists users with active status and last login", async 
     ["admin_root", "viewer_1"],
   );
   assert.equal(typeof listUsersBody.users[0].is_active, "boolean");
+  assert.equal(listUsersBody.pagination.has_more, false);
+});
+
+test("GET /web/auth/users paginates with limit and cursor", async () => {
+  const db = createMockDB();
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const bootstrapBody = await bootstrapResponse.json();
+  assert.equal(bootstrapResponse.status, 201);
+
+  for (const username of ["viewer_1", "viewer_2"]) {
+    const createUserRequest = new Request("https://worker.example/web/auth/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bootstrapBody.access_token}`,
+      },
+      body: JSON.stringify({
+        username,
+        password: "ViewerPass#2026",
+        role: "viewer",
+      }),
+    });
+    const createUserResponse = await workerFetch(createUserRequest, {
+      DB: db,
+      WEB_SESSION_SECRET: "web-session-secret",
+    });
+    assert.equal(createUserResponse.status, 201);
+  }
+
+  const page1Response = await workerFetch(
+    new Request("https://worker.example/web/auth/users?limit=2", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${bootstrapBody.access_token}`,
+      },
+    }),
+    {
+      DB: db,
+      WEB_SESSION_SECRET: "web-session-secret",
+    },
+  );
+  const page1Body = await page1Response.json();
+  assert.equal(page1Response.status, 200);
+  assert.equal(page1Body.users.length, 2);
+  assert.equal(page1Body.pagination.has_more, true);
+  assert.ok(page1Body.pagination.next_cursor);
+
+  const page2Response = await workerFetch(
+    new Request(
+      `https://worker.example/web/auth/users?limit=2&cursor=${encodeURIComponent(page1Body.pagination.next_cursor)}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${bootstrapBody.access_token}`,
+        },
+      },
+    ),
+    {
+      DB: db,
+      WEB_SESSION_SECRET: "web-session-secret",
+    },
+  );
+  const page2Body = await page2Response.json();
+  assert.equal(page2Response.status, 200);
+  assert.equal(page2Body.users.length, 1);
+  assert.equal(page2Body.users[0].username, "viewer_2");
+  assert.equal(page2Body.pagination.has_more, false);
 });
 
 test("PATCH /web/auth/users/:id updates role and active status", async () => {

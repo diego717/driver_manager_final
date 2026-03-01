@@ -50,12 +50,12 @@ const MIN_TOUCH_TARGET_SIZE = 44;
 const STEP_TITLES = ["Checklist", "Nota", "Fotos", "Confirmacion"] as const;
 
 const CHECKLIST_ITEMS = [
-  "Area segura",
-  "Equipo identificado",
-  "Cliente validado",
-  "Falla reproducida",
-  "EPP utilizado",
-  "Permiso de intervencion",
+  "Equipo identificado (QR/serie)",
+  "Incidencia reproducida",
+  "Evidencia fotografica capturada",
+  "Diagnostico inicial registrado",
+  "Accion correctiva documentada",
+  "Validacion final con usuario/tecnico",
 ] as const;
 
 function normalizeParam(value: string | string[] | undefined): string {

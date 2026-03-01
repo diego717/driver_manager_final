@@ -68,10 +68,8 @@ function isLocalhostOrigin(origin) {
 }
 
 function getAllowedCorsOrigins(request, env) {
+  void request;
   const allowed = new Set([...CONTROLLED_DASHBOARD_ORIGINS, ...CONTROLLED_MOBILE_ORIGINS]);
-  if (request?.url) {
-    allowed.add(new URL(request.url).origin);
-  }
 
   const extraOrigins = normalizeOptionalString(env?.CORS_ALLOWED_ORIGINS, "");
   if (extraOrigins) {
@@ -563,6 +561,107 @@ function parseDateOrNull(value) {
 function parseOptionalPositiveInt(value, label) {
   if (value === null || value === undefined || value === "") return null;
   return parsePositiveInt(value, label);
+}
+
+function parsePageLimit(searchParams, options = {}) {
+  const fallback = Number.isInteger(options.fallback) ? options.fallback : 100;
+  const max = Number.isInteger(options.max) ? options.max : 500;
+  const requested = parseOptionalPositiveInt(searchParams.get("limit"), "limit");
+  if (requested === null) return fallback;
+  return Math.min(requested, max);
+}
+
+function encodeCursorPart(value) {
+  return encodeURIComponent(String(value ?? ""));
+}
+
+function decodeCursorPart(value) {
+  return decodeURIComponent(value);
+}
+
+function buildTimestampIdCursor(timestamp, id) {
+  return `${encodeCursorPart(timestamp)}|${encodeCursorPart(id)}`;
+}
+
+function parseTimestampIdCursor(rawCursor) {
+  const cursor = normalizeOptionalString(rawCursor, "");
+  if (!cursor) return null;
+
+  const parts = cursor.split("|");
+  if (parts.length !== 2) {
+    throw new HttpError(400, "Cursor invalido.");
+  }
+
+  let timestamp = "";
+  let idText = "";
+  try {
+    timestamp = decodeCursorPart(parts[0]);
+    idText = decodeCursorPart(parts[1]);
+  } catch {
+    throw new HttpError(400, "Cursor invalido.");
+  }
+
+  if (!timestamp || Number.isNaN(Date.parse(timestamp))) {
+    throw new HttpError(400, "Cursor invalido.");
+  }
+
+  const id = Number.parseInt(idText, 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new HttpError(400, "Cursor invalido.");
+  }
+
+  return { timestamp, id };
+}
+
+function buildUsernameIdCursor(username, id) {
+  return `${encodeCursorPart(username)}|${encodeCursorPart(id)}`;
+}
+
+function parseUsernameIdCursor(rawCursor) {
+  const cursor = normalizeOptionalString(rawCursor, "");
+  if (!cursor) return null;
+
+  const parts = cursor.split("|");
+  if (parts.length !== 2) {
+    throw new HttpError(400, "Cursor invalido.");
+  }
+
+  let username = "";
+  let idText = "";
+  try {
+    username = decodeCursorPart(parts[0]);
+    idText = decodeCursorPart(parts[1]);
+  } catch {
+    throw new HttpError(400, "Cursor invalido.");
+  }
+
+  if (!username) {
+    throw new HttpError(400, "Cursor invalido.");
+  }
+
+  const id = Number.parseInt(idText, 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new HttpError(400, "Cursor invalido.");
+  }
+
+  return { username, id };
+}
+
+function appendPaginationHeader(response, nextCursor) {
+  if (!response || !nextCursor) return response;
+  response.headers.set("X-Next-Cursor", nextCursor);
+
+  const expose = response.headers.get("Access-Control-Expose-Headers");
+  if (!expose) {
+    response.headers.set("Access-Control-Expose-Headers", "X-Next-Cursor");
+    return response;
+  }
+
+  const normalized = expose.toLowerCase();
+  if (!normalized.split(",").map((item) => item.trim()).includes("x-next-cursor")) {
+    response.headers.set("Access-Control-Expose-Headers", `${expose}, X-Next-Cursor`);
+  }
+  return response;
 }
 
 function applyInstallationFilters(installations, searchParams) {
@@ -1078,8 +1177,13 @@ function normalizeNotificationData(rawData) {
   return normalized;
 }
 
-// AUDIT LOGGING FUNCTION
-async function logAuditEvent(env, { action, username, success, details, computerName, ipAddress, platform }) {
+// Single audit persistence path (audit_logs).
+async function logAuditEvent(
+  env,
+  { action, username, success, details, computerName, ipAddress, platform, timestamp },
+  options = {},
+) {
+  const swallowErrors = options?.swallowErrors !== false;
   try {
     const detailsJson = details && typeof details === "object" ? JSON.stringify(details) : "{}";
     await env.DB.prepare(`
@@ -1087,7 +1191,7 @@ async function logAuditEvent(env, { action, username, success, details, computer
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `)
       .bind(
-        nowIso(),
+        normalizeOptionalString(timestamp, nowIso()),
         normalizeOptionalString(action, "unknown"),
         normalizeOptionalString(username, "unknown"),
         success ? 1 : 0,
@@ -1098,6 +1202,9 @@ async function logAuditEvent(env, { action, username, success, details, computer
       )
       .run();
   } catch (err) {
+    if (!swallowErrors) {
+      throw err;
+    }
     console.error("Failed to write audit log:", err);
   }
 }
@@ -1629,27 +1736,46 @@ function serializeWebUser(rawUser) {
 
 async function listWebUsers(env, options = {}) {
   const tenantId = normalizeOptionalString(options?.tenantId, "");
+  const limit = Number.isInteger(options?.limit) ? options.limit : 100;
+  const cursor = options?.cursor || null;
+  const pageSize = limit + 1;
   try {
-    let results = [];
+    let query = `
+      SELECT id, username, role, is_active, created_at, updated_at, last_login_at, tenant_id
+      FROM web_users
+    `;
+    const bindings = [];
+
     if (tenantId) {
-      const query = await env.DB.prepare(`
-        SELECT id, username, role, is_active, created_at, updated_at, last_login_at, tenant_id
-        FROM web_users
-        WHERE tenant_id = ?
-        ORDER BY username ASC
-      `)
-        .bind(normalizeRealtimeTenantId(tenantId))
-        .all();
-      results = query.results || [];
-    } else {
-      const query = await env.DB.prepare(`
-        SELECT id, username, role, is_active, created_at, updated_at, last_login_at, tenant_id
-        FROM web_users
-        ORDER BY username ASC
-      `).all();
-      results = query.results || [];
+      query += " WHERE tenant_id = ?";
+      bindings.push(normalizeRealtimeTenantId(tenantId));
     }
-    return (results || []).map((row) => serializeWebUser(row));
+
+    if (cursor) {
+      query += tenantId ? " AND " : " WHERE ";
+      query += "(username > ? OR (username = ? AND id > ?))";
+      bindings.push(cursor.username, cursor.username, cursor.id);
+    }
+
+    query += `
+      ORDER BY username ASC, id ASC
+      LIMIT ?
+    `;
+    bindings.push(pageSize);
+
+    const queryResult = await env.DB.prepare(query).bind(...bindings).all();
+    const rows = queryResult.results || [];
+    const hasMore = rows.length > limit;
+    const users = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore
+      ? buildUsernameIdCursor(users[users.length - 1].username, users[users.length - 1].id)
+      : null;
+
+    return {
+      users: users.map((row) => serializeWebUser(row)),
+      hasMore,
+      nextCursor,
+    };
   } catch (error) {
     ensureWebUsersTableAvailable(error);
   }
@@ -2271,20 +2397,30 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
 
     const session = await verifyWebAccessToken(request, env);
     requireAdminRole(session.role);
+    const searchParams = new URL(request.url).searchParams;
 
     const requestTenantFilter = normalizeOptionalString(
-      new URL(request.url).searchParams.get("tenant_id"),
+      searchParams.get("tenant_id"),
       "",
     );
-    const users = await listWebUsers(env, {
+    const limit = parsePageLimit(searchParams, { fallback: 100, max: 500 });
+    const cursor = parseUsernameIdCursor(searchParams.get("cursor"));
+    const usersPage = await listWebUsers(env, {
       tenantId: canManageAllTenants(session.role)
         ? requestTenantFilter || null
         : normalizeRealtimeTenantId(session.tenant_id),
+      limit,
+      cursor,
     });
     return jsonResponse(request, env, corsPolicy,
       {
         success: true,
-        users,
+        users: usersPage.users,
+        pagination: {
+          limit,
+          has_more: usersPage.hasMore,
+          next_cursor: usersPage.nextCursor,
+        },
       },
       200,
     );
@@ -3005,11 +3141,63 @@ export default {
 
       if (routeParts.length === 1 && routeParts[0] === "installations") {
         if (request.method === "GET") {
-          const { results } = await env.DB.prepare(
-            "SELECT * FROM installations ORDER BY timestamp DESC",
-          ).all();
-          const filtered = applyInstallationFilters(results, url.searchParams);
-          return jsonResponse(request, env, corsPolicy,filtered);
+          const clientName = normalizeOptionalString(
+            url.searchParams.get("client_name"),
+            "",
+          ).toLowerCase();
+          const brand = normalizeOptionalString(url.searchParams.get("brand"), "").toLowerCase();
+          const status = normalizeOptionalString(url.searchParams.get("status"), "").toLowerCase();
+          const startDate = parseDateOrNull(url.searchParams.get("start_date"));
+          const endDate = parseDateOrNull(url.searchParams.get("end_date"));
+          const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
+          const cursor = parseTimestampIdCursor(url.searchParams.get("cursor"));
+          const pageSize = limit + 1;
+
+          let query = "SELECT * FROM installations WHERE 1 = 1";
+          const bindings = [];
+
+          if (clientName) {
+            query += " AND LOWER(COALESCE(client_name, '')) LIKE ?";
+            bindings.push(`%${clientName}%`);
+          }
+          if (brand) {
+            query += " AND LOWER(COALESCE(driver_brand, '')) = ?";
+            bindings.push(brand);
+          }
+          if (status) {
+            query += " AND LOWER(COALESCE(status, '')) = ?";
+            bindings.push(status);
+          }
+          if (startDate) {
+            query += " AND timestamp >= ?";
+            bindings.push(startDate.toISOString());
+          }
+          if (endDate) {
+            query += " AND timestamp < ?";
+            bindings.push(endDate.toISOString());
+          }
+          if (cursor) {
+            query += " AND (timestamp < ? OR (timestamp = ? AND id < ?))";
+            bindings.push(cursor.timestamp, cursor.timestamp, cursor.id);
+          }
+
+          query += " ORDER BY timestamp DESC, id DESC LIMIT ?";
+          bindings.push(pageSize);
+
+          const { results } = await env.DB.prepare(query).bind(...bindings).all();
+          const rows = results || [];
+          const hasMore = rows.length > limit;
+          const items = hasMore ? rows.slice(0, limit) : rows;
+          const nextCursor = hasMore
+            ? buildTimestampIdCursor(
+                items[items.length - 1].timestamp,
+                items[items.length - 1].id,
+              )
+            : null;
+
+          const response = jsonResponse(request, env, corsPolicy, items);
+          appendPaginationHeader(response, nextCursor);
+          return response;
         }
 
         if (request.method === "POST") {
@@ -3079,45 +3267,59 @@ export default {
 
           const rawDetails =
             data && typeof data.details === "object" && data.details !== null ? data.details : {};
-          const detailsJson = JSON.stringify(rawDetails);
-
-          await env.DB.prepare(`
-            INSERT INTO audit_logs
-              (timestamp, action, username, success, details, computer_name, ip_address, platform)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `)
-            .bind(
-              normalizeOptionalString(data.timestamp, nowIso()),
+          await logAuditEvent(
+            env,
+            {
+              timestamp: data?.timestamp,
               action,
               username,
-              data?.success ? 1 : 0,
-              detailsJson,
-              normalizeOptionalString(data?.computer_name, ""),
-              normalizeOptionalString(data?.ip_address, ""),
-              normalizeOptionalString(data?.platform, ""),
-            )
-            .run();
+              success: Boolean(data?.success),
+              details: rawDetails,
+              computerName: data?.computer_name,
+              ipAddress: data?.ip_address,
+              platform: data?.platform,
+            },
+            { swallowErrors: false },
+          );
 
           return jsonResponse(request, env, corsPolicy,{ success: true }, 201);
 
         }
 
         if (request.method === "GET") {
-          const limit = Math.min(
-            parseOptionalPositiveInt(url.searchParams.get("limit"), "limit") || 100,
-            500,
-          );
+          const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
+          const cursor = parseTimestampIdCursor(url.searchParams.get("cursor"));
+          const pageSize = limit + 1;
 
-          const { results } = await env.DB.prepare(`
+          let query = `
             SELECT id, timestamp, action, username, success, details, computer_name, ip_address, platform
             FROM audit_logs
+          `;
+          const bindings = [];
+          if (cursor) {
+            query += " WHERE (timestamp < ? OR (timestamp = ? AND id < ?))";
+            bindings.push(cursor.timestamp, cursor.timestamp, cursor.id);
+          }
+          query += `
             ORDER BY timestamp DESC, id DESC
             LIMIT ?
-          `)
-            .bind(limit)
-            .all();
+          `;
+          bindings.push(pageSize);
 
-          return jsonResponse(request, env, corsPolicy,results || []);
+          const { results } = await env.DB.prepare(query).bind(...bindings).all();
+          const rows = results || [];
+          const hasMore = rows.length > limit;
+          const items = hasMore ? rows.slice(0, limit) : rows;
+          const nextCursor = hasMore
+            ? buildTimestampIdCursor(
+                items[items.length - 1].timestamp,
+                items[items.length - 1].id,
+              )
+            : null;
+
+          const response = jsonResponse(request, env, corsPolicy, items);
+          appendPaginationHeader(response, nextCursor);
+          return response;
         }
       }
 

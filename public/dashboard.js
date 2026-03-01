@@ -8,11 +8,11 @@ const API_BASE = (() => {
     return '';
 })();
 
-let authToken = localStorage.getItem('authToken');
 let currentUser = null;
 let charts = {};
 let searchDebounceTimer = null;
 let currentInstallationsData = [];
+let currentSelectedInstallationId = null;
 
 // WebSocket/SSE State
 let eventSource = null;
@@ -20,6 +20,7 @@ let sseReconnectTimer = null;
 let sseReconnectAttempts = 0;
 const MAX_SSE_RECONNECT_ATTEMPTS = 5;
 const SSE_RECONNECT_DELAY = 3000; // 3 seconds
+const FORCE_LOGIN_ON_OPEN = true;
 
 
 // Chart.js default configuration
@@ -51,7 +52,7 @@ const api = {
         const response = await fetch(API_BASE + endpoint, {
             ...options,
             headers,
-            credentials: 'same-origin'
+            credentials: 'include'
         });
         
         if (response.status === 401) {
@@ -78,6 +79,52 @@ const api = {
     getIncidents(installationId) {
         return this.request('/web/installations/' + installationId + '/incidents');
     },
+
+    createRecord(payload) {
+        return this.request('/web/records', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    createIncident(installationId, payload) {
+        return this.request('/web/installations/' + installationId + '/incidents', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+
+    async uploadIncidentPhoto(incidentId, file) {
+        const response = await fetch(API_BASE + '/web/incidents/' + incidentId + '/photos', {
+            method: 'POST',
+            headers: {
+                'Content-Type': file.type || 'image/jpeg',
+                'X-File-Name': file.name || ('incident_' + incidentId + '.jpg')
+            },
+            body: file,
+            credentials: 'include'
+        });
+
+        if (response.status === 401) {
+            currentUser = null;
+            closeSSE();
+            showLogin();
+            throw new Error('No autorizado');
+        }
+
+        if (!response.ok) {
+            let message = 'Error subiendo foto.';
+            try {
+                const payload = await response.json();
+                message = payload?.error?.message || payload?.message || message;
+            } catch (_err) {
+                // Ignorar parseo de body en errores no JSON.
+            }
+            throw new Error(message);
+        }
+
+        return response.json();
+    },
     
     getTrendData() {
         return this.request('/web/statistics/trend');
@@ -100,6 +147,7 @@ const api = {
 };
 
 function showLogin() {
+    resetProtectedViews();
     document.getElementById('loginModal').classList.add('active');
     document.body.style.overflow = 'hidden';
 }
@@ -108,6 +156,175 @@ function hideLogin() {
     document.getElementById('loginModal').classList.remove('active');
     document.body.style.overflow = '';
     document.getElementById('loginError').textContent = '';
+}
+
+function resetProtectedViews() {
+    const ids = [
+        'recentInstallations',
+        'installationsTable',
+        'incidentsList',
+        'auditLogs',
+        'resultsCount',
+    ];
+    ids.forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.innerHTML = '<p class="loading">Inicia sesion para ver informacion.</p>';
+    });
+    currentInstallationsData = [];
+    currentSelectedInstallationId = null;
+}
+
+function hasActiveSession() {
+    return Boolean(currentUser && currentUser.username);
+}
+
+function requireActiveSession() {
+    if (hasActiveSession()) return true;
+    showLogin();
+    return false;
+}
+
+function applyAuthenticatedUser(user) {
+    currentUser = user;
+    document.getElementById('username').textContent = user.username || 'Usuario';
+    document.getElementById('userRole').textContent = user.role || 'admin';
+    const initial = (user.username || 'U').charAt(0).toUpperCase();
+    const avatarEl = document.getElementById('userInitial');
+    if (avatarEl) avatarEl.textContent = initial;
+}
+
+function normalizeSeverity(input) {
+    const valid = ['low', 'medium', 'high', 'critical'];
+    const value = String(input || '').trim().toLowerCase();
+    return valid.includes(value) ? value : 'medium';
+}
+
+async function createManualRecordFromWeb() {
+    const clientName = prompt('Cliente (opcional):', currentUser?.username || '') ?? '';
+    const brand = prompt('Marca/Equipo (opcional):', 'N/A');
+    if (brand === null) return;
+    const version = prompt('Version/Referencia (opcional):', 'N/A');
+    if (version === null) return;
+    const statusInput = prompt('Estado (manual/success/failed/unknown):', 'manual');
+    if (statusInput === null) return;
+    const status = String(statusInput).trim().toLowerCase() || 'manual';
+    const validStatus = ['manual', 'success', 'failed', 'unknown'];
+    if (!validStatus.includes(status)) {
+        showNotification('Estado invalido. Usa: manual, success, failed o unknown.', 'error');
+        return;
+    }
+    const notes = prompt('Notas (opcional):', '') ?? '';
+
+    try {
+        const result = await api.createRecord({
+            client_name: (clientName || '').trim() || 'Sin cliente',
+            driver_brand: (brand || '').trim() || 'N/A',
+            driver_version: (version || '').trim() || 'N/A',
+            status,
+            notes: (notes || '').trim(),
+            driver_description: 'Registro manual desde dashboard web',
+            os_info: 'web',
+            installation_time_seconds: 0
+        });
+
+        const recordId = result?.record?.id;
+        showNotification(
+            recordId ? `Registro manual creado (#${recordId})` : 'Registro manual creado.',
+            'success'
+        );
+        await loadInstallations();
+
+        if (recordId) {
+            currentSelectedInstallationId = Number(recordId);
+            await showIncidentsForInstallation(recordId);
+        }
+    } catch (err) {
+        showNotification(`No se pudo crear registro: ${err.message || err}`, 'error');
+    }
+}
+
+async function createIncidentFromWeb(installationId) {
+    const targetId = Number.parseInt(String(installationId), 10);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+        showNotification('installation_id invalido para crear incidencia.', 'error');
+        return;
+    }
+
+    const note = prompt('Detalle de la incidencia:', '');
+    if (note === null) return;
+    if (!String(note).trim()) {
+        showNotification('La incidencia requiere una nota.', 'error');
+        return;
+    }
+
+    const severityInput = prompt('Severidad (low/medium/high/critical):', 'medium');
+    if (severityInput === null) return;
+    const severity = normalizeSeverity(severityInput);
+
+    const adjustmentRaw = prompt('Ajuste de tiempo en segundos (puede ser negativo):', '0');
+    if (adjustmentRaw === null) return;
+    const timeAdjustment = Number.parseInt(String(adjustmentRaw).trim(), 10);
+    if (!Number.isInteger(timeAdjustment)) {
+        showNotification('El ajuste de tiempo debe ser un numero entero.', 'error');
+        return;
+    }
+
+    const applyToInstallation = confirm('Aplicar nota/ajuste al registro de instalacion?');
+
+    try {
+        const result = await api.createIncident(targetId, {
+            note: String(note).trim(),
+            reporter_username: currentUser?.username || 'web_user',
+            time_adjustment_seconds: timeAdjustment,
+            severity,
+            source: 'web',
+            apply_to_installation: applyToInstallation
+        });
+
+        const incidentId = result?.incident?.id;
+        showNotification(
+            incidentId
+                ? `Incidencia creada (#${incidentId}) en instalacion #${targetId}`
+                : `Incidencia creada en instalacion #${targetId}`,
+            'success'
+        );
+
+        await showIncidentsForInstallation(targetId);
+        await loadInstallations();
+    } catch (err) {
+        showNotification(`No se pudo crear incidencia: ${err.message || err}`, 'error');
+    }
+}
+
+async function selectAndUploadIncidentPhoto(incidentId, installationId) {
+    const targetIncidentId = Number.parseInt(String(incidentId), 10);
+    if (!Number.isInteger(targetIncidentId) || targetIncidentId <= 0) {
+        showNotification('incident_id invalido para subir foto.', 'error');
+        return;
+    }
+
+    const picker = document.createElement('input');
+    picker.type = 'file';
+    picker.accept = 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp';
+    picker.style.display = 'none';
+    document.body.appendChild(picker);
+
+    picker.addEventListener('change', async () => {
+        const file = picker.files?.[0];
+        picker.remove();
+        if (!file) return;
+
+        try {
+            await api.uploadIncidentPhoto(targetIncidentId, file);
+            showNotification(`Foto subida a incidencia #${targetIncidentId}`, 'success');
+            await showIncidentsForInstallation(installationId);
+        } catch (err) {
+            showNotification(`No se pudo subir foto: ${err.message || err}`, 'error');
+        }
+    }, { once: true });
+
+    picker.click();
 }
 
 function updateStats(stats) {
@@ -335,6 +552,7 @@ async function renderTrendChart() {
 }
 
 async function loadDashboard() {
+    if (!requireActiveSession()) return;
     try {
         const stats = await api.getStatistics();
         updateStats(stats);
@@ -791,6 +1009,18 @@ function setupAdvancedFilters() {
     if (clearBtn) {
         clearBtn.addEventListener('click', clearAllFilters);
     }
+
+    const actionsContainer = document.querySelector('.filter-actions');
+    if (actionsContainer && !document.getElementById('createManualRecordBtn')) {
+        const createRecordBtn = document.createElement('button');
+        createRecordBtn.id = 'createManualRecordBtn';
+        createRecordBtn.className = 'btn-secondary';
+        createRecordBtn.textContent = '📝 Registrar nuevo equipo';
+        createRecordBtn.addEventListener('click', () => {
+            void createManualRecordFromWeb();
+        });
+        actionsContainer.insertBefore(createRecordBtn, document.getElementById('applyFilters'));
+    }
     
     // Keyboard shortcut: Ctrl+K to focus search
     document.addEventListener('keydown', (e) => {
@@ -806,6 +1036,7 @@ function setupAdvancedFilters() {
 }
 
 async function loadInstallations() {
+    if (!requireActiveSession()) return;
     const container = document.getElementById('installationsTable');
     const resultsCount = document.getElementById('resultsCount');
     container.innerHTML = '<p class="loading">Cargando...</p>';
@@ -923,6 +1154,8 @@ function renderInstallationsTable(installations) {
 }
 
 async function showIncidentsForInstallation(installationId) {
+    if (!requireActiveSession()) return;
+    currentSelectedInstallationId = Number.parseInt(String(installationId), 10);
     const container = document.getElementById('incidentsList');
     document.querySelector('[data-section="incidents"]').click();
     container.innerHTML = '<p class="loading">Cargando incidencias...</p>';
@@ -937,13 +1170,8 @@ async function showIncidentsForInstallation(installationId) {
 
 async function loadPhotoWithAuth(photoId) {
     try {
-        const headers = {};
-        if (authToken) {
-            headers['Authorization'] = 'Bearer ' + authToken;
-        }
         const response = await fetch(API_BASE + '/web/photos/' + photoId, {
-            headers,
-            credentials: 'same-origin'
+            credentials: 'include'
         });
         if (!response.ok) throw new Error('Failed to load photo');
         const blob = await response.blob();
@@ -972,7 +1200,19 @@ async function renderIncidents(incidents, installationId) {
         document.querySelector('[data-section="installations"]')?.click();
     });
 
-    header.append(heading, backButton);
+    const createIncidentBtn = document.createElement('button');
+    createIncidentBtn.className = 'btn-primary';
+    createIncidentBtn.textContent = '⚠️ Crear incidencia';
+    createIncidentBtn.addEventListener('click', () => {
+        void createIncidentFromWeb(installationId);
+    });
+
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.gap = '0.5rem';
+    actions.append(createIncidentBtn, backButton);
+
+    header.append(heading, actions);
     container.appendChild(header);
 
     if (!incidents || !incidents.length) {
@@ -1015,6 +1255,15 @@ async function renderIncidents(incidents, installationId) {
 
         incidentCard.append(incidentHeader, note);
 
+        const uploadPhotoBtn = document.createElement('button');
+        uploadPhotoBtn.className = 'btn-secondary';
+        uploadPhotoBtn.textContent = '📤 Subir foto';
+        uploadPhotoBtn.style.marginTop = '0.5rem';
+        uploadPhotoBtn.addEventListener('click', () => {
+            void selectAndUploadIncidentPhoto(inc.id, installationId);
+        });
+        incidentCard.appendChild(uploadPhotoBtn);
+
         if (inc.photos && inc.photos.length) {
             const photosGrid = document.createElement('div');
             photosGrid.className = 'photos-grid';
@@ -1048,6 +1297,7 @@ async function viewPhoto(photoId) {
 }
 
 async function loadAuditLogs() {
+    if (!requireActiveSession()) return;
     const container = document.getElementById('auditLogs');
     container.innerHTML = '<p class="loading">Cargando logs...</p>';
     
@@ -1161,16 +1411,11 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     
     try {
         const result = await api.login(username, password);
-        currentUser = result.user;
-        
-        document.getElementById('username').textContent = result.user.username;
-        document.getElementById('userRole').textContent = result.user.role;
-        const initial = (result.user.username || 'U').charAt(0).toUpperCase();
-        const avatarEl = document.getElementById('userInitial');
-        if (avatarEl) avatarEl.textContent = initial;
+        applyAuthenticatedUser(result.user);
         
         hideLogin();
         loadDashboard();
+        initSSE();
         
         // Show success notification
         showNotification('✅ Bienvenido, ' + result.user.username + '!', 'success');
@@ -1188,11 +1433,13 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     }
     currentUser = null;
     closeSSE();
+    resetProtectedViews();
     showLogin();
     showNotification('👋 Sesión cerrada', 'info');
 });
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
+    if (!requireActiveSession()) return;
     const btn = document.getElementById('refreshBtn');
     btn.style.transform = 'rotate(360deg)';
     btn.style.transition = 'transform 0.5s ease';
@@ -1209,6 +1456,7 @@ document.getElementById('refreshBtn').addEventListener('click', () => {
 document.querySelectorAll('.nav-links a').forEach(link => {
     link.addEventListener('click', (e) => {
         e.preventDefault();
+        if (!requireActiveSession()) return;
         const section = link.dataset.section;
         
         document.querySelectorAll('.nav-links a').forEach(l => l.classList.remove('active'));
@@ -1231,14 +1479,19 @@ document.querySelectorAll('.nav-links a').forEach(link => {
 });
 
 document.getElementById('applyFilters').addEventListener('click', () => {
+    if (!requireActiveSession()) return;
     updateFilterChips();
     loadInstallations();
 });
 
 
-document.getElementById('refreshAudit').addEventListener('click', loadAuditLogs);
+document.getElementById('refreshAudit').addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    loadAuditLogs();
+});
 
 document.getElementById('auditActionFilter').addEventListener('change', () => {
+    if (!requireActiveSession()) return;
     loadAuditLogs();
 });
 
@@ -1544,19 +1797,28 @@ function closeSSE() {
 // Initialize
 async function init() {
     try {
-        const me = await api.getMe();
-        currentUser = me;
-        document.getElementById('username').textContent = me.username || 'Usuario';
-        document.getElementById('userRole').textContent = me.role || 'admin';
-        const initial = (me.username || 'U').charAt(0).toUpperCase();
-        const avatarEl = document.getElementById('userInitial');
-        if (avatarEl) avatarEl.textContent = initial;
-        loadDashboard();
-
-        // Initialize SSE connection for real-time updates
-        initSSE();
+        if (FORCE_LOGIN_ON_OPEN) {
+            try {
+                await api.logout();
+            } catch (_err) {
+                // Ignorar si no habia sesion activa.
+            }
+            currentUser = null;
+            closeSSE();
+            resetProtectedViews();
+            showLogin();
+        } else {
+            const me = await api.getMe();
+            applyAuthenticatedUser(me);
+            hideLogin();
+            loadDashboard();
+            initSSE();
+        }
     } catch (err) {
         console.error('Error validating session:', err);
+        currentUser = null;
+        closeSSE();
+        resetProtectedViews();
         showLogin();
     }
     

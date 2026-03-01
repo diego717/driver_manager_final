@@ -11,8 +11,20 @@ const incidentsApiMocks = vi.hoisted(() => ({
 const secureStorageMocks = vi.hoisted(() => ({
   getStoredWebAccessUsername: vi.fn(async () => "usuario_web"),
 }));
+const webAuthMocks = vi.hoisted(() => ({
+  clearWebSession: vi.fn(),
+  readStoredWebSession: vi.fn(async () => ({
+    accessToken: "token-123",
+    expiresAt: "2030-01-01T00:00:00.000Z",
+    username: "usuario_web",
+    role: "admin",
+  })),
+}));
 const routerMocks = vi.hoisted(() => ({
   push: vi.fn(),
+}));
+const startupSessionPolicyMocks = vi.hoisted(() => ({
+  consumeForceLoginOnOpenFlag: vi.fn(() => false),
 }));
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -112,6 +124,8 @@ vi.mock("expo-router", () => ({
 
 vi.mock("@/src/api/incidents", () => incidentsApiMocks);
 vi.mock("@/src/storage/secure", () => secureStorageMocks);
+vi.mock("@/src/api/webAuth", () => webAuthMocks);
+vi.mock("@/src/security/startup-session-policy", () => startupSessionPolicyMocks);
 vi.mock("@/src/api/client", () => ({
   extractApiError: (error: unknown) =>
     error instanceof Error ? error.message : String(error),

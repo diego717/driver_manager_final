@@ -14,6 +14,9 @@ import {
 
 import { extractApiError } from "@/src/api/client";
 import { listIncidentsByInstallation, listInstallations } from "@/src/api/incidents";
+import { clearWebSession, readStoredWebSession } from "@/src/api/webAuth";
+import { evaluateWebSession } from "@/src/api/webSession";
+import { consumeForceLoginOnOpenFlag } from "@/src/security/startup-session-policy";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 import { type Incident, type InstallationRecord } from "@/src/types/api";
@@ -26,8 +29,38 @@ export default function IncidentListScreen() {
   const [loadingInstallations, setLoadingInstallations] = useState(false);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [hasActiveSession, setHasActiveSession] = useState(false);
+
+  const refreshSessionState = useCallback(async () => {
+    setCheckingSession(true);
+    try {
+      if (consumeForceLoginOnOpenFlag()) {
+        await clearWebSession();
+      }
+      const storedSession = await readStoredWebSession();
+      const resolved = evaluateWebSession(storedSession.accessToken, storedSession.expiresAt);
+      if (resolved.state === "expired") {
+        await clearWebSession();
+      }
+      const isActive = resolved.state === "active";
+      setHasActiveSession(isActive);
+      if (!isActive) {
+        setIncidents([]);
+        setInstallations([]);
+      }
+      return isActive;
+    } finally {
+      setCheckingSession(false);
+    }
+  }, []);
+
   const loadIncidents = useCallback(
     async (targetInstallationId: number) => {
+      const activeSession = await refreshSessionState();
+      if (!activeSession) {
+        return;
+      }
       if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
         Alert.alert("Dato invalido", "installation_id debe ser un numero positivo.");
         return;
@@ -43,35 +76,53 @@ export default function IncidentListScreen() {
         setLoading(false);
       }
     },
-    [],
+    [refreshSessionState],
   );
 
-  const loadInstallations = useCallback(async (options?: { forceRefresh?: boolean }) => {
-    try {
-      setLoadingInstallations(true);
-      const records = await listInstallations(options);
-      setInstallations(records);
-      setInstallationId((current) => {
-        const currentId = Number.parseInt(current, 10);
-        const exists = records.some((item) => item.id === currentId);
-        if (!exists && records.length > 0) {
-          return String(records[0].id);
-        }
-        return current;
-      });
-    } catch (error) {
-      Alert.alert("Error", `No se pudo cargar instalaciones: ${extractApiError(error)}`);
-    } finally {
-      setLoadingInstallations(false);
-    }
-  }, []);
+  const loadInstallations = useCallback(
+    async (options?: { forceRefresh?: boolean }) => {
+      const activeSession = await refreshSessionState();
+      if (!activeSession) {
+        return;
+      }
+
+      try {
+        setLoadingInstallations(true);
+        const records = await listInstallations(options);
+        setInstallations(records);
+        setInstallationId((current) => {
+          const currentId = Number.parseInt(current, 10);
+          const exists = records.some((item) => item.id === currentId);
+          if (!exists && records.length > 0) {
+            return String(records[0].id);
+          }
+          return current;
+        });
+      } catch (error) {
+        Alert.alert("Error", `No se pudo cargar instalaciones: ${extractApiError(error)}`);
+      } finally {
+        setLoadingInstallations(false);
+      }
+    },
+    [refreshSessionState],
+  );
 
   const onLoad = async () => {
+    if (!(await refreshSessionState())) {
+      Alert.alert("Sesion requerida", "Inicia sesion web en Configuracion y acceso.");
+      router.push("/modal");
+      return;
+    }
     const parsedInstallationId = Number.parseInt(installationId, 10);
     await loadIncidents(parsedInstallationId);
   };
 
   const onSelectInstallation = async (id: number) => {
+    if (!(await refreshSessionState())) {
+      Alert.alert("Sesion requerida", "Inicia sesion web en Configuracion y acceso.");
+      router.push("/modal");
+      return;
+    }
     const next = String(id);
     setInstallationId(next);
     await loadIncidents(id);
@@ -90,6 +141,47 @@ export default function IncidentListScreen() {
       void loadIncidents(parsedInstallationId);
     }, [installationId, loadIncidents]),
   );
+
+  if (checkingSession) {
+    return (
+      <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
+        <ActivityIndicator size="large" color={palette.loadingSpinner} />
+        <Text style={[styles.authHintText, { color: palette.textSecondary }]}>
+          Verificando sesion web...
+        </Text>
+      </View>
+    );
+  }
+
+  if (!hasActiveSession) {
+    return (
+      <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
+        <View
+          style={[
+            styles.authCard,
+            { backgroundColor: palette.cardBg, borderColor: palette.cardBorder },
+          ]}
+        >
+          <Text style={[styles.authTitle, { color: palette.textPrimary }]}>
+            Sesion requerida
+          </Text>
+          <Text style={[styles.authHintText, { color: palette.textSecondary }]}>
+            Inicia sesion web para ver registros e incidencias.
+          </Text>
+          <TouchableOpacity
+            style={[styles.button, { backgroundColor: palette.primaryButtonBg }]}
+            onPress={() => router.push("/modal")}
+            accessibilityRole="button"
+            accessibilityLabel="Ir a Configuracion y acceso"
+          >
+            <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>
+              Ir a Configuracion y acceso
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
@@ -137,7 +229,9 @@ export default function IncidentListScreen() {
                       borderColor: palette.chipSelectedBorder,
                     },
                   ]}
-                  onPress={() => onSelectInstallation(item.id)}
+                  onPress={() => {
+                    void onSelectInstallation(item.id);
+                  }}
                   disabled={loading}
                 >
                   <Text
@@ -161,7 +255,14 @@ export default function IncidentListScreen() {
         value={installationId}
         onChangeText={setInstallationId}
         keyboardType="numeric"
-        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
+        style={[
+          styles.input,
+          {
+            backgroundColor: palette.inputBg,
+            borderColor: palette.inputBorder,
+            color: palette.textPrimary,
+          },
+        ]}
         placeholder="1"
         placeholderTextColor={palette.placeholder}
       />
@@ -172,7 +273,9 @@ export default function IncidentListScreen() {
           { backgroundColor: palette.primaryButtonBg },
           loading && styles.buttonDisabled,
         ]}
-        onPress={onLoad}
+        onPress={() => {
+          void onLoad();
+        }}
         disabled={loading}
       >
         {loading ? (
@@ -233,9 +336,30 @@ export default function IncidentListScreen() {
 }
 
 const styles = StyleSheet.create({
+  centerContainer: {
+    flex: 1,
+    padding: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   container: {
     padding: 20,
     gap: 10,
+  },
+  authCard: {
+    width: "100%",
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+    gap: 8,
+  },
+  authTitle: {
+    fontSize: 18,
+    fontFamily: fontFamilies.bold,
+  },
+  authHintText: {
+    fontSize: 13,
+    fontFamily: fontFamilies.regular,
   },
   rowBetween: {
     flexDirection: "row",
@@ -301,8 +425,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     gap: 10,
   },
-  emptyText: {
-  },
+  emptyText: {},
   card: {
     borderWidth: 1,
     borderRadius: 10,

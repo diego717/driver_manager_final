@@ -1,8 +1,11 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Keyboard,
+  type LayoutChangeEvent,
   Platform,
   ScrollView,
   StyleSheet,
@@ -68,6 +71,7 @@ function formatDateTime(value: string | null): string {
 export default function ApiSettingsScreen() {
   const { mode, resolvedScheme, setMode } = useThemePreference();
   const palette = useAppPalette();
+  const scrollViewRef = useRef<ScrollView | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -83,6 +87,8 @@ export default function ApiSettingsScreen() {
   const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
   const [webSessionExpiresAt, setWebSessionExpiresAt] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [loginSectionY, setLoginSectionY] = useState(0);
 
   const [baseUrlFromStorage, setBaseUrlFromStorage] = useState(false);
   const hasWebSession = useMemo(
@@ -93,6 +99,36 @@ export default function ApiSettingsScreen() {
   const notify = (title: string, message: string) => {
     setFeedbackMessage(`${title}: ${message}`);
     Alert.alert(title, message);
+  };
+
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const onKeyboardShow = Keyboard.addListener(showEvent, (event) => {
+      const nextHeight = event.endCoordinates?.height ?? 0;
+      setKeyboardHeight(nextHeight);
+    });
+    const onKeyboardHide = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      onKeyboardShow.remove();
+      onKeyboardHide.remove();
+    };
+  }, []);
+
+  const focusLoginSection = () => {
+    if (!scrollViewRef.current) return;
+    const target = Math.max(0, loginSectionY - 24);
+    requestAnimationFrame(() => {
+      scrollViewRef.current?.scrollTo({ y: target, animated: true });
+    });
+  };
+
+  const onLoginSectionLayout = (event: LayoutChangeEvent) => {
+    setLoginSectionY(event.nativeEvent.layout.y);
   };
 
   const loadConfig = useCallback(async () => {
@@ -260,11 +296,23 @@ export default function ApiSettingsScreen() {
   }
 
   return (
-    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
-      <Text style={[styles.title, { color: palette.title }]}>Configuracion y acceso</Text>
-      <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
-        Modo simple: URL del Worker + login web por usuario y contrasena.
-      </Text>
+    <KeyboardAvoidingView
+      style={[styles.keyboardWrapper, { backgroundColor: palette.screenBg }]}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 96 : 0}
+    >
+      <ScrollView
+        ref={scrollViewRef}
+        contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        contentInset={{ bottom: keyboardHeight }}
+        contentOffset={{ x: 0, y: 0 }}
+      >
+        <Text style={[styles.title, { color: palette.title }]}>Configuracion y acceso</Text>
+        <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
+          Modo simple: URL del Worker + login web por usuario y contrasena.
+        </Text>
 
       <Text style={[styles.sourceText, { color: palette.textMuted }]}>
         Base URL actual: {apiBaseUrl || "(vacia)"} ({baseUrlFromStorage ? "SecureStore" : ".env"})
@@ -362,26 +410,30 @@ export default function ApiSettingsScreen() {
         )}
       </TouchableOpacity>
 
-      <Text style={[styles.sectionLabel, { color: palette.title }]}>Login web</Text>
-      <TextInput
-        value={webLoginUsername}
-        onChangeText={setWebLoginUsername}
-        autoCapitalize="none"
-        autoCorrect={false}
-        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.title }]}
-        placeholder="Usuario web"
-        placeholderTextColor={palette.placeholder}
-      />
-      <TextInput
-        value={webLoginPassword}
-        onChangeText={setWebLoginPassword}
-        autoCapitalize="none"
-        autoCorrect={false}
-        secureTextEntry
-        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.title }]}
-        placeholder="Contrasena"
-        placeholderTextColor={palette.placeholder}
-      />
+      <View onLayout={onLoginSectionLayout}>
+        <Text style={[styles.sectionLabel, { color: palette.title }]}>Login web</Text>
+        <TextInput
+          value={webLoginUsername}
+          onChangeText={setWebLoginUsername}
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.title }]}
+          placeholder="Usuario web"
+          placeholderTextColor={palette.placeholder}
+          onFocus={focusLoginSection}
+        />
+        <TextInput
+          value={webLoginPassword}
+          onChangeText={setWebLoginPassword}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry
+          style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.title }]}
+          placeholder="Contrasena"
+          placeholderTextColor={palette.placeholder}
+          onFocus={focusLoginSection}
+        />
+      </View>
 
       <TouchableOpacity
         style={[
@@ -435,12 +487,19 @@ export default function ApiSettingsScreen() {
         Si es la primera vez y no tienes usuario web creado, inicializa el primer admin con
         /web/auth/bootstrap desde un cliente seguro (curl/Postman).
       </Text>
-      <Text style={[styles.hintText, { color: palette.textMuted }]}>Expira: {formatDateTime(webSessionExpiresAt)}</Text>
-    </ScrollView>
+        <Text style={[styles.hintText, { color: palette.textMuted }]}>
+          Expira: {formatDateTime(webSessionExpiresAt)}
+        </Text>
+        <View style={{ height: keyboardHeight > 0 ? keyboardHeight + 24 : 24 }} />
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
+  keyboardWrapper: {
+    flex: 1,
+  },
   loadingContainer: {
     flex: 1,
     alignItems: "center",

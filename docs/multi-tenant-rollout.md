@@ -17,7 +17,7 @@ Se agrega la migración `0007_multi_tenant_foundation.sql` con:
 - Tabla `plan_limits` con planes base (`starter`, `growth`, `scale`).
 - Columna `tenant_id` en tablas críticas existentes (`installations`, `incidents`, `incident_photos`, `web_users`, `audit_logs`, `device_tokens`).
 - Tabla `tenant_user_roles` para roles por empresa.
-- Tabla `tenant_audit_events` para auditoría mínima por tenant.
+- La auditoría operativa se centraliza en `audit_logs` (fuente única).
 - Tabla `tenant_usage_snapshots` para consumo mensual (usuarios/storage/incidencias).
 
 ## Diseño funcional por requerimiento
@@ -126,7 +126,7 @@ Ejemplos de bloqueo:
 
 - Integrar `tenant_user_roles` en login/autorización.
 - Implementar `requireTenantRole` por endpoint.
-- Registrar eventos en `tenant_audit_events`.
+- Registrar eventos en `audit_logs` con `tenant_id`.
 - Añadir tests de permisos por rol.
 
 ### Sprint C - R2 isolation + límites

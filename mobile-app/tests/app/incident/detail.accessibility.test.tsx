@@ -13,6 +13,7 @@ const incidentsApiMocks = vi.hoisted(() => ({
 
 const photosApiMocks = vi.hoisted(() => ({
   resolveIncidentPhotoPreviewTarget: vi.fn(),
+  fetchIncidentPhotoDataUri: vi.fn(),
 }));
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -153,6 +154,9 @@ describe("IncidentDetailScreen accessibility", () => {
       uri: "https://example.com/photo.jpg",
       headers: {},
     });
+    photosApiMocks.fetchIncidentPhotoDataUri.mockResolvedValue(
+      "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD",
+    );
   });
 
   it("exposes loading state for refresh button and interactive labels for actions", async () => {
