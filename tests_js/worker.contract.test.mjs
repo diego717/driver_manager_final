@@ -1654,7 +1654,9 @@ test("POST /incidents/:id/photos returns 500 when R2 bucket binding is missing",
   const body = await response.json();
 
   assert.equal(response.status, 500);
-  assert.match(body.error, /INCIDENTS_BUCKET/);
+  assert.equal(body.success, false);
+  assert.equal(body.error.code, "INTERNAL_ERROR");
+  assert.match(body.error.message, /error interno del servidor/i);
 });
 
 test("POST /incidents/:id/photos rejects invalid incident id", async () => {
@@ -1947,7 +1949,9 @@ test("returns 500 when DB binding is missing", async () => {
   const body = await response.json();
 
   assert.equal(response.status, 500);
-  assert.match(body.error, /D1/);
+  assert.equal(body.success, false);
+  assert.equal(body.error.code, "INTERNAL_ERROR");
+  assert.match(body.error.message, /error interno del servidor/i);
 });
 
 test("returns 503 when API auth secrets are missing", async () => {
@@ -3013,6 +3017,149 @@ test("POST /web/auth/login rate limits repeated failed attempts with RATE_LIMIT_
     (entry) => entry.op === "put" && entry.key === "web_login_attempts:198.51.100.10:admin_root",
   );
   assert.equal(ttlCall?.options?.expirationTtl, 900);
+});
+
+test("POST /web/auth/bootstrap rate limits repeated failed bootstrap_password attempts with RATE_LIMIT_KV", async () => {
+  const db = createMockDB();
+  const rateLimitKv = createMockKV();
+  const env = {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+    RATE_LIMIT_KV: rateLimitKv,
+  };
+  const requestHeaders = {
+    "Content-Type": "application/json",
+    "CF-Connecting-IP": "198.51.100.10",
+  };
+  const requestPayload = JSON.stringify({
+    bootstrap_password: "wrong-pass",
+    username: "admin_root",
+    password: "StrongPass#2026",
+    role: "admin",
+  });
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: requestHeaders,
+      body: requestPayload,
+    });
+    const bootstrapResponse = await workerFetch(bootstrapRequest, env);
+    assert.equal(bootstrapResponse.status, 401);
+  }
+
+  const blockedRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: requestHeaders,
+    body: requestPayload,
+  });
+  const blockedResponse = await workerFetch(blockedRequest, env);
+  const blockedBody = await blockedResponse.json();
+
+  assert.equal(blockedResponse.status, 429);
+  assert.equal(blockedBody.success, false);
+  assert.match(blockedBody.error.message, /demasiados intentos/i);
+  assert.equal(
+    await rateLimitKv.get("web_login_attempts:198.51.100.10:bootstrap"),
+    "5",
+  );
+
+  const ttlCall = rateLimitKv.calls.find(
+    (entry) => entry.op === "put" && entry.key === "web_login_attempts:198.51.100.10:bootstrap",
+  );
+  assert.equal(ttlCall?.options?.expirationTtl, 900);
+});
+
+test("POST /web/auth/bootstrap clears RATE_LIMIT_KV counter after successful bootstrap", async () => {
+  const db = createMockDB();
+  const rateLimitKv = createMockKV();
+  const env = {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+    RATE_LIMIT_KV: rateLimitKv,
+  };
+
+  const failedRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "CF-Connecting-IP": "198.51.100.10",
+    },
+    body: JSON.stringify({
+      bootstrap_password: "wrong-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+      role: "admin",
+    }),
+  });
+  const failedResponse = await workerFetch(failedRequest, env);
+  assert.equal(failedResponse.status, 401);
+  assert.equal(
+    await rateLimitKv.get("web_login_attempts:198.51.100.10:bootstrap"),
+    "1",
+  );
+
+  const successfulRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "CF-Connecting-IP": "198.51.100.10",
+    },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+      role: "admin",
+    }),
+  });
+  const successfulResponse = await workerFetch(successfulRequest, env);
+  assert.equal(successfulResponse.status, 201);
+  assert.equal(
+    await rateLimitKv.get("web_login_attempts:198.51.100.10:bootstrap"),
+    null,
+  );
+  assert.equal(
+    rateLimitKv.calls.some(
+      (entry) => entry.op === "delete" && entry.key === "web_login_attempts:198.51.100.10:bootstrap",
+    ),
+    true,
+  );
+});
+
+test("POST /web/auth/bootstrap returns conflict when bootstrap already executed", async () => {
+  const db = createMockDB({
+    webUsers: [
+      {
+        id: 1,
+        username: "existing_admin",
+        password_hash: "pbkdf2_sha256$100000$salt$hash",
+        role: "admin",
+      },
+    ],
+  });
+
+  const request = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "wrong-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+      role: "admin",
+    }),
+  });
+  const response = await workerFetch(request, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /bootstrap ya ejecutado/i);
 });
 
 test("POST /web/auth/login clears RATE_LIMIT_KV counter after successful login", async () => {

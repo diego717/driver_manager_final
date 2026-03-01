@@ -490,6 +490,10 @@ function buildWebLoginRateLimitIdentifier(request, username) {
   return `${getClientIpForRateLimit(request)}:${normalizeWebUsername(username)}`;
 }
 
+function buildWebBootstrapRateLimitIdentifier(request) {
+  return `${getClientIpForRateLimit(request)}:bootstrap`;
+}
+
 async function checkWebLoginRateLimit(env, identifier) {
   const kv = getRateLimitKv(env);
   if (!kv) return;
@@ -2341,6 +2345,14 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       );
     }
 
+    const rateLimitIdentifier = buildWebBootstrapRateLimitIdentifier(request);
+    await checkWebLoginRateLimit(env, rateLimitIdentifier);
+
+    const userCount = await countWebUsers(env);
+    if (userCount > 0) {
+      throw new HttpError(409, "Bootstrap ya ejecutado. La tabla web_users ya tiene usuarios.");
+    }
+
     let body = {};
     try {
       body = await request.json();
@@ -2353,12 +2365,8 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       throw new HttpError(400, "Campo 'bootstrap_password' es obligatorio.");
     }
     if (!timingSafeEqual(bootstrapPassword, String(env.WEB_LOGIN_PASSWORD))) {
+      await recordFailedWebLoginAttempt(env, rateLimitIdentifier);
       throw new HttpError(401, "Bootstrap password invalido.");
-    }
-
-    const userCount = await countWebUsers(env);
-    if (userCount > 0) {
-      throw new HttpError(409, "Bootstrap ya ejecutado. La tabla web_users ya tiene usuarios.");
     }
 
     const username = validateWebUsername(body?.username);
@@ -2366,6 +2374,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     const role = normalizeWebRole(body?.role || WEB_DEFAULT_ROLE);
     const tenantId = normalizeRealtimeTenantId(body?.tenant_id);
     const createdUser = await createWebUser(env, { username, password, role, tenantId });
+    await clearWebLoginRateLimit(env, rateLimitIdentifier);
 
     const sessionVersion = await rotateWebSessionVersion(env, Number(createdUser.id));
     const token = await buildWebAccessToken(env, {
@@ -3871,7 +3880,23 @@ export default {
         );
       }
 
-      return jsonResponse(request, env, corsPolicy,{ error: error.message }, 500);
+      console.error("[worker] unhandled error", {
+        method: request.method,
+        path: new URL(request.url).pathname,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+
+      return jsonResponse(request, env, corsPolicy,
+        {
+          success: false,
+          error: {
+            code: "INTERNAL_ERROR",
+            message: "Error interno del servidor.",
+          },
+        },
+        500,
+      );
     }
   },
 };
