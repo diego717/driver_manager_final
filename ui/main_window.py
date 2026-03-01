@@ -1,14 +1,15 @@
-
+﻿
 import sys
 import json
 import gc
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QTabWidget, QProgressBar, QMessageBox, QListWidgetItem, QLabel, QPushButton, QDialog, QGroupBox, QLineEdit, QInputDialog)
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+                             QTabWidget, QProgressBar, QMessageBox, QListWidgetItem, QLabel, QPushButton,
+                             QDialog, QGroupBox, QLineEdit, QInputDialog, QFileDialog)
+from PyQt6.QtCore import Qt, QObject, pyqtSignal, QRunnable, QThreadPool
+from PyQt6.QtGui import QFont, QPixmap, QIcon
 
 # Importar módulos personalizados
 from managers.cloud_manager import CloudflareR2Manager
@@ -29,6 +30,30 @@ from core.config_manager import ConfigManager
 from core.logger import get_logger
 
 logger = get_logger()
+
+
+class _ThumbnailWorkerSignals(QObject):
+    """Señales para carga asíncrona de miniaturas."""
+
+    loaded = pyqtSignal(int, bytes)
+    failed = pyqtSignal(int, str)
+
+
+class _ThumbnailWorker(QRunnable):
+    """Worker de fondo para descargar bytes de foto sin bloquear UI."""
+
+    def __init__(self, history, photo_id):
+        super().__init__()
+        self.history = history
+        self.photo_id = photo_id
+        self.signals = _ThumbnailWorkerSignals()
+
+    def run(self):
+        try:
+            photo_bytes, _content_type = self.history.get_photo_content(self.photo_id)
+            self.signals.loaded.emit(self.photo_id, photo_bytes)
+        except Exception as e:
+            self.signals.failed.emit(self.photo_id, str(e))
 
 
 
@@ -192,6 +217,10 @@ class MainWindow(QMainWindow):
         self.is_admin = False
         self.installation_start_time = None
         self._audit_logs_repair_attempted = False
+        self._photo_thumbnail_cache = {}
+        self._thumbnail_inflight = set()
+        self._thumbnail_item_map = {}
+        self._thumbnail_pool = QThreadPool.globalInstance()
         
         # Cache local
         if PORTABLE_MODE and PORTABLE_CONFIG:
@@ -258,11 +287,42 @@ class MainWindow(QMainWindow):
         
         # History tab
         self.history_tab.history_view_combo.currentTextChanged.connect(self.on_history_view_changed)
-        self.history_tab.history_list.currentItemChanged.connect(
-            lambda item: self.history_tab.edit_button.setEnabled(item is not None and self.is_admin)
-        )
+        self.history_tab.history_list.currentItemChanged.connect(self._on_history_item_changed)
         self.history_tab.create_manual_button.clicked.connect(self.create_manual_history_record)
         self.history_tab.edit_button.clicked.connect(self.show_edit_installation_dialog)
+        if hasattr(self.history_tab, "view_incidents_button"):
+            self.history_tab.view_incidents_button.clicked.connect(self.show_incidents_for_selected_record)
+        if hasattr(self.history_tab, "incidents_installations_list"):
+            self.history_tab.incidents_installations_list.currentItemChanged.connect(
+                self._on_incidents_installation_changed
+            )
+        if hasattr(self.history_tab, "incidents_list"):
+            self.history_tab.incidents_list.currentItemChanged.connect(self._on_incident_item_changed)
+        if hasattr(self.history_tab, "incident_photos_list"):
+            self.history_tab.incident_photos_list.itemDoubleClicked.connect(
+                lambda _item: self.view_selected_incident_photo()
+            )
+            self.history_tab.incident_photos_list.currentItemChanged.connect(
+                lambda current, _previous=None: self.history_tab.view_incident_photo_btn.setEnabled(current is not None)
+            )
+        if hasattr(self.history_tab, "refresh_incidents_view_btn"):
+            self.history_tab.refresh_incidents_view_btn.clicked.connect(self.refresh_incidents_view)
+        if hasattr(self.history_tab, "apply_incidents_filters_btn"):
+            self.history_tab.apply_incidents_filters_btn.clicked.connect(self.apply_incidents_filters)
+        if hasattr(self.history_tab, "incidents_severity_filter"):
+            self.history_tab.incidents_severity_filter.currentTextChanged.connect(
+                lambda _value: self.apply_incidents_filters()
+            )
+        if hasattr(self.history_tab, "incidents_period_filter"):
+            self.history_tab.incidents_period_filter.currentTextChanged.connect(
+                lambda _value: self.apply_incidents_filters()
+            )
+        if hasattr(self.history_tab, "create_incident_btn"):
+            self.history_tab.create_incident_btn.clicked.connect(self.create_incident_from_incidents_view)
+        if hasattr(self.history_tab, "upload_incident_photo_btn"):
+            self.history_tab.upload_incident_photo_btn.clicked.connect(self.upload_photo_for_selected_incident)
+        if hasattr(self.history_tab, "view_incident_photo_btn"):
+            self.history_tab.view_incident_photo_btn.clicked.connect(self.view_selected_incident_photo)
 
         # Conexiones para la pestaña de gestion de registros
         self.history_tab.management_history_list.currentItemChanged.connect(
@@ -477,28 +537,35 @@ class MainWindow(QMainWindow):
                 self.drivers_tab.drivers_list.addItem(item)
     
     def on_history_view_changed(self, view_name):
-        """Cambiar vista del historial"""
-        views = {
-            "Últimas Instalaciones": 0,
-            "Por Cliente": 1,
-            "Estadísticas": 2,
-            "Generar Reportes": 3,
-            "🗑️ Gestión de Registros": 4
-        }
-        self.history_tab.history_stack.setCurrentIndex(views.get(view_name, 0))
-        
-        # Actualizar vistas si se cambia a gestión de registros
-        if view_name == "🗑️ Gestión de Registros":
+        """Cambiar vista del historial."""
+        _ = view_name
+        current_index = self.history_tab.history_view_combo.currentIndex()
+        self.history_tab.history_stack.setCurrentIndex(current_index)
+
+        # 3: Incidencias, 4: Reportes, 5: Gestión de Registros
+        if current_index == 5:
             self._update_management_stats()
             self.refresh_history_view()
-        elif view_name == "Generar Reportes":
+        elif current_index == 4:
             self.report_handlers.refresh_reports_preview()
-    
+        elif current_index == 3:
+            self.refresh_incidents_view()
+
+    def _on_history_item_changed(self, item, _previous=None):
+        """Sincronizar estado de botones según selección de historial."""
+        has_selection = item is not None
+        self.history_tab.edit_button.setEnabled(has_selection and self.is_admin)
+        if hasattr(self.history_tab, "view_incidents_button"):
+            self.history_tab.view_incidents_button.setEnabled(has_selection)
+
     def refresh_history_view(self):
         """Actualizar vista actual del historial"""
         try:
             installations = self.history.get_installations(limit=10)
             self.history_tab.history_list.clear()
+            self.history_tab.edit_button.setEnabled(False)
+            if hasattr(self.history_tab, "view_incidents_button"):
+                self.history_tab.view_incidents_button.setEnabled(False)
             
             for inst in installations:
                 timestamp = datetime.fromisoformat(inst['timestamp'])
@@ -524,14 +591,354 @@ class MainWindow(QMainWindow):
             logger.error(f"Error cargando historial: {e}", exc_info=True)
     
     def refresh_current_history_view(self):
-        """Actualizar la vista actual del historial incluyendo estadísticas"""
-        current_view = self.history_tab.history_view_combo.currentText()
-        
-        if current_view == "🗑️ Gestión de Registros":
+        """Actualizar la vista actual del historial incluyendo estadísticas."""
+        current_index = self.history_tab.history_view_combo.currentIndex()
+
+        if current_index == 5:
             self._update_management_stats()
+        elif current_index == 3:
+            self.refresh_incidents_view()
         else:
             self.refresh_history_view()
-    
+
+    def _parse_limit_from_text(self, limit_text, default=10):
+        """Convertir etiqueta de límite a entero."""
+        if not limit_text:
+            return default
+        for token in ("10", "25", "50", "100", "200"):
+            if token in str(limit_text):
+                return int(token)
+        return default
+
+    def _parse_incident_datetime(self, raw_value):
+        """Parsear fecha ISO de incidente de manera tolerante."""
+        if not raw_value:
+            return None
+        raw = str(raw_value).strip()
+        if raw.endswith("Z"):
+            raw = f"{raw[:-1]}+00:00"
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        if dt.tzinfo is not None:
+            return dt.astimezone().replace(tzinfo=None)
+        return dt
+
+    def _period_days_from_text(self, period_text):
+        """Mapear etiqueta de periodo a días."""
+        label = str(period_text or "").strip().lower()
+        if "7" in label:
+            return 7
+        if "30" in label:
+            return 30
+        if "90" in label:
+            return 90
+        return None
+
+    def apply_incidents_filters(self):
+        """Aplicar filtros sobre incidencias de la instalación seleccionada."""
+        if not hasattr(self.history_tab, "incidents_installations_list"):
+            return
+        current_installation = self.history_tab.incidents_installations_list.currentItem()
+        self._on_incidents_installation_changed(current_installation)
+
+    def _build_photo_thumbnail_icon(self, photo_id):
+        """Obtener miniatura desde caché, sin bloquear UI."""
+        return self._photo_thumbnail_cache.get(photo_id)
+
+    def _icon_from_photo_bytes(self, photo_bytes):
+        """Crear QIcon thumbnail a partir de bytes de imagen."""
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(photo_bytes):
+            return None
+        thumb = pixmap.scaled(
+            96,
+            72,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        return QIcon(thumb)
+
+    def _queue_thumbnail_load(self, photo_id):
+        """Encolar descarga de miniatura si no está en caché ni en curso."""
+        if photo_id in self._photo_thumbnail_cache:
+            return
+        if photo_id in self._thumbnail_inflight:
+            return
+
+        self._thumbnail_inflight.add(photo_id)
+        worker = _ThumbnailWorker(self.history, photo_id)
+        worker.signals.loaded.connect(self._on_thumbnail_loaded)
+        worker.signals.failed.connect(self._on_thumbnail_failed)
+        self._thumbnail_pool.start(worker)
+
+    def _on_thumbnail_loaded(self, photo_id, photo_bytes):
+        """Aplicar miniatura descargada en segundo plano."""
+        self._thumbnail_inflight.discard(photo_id)
+        icon = self._icon_from_photo_bytes(photo_bytes)
+        if icon is None:
+            return
+
+        self._photo_thumbnail_cache[photo_id] = icon
+        item = self._thumbnail_item_map.get(photo_id)
+        if item is None:
+            return
+
+        try:
+            if self.history_tab.incident_photos_list.row(item) >= 0:
+                item.setIcon(icon)
+        except Exception:
+            # Si la lista cambió mientras cargaba la miniatura, no hacemos nada.
+            pass
+
+    def _on_thumbnail_failed(self, photo_id, _error):
+        """Liberar estado de tareas fallidas para permitir reintento."""
+        self._thumbnail_inflight.discard(photo_id)
+
+    def refresh_incidents_view(self, preferred_record_id=None):
+        """Cargar instalaciones para la vista de incidencias."""
+        if not hasattr(self.history_tab, "incidents_installations_list"):
+            return
+
+        current_item = self.history_tab.incidents_installations_list.currentItem()
+        if preferred_record_id is None and current_item is not None:
+            current_data = current_item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(current_data, dict):
+                preferred_record_id = current_data.get("id")
+
+        limit_text = self.history_tab.incidents_installations_limit.currentText()
+        limit = self._parse_limit_from_text(limit_text, default=25)
+
+        self.history_tab.incidents_installations_list.clear()
+        self.history_tab.incidents_list.clear()
+        self.history_tab.incident_photos_list.clear()
+        self._thumbnail_item_map.clear()
+        self.history_tab.incident_detail.clear()
+        self.history_tab.upload_incident_photo_btn.setEnabled(False)
+        self.history_tab.view_incident_photo_btn.setEnabled(False)
+        if hasattr(self.history_tab, "create_incident_btn"):
+            self.history_tab.create_incident_btn.setEnabled(False)
+
+        try:
+            installations = self.history.get_installations(limit=limit)
+        except Exception as e:
+            self.history_tab.incident_detail.setText(f"Error cargando instalaciones: {e}")
+            return
+
+        selected_item = None
+        for inst in installations:
+            timestamp_raw = inst.get("timestamp")
+            date_str = str(timestamp_raw or "")
+            try:
+                date_str = datetime.fromisoformat(str(timestamp_raw)).strftime("%d/%m/%Y %H:%M")
+            except Exception:
+                pass
+
+            status = (inst.get("status") or "").lower()
+            if status == "success":
+                status_icon = "✓"
+            elif status == "failed":
+                status_icon = "✗"
+            else:
+                status_icon = "•"
+
+            record_id = inst.get("id")
+            brand = inst.get("driver_brand") or "N/A"
+            version = inst.get("driver_version") or "N/A"
+            client = inst.get("client_name") or "Sin cliente"
+            text = f"#{record_id} {status_icon} {date_str} - {brand} v{version} ({client})"
+
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, inst)
+            self.history_tab.incidents_installations_list.addItem(item)
+
+            if preferred_record_id is not None and record_id == preferred_record_id:
+                selected_item = item
+
+        if selected_item is not None:
+            self.history_tab.incidents_installations_list.setCurrentItem(selected_item)
+        elif self.history_tab.incidents_installations_list.count() > 0:
+            self.history_tab.incidents_installations_list.setCurrentRow(0)
+        else:
+            self.history_tab.incident_detail.setText("No hay instalaciones para mostrar en este rango.")
+
+    def _on_incidents_installation_changed(self, current, _previous=None):
+        """Recargar incidencias cuando cambia la instalación seleccionada."""
+        self.history_tab.incidents_list.clear()
+        self.history_tab.incident_photos_list.clear()
+        self._thumbnail_item_map.clear()
+        self.history_tab.incident_detail.clear()
+        self.history_tab.upload_incident_photo_btn.setEnabled(False)
+        self.history_tab.view_incident_photo_btn.setEnabled(False)
+
+        has_installation = current is not None
+        if hasattr(self.history_tab, "create_incident_btn"):
+            self.history_tab.create_incident_btn.setEnabled(has_installation)
+        if not has_installation:
+            return
+
+        installation = current.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(installation, dict):
+            return
+
+        record_id = installation.get("id")
+        if record_id is None:
+            return
+
+        try:
+            incidents = self.history.get_incidents_for_installation(record_id)
+        except Exception as e:
+            self.history_tab.incident_detail.setText(f"Error cargando incidencias: {e}")
+            return
+
+        severity_filter = "todas"
+        if hasattr(self.history_tab, "incidents_severity_filter"):
+            severity_filter = str(self.history_tab.incidents_severity_filter.currentText() or "Todas").strip().lower()
+
+        period_days = None
+        if hasattr(self.history_tab, "incidents_period_filter"):
+            period_days = self._period_days_from_text(self.history_tab.incidents_period_filter.currentText())
+
+        cutoff = None
+        if period_days is not None:
+            cutoff = datetime.now() - timedelta(days=period_days)
+
+        filtered_incidents = []
+        for incident in incidents:
+            incident_severity = str(incident.get("severity") or "").strip().lower()
+            if severity_filter != "todas" and incident_severity != severity_filter:
+                continue
+
+            if cutoff is not None:
+                incident_dt = self._parse_incident_datetime(incident.get("created_at"))
+                if incident_dt is None or incident_dt < cutoff:
+                    continue
+
+            filtered_incidents.append(incident)
+            incident_id = incident.get("id")
+            severity = str(incident.get("severity") or "N/A").upper()
+            created_at = str(incident.get("created_at") or "")
+            note_preview = (incident.get("note") or "").strip().replace("\n", " ")
+            if len(note_preview) > 80:
+                note_preview = note_preview[:77] + "..."
+            text = f"#{incident_id} [{severity}] {created_at} - {note_preview or 'Sin nota'}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, incident)
+            self.history_tab.incidents_list.addItem(item)
+
+        if self.history_tab.incidents_list.count() > 0:
+            self.history_tab.incidents_list.setCurrentRow(0)
+        else:
+            if incidents and not filtered_incidents:
+                self.history_tab.incident_detail.setText(
+                    "No hay incidencias que coincidan con los filtros actuales."
+                )
+            else:
+                self.history_tab.incident_detail.setText(
+                    f"No hay incidencias para la instalación #{record_id}."
+                )
+
+    def _on_incident_item_changed(self, current, _previous=None):
+        """Actualizar detalle y fotos según la incidencia seleccionada."""
+        self.history_tab.incident_photos_list.clear()
+        self._thumbnail_item_map.clear()
+        self.history_tab.view_incident_photo_btn.setEnabled(False)
+        self.history_tab.upload_incident_photo_btn.setEnabled(current is not None)
+
+        if current is None:
+            self.history_tab.incident_detail.clear()
+            return
+
+        incident = current.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(incident, dict):
+            self.history_tab.incident_detail.clear()
+            return
+
+        photos = incident.get("photos") or []
+        details = (
+            f"ID: {incident.get('id')}\n"
+            f"Instalación: {incident.get('installation_id')}\n"
+            f"Severidad: {incident.get('severity')}\n"
+            f"Reportado por: {incident.get('reporter_username')}\n"
+            f"Origen: {incident.get('source')}\n"
+            f"Ajuste tiempo (s): {incident.get('time_adjustment_seconds')}\n"
+            f"Fecha: {incident.get('created_at')}\n"
+            f"Fotos: {len(photos)}\n\n"
+            f"Nota:\n{incident.get('note') or ''}"
+        )
+        self.history_tab.incident_detail.setText(details)
+
+        for photo in photos:
+            photo_id = photo.get("id")
+            file_name = photo.get("file_name") or f"photo_{photo_id}"
+            content_type = photo.get("content_type") or "image/*"
+            label = f"#{photo_id} - {file_name} ({content_type})"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, photo)
+            if photo_id is not None:
+                icon = self._build_photo_thumbnail_icon(photo_id)
+                if icon is not None:
+                    item.setIcon(icon)
+                else:
+                    self._queue_thumbnail_load(photo_id)
+                self._thumbnail_item_map[photo_id] = item
+            created_at = photo.get("created_at")
+            if created_at:
+                item.setToolTip(f"Fecha: {created_at}")
+            self.history_tab.incident_photos_list.addItem(item)
+
+        if self.history_tab.incident_photos_list.count() > 0:
+            self.history_tab.incident_photos_list.setCurrentRow(0)
+            self.history_tab.view_incident_photo_btn.setEnabled(True)
+
+    def create_incident_from_incidents_view(self):
+        """Crear incidencia usando la instalación seleccionada en el panel."""
+        current_installation = self.history_tab.incidents_installations_list.currentItem()
+        if current_installation is None:
+            QMessageBox.warning(self, "Atención", "Selecciona una instalación primero.")
+            return
+
+        installation = current_installation.data(Qt.ItemDataRole.UserRole)
+        record_id = installation.get("id") if isinstance(installation, dict) else None
+        if record_id is None:
+            QMessageBox.warning(self, "Error", "No se pudo obtener el ID de instalación.")
+            return
+
+        self.create_incident_for_record(record_id)
+
+    def upload_photo_for_selected_incident(self):
+        """Subir foto para la incidencia seleccionada en el panel."""
+        current_incident = self.history_tab.incidents_list.currentItem()
+        if current_incident is None:
+            QMessageBox.warning(self, "Atención", "Selecciona una incidencia primero.")
+            return
+
+        incident = current_incident.data(Qt.ItemDataRole.UserRole)
+        incident_id = incident.get("id") if isinstance(incident, dict) else None
+        if incident_id is None:
+            QMessageBox.warning(self, "Error", "No se pudo obtener el ID de incidencia.")
+            return
+
+        self._upload_photo_for_incident(incident_id)
+        current_installation = self.history_tab.incidents_installations_list.currentItem()
+        self._on_incidents_installation_changed(current_installation)
+
+    def view_selected_incident_photo(self):
+        """Abrir la foto seleccionada en el visor."""
+        current_photo = self.history_tab.incident_photos_list.currentItem()
+        if current_photo is None:
+            QMessageBox.information(self, "Sin foto", "Selecciona una foto de la lista.")
+            return
+
+        photo = current_photo.data(Qt.ItemDataRole.UserRole)
+        photo_id = photo.get("id") if isinstance(photo, dict) else None
+        if photo_id is None:
+            QMessageBox.warning(self, "Error", "No se pudo obtener el ID de la foto.")
+            return
+
+        self._open_photo_viewer(photo_id, current_photo.text())
+
     def _update_management_stats(self):
         """Actualizar estadísticas y logs en la vista de gestión de registros"""
         try:
@@ -743,6 +1150,214 @@ class MainWindow(QMainWindow):
                     details={"status": status},
                 )
 
+    def show_incidents_for_selected_record(self):
+        """Navegar al panel de incidencias con el registro seleccionado."""
+        selected_items = self.history_tab.history_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "Atención", "Selecciona un registro del historial primero.")
+            return
+
+        record_id = selected_items[0].data(Qt.ItemDataRole.UserRole)
+        if record_id is None:
+            QMessageBox.warning(self, "Error", "No se pudo obtener el ID del registro.")
+            return
+
+        if self.history_tab.history_view_combo.count() >= 4:
+            self.history_tab.history_view_combo.setCurrentIndex(3)
+        self.refresh_incidents_view(preferred_record_id=record_id)
+
+    def create_incident_for_record(self, record_id):
+        """Crear una incidencia nueva para un registro existente."""
+        note, ok = QInputDialog.getMultiLineText(
+            self,
+            f"Nueva incidencia para instalación #{record_id}",
+            "Detalle de la incidencia:",
+            "",
+        )
+        if not ok:
+            return
+        note = (note or "").strip()
+        if not note:
+            QMessageBox.warning(self, "Atención", "La incidencia requiere un detalle.")
+            return
+
+        severity, ok = QInputDialog.getItem(
+            self,
+            "Severidad",
+            "Selecciona severidad:",
+            ["low", "medium", "high", "critical"],
+            1,
+            False,
+        )
+        if not ok:
+            return
+
+        adjust_text, ok = QInputDialog.getText(
+            self,
+            "Ajuste de tiempo",
+            "Segundos a ajustar (puede ser negativo):",
+            text="0",
+        )
+        if not ok:
+            return
+
+        try:
+            time_adjustment = int((adjust_text or "0").strip())
+        except ValueError:
+            QMessageBox.warning(self, "Error", "El ajuste de tiempo debe ser un número entero.")
+            return
+
+        apply_item, ok = QInputDialog.getItem(
+            self,
+            "Aplicar a instalación",
+            "¿Aplicar nota/tiempo al registro de instalación?",
+            ["No", "Sí"],
+            0,
+            False,
+        )
+        if not ok:
+            return
+
+        reporter = "desktop"
+        if self.user_manager and self.user_manager.current_user:
+            reporter = self.user_manager.current_user.get("username", "desktop")
+
+        try:
+            incident = self.history.create_incident(
+                installation_id=record_id,
+                note=note,
+                severity=severity,
+                reporter_username=reporter,
+                time_adjustment_seconds=time_adjustment,
+                apply_to_installation=(apply_item == "Sí"),
+                source="desktop",
+            )
+            incident_id = incident.get("id") if isinstance(incident, dict) else None
+            msg = "Incidencia creada correctamente."
+            if incident_id:
+                msg += f"\nID: {incident_id}"
+            QMessageBox.information(self, "Éxito", msg)
+            self.refresh_history_view()
+            if hasattr(self.history_tab, "incidents_installations_list"):
+                self.refresh_incidents_view(preferred_record_id=record_id)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo crear la incidencia:\n{e}")
+
+    def _show_incident_details(self, incident):
+        """Mostrar detalle de incidencia en una ventana simple."""
+        photos_count = len(incident.get("photos") or [])
+        details = (
+            f"ID: {incident.get('id')}\n"
+            f"Instalación: {incident.get('installation_id')}\n"
+            f"Severidad: {incident.get('severity')}\n"
+            f"Reportado por: {incident.get('reporter_username')}\n"
+            f"Origen: {incident.get('source')}\n"
+            f"Ajuste tiempo (s): {incident.get('time_adjustment_seconds')}\n"
+            f"Fecha: {incident.get('created_at')}\n"
+            f"Fotos: {photos_count}\n\n"
+            f"Nota:\n{incident.get('note') or ''}"
+        )
+        QMessageBox.information(self, f"Incidencia #{incident.get('id')}", details)
+
+    def _select_incident_photo(self, incident):
+        """Elegir y abrir una foto de incidencia."""
+        photos = incident.get("photos") or []
+        if not photos:
+            QMessageBox.information(self, "Sin fotos", "Esta incidencia no tiene fotos asociadas.")
+            return
+
+        choices = []
+        photo_map = {}
+        for photo in photos:
+            photo_id = photo.get("id")
+            file_name = photo.get("file_name") or f"photo_{photo_id}"
+            content_type = photo.get("content_type") or "image/*"
+            choice = f"#{photo_id} - {file_name} ({content_type})"
+            choices.append(choice)
+            photo_map[choice] = photo
+
+        selected_photo, ok = QInputDialog.getItem(
+            self,
+            f"Fotos de incidencia #{incident.get('id')}",
+            "Selecciona foto:",
+            choices,
+            0,
+            False,
+        )
+        if not ok:
+            return
+
+        photo = photo_map.get(selected_photo)
+        photo_id = photo.get("id") if photo else None
+        if photo_id is None:
+            QMessageBox.warning(self, "Error", "No se pudo obtener el ID de la foto.")
+            return
+        self._open_photo_viewer(photo_id, selected_photo)
+
+    def _open_photo_viewer(self, photo_id, title):
+        """Descargar y mostrar foto de incidencia."""
+        try:
+            photo_bytes, _content_type = self.history.get_photo_content(photo_id)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo descargar la foto #{photo_id}:\n{e}")
+            return
+
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(photo_bytes):
+            QMessageBox.warning(
+                self,
+                "Formato no soportado",
+                "No se pudo renderizar la imagen en el visor de Qt.",
+            )
+            return
+
+        viewer = QDialog(self)
+        viewer.setWindowTitle(f"Foto {title}")
+        viewer.resize(920, 700)
+
+        layout = QVBoxLayout(viewer)
+        image_label = QLabel()
+        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        image_label.setPixmap(
+            pixmap.scaled(
+                880,
+                620,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        layout.addWidget(image_label)
+
+        close_btn = QPushButton("Cerrar")
+        close_btn.clicked.connect(viewer.accept)
+        layout.addWidget(close_btn)
+        viewer.exec()
+
+    def _upload_photo_for_incident(self, incident_id):
+        """Subir foto a una incidencia existente."""
+        if incident_id is None:
+            QMessageBox.warning(self, "Error", "Incidencia inválida.")
+            return
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Subir foto a incidencia #{incident_id}",
+            "",
+            "Imágenes (*.jpg *.jpeg *.png *.webp)",
+        )
+        if not file_path:
+            return
+
+        try:
+            photo = self.history.upload_incident_photo(incident_id, file_path)
+            photo_id = photo.get("id") if isinstance(photo, dict) else None
+            msg = "Foto subida correctamente."
+            if photo_id:
+                msg += f"\nID: {photo_id}"
+            QMessageBox.information(self, "Éxito", msg)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo subir la foto:\n{e}")
+
     def refresh_audit_logs(self):
         """Actualizar la lista de logs de auditoría"""
         self.history_tab.audit_log_list.clear()
@@ -879,7 +1494,6 @@ class MainWindow(QMainWindow):
     
     def select_driver_file(self):
         """Seleccionar archivo de driver"""
-        from PyQt6.QtWidgets import QFileDialog
         from pathlib import Path
         
         file_path, _ = QFileDialog.getOpenFileName(
@@ -1275,3 +1889,8 @@ class MainWindow(QMainWindow):
         if self.theme_manager.set_theme(theme_name):
             self.apply_theme()
             self.statusBar().showMessage(f"✨ Tema cambiado a: {theme_text}")
+
+
+
+
+

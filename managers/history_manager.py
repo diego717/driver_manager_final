@@ -441,7 +441,15 @@ class InstallationHistory:
             raise ValueError(f"ID inválido: {record_id}")
         return int(raw_id)
     
-    def _make_request(self, method, endpoint, params=None, **kwargs):
+    def _make_request(
+        self,
+        method,
+        endpoint,
+        params=None,
+        expect_json=True,
+        extra_headers=None,
+        **kwargs,
+    ):
         """
         Realizar solicitud HTTP con autenticación y validación.
         
@@ -493,6 +501,8 @@ class InstallationHistory:
 
         # Generar headers con autenticación
         headers = self._get_headers(method, path, body_hash)
+        if extra_headers:
+            headers.update(extra_headers)
         
         try:
             response = requests.request(
@@ -504,7 +514,9 @@ class InstallationHistory:
                 **kwargs
             )
             response.raise_for_status()
-            return response.json() if response.content else None
+            if expect_json:
+                return response.json() if response.content else None
+            return response
             
         except requests.exceptions.Timeout:
             logger.error(f"Request timeout: {url}")
@@ -766,6 +778,91 @@ class InstallationHistory:
         except ConnectionError as e:
             logger.error(f"Failed to delete installation {normalized_record_id}: {e}")
             return False
+
+    def _guess_image_content_type(self, file_path):
+        """Determinar content type de imagen por extensión."""
+        suffix = Path(file_path).suffix.lower()
+        if suffix in (".jpg", ".jpeg"):
+            return "image/jpeg"
+        if suffix == ".png":
+            return "image/png"
+        if suffix == ".webp":
+            return "image/webp"
+        raise ValueError("Formato no soportado. Usa JPG, PNG o WEBP.")
+
+    def get_incidents_for_installation(self, installation_id):
+        """Listar incidencias (con fotos) asociadas a una instalación."""
+        normalized_id = self._validate_record_id(installation_id)
+        payload = self._make_request("get", f"installations/{normalized_id}/incidents")
+        if isinstance(payload, dict):
+            return payload.get("incidents", []) or []
+        return []
+
+    def create_incident(
+        self,
+        installation_id,
+        note,
+        severity="medium",
+        reporter_username="desktop",
+        time_adjustment_seconds=0,
+        apply_to_installation=False,
+        source="desktop",
+    ):
+        """Crear incidencia para una instalación existente."""
+        normalized_id = self._validate_record_id(installation_id)
+        payload = {
+            "reporter_username": str(reporter_username or "desktop"),
+            "note": str(note or "").strip(),
+            "severity": str(severity or "medium"),
+            "time_adjustment_seconds": int(time_adjustment_seconds or 0),
+            "apply_to_installation": bool(apply_to_installation),
+            "source": str(source or "desktop"),
+        }
+        if not payload["note"]:
+            raise ValueError("La incidencia requiere una nota/descripción.")
+        result = self._make_request(
+            "post",
+            f"installations/{normalized_id}/incidents",
+            json=payload,
+        )
+        if isinstance(result, dict):
+            return result.get("incident")
+        return None
+
+    def upload_incident_photo(self, incident_id, file_path):
+        """Subir foto de evidencia a una incidencia."""
+        normalized_incident_id = self._validate_record_id(incident_id)
+        file_to_upload = Path(file_path)
+        if not file_to_upload.exists() or not file_to_upload.is_file():
+            raise FileNotFoundError(f"No se encontró el archivo: {file_path}")
+
+        content_type = self._guess_image_content_type(file_to_upload)
+        binary_data = file_to_upload.read_bytes()
+        if len(binary_data) < 1024:
+            raise ValueError("La imagen es demasiado pequeña o está corrupta.")
+
+        result = self._make_request(
+            "post",
+            f"incidents/{normalized_incident_id}/photos",
+            data=binary_data,
+            extra_headers={
+                "Content-Type": content_type,
+                "X-File-Name": file_to_upload.name,
+            },
+        )
+        if isinstance(result, dict):
+            return result.get("photo")
+        return None
+
+    def get_photo_content(self, photo_id):
+        """Descargar bytes de una foto de incidencia para mostrarla en UI."""
+        normalized_photo_id = self._validate_record_id(photo_id)
+        response = self._make_request(
+            "get",
+            f"photos/{normalized_photo_id}",
+            expect_json=False,
+        )
+        return response.content, response.headers.get("Content-Type", "image/jpeg")
     
     def get_statistics(self, start_date=None, end_date=None):
         """

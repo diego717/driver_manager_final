@@ -20,130 +20,130 @@ class ThemeManager:
             "light": {
                 "name": "Tema Claro",
                 "colors": {
-                    # Colores principales
-                    "background": "#FFFFFF",
-                    "surface": "#F8F9FA",
-                    "primary": "#2C3E50",
-                    "secondary": "#34495E",
-                    "accent": "#3498DB",
+                    # Colores principales (Stitch v1)
+                    "background": "#f5f7fa",  # --bg-primary
+                    "surface": "#ffffff",     # --bg-secondary
+                    "primary": "#1a1d23",     # --text-primary
+                    "secondary": "#5f6b7a",   # --text-secondary
+                    "accent": "#0f756d",      # --accent-primary
                     
                     # Texto
-                    "text_primary": "#2C3E50",
-                    "text_secondary": "#5D6D7E",
-                    "text_muted": "#85929E",
-                    "text_inverse": "#FFFFFF",
+                    "text_primary": "#1a1d23",
+                    "text_secondary": "#5f6b7a",
+                    "text_muted": "#8b93a5",
+                    "text_inverse": "#ffffff",
                     
                     # Estados
-                    "success": "#27AE60",
-                    "warning": "#F39C12",
-                    "error": "#E74C3C",
-                    "info": "#3498DB",
+                    "success": "#0d9f6e",
+                    "warning": "#d97706",
+                    "error": "#dc2626",
+                    "info": "#2563eb",
                     
                     # Bordes y separadores
-                    "border": "#BDC3C7",
-                    "border_light": "#ECF0F1",
-                    "separator": "#D5DBDB",
+                    "border": "#dce1e8",
+                    "border_light": "#f0f2f5", # --bg-card
+                    "separator": "#e4e7ec",    # --bg-hover
                     
                     # Botones
-                    "button_primary": "#3498DB",
-                    "button_primary_hover": "#2980B9",
-                    "button_secondary": "#95A5A6",
-                    "button_secondary_hover": "#7F8C8D",
-                    "button_success": "#27AE60",
-                    "button_success_hover": "#229954",
-                    "button_warning": "#F39C12",
-                    "button_warning_hover": "#E67E22",
-                    "button_danger": "#E74C3C",
-                    "button_danger_hover": "#C0392B",
+                    "button_primary": "#0f756d",
+                    "button_primary_hover": "#14a89e", # --accent-secondary
+                    "button_secondary": "#e4e7ec",
+                    "button_secondary_hover": "#dce1e8",
+                    "button_success": "#0d9f6e",
+                    "button_success_hover": "#10b981",
+                    "button_warning": "#d97706",
+                    "button_warning_hover": "#f59e0b",
+                    "button_danger": "#dc2626",
+                    "button_danger_hover": "#ef4444",
                     
                     # Inputs
-                    "input_background": "#FFFFFF",
-                    "input_border": "#BDC3C7",
-                    "input_border_focus": "#3498DB",
-                    "input_text": "#2C3E50",
+                    "input_background": "#ffffff",
+                    "input_border": "#dce1e8",
+                    "input_border_focus": "#0f756d",
+                    "input_text": "#1a1d23",
                     
                     # Tablas y listas
-                    "table_header": "#ECF0F1",
-                    "table_row_even": "#FFFFFF",
-                    "table_row_odd": "#F8F9FA",
-                    "table_row_hover": "#EBF5FF",
-                    "table_selected": "#D6EAF8",
+                    "table_header": "#f5f7fa",
+                    "table_row_even": "#ffffff",
+                    "table_row_odd": "#f5f7fa",
+                    "table_row_hover": "#e4e7ec",
+                    "table_selected": "rgba(15, 117, 109, 0.08)", # --sidebar-active-bg
                     
-                    # Paneles especiales
-                    "panel_info": "#EBF5FF",
-                    "panel_success": "#E8F8F5",
-                    "panel_warning": "#FEF9E7",
-                    "panel_error": "#FDEDEC",
+                    # Paneles especiales (con alpha blends sugeridos)
+                    "panel_info": "rgba(37, 99, 235, 0.1)",
+                    "panel_success": "rgba(13, 159, 110, 0.1)",
+                    "panel_warning": "rgba(217, 119, 6, 0.1)",
+                    "panel_error": "rgba(220, 38, 38, 0.1)",
                     
                     # Estadísticas (contraste mejorado)
-                    "stats_background": "#F8F9FA",
-                    "stats_text": "#2C3E50",
-                    "stats_border": "#D5DBDB"
+                    "stats_background": "#ffffff",
+                    "stats_text": "#1a1d23",
+                    "stats_border": "#dce1e8"
                 }
             },
             
             "dark": {
                 "name": "Tema Oscuro",
                 "colors": {
-                    # Colores principales
-                    "background": "#1E1E1E",
-                    "surface": "#2D2D30",
-                    "primary": "#E8E8E8",
-                    "secondary": "#CCCCCC",
-                    "accent": "#4FC3F7",
+                    # Colores principales (Stitch v1)
+                    "background": "#0f1117",  # --bg-primary
+                    "surface": "#1a1d27",     # --bg-secondary
+                    "primary": "#eef0f4",     # --text-primary
+                    "secondary": "#8b93a5",   # --text-secondary
+                    "accent": "#14a89e",      # --accent-primary
                     
                     # Texto
-                    "text_primary": "#E8E8E8",
-                    "text_secondary": "#CCCCCC",
-                    "text_muted": "#999999",
-                    "text_inverse": "#1E1E1E",
+                    "text_primary": "#eef0f4",
+                    "text_secondary": "#8b93a5",
+                    "text_muted": "#5f6b7a",
+                    "text_inverse": "#0f1117",
                     
                     # Estados
-                    "success": "#4CAF50",
-                    "warning": "#FF9800",
-                    "error": "#F44336",
-                    "info": "#2196F3",
+                    "success": "#10b981",
+                    "warning": "#f59e0b",
+                    "error": "#ef4444",
+                    "info": "#3b82f6",
                     
                     # Bordes y separadores
-                    "border": "#404040",
-                    "border_light": "#333333",
-                    "separator": "#404040",
+                    "border": "#2e3240",
+                    "border_light": "#242833", # --bg-card
+                    "separator": "#2e3240",    # --bg-hover
                     
                     # Botones
-                    "button_primary": "#2196F3",
-                    "button_primary_hover": "#1976D2",
-                    "button_secondary": "#616161",
-                    "button_secondary_hover": "#424242",
-                    "button_success": "#4CAF50",
-                    "button_success_hover": "#388E3C",
-                    "button_warning": "#FF9800",
-                    "button_warning_hover": "#F57C00",
-                    "button_danger": "#F44336",
-                    "button_danger_hover": "#D32F2F",
+                    "button_primary": "#14a89e",
+                    "button_primary_hover": "#2dd4c0", # equivalent --accent-secondary/gradient
+                    "button_secondary": "#242833",
+                    "button_secondary_hover": "#2e3240",
+                    "button_success": "#10b981",
+                    "button_success_hover": "#34d399",
+                    "button_warning": "#f59e0b",
+                    "button_warning_hover": "#fbbf24",
+                    "button_danger": "#ef4444",
+                    "button_danger_hover": "#f87171",
                     
                     # Inputs
-                    "input_background": "#2D2D30",
-                    "input_border": "#404040",
-                    "input_border_focus": "#4FC3F7",
-                    "input_text": "#E8E8E8",
+                    "input_background": "#1a1d27",
+                    "input_border": "#2e3240",
+                    "input_border_focus": "#14a89e",
+                    "input_text": "#eef0f4",
                     
                     # Tablas y listas
-                    "table_header": "#333333",
-                    "table_row_even": "#2D2D30",
-                    "table_row_odd": "#252526",
-                    "table_row_hover": "#094771",
-                    "table_selected": "#0E4F79",
+                    "table_header": "#0f1117",
+                    "table_row_even": "#1a1d27",
+                    "table_row_odd": "#0f1117",
+                    "table_row_hover": "#2e3240",
+                    "table_selected": "rgba(20, 168, 158, 0.12)", # --sidebar-active-bg
                     
                     # Paneles especiales
-                    "panel_info": "#0D47A1",
-                    "panel_success": "#1B5E20",
-                    "panel_warning": "#E65100",
-                    "panel_error": "#B71C1C",
+                    "panel_info": "rgba(59, 130, 246, 0.15)",
+                    "panel_success": "rgba(16, 185, 129, 0.15)",
+                    "panel_warning": "rgba(245, 158, 11, 0.15)",
+                    "panel_error": "rgba(239, 68, 68, 0.15)",
                     
                     # Estadísticas (contraste mejorado)
-                    "stats_background": "#2D2D30",
-                    "stats_text": "#E8E8E8",
-                    "stats_border": "#404040"
+                    "stats_background": "#1a1d27",
+                    "stats_text": "#eef0f4",
+                    "stats_border": "#2e3240"
                 }
             }
         }
@@ -177,17 +177,20 @@ class ThemeManager:
         QMainWindow {{
             background-color: {colors['background']};
             color: {colors['text_primary']};
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
         }}
         
         QWidget {{
             background-color: {colors['background']};
             color: {colors['text_primary']};
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
         }}
         
         /* Tabs */
         QTabWidget::pane {{
             border: 1px solid {colors['border']};
             background-color: {colors['surface']};
+            border-radius: 12px;
         }}
         
         QTabBar::tab {{
@@ -263,9 +266,9 @@ class ThemeManager:
         QLineEdit, QTextEdit, QComboBox {{
             background-color: {colors['input_background']};
             color: {colors['input_text']};
-            border: 2px solid {colors['input_border']};
-            border-radius: 4px;
-            padding: 6px;
+            border: 1px solid {colors['input_border']};
+            border-radius: 8px;
+            padding: 8px 12px;
         }}
         
         QLineEdit:focus, QTextEdit:focus, QComboBox:focus {{
@@ -278,6 +281,7 @@ class ThemeManager:
             color: {colors['text_primary']};
             border: 1px solid {colors['border']};
             alternate-background-color: {colors['table_row_odd']};
+            border-radius: 12px;
         }}
         
         QListWidget::item, QTableWidget::item {{
@@ -304,11 +308,12 @@ class ThemeManager:
         /* GroupBox */
         QGroupBox {{
             font-weight: bold;
-            border: 2px solid {colors['border']};
-            border-radius: 5px;
-            margin-top: 10px;
-            padding-top: 10px;
+            border: 1px solid {colors['border']};
+            border-radius: 12px;
+            margin-top: 12px;
+            padding-top: 12px;
             color: {colors['text_primary']};
+            background-color: {colors['surface']};
         }}
         
         QGroupBox::title {{
@@ -339,9 +344,9 @@ class ThemeManager:
         QLabel[class="info"] {{
             background-color: {colors['panel_info']};
             color: {colors['text_primary']};
-            padding: 10px;
-            border-radius: 4px;
-            border: 1px solid {colors['border']};
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid {colors['info']};
         }}
         
         QLabel[class="success"] {{

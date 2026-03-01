@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QListWidget, QLabel, QLineEdit, QComboBox, QTextEdit,
                              QListWidgetItem, QGroupBox, QStackedWidget, QDialog,
                              QSpinBox, QDialogButtonBox, QInputDialog, QMessageBox)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QFont
 
 from core.logger import get_logger
@@ -95,21 +95,6 @@ class DriversTab(QWidget):
     def _create_drag_drop_upload_section(self, layout):
         """Crear sección de upload con drag & drop"""
         upload_group = QGroupBox("☁️ Subir Nuevo Driver")
-        upload_group.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                border: 2px solid #27AE60;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-                color: #27AE60;
-            }
-        """)
         upload_layout = QVBoxLayout()
         
         instructions = QLabel(
@@ -118,15 +103,7 @@ class DriversTab(QWidget):
             "• Haz clic en la zona para abrir el explorador de archivos"
         )
         instructions.setWordWrap(True)
-        instructions.setStyleSheet("""
-            QLabel {
-                background-color: #E8F8F5;
-                color: #117A65;
-                padding: 10px;
-                border-radius: 5px;
-                border: 1px solid #A9DFBF;
-            }
-        """)
+        instructions.setProperty("class", "info")
         upload_layout.addWidget(instructions)
         
         self.drop_zone = DropZoneWidget(
@@ -240,6 +217,7 @@ class HistoryTab(QWidget):
             "Últimas Instalaciones",
             "Por Cliente", 
             "Estadísticas",
+            "⚠️ Incidencias",
             "Generar Reportes",
             "🗑️ Gestión de Registros"
         ])
@@ -289,6 +267,13 @@ class HistoryTab(QWidget):
         self.edit_button = QPushButton("📝 Editar Registro")
         self.edit_button.setEnabled(False)
         actions_layout.addWidget(self.edit_button)
+
+        self.view_incidents_button = QPushButton("⚠️ Incidencias/Fotos")
+        self.view_incidents_button.setEnabled(False)
+        self.view_incidents_button.setToolTip(
+            "Ver incidencias asociadas al registro seleccionado, crear nuevas y abrir fotos"
+        )
+        actions_layout.addWidget(self.view_incidents_button)
         actions_layout.addStretch()
         inst_layout.addLayout(actions_layout)
         
@@ -299,11 +284,104 @@ class HistoryTab(QWidget):
             widget = QLabel(f"Vista de {name.lower()} - en desarrollo")
             self.history_stack.addWidget(widget)
         
+        # Vista de incidencias
+        self._create_incidents_view()
+
         # Vista de reportes
         self._create_reports_view()
         
         # Vista de gestión
         self._create_management_view()
+
+    def _create_incidents_view(self):
+        """Crear vista dedicada a incidencias y fotos."""
+        incidents_widget = QWidget()
+        incidents_layout = QVBoxLayout(incidents_widget)
+
+        title = QLabel("⚠️ Incidencias y Evidencias")
+        title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        incidents_layout.addWidget(title)
+
+        controls_layout = QHBoxLayout()
+        controls_layout.addWidget(QLabel("Instalaciones:"))
+        self.incidents_installations_limit = QComboBox()
+        self.incidents_installations_limit.addItems(["Últimas 10", "Últimas 25", "Últimas 50", "Últimas 100"])
+        controls_layout.addWidget(self.incidents_installations_limit)
+
+        controls_layout.addWidget(QLabel("Severidad:"))
+        self.incidents_severity_filter = QComboBox()
+        self.incidents_severity_filter.addItems(["Todas", "low", "medium", "high", "critical"])
+        controls_layout.addWidget(self.incidents_severity_filter)
+
+        controls_layout.addWidget(QLabel("Periodo:"))
+        self.incidents_period_filter = QComboBox()
+        self.incidents_period_filter.addItems(
+            ["Todos", "Últimos 7 días", "Últimos 30 días", "Últimos 90 días"]
+        )
+        controls_layout.addWidget(self.incidents_period_filter)
+
+        self.apply_incidents_filters_btn = QPushButton("🔎 Aplicar Filtros")
+        controls_layout.addWidget(self.apply_incidents_filters_btn)
+
+        self.refresh_incidents_view_btn = QPushButton("🔄 Recargar Incidencias")
+        self.refresh_incidents_view_btn.setProperty("class", "primary")
+        controls_layout.addWidget(self.refresh_incidents_view_btn)
+        controls_layout.addStretch()
+        incidents_layout.addLayout(controls_layout)
+
+        split_layout = QHBoxLayout()
+
+        installations_container = QVBoxLayout()
+        installations_container.addWidget(QLabel("Registros de Instalación"))
+        self.incidents_installations_list = QListWidget()
+        self.incidents_installations_list.setMinimumWidth(320)
+        installations_container.addWidget(self.incidents_installations_list)
+        split_layout.addLayout(installations_container, 1)
+
+        incidents_container = QVBoxLayout()
+        incidents_container.addWidget(QLabel("Incidencias"))
+        self.incidents_list = QListWidget()
+        incidents_container.addWidget(self.incidents_list)
+
+        incident_actions = QHBoxLayout()
+        self.create_incident_btn = QPushButton("➕ Crear Incidencia")
+        self.create_incident_btn.setProperty("class", "warning")
+        incident_actions.addWidget(self.create_incident_btn)
+
+        self.upload_incident_photo_btn = QPushButton("📤 Subir Foto")
+        self.upload_incident_photo_btn.setProperty("class", "info")
+        self.upload_incident_photo_btn.setEnabled(False)
+        incident_actions.addWidget(self.upload_incident_photo_btn)
+
+        self.view_incident_photo_btn = QPushButton("🖼️ Ver Foto")
+        self.view_incident_photo_btn.setEnabled(False)
+        incident_actions.addWidget(self.view_incident_photo_btn)
+        incident_actions.addStretch()
+        incidents_container.addLayout(incident_actions)
+
+        detail_title = QLabel("Detalle de la incidencia")
+        detail_title.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        incidents_container.addWidget(detail_title)
+
+        self.incident_detail = QTextEdit()
+        self.incident_detail.setReadOnly(True)
+        self.incident_detail.setMinimumHeight(140)
+        self.incident_detail.setPlaceholderText("Selecciona una incidencia para ver su detalle.")
+        incidents_container.addWidget(self.incident_detail)
+
+        photos_title = QLabel("Fotos asociadas")
+        photos_title.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        incidents_container.addWidget(photos_title)
+
+        self.incident_photos_list = QListWidget()
+        self.incident_photos_list.setMinimumHeight(110)
+        self.incident_photos_list.setIconSize(QSize(96, 72))
+        incidents_container.addWidget(self.incident_photos_list)
+
+        split_layout.addLayout(incidents_container, 2)
+        incidents_layout.addLayout(split_layout)
+
+        self.history_stack.addWidget(incidents_widget)
     
     def _create_reports_view(self):
         """Crear vista de reportes"""
@@ -316,18 +394,7 @@ class HistoryTab(QWidget):
         
         # Reporte diario
         self.daily_report_btn = QPushButton("📄 Generar Reporte de Hoy")
-        self.daily_report_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4A90E2;
-                color: white;
-                padding: 10px 20px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #357ABD;
-            }
-        """)
+        self.daily_report_btn.setProperty("class", "primary")
         reports_layout.addWidget(self.daily_report_btn)
         
         # Reporte mensual
@@ -352,32 +419,10 @@ class HistoryTab(QWidget):
         reports_layout.addLayout(monthly_layout)
         
         self.monthly_report_btn = QPushButton("Generar Reporte del Mes Seleccionado")
-        self.monthly_report_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #5CB85C;
-                color: white;
-                padding: 10px 20px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #4CAE4C;
-            }
-        """)
+        self.monthly_report_btn.setProperty("class", "success")
         reports_layout.addWidget(self.monthly_report_btn)
         self.yearly_report_btn = QPushButton("Generar Reporte Anual (Ano Seleccionado)")
-        self.yearly_report_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #F0AD4E;
-                color: white;
-                padding: 10px 20px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #EC971F;
-            }
-        """)
+        self.yearly_report_btn.setProperty("class", "warning")
         reports_layout.addWidget(self.yearly_report_btn)
 
         preview_title = QLabel("Vista previa del reporte")
@@ -403,19 +448,15 @@ class HistoryTab(QWidget):
         # Título con advertencia
         title = QLabel("🗑️ Gestión de Registros")
         title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-        title.setStyleSheet("color: #D9534F;")
+        title.setProperty("class", "error")
         management_layout.addWidget(title)
         
-        self.warning = QLabel("⚠️ Esta sección requiere autenticación de administrador")
-        self.warning.setStyleSheet("""
-            QLabel {
-                background-color: #FCF8E3;
-                color: #8A6D3B;
-                padding: 10px;
-                border: 1px solid #FAEBCC;
-                border-radius: 4px;
-            }
-        """)
+        self.warning = QLabel(
+            "⚠️ Solo administradores pueden eliminar registros del historial. "
+            "Esta acción no se puede deshacer."
+        )
+        self.warning.setWordWrap(True)
+        self.warning.setProperty("class", "warning")
         # Ocultar warning si es admin
         if hasattr(self.parent, 'is_admin') and self.parent.is_admin:
             self.warning.setVisible(False)
@@ -444,18 +485,7 @@ class HistoryTab(QWidget):
 
         self.delete_selected_btn = QPushButton("🗑️ Eliminar Seleccionado")
         self.delete_selected_btn.setEnabled(False)
-        self.delete_selected_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #D9534F;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:disabled {
-                background-color: #d4a3a1;
-            }
-        """)
+        self.delete_selected_btn.setProperty("class", "danger")
         delete_layout.addWidget(self.delete_selected_btn)
         delete_layout.addStretch()
 
@@ -542,15 +572,7 @@ class AdminTab(QWidget):
         
         # Botón de gestión de usuarios (solo para super_admin)
         self.user_mgmt_btn = QPushButton("👥 Gestionar Usuarios")
-        self.user_mgmt_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #9B59B6;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-        """)
+        self.user_mgmt_btn.setProperty("class", "info")
         self.user_mgmt_btn.setVisible(False)
         layout.addWidget(self.user_mgmt_btn)
         
@@ -584,27 +606,11 @@ class AdminTab(QWidget):
         config_buttons = QHBoxLayout()
         
         change_pass_btn = QPushButton("🔑 Cambiar Contraseña")
-        change_pass_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #F0AD4E;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-        """)
+        change_pass_btn.setProperty("class", "warning")
         config_buttons.addWidget(change_pass_btn)
         
         clear_cache_btn = QPushButton("🧹 Limpiar Caché")
-        clear_cache_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #D9534F;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-        """)
+        clear_cache_btn.setProperty("class", "danger")
         config_buttons.addWidget(clear_cache_btn)
         
         config_buttons.addStretch()
@@ -617,34 +623,12 @@ class AdminTab(QWidget):
     def _create_r2_config_section(self, layout):
         """Crear sección de configuración R2"""
         r2_group = QGroupBox("🌐 Configuración Cloudflare R2")
-        r2_group.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                border: 2px solid #366092;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-            }
-        """)
         r2_layout = QVBoxLayout()
         
         # Warning de seguridad
         warning = QLabel("🔐 Información sensible - Solo visible para administradores")
-        warning.setStyleSheet("""
-            QLabel {
-                background-color: #FCF8E3;
-                color: #8A6D3B;
-                padding: 8px;
-                border: 1px solid #FAEBCC;
-                border-radius: 4px;
-                margin-bottom: 10px;
-            }
-        """)
+        warning.setWordWrap(True)
+        warning.setProperty("class", "warning")
         r2_layout.addWidget(warning)
         
         # Campos de configuración
@@ -675,27 +659,11 @@ class AdminTab(QWidget):
         # Botones R2
         r2_buttons = QHBoxLayout()
         save_btn = QPushButton("💾 Guardar Configuración R2")
-        save_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #5CB85C;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-        """)
+        save_btn.setProperty("class", "success")
         r2_buttons.addWidget(save_btn)
         
         test_btn = QPushButton("🔌 Probar Conexión")
-        test_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4A90E2;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-        """)
+        test_btn.setProperty("class", "primary")
         r2_buttons.addWidget(test_btn)
         r2_buttons.addStretch()
         r2_layout.addLayout(r2_buttons)
@@ -763,16 +731,7 @@ class ConfigTab(QWidget):
             "Accede a la pestaña '🔐 Administración' con tu contraseña de admin\n"
             "para ver y modificar las credenciales de la nube."
         )
-        info_text.setStyleSheet("""
-            QLabel {
-                background-color: #D9EDF7;
-                color: #31708F;
-                padding: 15px;
-                border: 1px solid #BCE8F1;
-                border-radius: 4px;
-                margin: 10px 0;
-            }
-        """)
+        info_text.setProperty("class", "info")
         layout.addWidget(info_text)
         
         layout.addSpacing(20)
@@ -783,15 +742,7 @@ class ConfigTab(QWidget):
         layout.addWidget(admin_label)
         
         change_pass_btn = QPushButton("🔑 Cambiar Contraseña")
-        change_pass_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #F0AD4E;
-                color: white;
-                padding: 10px 20px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-        """)
+        change_pass_btn.setProperty("class", "warning")
         layout.addWidget(change_pass_btn)
         
         # Cache
