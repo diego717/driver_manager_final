@@ -8,6 +8,53 @@ Driver Manager es un monorepo con tres componentes:
 - API en Cloudflare Workers (D1 + R2) para instalaciones e incidencias.
 - App movil en Expo/React Native para reportar incidencias y subir fotos.
 
+## Quick Start
+
+### Desktop (Python)
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python main.py
+```
+
+Detalles: ver [Desktop (Python)](#desktop-python).
+
+### Worker (Cloudflare)
+
+```powershell
+npm ci
+npm run dev
+```
+
+Deploy:
+
+```powershell
+npm run deploy
+```
+
+Detalles: ver [Worker (Cloudflare)](#worker-cloudflare).
+
+### Mobile (Expo)
+
+```powershell
+cd mobile-app
+npm ci
+Copy-Item .env.example .env
+npm start
+```
+
+APK (EAS):
+
+```powershell
+npx eas-cli login
+npm run build:android:apk
+```
+
+Detalles: ver [Mobile app (Expo)](#mobile-app-expo) y [APK Android con EAS (recomendado)](#apk-android-con-eas-recomendado).
+
 ## Novedades recientes
 
 - Desktop:
@@ -24,6 +71,7 @@ Driver Manager es un monorepo con tres componentes:
 - `main.py`: entrada de la app desktop.
 - `worker.js`: API HTTP para instalaciones, estadisticas e incidencias.
 - `mobile-app/`: cliente movil (Expo Router).
+- `mobile-app/app.config.js`: config dinamica Expo/EAS (Firebase file vars para builds remotos).
 - `migrations/0002_incidents_v1.sql`: migracion de incidencias y fotos.
 - `docs/incidents-v1.openapi.yaml`: contrato OpenAPI.
 - `docs/postman/`: coleccion y entorno de Postman.
@@ -117,6 +165,14 @@ npm run dev:remote
 npm run deploy
 ```
 
+Comandos utiles:
+
+```powershell
+npm run tail                 # logs en vivo del Worker
+npm run test:web             # tests del dashboard + contract tests Worker
+npm run users:tenant         # script de gestion de usuarios por tenant (CLI Python)
+```
+
 ### Configuracion Cloudflare
 
 `wrangler.toml` ya define:
@@ -180,6 +236,8 @@ Las migraciones incluidas crean:
 - `0005_audit_logs.sql`: tabla `audit_logs` para auditoria centralizada en D1.
 - `0006_device_tokens.sql`: tabla `device_tokens` para registro de dispositivos y push.
 - `0007_multi_tenant_foundation.sql`: base multi-tenant (tenants, roles por tenant, auditoria tenant y limites de plan).
+- `0008_assets_registry.sql`: registro de equipos (assets), asociaciones e historial.
+- `0009_assets_brand_and_metadata.sql`: metadata extendida para equipos (marca/modelo/serie/cliente/notas).
 
 ## Mobile app (Expo)
 
@@ -193,8 +251,59 @@ npm start
 Variables en `mobile-app/.env`:
 
 - `EXPO_PUBLIC_API_BASE_URL`
+- `EXPO_PUBLIC_ALLOW_HTTP_API_BASE_URL` (solo debug/local si necesitas URL HTTP)
 
 La autenticacion mobile en produccion usa exclusivamente login web (`/web/auth/login`) y Bearer de corta duracion con expiracion/revocacion server-side.
+
+### APK Android con EAS (recomendado)
+
+La app usa `app.config.js` para resolver archivos Firebase de forma dinamica:
+
+- Android: variable de entorno `GOOGLE_SERVICES_JSON` (tipo `file` en EAS).
+- iOS (opcional): `GOOGLE_SERVICE_INFO_PLIST` (tipo `file` en EAS).
+
+Si no existe variable de archivo en EAS, se usa fallback local (`./google-services.json`) solo para desarrollo local.
+
+#### 1) Login EAS
+
+```powershell
+cd mobile-app
+npx eas-cli login
+```
+
+#### 2) Cargar archivo Firebase en EAS (no subir a git)
+
+```powershell
+npx eas-cli env:create --environment preview --name GOOGLE_SERVICES_JSON --type file --visibility secret
+```
+
+Opcional para produccion:
+
+```powershell
+npx eas-cli env:create --environment production --name GOOGLE_SERVICES_JSON --type file --visibility secret
+```
+
+Ver variables configuradas:
+
+```powershell
+npx eas-cli env:list --environment preview
+```
+
+#### 3) Generar APK
+
+```powershell
+npm run build:android:apk
+```
+
+Notas:
+
+- El build profile `preview` genera `.apk` (`eas.json`).
+- `cli.appVersionSource` esta configurado en `remote` para evitar warnings futuros de EAS.
+- Si cambias assets/config y no se refleja en Expo Go, reinicia con cache limpia:
+
+```powershell
+npm run start -- --clear
+```
 
 ## Endpoints principales del Worker
 
@@ -322,6 +431,22 @@ CI (`.github/workflows/tests.yml`) ejecuta estas tres suites.
 - Config desktop cifrada en `config/config.enc` con cifrado simetrico + validacion HMAC.
 - No commitear secretos ni archivos locales (`.env`, `portable_config.json`, `config/`, `*.enc`).
 - Usa claves de Cloudflare con permisos minimos y rotacion periodica.
+
+## Troubleshooting
+
+- Error `npm error could not determine executable to run` al hacer login EAS:
+  - Usa `npx eas-cli login` (no `npx eas login`).
+- Error EAS: `"google-services.json" is missing`:
+  - Carga `GOOGLE_SERVICES_JSON` como variable de tipo `file` en EAS (`preview` y/o `production`).
+  - Verifica con `npx eas-cli env:list --environment preview`.
+- Expo Go no refleja cambios:
+  - Reinicia Metro con cache limpia: `npm --prefix mobile-app run start -- --clear`.
+- Dashboard web sigue mostrando comportamiento viejo:
+  - Hard refresh (`Ctrl+F5`) y, si aplica, unregister del Service Worker.
+  - Si cambias assets web, ejecuta `npm run dashboard:sync-assets` antes de `npm run deploy`.
+- Error de sesion web invalida despues de habilitar edicion:
+  - Asegurate de estar en una version desplegada reciente del dashboard/worker y recargar.
+  - Cerrar sesion y volver a iniciar tambien fuerza refresh de token/sesion.
 
 ## Licencia
 
