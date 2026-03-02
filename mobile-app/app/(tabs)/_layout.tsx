@@ -69,6 +69,20 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <TabBarIcon name="list-alt" color={color} />,
         }}
       />
+      <Tabs.Screen
+        name="assets"
+        options={{
+          title: "Equipos",
+          tabBarIcon: ({ color }) => <TabBarIcon name="hdd-o" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="qr"
+        options={{
+          title: "QR",
+          tabBarIcon: ({ color }) => <TabBarIcon name="qrcode" color={color} />,
+        }}
+      />
     </Tabs>
   );
 }

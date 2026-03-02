@@ -32,18 +32,42 @@ let charts = {};
 let searchDebounceTimer = null;
 let currentInstallationsData = [];
 let currentSelectedInstallationId = null;
+let currentAssetsData = [];
+let currentSelectedAssetId = null;
 
 // WebSocket/SSE State
 let eventSource = null;
 let sseReconnectTimer = null;
 let sseReconnectAttempts = 0;
 let sseLastConnectAttemptAt = 0;
+let connectionStatusLastRendered = { status: '', at: 0 };
+let connectionStatusMobileBindingsReady = false;
+let connectionStatusLastScrollY = 0;
+let connectionStatusForceVisibleUntil = 0;
+let connectionStatusScrollHideTimer = null;
 const MAX_SSE_RECONNECT_ATTEMPTS = 6;
 const SSE_RECONNECT_BASE_DELAY = 2500;
 const SSE_RECONNECT_MAX_DELAY = 30000;
 const SSE_MIN_CONNECT_GAP_MS = 1200;
-const SSE_ACTIVE_SECTIONS = new Set(['dashboard', 'installations', 'incidents']);
+const CONNECTION_STATUS_DEDUP_MS = 700;
+const SSE_ACTIVE_SECTIONS = new Set(['dashboard', 'installations', 'assets', 'incidents']);
 const FORCE_LOGIN_ON_OPEN = true;
+const QR_MAX_ASSET_CODE_LENGTH = 128;
+const QR_MAX_BRAND_LENGTH = 120;
+const QR_MAX_MODEL_LENGTH = 160;
+const QR_MAX_SERIAL_LENGTH = 128;
+const QR_MAX_CLIENT_LENGTH = 180;
+const QR_MAX_NOTES_LENGTH = 2000;
+const QR_PREVIEW_SIZE_PX = 320;
+
+let currentQrPayload = '';
+let currentQrImageUrl = '';
+let currentQrLabelInfo = null;
+let qrModalReadOnly = false;
+let qrModalEditUnlocked = false;
+let qrModalEditUnlockUntil = 0;
+let qrPasswordModalBusy = false;
+const QR_EDIT_UNLOCK_TTL_MS = 10 * 60 * 1000;
 
 
 // Chart.js default configuration
@@ -103,21 +127,41 @@ function extractApiErrorMessage(payload, response) {
 
 const api = {
     async request(endpoint, options = {}) {
-        const authHeaders = webAccessToken
-            ? { Authorization: 'Bearer ' + webAccessToken }
-            : {};
-        const headers = {
+        const baseHeaders = {
             'Content-Type': 'application/json',
-            ...authHeaders,
-            ...options.headers
+            ...(options.headers || {})
         };
-        
-        const response = await fetch(API_BASE + endpoint, {
-            ...options,
-            headers,
-            credentials: 'include'
-        });
-        const payload = await parseApiResponsePayload(response);
+
+        const sendRequest = async (useBearer = true) => {
+            const authHeaders = useBearer && webAccessToken
+                ? { Authorization: 'Bearer ' + webAccessToken }
+                : {};
+            const headers = {
+                ...baseHeaders,
+                ...authHeaders,
+            };
+
+            const response = await fetch(API_BASE + endpoint, {
+                ...options,
+                headers,
+                credentials: 'include'
+            });
+            const payload = await parseApiResponsePayload(response);
+            return { response, payload };
+        };
+
+        let { response, payload } = await sendRequest(true);
+
+        // If bearer got stale (session rotated), retry once using only cookie session.
+        if (response.status === 401 && webAccessToken) {
+            const retryResult = await sendRequest(false);
+            response = retryResult.response;
+            payload = retryResult.payload;
+            if (response.ok) {
+                // Prefer cookie session from now on until next explicit login refreshes bearer.
+                webAccessToken = '';
+            }
+        }
         
         if (response.status === 401) {
             currentUser = null;
@@ -167,6 +211,31 @@ const api = {
         return this.request('/web/installations/' + installationId + '/incidents', {
             method: 'POST',
             body: JSON.stringify(payload)
+        });
+    },
+
+    resolveAsset(payload) {
+        return this.request('/web/assets/resolve', {
+            method: 'POST',
+            body: JSON.stringify(payload || {})
+        });
+    },
+
+    getAssets(params = {}) {
+        const query = new URLSearchParams(params).toString();
+        return this.request(`/web/assets?${query}`);
+    },
+
+    getAssetIncidents(assetId, params = {}) {
+        const query = new URLSearchParams(params).toString();
+        const suffix = query ? `?${query}` : '';
+        return this.request(`/web/assets/${assetId}/incidents${suffix}`);
+    },
+
+    linkAssetToInstallation(assetId, payload) {
+        return this.request('/web/assets/' + assetId + '/link-installation', {
+            method: 'POST',
+            body: JSON.stringify(payload || {})
         });
     },
 
@@ -243,9 +312,12 @@ function resetProtectedViews() {
     const ids = [
         'recentInstallations',
         'installationsTable',
+        'assetsTable',
+        'assetDetail',
         'incidentsList',
         'auditLogs',
         'resultsCount',
+        'assetsResultsCount',
     ];
     ids.forEach((id) => {
         const el = document.getElementById(id);
@@ -254,6 +326,8 @@ function resetProtectedViews() {
     });
     currentInstallationsData = [];
     currentSelectedInstallationId = null;
+    currentAssetsData = [];
+    currentSelectedAssetId = null;
 }
 
 function hasActiveSession() {
@@ -378,6 +452,90 @@ async function createIncidentFromWeb(installationId) {
     }
 }
 
+async function associateAssetFromWeb() {
+    const externalCodeRaw = prompt('CÃƒÂ³digo externo del equipo (QR/serie):', '') ?? '';
+    const externalCode = String(externalCodeRaw || '').trim();
+    if (!externalCode) {
+        showNotification('Debes ingresar un cÃƒÂ³digo de equipo vÃƒÂ¡lido.', 'error');
+        return;
+    }
+
+    const installationInput = prompt(
+        'ID de instalaciÃƒÂ³n destino:',
+        currentSelectedInstallationId ? String(currentSelectedInstallationId) : ''
+    );
+    if (installationInput === null) return;
+    const installationId = Number.parseInt(String(installationInput).trim(), 10);
+    if (!Number.isInteger(installationId) || installationId <= 0) {
+        showNotification('installation_id invÃƒÂ¡lido para asociaciÃƒÂ³n.', 'error');
+        return;
+    }
+
+    const notes = prompt('Nota opcional de asociaciÃƒÂ³n:', '') ?? '';
+
+    try {
+        const resolved = await api.resolveAsset({
+            external_code: externalCode
+        });
+        const assetId = Number(resolved?.asset?.id);
+        if (!Number.isInteger(assetId) || assetId <= 0) {
+            throw new Error('No se pudo resolver el ID del equipo.');
+        }
+
+        await api.linkAssetToInstallation(assetId, {
+            installation_id: installationId,
+            notes: String(notes || '').trim()
+        });
+
+        showNotification(
+            `Equipo ${externalCode} asociado a instalaciÃƒÂ³n #${installationId}.`,
+            'success'
+        );
+        currentSelectedInstallationId = installationId;
+        await loadInstallations();
+        await showIncidentsForInstallation(installationId);
+    } catch (err) {
+        showNotification(`No se pudo asociar equipo: ${err.message || err}`, 'error');
+    }
+}
+
+async function openAssetLookupFromWeb() {
+    if (!requireActiveSession()) return;
+    const codeRaw = prompt('Codigo externo del equipo a consultar:', '') ?? '';
+    const code = normalizeAssetCodeForQr(codeRaw);
+    if (!code) {
+        showNotification('Debes ingresar un codigo de equipo valido.', 'error');
+        return;
+    }
+
+    try {
+        const response = await api.getAssets({
+            code,
+            limit: 1
+        });
+        const asset = Array.isArray(response?.items) ? response.items[0] : null;
+        if (!asset) {
+            showNotification(`No existe equipo con codigo ${code}.`, 'info');
+            return;
+        }
+
+        showQrModal({ type: 'asset', asset, readOnly: true });
+        generateQrPreview({
+            assetData: {
+                external_code: normalizeAssetCodeForQr(asset.external_code || code),
+                brand: normalizeAssetFormText(asset.brand, QR_MAX_BRAND_LENGTH),
+                model: normalizeAssetFormText(asset.model, QR_MAX_MODEL_LENGTH),
+                serial_number: normalizeAssetFormText(asset.serial_number, QR_MAX_SERIAL_LENGTH),
+                client_name: normalizeAssetFormText(asset.client_name, QR_MAX_CLIENT_LENGTH),
+                notes: normalizeAssetFormText(asset.notes, QR_MAX_NOTES_LENGTH),
+            }
+        });
+        showNotification(`Equipo cargado: ${asset.external_code || code}`, 'success');
+    } catch (err) {
+        showNotification(`No se pudo consultar equipo: ${err.message || err}`, 'error');
+    }
+}
+
 async function selectAndUploadIncidentPhoto(incidentId, installationId) {
     const targetIncidentId = Number.parseInt(String(incidentId), 10);
     if (!Number.isInteger(targetIncidentId) || targetIncidentId <= 0) {
@@ -445,7 +603,7 @@ function renderSuccessChart(stats) {
     charts.success = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Éxito', 'Fallido', 'Otro'],
+            labels: ['Ãƒâ€°xito', 'Fallido', 'Otro'],
             datasets: [{
                 data: [success, failed, Math.max(0, other)],
                 backgroundColor: [
@@ -691,7 +849,7 @@ function renderRecentInstallations(installations) {
 
     installations.forEach(inst => {
         const statusClass = inst.status || 'unknown';
-        const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
+        const statusIcon = inst.status === 'success' ? 'Ã¢Å“â€¦' : inst.status === 'failed' ? 'Ã¢ÂÅ’' : 'Ã¢Ââ€œ';
 
         const row = document.createElement('tr');
 
@@ -767,31 +925,31 @@ function updateFilterChips() {
         const removeSpan = document.createElement('span');
         removeSpan.className = 'chip-remove';
         removeSpan.dataset.filter = filterType;
-        removeSpan.textContent = '×';
+        removeSpan.textContent = 'Ãƒâ€”';
 
         chip.append(labelSpan, valueSpan, removeSpan);
         chipsContainer.appendChild(chip);
     };
 
     if (filters.search) {
-        appendChip('🔍', `"${filters.search}"`, 'search');
+        appendChip('Ã°Å¸â€Â', `"${filters.search}"`, 'search');
     }
 
     if (filters.brand) {
-        appendChip('🏷️ Marca:', filters.brand, 'brand');
+        appendChip('Ã°Å¸ÂÂ·Ã¯Â¸Â Marca:', filters.brand, 'brand');
     }
 
     if (filters.status) {
-        const statusLabel = filters.status === 'success' ? '✅ Éxito' : 
-                           filters.status === 'failed' ? '❌ Fallido' : '❓ Desconocido';
-        appendChip('📊 Estado:', statusLabel, 'status');
+        const statusLabel = filters.status === 'success' ? 'Ã¢Å“â€¦ Ãƒâ€°xito' : 
+                           filters.status === 'failed' ? 'Ã¢ÂÅ’ Fallido' : 'Ã¢Ââ€œ Desconocido';
+        appendChip('Ã°Å¸â€œÅ  Estado:', statusLabel, 'status');
     }
 
     if (filters.startDate || filters.endDate) {
         const dateLabel = filters.startDate && filters.endDate ? 
             `${filters.startDate} - ${filters.endDate}` :
             filters.startDate ? `Desde: ${filters.startDate}` : `Hasta: ${filters.endDate}`;
-        appendChip('📅', dateLabel, 'date');
+        appendChip('Ã°Å¸â€œâ€¦', dateLabel, 'date');
     }
     
     // Add click handlers to remove buttons
@@ -867,12 +1025,12 @@ function toExcelCell(value) {
 }
 function exportToCSV(data, filename = 'instalaciones.csv') {
     if (!data || !data.length) {
-        showNotification('❌ No hay datos para exportar', 'error');
+        showNotification('Ã¢ÂÅ’ No hay datos para exportar', 'error');
         return;
     }
     
     // CSV Headers
-    const headers = ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo (s)', 'Notas', 'Fecha'];
+    const headers = ['ID', 'Cliente', 'Marca', 'VersiÃƒÂ³n', 'Estado', 'Tiempo (s)', 'Notas', 'Fecha'];
     
     // Convert data to CSV rows
     const rows = data.map(inst => [
@@ -904,12 +1062,12 @@ function exportToCSV(data, filename = 'instalaciones.csv') {
     link.click();
     document.body.removeChild(link);
     
-    showNotification(`✅ Exportado: ${filename}`, 'success');
+    showNotification(`Ã¢Å“â€¦ Exportado: ${filename}`, 'success');
 }
 
 function exportToExcel(data, filename = 'instalaciones.xls') {
     if (!data || !data.length) {
-        showNotification('❌ No hay datos para exportar', 'error');
+        showNotification('Ã¢ÂÅ’ No hay datos para exportar', 'error');
         return;
     }
     
@@ -920,7 +1078,7 @@ function exportToExcel(data, filename = 'instalaciones.xls') {
     
     // Headers
     html += '<tr>';
-    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo (s)', 'Notas', 'Fecha'].forEach(header => {
+    ['ID', 'Cliente', 'Marca', 'VersiÃƒÂ³n', 'Estado', 'Tiempo (s)', 'Notas', 'Fecha'].forEach(header => {
         html += `<th>${escapeHtml(header)}</th>`;
     });
     html += '</tr>';
@@ -953,7 +1111,7 @@ function exportToExcel(data, filename = 'instalaciones.xls') {
     link.click();
     document.body.removeChild(link);
     
-    showNotification(`✅ Exportado: ${filename}`, 'success');
+    showNotification(`Ã¢Å“â€¦ Exportado: ${filename}`, 'success');
 }
 
 function setupExportButtons() {
@@ -968,7 +1126,7 @@ function setupExportButtons() {
         exportDropdown.style.cssText = 'position: relative; display: inline-block;';
         
         exportDropdown.innerHTML = `
-            <button id="exportBtn" class="btn-secondary">📥 Exportar ▼</button>
+            <button id="exportBtn" class="btn-secondary">Ã°Å¸â€œÂ¥ Exportar Ã¢â€“Â¼</button>
             <div class="export-menu" style="
                 display: none;
                 position: absolute;
@@ -994,7 +1152,7 @@ function setupExportButtons() {
                     cursor: pointer;
                     font-size: 0.875rem;
                     text-align: left;
-                ">📄 Exportar CSV</button>
+                ">Ã°Å¸â€œâ€ž Exportar CSV</button>
                 <button class="export-option" data-format="excel" style="
                     display: flex;
                     align-items: center;
@@ -1008,7 +1166,7 @@ function setupExportButtons() {
                     font-size: 0.875rem;
                     text-align: left;
                     border-top: 1px solid var(--border);
-                ">📊 Exportar Excel</button>
+                ">Ã°Å¸â€œÅ  Exportar Excel</button>
             </div>
         `;
         
@@ -1138,11 +1296,44 @@ function setupAdvancedFilters() {
         const createRecordBtn = document.createElement('button');
         createRecordBtn.id = 'createManualRecordBtn';
         createRecordBtn.className = 'btn-secondary';
-        createRecordBtn.textContent = '📝 Registrar nuevo equipo';
+        createRecordBtn.textContent = 'Ã°Å¸â€œÂ Registrar nuevo equipo';
         createRecordBtn.addEventListener('click', () => {
             void createManualRecordFromWeb();
         });
         actionsContainer.insertBefore(createRecordBtn, document.getElementById('applyFilters'));
+    }
+    if (actionsContainer && !document.getElementById('openQrGeneratorBtn')) {
+        const qrButton = document.createElement('button');
+        qrButton.id = 'openQrGeneratorBtn';
+        qrButton.type = 'button';
+        qrButton.className = 'btn-secondary';
+        qrButton.textContent = 'QR equipo';
+        qrButton.addEventListener('click', () => {
+            showQrModal({ type: 'asset', value: '' });
+        });
+        actionsContainer.insertBefore(qrButton, document.getElementById('applyFilters'));
+    }
+    if (actionsContainer && !document.getElementById('associateAssetBtn')) {
+        const associateButton = document.createElement('button');
+        associateButton.id = 'associateAssetBtn';
+        associateButton.type = 'button';
+        associateButton.className = 'btn-secondary';
+        associateButton.textContent = 'Asociar equipo';
+        associateButton.addEventListener('click', () => {
+            void associateAssetFromWeb();
+        });
+        actionsContainer.insertBefore(associateButton, document.getElementById('applyFilters'));
+    }
+    if (actionsContainer && !document.getElementById('lookupAssetBtn')) {
+        const lookupButton = document.createElement('button');
+        lookupButton.id = 'lookupAssetBtn';
+        lookupButton.type = 'button';
+        lookupButton.className = 'btn-secondary';
+        lookupButton.textContent = 'Buscar equipo';
+        lookupButton.addEventListener('click', () => {
+            void openAssetLookupFromWeb();
+        });
+        actionsContainer.insertBefore(lookupButton, document.getElementById('applyFilters'));
     }
     
     // Keyboard shortcut: Ctrl+K to focus search
@@ -1193,7 +1384,7 @@ async function loadInstallations() {
         // Update filter chips (in case they were cleared externally)
         updateFilterChips();
     } catch (err) {
-        container.innerHTML = '<p class="error">❌ Error cargando instalaciones</p>';
+        container.innerHTML = '<p class="error">Ã¢ÂÅ’ Error cargando instalaciones</p>';
         if (resultsCount) {
             resultsCount.textContent = 'Error al cargar';
         }
@@ -1216,7 +1407,7 @@ function renderInstallationsTable(installations) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo', 'Notas', 'Fecha'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'VersiÃƒÂ³n', 'Estado', 'Tiempo', 'Notas', 'Fecha', 'QR'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -1227,7 +1418,7 @@ function renderInstallationsTable(installations) {
 
     installations.forEach(inst => {
         const statusClass = inst.status || 'unknown';
-        const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
+        const statusIcon = inst.status === 'success' ? 'Ã¢Å“â€¦' : inst.status === 'failed' ? 'Ã¢ÂÅ’' : 'Ã¢Ââ€œ';
 
         const row = document.createElement('tr');
         row.dataset.id = String(inst.id ?? '');
@@ -1261,7 +1452,19 @@ function renderInstallationsTable(installations) {
         const dateCell = document.createElement('td');
         dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
 
-        row.append(idCell, clientCell, brandCell, versionCell, statusCell, timeCell, notesCell, dateCell);
+        const qrCell = document.createElement('td');
+        const qrButton = document.createElement('button');
+        qrButton.type = 'button';
+        qrButton.className = 'btn-secondary table-action-btn';
+        qrButton.textContent = 'QR';
+        qrButton.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            showQrModal({ type: 'installation', value: String(inst.id ?? '') });
+        });
+        qrCell.appendChild(qrButton);
+
+        row.append(idCell, clientCell, brandCell, versionCell, statusCell, timeCell, notesCell, dateCell, qrCell);
         tbody.appendChild(row);
     });
 
@@ -1287,8 +1490,470 @@ async function showIncidentsForInstallation(installationId) {
         const data = await api.getIncidents(installationId);
         renderIncidents(data.incidents || [], installationId);
     } catch (err) {
-        container.innerHTML = '<p class="error">❌ Error cargando incidencias</p>';
+        container.innerHTML = '<p class="error">Ã¢ÂÅ’ Error cargando incidencias</p>';
     }
+}
+
+function normalizeAssetStatusLabel(status) {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (!normalized) return 'active';
+    return normalized;
+}
+
+function getSeverityIcon(severity) {
+    if (severity === 'critical') return 'Ã°Å¸â€Â´';
+    if (severity === 'high') return 'Ã°Å¸Å¸Â ';
+    if (severity === 'medium') return 'Ã°Å¸Å¸Â¡';
+    return 'Ã°Å¸â€Âµ';
+}
+
+async function loadAssets() {
+    if (!requireActiveSession()) return;
+    const tableContainer = document.getElementById('assetsTable');
+    const resultsCount = document.getElementById('assetsResultsCount');
+    const searchInput = document.getElementById('assetsSearchInput');
+    if (!tableContainer) return;
+
+    tableContainer.innerHTML = '<p class="loading">Cargando equipos...</p>';
+    if (resultsCount) {
+        resultsCount.innerHTML = '<span class="loading">Buscando...</span>';
+    }
+
+    try {
+        const search = String(searchInput?.value || '').trim();
+        const params = { limit: 200 };
+        if (search) {
+            params.search = search;
+        }
+
+        const response = await api.getAssets(params);
+        const assets = Array.isArray(response?.items) ? response.items : [];
+        currentAssetsData = assets;
+        renderAssetsTable(assets);
+
+        if (resultsCount) {
+            const count = assets.length;
+            resultsCount.innerHTML = `Mostrando <span class="count">${count}</span> equipo${count !== 1 ? 's' : ''}`;
+        }
+
+        if (currentSelectedAssetId) {
+            const selectedAsset = assets.find((item) => Number(item.id) === Number(currentSelectedAssetId));
+            if (selectedAsset) {
+                await loadAssetDetail(selectedAsset.id, { keepSelection: true });
+            }
+        }
+    } catch (err) {
+        tableContainer.innerHTML = '<p class="error">Ã¢ÂÅ’ Error cargando equipos</p>';
+        if (resultsCount) {
+            resultsCount.textContent = 'Error al cargar';
+        }
+    }
+}
+
+function renderAssetsTable(assets) {
+    const container = document.getElementById('assetsTable');
+    if (!container) return;
+    container.replaceChildren();
+
+    if (!assets || !assets.length) {
+        const emptyMessage = document.createElement('p');
+        emptyMessage.className = 'loading';
+        emptyMessage.textContent = 'No se encontraron equipos';
+        container.appendChild(emptyMessage);
+        return;
+    }
+
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    ['ID', 'Codigo', 'Marca', 'Modelo', 'Serie', 'Cliente', 'Estado', 'Actualizado', 'Acciones'].forEach((label) => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+
+    const tbody = document.createElement('tbody');
+    for (const asset of assets) {
+        const row = document.createElement('tr');
+        row.dataset.assetId = String(asset.id || '');
+
+        const idCell = document.createElement('td');
+        idCell.textContent = `#${asset.id ?? 'N/A'}`;
+
+        const codeCell = document.createElement('td');
+        codeCell.textContent = asset.external_code || '-';
+
+        const brandCell = document.createElement('td');
+        brandCell.textContent = asset.brand || '-';
+
+        const modelCell = document.createElement('td');
+        modelCell.textContent = asset.model || '-';
+
+        const serialCell = document.createElement('td');
+        serialCell.textContent = asset.serial_number || '-';
+
+        const clientCell = document.createElement('td');
+        clientCell.textContent = asset.client_name || '-';
+
+        const statusCell = document.createElement('td');
+        const statusBadge = document.createElement('span');
+        statusBadge.className = 'badge unknown';
+        statusBadge.textContent = normalizeAssetStatusLabel(asset.status);
+        statusCell.appendChild(statusBadge);
+
+        const updatedCell = document.createElement('td');
+        updatedCell.textContent = asset.updated_at
+            ? new Date(asset.updated_at).toLocaleString('es-ES')
+            : '-';
+
+        const actionsCell = document.createElement('td');
+        const detailBtn = document.createElement('button');
+        detailBtn.type = 'button';
+        detailBtn.className = 'btn-secondary table-action-btn';
+        detailBtn.textContent = 'Detalle';
+        detailBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void loadAssetDetail(asset.id);
+        });
+
+        const incidentBtn = document.createElement('button');
+        incidentBtn.type = 'button';
+        incidentBtn.className = 'btn-secondary table-action-btn';
+        incidentBtn.textContent = 'Incidencia';
+        incidentBtn.style.marginLeft = '0.35rem';
+        incidentBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void createIncidentForAsset(asset.id);
+        });
+
+        actionsCell.append(detailBtn, incidentBtn);
+        row.append(
+            idCell,
+            codeCell,
+            brandCell,
+            modelCell,
+            serialCell,
+            clientCell,
+            statusCell,
+            updatedCell,
+            actionsCell,
+        );
+        row.addEventListener('click', () => {
+            void loadAssetDetail(asset.id);
+        });
+        tbody.appendChild(row);
+    }
+
+    table.append(thead, tbody);
+    container.appendChild(table);
+}
+
+async function createIncidentForAsset(assetId) {
+    if (!requireActiveSession()) return;
+    const numericAssetId = Number.parseInt(String(assetId), 10);
+    if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
+        showNotification('asset_id invalido.', 'error');
+        return;
+    }
+
+    try {
+        const detail = await api.getAssetIncidents(numericAssetId, { limit: 1 });
+        const activeInstallationId = Number(detail?.active_link?.installation_id);
+        let targetInstallationId = activeInstallationId;
+        if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
+            const input = prompt('No hay instalacion activa para este equipo. ID de instalacion destino:', '');
+            if (input === null) return;
+            targetInstallationId = Number.parseInt(String(input).trim(), 10);
+            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
+                showNotification('installation_id invalido.', 'error');
+                return;
+            }
+            await api.linkAssetToInstallation(numericAssetId, {
+                installation_id: targetInstallationId,
+                notes: 'Vinculo creado desde modulo Equipos',
+            });
+        }
+
+        const noteInput = prompt('Detalle de la incidencia:', '');
+        if (noteInput === null) return;
+        const note = String(noteInput || '').trim();
+        if (!note) {
+            showNotification('La incidencia requiere una nota.', 'error');
+            return;
+        }
+        const severityInput = prompt('Severidad (low/medium/high/critical):', 'medium');
+        if (severityInput === null) return;
+        const severity = normalizeSeverity(severityInput);
+        const adjustmentInput = prompt('Ajuste de tiempo en segundos (puede ser negativo):', '0');
+        if (adjustmentInput === null) return;
+        const adjustment = Number.parseInt(String(adjustmentInput).trim(), 10);
+        if (!Number.isInteger(adjustment)) {
+            showNotification('El ajuste de tiempo debe ser entero.', 'error');
+            return;
+        }
+        const applyToInstallation = confirm('Aplicar nota/ajuste tambien al registro de instalacion?');
+
+        const result = await api.createIncident(targetInstallationId, {
+            note,
+            reporter_username: currentUser?.username || 'web_user',
+            time_adjustment_seconds: adjustment,
+            severity,
+            source: 'web',
+            apply_to_installation: applyToInstallation,
+        });
+
+        showNotification(
+            `Incidencia #${result?.incident?.id || 'N/A'} creada para equipo #${numericAssetId}.`,
+            'success',
+        );
+        await loadInstallations();
+        await loadAssetDetail(numericAssetId, { keepSelection: true });
+    } catch (err) {
+        showNotification(`No se pudo crear incidencia del equipo: ${err.message || err}`, 'error');
+    }
+}
+
+async function linkAssetFromDetail(assetId) {
+    if (!requireActiveSession()) return;
+    const installationInput = prompt('ID de instalacion a vincular con este equipo:', '');
+    if (installationInput === null) return;
+    const installationId = Number.parseInt(String(installationInput).trim(), 10);
+    if (!Number.isInteger(installationId) || installationId <= 0) {
+        showNotification('installation_id invalido.', 'error');
+        return;
+    }
+
+    try {
+        await api.linkAssetToInstallation(assetId, {
+            installation_id: installationId,
+            notes: 'Vinculo manual desde detalle de equipo',
+        });
+        showNotification(`Equipo vinculado a instalacion #${installationId}.`, 'success');
+        await loadAssetDetail(assetId, { keepSelection: true });
+    } catch (err) {
+        showNotification(`No se pudo vincular equipo: ${err.message || err}`, 'error');
+    }
+}
+
+async function loadAssetDetail(assetId, options = {}) {
+    if (!requireActiveSession()) return;
+    const numericAssetId = Number.parseInt(String(assetId), 10);
+    if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
+        return;
+    }
+    currentSelectedAssetId = numericAssetId;
+
+    const detailContainer = document.getElementById('assetDetail');
+    if (detailContainer && !options.keepSelection) {
+        detailContainer.innerHTML = '<p class="loading">Cargando detalle del equipo...</p>';
+    }
+
+    try {
+        const data = await api.getAssetIncidents(numericAssetId, { limit: 150 });
+        await renderAssetDetail(data);
+    } catch (err) {
+        if (detailContainer) {
+            detailContainer.innerHTML = `<p class="error">Ã¢ÂÅ’ ${escapeHtml(err.message || String(err))}</p>`;
+        }
+    }
+}
+
+async function renderAssetDetail(data) {
+    const container = document.getElementById('assetDetail');
+    if (!container) return;
+    container.replaceChildren();
+
+    const asset = data?.asset;
+    if (!asset) {
+        const message = document.createElement('p');
+        message.className = 'loading';
+        message.textContent = 'No hay detalle disponible para este equipo.';
+        container.appendChild(message);
+        return;
+    }
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'asset-detail-toolbar';
+
+    const createIncidentBtn = document.createElement('button');
+    createIncidentBtn.type = 'button';
+    createIncidentBtn.className = 'btn-primary';
+    createIncidentBtn.textContent = 'Crear incidencia';
+    createIncidentBtn.addEventListener('click', () => {
+        void createIncidentForAsset(asset.id);
+    });
+
+    const linkBtn = document.createElement('button');
+    linkBtn.type = 'button';
+    linkBtn.className = 'btn-secondary';
+    linkBtn.textContent = 'Vincular instalacion';
+    linkBtn.addEventListener('click', () => {
+        void linkAssetFromDetail(asset.id);
+    });
+
+    const qrBtn = document.createElement('button');
+    qrBtn.type = 'button';
+    qrBtn.className = 'btn-secondary';
+    qrBtn.textContent = 'Ver QR';
+    qrBtn.addEventListener('click', () => {
+        showQrModal({ type: 'asset', asset, readOnly: true });
+        generateQrPreview({
+            assetData: {
+                external_code: normalizeAssetCodeForQr(asset.external_code || ''),
+                brand: normalizeAssetFormText(asset.brand, QR_MAX_BRAND_LENGTH),
+                model: normalizeAssetFormText(asset.model, QR_MAX_MODEL_LENGTH),
+                serial_number: normalizeAssetFormText(asset.serial_number, QR_MAX_SERIAL_LENGTH),
+                client_name: normalizeAssetFormText(asset.client_name, QR_MAX_CLIENT_LENGTH),
+                notes: normalizeAssetFormText(asset.notes, QR_MAX_NOTES_LENGTH),
+            },
+        });
+    });
+
+    toolbar.append(createIncidentBtn, linkBtn, qrBtn);
+    container.appendChild(toolbar);
+
+    const metaGrid = document.createElement('div');
+    metaGrid.className = 'asset-meta-grid';
+    const metaEntries = [
+        ['ID', `#${asset.id || '-'}`],
+        ['Codigo', asset.external_code || '-'],
+        ['Marca', asset.brand || '-'],
+        ['Modelo', asset.model || '-'],
+        ['Serie', asset.serial_number || '-'],
+        ['Cliente', asset.client_name || '-'],
+        ['Estado', normalizeAssetStatusLabel(asset.status)],
+        ['Actualizado', asset.updated_at ? new Date(asset.updated_at).toLocaleString('es-ES') : '-'],
+    ];
+    for (const [label, value] of metaEntries) {
+        const item = document.createElement('div');
+        item.className = 'asset-meta-item';
+        const title = document.createElement('small');
+        title.textContent = label;
+        const content = document.createElement('strong');
+        content.textContent = value;
+        item.append(title, content);
+        metaGrid.appendChild(item);
+    }
+    container.appendChild(metaGrid);
+
+    const activeLink = data?.active_link;
+    const activeInfo = document.createElement('p');
+    activeInfo.className = 'asset-muted';
+    if (activeLink?.installation_id) {
+        activeInfo.textContent =
+            `Instalacion activa: #${activeLink.installation_id}` +
+            (activeLink.installation_client_name ? ` (${activeLink.installation_client_name})` : '');
+    } else {
+        activeInfo.textContent = 'Sin instalacion activa vinculada.';
+    }
+    container.appendChild(activeInfo);
+
+    const linksTitle = document.createElement('h4');
+    linksTitle.textContent = 'Historial de asociaciones';
+    container.appendChild(linksTitle);
+
+    const linksList = document.createElement('div');
+    linksList.className = 'asset-links-list';
+    const links = Array.isArray(data?.links) ? data.links : [];
+    if (links.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'asset-muted';
+        empty.textContent = 'Este equipo todavia no tiene asociaciones registradas.';
+        linksList.appendChild(empty);
+    } else {
+        for (const link of links) {
+            const pill = document.createElement('div');
+            pill.className = 'asset-link-item';
+            const state = link.unlinked_at ? 'historial' : 'activa';
+            const text =
+                `Instalacion #${link.installation_id} (${state})` +
+                (link.installation_client_name ? ` - ${link.installation_client_name}` : '') +
+                (link.linked_at ? ` - vinculada: ${new Date(link.linked_at).toLocaleString('es-ES')}` : '');
+            pill.textContent = text;
+            linksList.appendChild(pill);
+        }
+    }
+    container.appendChild(linksList);
+
+    const incidentsTitle = document.createElement('h4');
+    incidentsTitle.textContent = 'Incidencias del equipo';
+    container.appendChild(incidentsTitle);
+
+    const incidents = Array.isArray(data?.incidents) ? data.incidents : [];
+    if (incidents.length === 0) {
+        const emptyIncident = document.createElement('p');
+        emptyIncident.className = 'asset-muted';
+        emptyIncident.textContent = 'No hay incidencias registradas para este equipo.';
+        container.appendChild(emptyIncident);
+        return;
+    }
+
+    const incidentsWrap = document.createElement('div');
+    incidentsWrap.className = 'incidents-grid';
+    for (const incident of incidents) {
+        const card = document.createElement('div');
+        card.className = 'incident-card';
+
+        const header = document.createElement('div');
+        header.className = 'incident-header';
+
+        const left = document.createElement('div');
+        const badge = document.createElement('span');
+        badge.className = `badge ${incident.severity || 'low'}`;
+        badge.textContent = `${getSeverityIcon(incident.severity)} ${incident.severity || 'low'}`;
+        const meta = document.createElement('small');
+        meta.textContent = `inst #${incident.installation_id} Ã‚Â· ${incident.reporter_username || 'desconocido'}`;
+        left.append(badge, document.createTextNode(' '), meta);
+
+        const created = document.createElement('small');
+        created.textContent = `Ã°Å¸â€¢Â ${new Date(incident.created_at).toLocaleString('es-ES')}`;
+        header.append(left, created);
+
+        const note = document.createElement('p');
+        note.style.color = 'var(--text-secondary)';
+        note.style.lineHeight = '1.6';
+        note.textContent = incident.note || '';
+
+        const sub = document.createElement('small');
+        sub.className = 'asset-muted';
+        sub.textContent =
+            `Cliente: ${incident.installation_client_name || '-'} Ã‚Â· ` +
+            `${incident.installation_brand || '-'} ${incident.installation_version || ''}`.trim();
+
+        card.append(header, note, sub);
+
+        const uploadBtn = document.createElement('button');
+        uploadBtn.className = 'btn-secondary';
+        uploadBtn.textContent = 'Subir foto';
+        uploadBtn.style.marginTop = '0.5rem';
+        uploadBtn.addEventListener('click', () => {
+            void selectAndUploadIncidentPhoto(incident.id, incident.installation_id);
+        });
+        card.appendChild(uploadBtn);
+
+        if (incident.photos && incident.photos.length) {
+            const photosGrid = document.createElement('div');
+            photosGrid.className = 'photos-grid';
+            for (const photo of incident.photos) {
+                const photoUrl = await loadPhotoWithAuth(photo.id);
+                if (photoUrl) {
+                    const image = document.createElement('img');
+                    image.src = photoUrl;
+                    image.className = 'photo-thumb';
+                    image.alt = 'Foto de incidencia';
+                    image.addEventListener('click', () => viewPhoto(photo.id));
+                    photosGrid.appendChild(image);
+                }
+            }
+            card.appendChild(photosGrid);
+        }
+
+        incidentsWrap.appendChild(card);
+    }
+    container.appendChild(incidentsWrap);
 }
 
 async function loadPhotoWithAuth(photoId) {
@@ -1325,18 +1990,18 @@ async function renderIncidents(incidents, installationId) {
     header.style.marginBottom = '1.5rem';
 
     const heading = document.createElement('h3');
-    heading.textContent = `⚠️ Incidencias de Instalación #${installationId}`;
+    heading.textContent = `Ã¢Å¡Â Ã¯Â¸Â Incidencias de InstalaciÃƒÂ³n #${installationId}`;
 
     const backButton = document.createElement('button');
     backButton.className = 'btn-secondary';
-    backButton.textContent = '← Volver';
+    backButton.textContent = 'Ã¢â€ Â Volver';
     backButton.addEventListener('click', () => {
         document.querySelector('[data-section="installations"]')?.click();
     });
 
     const createIncidentBtn = document.createElement('button');
     createIncidentBtn.className = 'btn-primary';
-    createIncidentBtn.textContent = '⚠️ Crear incidencia';
+    createIncidentBtn.textContent = 'Ã¢Å¡Â Ã¯Â¸Â Crear incidencia';
     createIncidentBtn.addEventListener('click', () => {
         void createIncidentFromWeb(installationId);
     });
@@ -1352,13 +2017,13 @@ async function renderIncidents(incidents, installationId) {
     if (!incidents || !incidents.length) {
         const emptyMessage = document.createElement('p');
         emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No hay incidencias para esta instalación';
+        emptyMessage.textContent = 'No hay incidencias para esta instalaciÃƒÂ³n';
         container.appendChild(emptyMessage);
         return;
     }
 
     for (const inc of incidents) {
-        const severityIcon = inc.severity === 'critical' ? '🔴' : inc.severity === 'high' ? '🟠' : inc.severity === 'medium' ? '🟡' : '🔵';
+        const severityIcon = inc.severity === 'critical' ? 'Ã°Å¸â€Â´' : inc.severity === 'high' ? 'Ã°Å¸Å¸Â ' : inc.severity === 'medium' ? 'Ã°Å¸Å¸Â¡' : 'Ã°Å¸â€Âµ';
 
         const incidentCard = document.createElement('div');
         incidentCard.className = 'incident-card';
@@ -1378,7 +2043,7 @@ async function renderIncidents(incidents, installationId) {
         leftMeta.append(severityBadge, document.createTextNode(' '), reporter);
 
         const createdAt = document.createElement('small');
-        createdAt.textContent = `🕐 ${new Date(inc.created_at).toLocaleString('es-ES')}`;
+        createdAt.textContent = `Ã°Å¸â€¢Â ${new Date(inc.created_at).toLocaleString('es-ES')}`;
 
         incidentHeader.append(leftMeta, createdAt);
 
@@ -1391,7 +2056,7 @@ async function renderIncidents(incidents, installationId) {
 
         const uploadPhotoBtn = document.createElement('button');
         uploadPhotoBtn.className = 'btn-secondary';
-        uploadPhotoBtn.textContent = '📤 Subir foto';
+        uploadPhotoBtn.textContent = 'Ã°Å¸â€œÂ¤ Subir foto';
         uploadPhotoBtn.style.marginTop = '0.5rem';
         uploadPhotoBtn.addEventListener('click', () => {
             void selectAndUploadIncidentPhoto(inc.id, installationId);
@@ -1430,6 +2095,755 @@ async function viewPhoto(photoId) {
     }
 }
 
+function normalizeAssetCodeForQr(rawValue) {
+    return String(rawValue || '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .slice(0, QR_MAX_ASSET_CODE_LENGTH);
+}
+
+function normalizeAssetFormText(rawValue, maxLength) {
+    return String(rawValue || '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .slice(0, maxLength);
+}
+
+function canCurrentUserEditAssets() {
+    const role = String(currentUser?.role || '').toLowerCase();
+    return role === 'admin' || role === 'super_admin';
+}
+
+function isQrEditSessionActive() {
+    return Number.isFinite(qrModalEditUnlockUntil) && qrModalEditUnlockUntil > Date.now();
+}
+
+function getQrEditSessionRemainingMs() {
+    return Math.max(0, qrModalEditUnlockUntil - Date.now());
+}
+
+function setQrAssetInputsDisabled(disabled) {
+    const inputIds = [
+        'qrAssetCodeInput',
+        'qrAssetBrandInput',
+        'qrAssetModelInput',
+        'qrAssetSerialInput',
+        'qrAssetClientInput',
+        'qrAssetNotesInput',
+    ];
+    inputIds.forEach((id) => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.disabled = Boolean(disabled);
+            element.toggleAttribute('readonly', Boolean(disabled));
+        }
+    });
+}
+
+function applyQrModalAccessState() {
+    const selectedType = document.querySelector('input[name="qrType"]:checked')?.value || 'asset';
+    const saveBtn = document.getElementById('qrSaveAssetBtn');
+    const enableEditBtn = document.getElementById('qrEnableEditBtn');
+    const qrTypeRadios = document.querySelectorAll('input[name="qrType"]');
+    const isAssetType = selectedType === 'asset';
+    const hasTimedUnlock = isQrEditSessionActive();
+    if (qrModalReadOnly) {
+        qrModalEditUnlocked = hasTimedUnlock;
+    } else if (canCurrentUserEditAssets()) {
+        qrModalEditUnlocked = true;
+    } else {
+        qrModalEditUnlocked = false;
+    }
+    const isReadOnlyAssetView = qrModalReadOnly && isAssetType && !qrModalEditUnlocked;
+    const canEdit = canCurrentUserEditAssets();
+
+    qrTypeRadios.forEach((radio) => {
+        radio.disabled = Boolean(qrModalReadOnly);
+    });
+
+    setQrAssetInputsDisabled(isReadOnlyAssetView);
+
+    if (saveBtn) {
+        const shouldShowSave = isAssetType && (!qrModalReadOnly || qrModalEditUnlocked);
+        saveBtn.classList.toggle('is-hidden', !shouldShowSave);
+        saveBtn.disabled = !shouldShowSave;
+    }
+
+    if (enableEditBtn) {
+        const shouldShowEnableEdit = isReadOnlyAssetView && canEdit;
+        enableEditBtn.classList.toggle('is-hidden', !shouldShowEnableEdit);
+        enableEditBtn.disabled = !shouldShowEnableEdit;
+    }
+
+    const helper = document.getElementById('qrAssetHelper');
+    if (helper) {
+        if (isReadOnlyAssetView && canEdit) {
+            helper.textContent = 'Modo solo lectura. Para editar, usa "Habilitar edicion" y confirma tu contrasena.';
+        } else if (isReadOnlyAssetView && !canEdit) {
+            helper.textContent = 'Modo solo lectura. Solo admin/super_admin pueden editar este equipo.';
+        } else if (qrModalReadOnly && qrModalEditUnlocked && hasTimedUnlock) {
+            const minutesLeft = Math.max(1, Math.ceil(getQrEditSessionRemainingMs() / 60000));
+            helper.textContent = `Edicion habilitada temporalmente (${minutesLeft} min restantes).`;
+        } else {
+            helper.textContent = 'Requisitos: marca o modelo, y numero de serie. El codigo externo se genera automaticamente desde serie si queda vacio.';
+        }
+    }
+}
+
+async function verifyCurrentUserPassword(password) {
+    const username = normalizeAssetFormText(currentUser?.username || '', 128);
+    const candidate = String(password || '');
+    if (!username) {
+        throw new Error('No se pudo validar usuario actual.');
+    }
+    if (!candidate.trim()) {
+        throw new Error('Debes ingresar tu contrasena.');
+    }
+
+    const response = await fetch(API_BASE + '/web/auth/login', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            username,
+            password: candidate
+        }),
+    });
+
+    const payload = await parseApiResponsePayload(response);
+
+    if (!response.ok) {
+        let errorMessage = 'Contrasena incorrecta o sesion invalida.';
+        if (payload && typeof payload === 'object') {
+            errorMessage = payload?.error?.message || payload?.message || errorMessage;
+        }
+        throw new Error(errorMessage);
+    }
+
+    // /web/auth/login rota session_version; sin refrescar el bearer local,
+    // las siguientes llamadas fallan con "Sesion web invalida o cerrada".
+    if (typeof payload?.access_token === 'string' && payload.access_token.trim()) {
+        webAccessToken = payload.access_token.trim();
+    }
+    if (payload?.user && typeof payload.user === 'object') {
+        applyAuthenticatedUser(payload.user);
+    }
+}
+
+function setQrPasswordModalError(message = '') {
+    const errorEl = document.getElementById('qrPasswordError');
+    if (!errorEl) return;
+    errorEl.textContent = message || '';
+}
+
+function setQrPasswordModalBusy(isBusy) {
+    qrPasswordModalBusy = Boolean(isBusy);
+    const confirmBtn = document.getElementById('qrPasswordConfirmBtn');
+    const cancelBtn = document.getElementById('qrPasswordCancelBtn');
+    const input = document.getElementById('qrPasswordInput');
+    if (confirmBtn) confirmBtn.disabled = qrPasswordModalBusy;
+    if (cancelBtn) cancelBtn.disabled = qrPasswordModalBusy;
+    if (input) input.disabled = qrPasswordModalBusy;
+}
+
+function openQrPasswordModal() {
+    const modal = document.getElementById('qrPasswordModal');
+    const input = document.getElementById('qrPasswordInput');
+    if (!modal || !input) return;
+    setQrPasswordModalBusy(false);
+    setQrPasswordModalError('');
+    input.value = '';
+    modal.classList.add('active');
+    setTimeout(() => {
+        input.focus();
+        input.select();
+    }, 0);
+}
+
+function closeQrPasswordModal() {
+    const modal = document.getElementById('qrPasswordModal');
+    if (!modal) return;
+    modal.classList.remove('active');
+    setQrPasswordModalBusy(false);
+    setQrPasswordModalError('');
+}
+
+async function confirmQrEditUnlockFromModal() {
+    if (qrPasswordModalBusy) return;
+    const input = document.getElementById('qrPasswordInput');
+    const password = String(input?.value || '');
+    try {
+        setQrPasswordModalBusy(true);
+        await verifyCurrentUserPassword(password);
+        qrModalEditUnlocked = true;
+        qrModalEditUnlockUntil = Date.now() + QR_EDIT_UNLOCK_TTL_MS;
+        applyQrModalAccessState();
+        closeQrPasswordModal();
+        setQrError('');
+        showNotification('Edicion habilitada por 10 minutos.', 'success');
+    } catch (error) {
+        setQrPasswordModalBusy(false);
+        setQrPasswordModalError(error?.message || 'No se pudo validar la contrasena.');
+    }
+}
+
+function readAssetFormData() {
+    const codeInput = document.getElementById('qrAssetCodeInput');
+    const brandInput = document.getElementById('qrAssetBrandInput');
+    const modelInput = document.getElementById('qrAssetModelInput');
+    const serialInput = document.getElementById('qrAssetSerialInput');
+    const clientInput = document.getElementById('qrAssetClientInput');
+    const notesInput = document.getElementById('qrAssetNotesInput');
+    if (!codeInput || !brandInput || !modelInput || !serialInput || !clientInput || !notesInput) {
+        throw new Error('Formulario QR incompleto. Recarga la pagina.');
+    }
+
+    const brand = normalizeAssetFormText(brandInput.value, QR_MAX_BRAND_LENGTH);
+    const model = normalizeAssetFormText(modelInput.value, QR_MAX_MODEL_LENGTH);
+    const serialNumber = normalizeAssetFormText(serialInput.value, QR_MAX_SERIAL_LENGTH);
+    const clientName = normalizeAssetFormText(clientInput.value, QR_MAX_CLIENT_LENGTH);
+    const notes = normalizeAssetFormText(notesInput.value, QR_MAX_NOTES_LENGTH);
+
+    if (!brand && !model) {
+        throw new Error('Debes ingresar al menos marca o modelo.');
+    }
+    if (!serialNumber) {
+        throw new Error('El numero de serie es obligatorio para la etiqueta.');
+    }
+
+    const explicitCode = normalizeAssetCodeForQr(codeInput.value);
+    const fallbackCode = normalizeAssetCodeForQr(serialNumber);
+    const externalCode = explicitCode || fallbackCode;
+    if (!externalCode) {
+        throw new Error('No se pudo construir un codigo externo de equipo.');
+    }
+
+    return {
+        external_code: externalCode,
+        brand,
+        model,
+        serial_number: serialNumber,
+        client_name: clientName,
+        notes,
+    };
+}
+
+function setQrError(message = '') {
+    const errorEl = document.getElementById('qrError');
+    if (!errorEl) return;
+    errorEl.textContent = message || '';
+}
+
+function applyQrTypeMeta() {
+    const selectedType = document.querySelector('input[name="qrType"]:checked')?.value || 'asset';
+    const installationFields = document.getElementById('qrInstallationFields');
+    const assetFields = document.getElementById('qrAssetFields');
+    if (selectedType === 'installation') {
+        installationFields?.classList.remove('is-hidden');
+        assetFields?.classList.add('is-hidden');
+    } else {
+        installationFields?.classList.add('is-hidden');
+        assetFields?.classList.remove('is-hidden');
+    }
+    const helperText = document.getElementById('qrHelperText');
+    if (helperText) {
+        helperText.textContent = 'Formato recomendado para mobile: dm://installation/{id}.';
+    }
+    applyQrModalAccessState();
+}
+
+function resetQrPreview() {
+    currentQrPayload = '';
+    currentQrImageUrl = '';
+    currentQrLabelInfo = null;
+    const preview = document.getElementById('qrPreview');
+    const previewImage = document.getElementById('qrPreviewImage');
+    const payloadText = document.getElementById('qrPayloadText');
+    const detailsText = document.getElementById('qrDetailsText');
+    const copyBtn = document.getElementById('qrCopyBtn');
+    const downloadBtn = document.getElementById('qrDownloadBtn');
+    const printBtn = document.getElementById('qrPrintBtn');
+
+    if (preview) preview.classList.add('is-hidden');
+    if (previewImage) previewImage.removeAttribute('src');
+    if (payloadText) payloadText.textContent = '';
+    if (detailsText) detailsText.textContent = '';
+    if (copyBtn) copyBtn.disabled = true;
+    if (downloadBtn) downloadBtn.disabled = true;
+    if (printBtn) printBtn.disabled = true;
+}
+
+function buildQrPayload(qrType, rawValue, assetData = null) {
+    if (qrType === 'installation') {
+        const installationId = Number.parseInt(String(rawValue || '').trim(), 10);
+        if (!Number.isInteger(installationId) || installationId <= 0) {
+            throw new Error('El ID de instalacion debe ser un entero positivo.');
+        }
+        return `dm://installation/${encodeURIComponent(String(installationId))}`;
+    }
+
+    const assetCode = normalizeAssetCodeForQr(assetData?.external_code || rawValue);
+    if (!assetCode) {
+        throw new Error('El codigo de equipo es obligatorio.');
+    }
+    return `dm://asset/${encodeURIComponent(assetCode)}`;
+}
+
+function buildQrImageUrl(payload) {
+    const qrGenerator = window.DMQR;
+    if (!qrGenerator || typeof qrGenerator.createPngDataUrl !== 'function') {
+        throw new Error('Generador QR no disponible. Recarga la pagina e intenta de nuevo.');
+    }
+
+    return qrGenerator.createPngDataUrl(payload, {
+        sizePx: QR_PREVIEW_SIZE_PX,
+        marginModules: 2,
+        ecc: 'M'
+    });
+}
+
+function sanitizeFileNamePart(value, fallback = 'codigo') {
+    const normalized = String(value || '')
+        .trim()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-zA-Z0-9._-]/g, '_')
+        .slice(0, 64);
+    return normalized || fallback;
+}
+
+function buildQrDownloadFileName(qrType, rawValue, assetData = null) {
+    if (qrType === 'installation') {
+        const numeric = Number.parseInt(String(rawValue || '').trim(), 10);
+        const suffix = Number.isInteger(numeric) && numeric > 0 ? String(numeric) : 'id';
+        return `qr-installacion-${suffix}.png`;
+    }
+    const code = assetData?.external_code || rawValue;
+    return `qr-equipo-${sanitizeFileNamePart(code, 'asset')}.png`;
+}
+
+function showQrModal(options = {}) {
+    const modal = document.getElementById('qrModal');
+    const valueInput = document.getElementById('qrValueInput');
+    const codeInput = document.getElementById('qrAssetCodeInput');
+    const brandInput = document.getElementById('qrAssetBrandInput');
+    const modelInput = document.getElementById('qrAssetModelInput');
+    const serialInput = document.getElementById('qrAssetSerialInput');
+    const clientInput = document.getElementById('qrAssetClientInput');
+    const notesInput = document.getElementById('qrAssetNotesInput');
+    const type = options.type === 'installation' ? 'installation' : 'asset';
+    const value = String(options.value || '');
+    const asset = options.asset && typeof options.asset === 'object' ? options.asset : {};
+    qrModalReadOnly = Boolean(options.readOnly);
+    qrModalEditUnlocked = false;
+    const radio = document.querySelector(`input[name="qrType"][value="${type}"]`);
+    if (!modal || !valueInput || !radio) return;
+
+    radio.checked = true;
+    valueInput.value = value;
+    if (codeInput) codeInput.value = normalizeAssetCodeForQr(asset.external_code || value);
+    if (brandInput) brandInput.value = normalizeAssetFormText(asset.brand, QR_MAX_BRAND_LENGTH);
+    if (modelInput) modelInput.value = normalizeAssetFormText(asset.model, QR_MAX_MODEL_LENGTH);
+    if (serialInput) serialInput.value = normalizeAssetFormText(asset.serial_number, QR_MAX_SERIAL_LENGTH);
+    if (clientInput) clientInput.value = normalizeAssetFormText(asset.client_name, QR_MAX_CLIENT_LENGTH);
+    if (notesInput) notesInput.value = normalizeAssetFormText(asset.notes, QR_MAX_NOTES_LENGTH);
+    applyQrTypeMeta();
+    applyQrModalAccessState();
+    resetQrPreview();
+    setQrError('');
+    modal.classList.add('active');
+    if (type === 'installation') {
+        valueInput.focus();
+        valueInput.select();
+    } else {
+        const serial = document.getElementById('qrAssetSerialInput');
+        if (serial) {
+            serial.focus();
+            serial.select();
+        }
+    }
+}
+
+function closeQrModal() {
+    const modal = document.getElementById('qrModal');
+    if (!modal) return;
+    modal.classList.remove('active');
+    closeQrPasswordModal();
+    qrModalReadOnly = false;
+    qrModalEditUnlocked = false;
+    setQrError('');
+    resetQrPreview();
+}
+
+function formatQrDetailsText(qrType, rawValue, assetData = null) {
+    if (qrType === 'installation') {
+        return `Tipo: Instalacion\nID: ${String(rawValue || '').trim()}`;
+    }
+    const details = assetData || {};
+    return [
+        'Tipo: Equipo',
+        `Codigo externo: ${details.external_code || '-'}`,
+        `Marca: ${details.brand || '-'}`,
+        `Modelo: ${details.model || '-'}`,
+        `Serie: ${details.serial_number || '-'}`,
+        `Cliente: ${details.client_name || '-'}`,
+    ].join('\n');
+}
+
+function buildQrPreviewInput() {
+    const selectedType = document.querySelector('input[name="qrType"]:checked')?.value || 'asset';
+    const valueInput = document.getElementById('qrValueInput');
+    if (!valueInput) {
+        throw new Error('No se encontro el input QR principal.');
+    }
+    if (selectedType === 'installation') {
+        return {
+            type: 'installation',
+            rawValue: valueInput.value,
+            assetData: null,
+        };
+    }
+    const assetData = readAssetFormData();
+    return {
+        type: 'asset',
+        rawValue: assetData.external_code,
+        assetData,
+    };
+}
+
+function generateQrPreview(options = {}) {
+    const selectedType = document.querySelector('input[name="qrType"]:checked')?.value || 'asset';
+    const valueInput = document.getElementById('qrValueInput');
+    const preview = document.getElementById('qrPreview');
+    const previewImage = document.getElementById('qrPreviewImage');
+    const payloadText = document.getElementById('qrPayloadText');
+    const detailsText = document.getElementById('qrDetailsText');
+    const copyBtn = document.getElementById('qrCopyBtn');
+    const downloadBtn = document.getElementById('qrDownloadBtn');
+    const printBtn = document.getElementById('qrPrintBtn');
+    if (!valueInput || !preview || !previewImage || !payloadText || !detailsText || !copyBtn || !downloadBtn || !printBtn) return;
+
+    try {
+        let rawValue = valueInput.value;
+        let assetData = null;
+        if (options.assetData) {
+            assetData = options.assetData;
+            rawValue = options.assetData.external_code || rawValue;
+            const codeInput = document.getElementById('qrAssetCodeInput');
+            if (codeInput) {
+                codeInput.value = normalizeAssetCodeForQr(rawValue);
+            }
+        } else {
+            const input = buildQrPreviewInput();
+            rawValue = input.rawValue;
+            assetData = input.assetData;
+        }
+
+        const payload = buildQrPayload(selectedType, rawValue, assetData);
+        const imageUrl = buildQrImageUrl(payload);
+        const details = formatQrDetailsText(selectedType, rawValue, assetData);
+        currentQrPayload = payload;
+        currentQrImageUrl = imageUrl;
+        currentQrLabelInfo = { type: selectedType, rawValue, assetData, details };
+
+        previewImage.src = imageUrl;
+        previewImage.alt = `QR ${selectedType}`;
+        payloadText.textContent = payload;
+        detailsText.textContent = details;
+        preview.classList.remove('is-hidden');
+        copyBtn.disabled = false;
+        downloadBtn.disabled = false;
+        printBtn.disabled = false;
+        downloadBtn.dataset.filename = buildQrDownloadFileName(selectedType, rawValue, assetData);
+        setQrError('');
+    } catch (error) {
+        resetQrPreview();
+        setQrError(error?.message || 'No se pudo generar el QR.');
+    }
+}
+
+async function saveAssetFromQrModal(options = {}) {
+    if (!requireActiveSession()) return;
+    if (qrModalReadOnly && !qrModalEditUnlocked) {
+        setQrError('Modo solo lectura. Habilita edicion y confirma tu contrasena para guardar cambios.');
+        return;
+    }
+    const generateAfterSave = Boolean(options.generateAfterSave);
+    try {
+        const assetData = readAssetFormData();
+        const result = await api.resolveAsset({
+            ...assetData,
+            update_existing: true,
+            status: 'active',
+        });
+        const savedAsset = result?.asset || {};
+        const mergedAsset = {
+            ...assetData,
+            external_code: normalizeAssetCodeForQr(savedAsset.external_code || assetData.external_code),
+            brand: normalizeAssetFormText(savedAsset.brand ?? assetData.brand, QR_MAX_BRAND_LENGTH),
+            model: normalizeAssetFormText(savedAsset.model ?? assetData.model, QR_MAX_MODEL_LENGTH),
+            serial_number: normalizeAssetFormText(savedAsset.serial_number ?? assetData.serial_number, QR_MAX_SERIAL_LENGTH),
+            client_name: normalizeAssetFormText(savedAsset.client_name ?? assetData.client_name, QR_MAX_CLIENT_LENGTH),
+            notes: normalizeAssetFormText(savedAsset.notes ?? assetData.notes, QR_MAX_NOTES_LENGTH),
+        };
+
+        const codeInput = document.getElementById('qrAssetCodeInput');
+        const brandInput = document.getElementById('qrAssetBrandInput');
+        const modelInput = document.getElementById('qrAssetModelInput');
+        const serialInput = document.getElementById('qrAssetSerialInput');
+        const clientInput = document.getElementById('qrAssetClientInput');
+        const notesInput = document.getElementById('qrAssetNotesInput');
+        if (codeInput) codeInput.value = mergedAsset.external_code;
+        if (brandInput) brandInput.value = mergedAsset.brand;
+        if (modelInput) modelInput.value = mergedAsset.model;
+        if (serialInput) serialInput.value = mergedAsset.serial_number;
+        if (clientInput) clientInput.value = mergedAsset.client_name;
+        if (notesInput) notesInput.value = mergedAsset.notes;
+
+        showNotification(`Equipo guardado: ${mergedAsset.external_code}`, 'success');
+        setQrError('');
+        if (getActiveSectionName() === 'assets') {
+            void loadAssets();
+        }
+        if (generateAfterSave) {
+            generateQrPreview({ assetData: mergedAsset });
+        }
+    } catch (error) {
+        setQrError(error?.message || 'No se pudo guardar el equipo.');
+        showNotification(`No se pudo guardar equipo: ${error?.message || error}`, 'error');
+    }
+}
+
+async function copyQrPayloadToClipboard() {
+    if (!currentQrPayload) return;
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(currentQrPayload);
+        } else {
+            const area = document.createElement('textarea');
+            area.value = currentQrPayload;
+            area.setAttribute('readonly', 'readonly');
+            area.style.position = 'fixed';
+            area.style.left = '-9999px';
+            document.body.appendChild(area);
+            area.select();
+            document.execCommand('copy');
+            area.remove();
+        }
+        showNotification('Payload QR copiado al portapapeles.', 'success');
+    } catch (error) {
+        showNotification('No se pudo copiar el payload QR.', 'error');
+    }
+}
+
+function dataUrlToPngDataUrl(dataUrl) {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => {
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = image.naturalWidth || image.width || QR_PREVIEW_SIZE_PX;
+                canvas.height = image.naturalHeight || image.height || QR_PREVIEW_SIZE_PX;
+                const context = canvas.getContext('2d');
+                if (!context) {
+                    reject(new Error('No se pudo inicializar canvas.'));
+                    return;
+                }
+                context.fillStyle = '#ffffff';
+                context.fillRect(0, 0, canvas.width, canvas.height);
+                context.drawImage(image, 0, 0);
+                resolve(canvas.toDataURL('image/png'));
+            } catch (error) {
+                reject(error);
+            }
+        };
+        image.onerror = () => reject(new Error('No se pudo convertir QR a PNG.'));
+        image.src = dataUrl;
+    });
+}
+
+function buildPrintableLabelDataUrl(imageDataUrl, details) {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => {
+            try {
+                const qrWidth = image.naturalWidth || image.width || QR_PREVIEW_SIZE_PX;
+                const qrHeight = image.naturalHeight || image.height || QR_PREVIEW_SIZE_PX;
+                const detailsLines = String(details || '')
+                    .split('\n')
+                    .map((line) => line.trim())
+                    .filter((line) => line && !line.toLowerCase().startsWith('tipo:'));
+
+                const outerPadding = 24;
+                const innerGap = 24;
+                const infoPanelWidth = 330;
+                const lineHeight = 28;
+                const titleHeight = 34;
+                const detailsHeight = Math.max(lineHeight * detailsLines.length, lineHeight * 4);
+
+                const canvasWidth = Math.max(
+                    700,
+                    outerPadding * 2 + qrWidth + innerGap + infoPanelWidth
+                );
+                const contentHeight = Math.max(qrHeight, titleHeight + detailsHeight);
+                const canvasHeight = outerPadding * 2 + contentHeight;
+                const canvas = document.createElement('canvas');
+                canvas.width = canvasWidth;
+                canvas.height = canvasHeight;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) {
+                    reject(new Error('No se pudo inicializar canvas para etiqueta.'));
+                    return;
+                }
+
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                const qrX = outerPadding;
+                const qrY = Math.floor((canvasHeight - qrHeight) / 2);
+                ctx.drawImage(image, qrX, qrY, qrWidth, qrHeight);
+
+                const infoX = qrX + qrWidth + innerGap;
+                const infoWidth = canvasWidth - infoX - outerPadding;
+                const textBlockHeight = titleHeight + detailsHeight;
+                const textStartY = Math.floor((canvasHeight - textBlockHeight) / 2);
+                let y = textStartY + 22;
+                ctx.fillStyle = '#0f172a';
+                ctx.font = '700 18px Inter, Arial, sans-serif';
+                ctx.fillText('Etiqueta Equipo - Driver Manager', infoX, y, infoWidth);
+
+                y += 34;
+                ctx.fillStyle = '#1f2937';
+                ctx.font = '500 14px Inter, Arial, sans-serif';
+                for (const line of detailsLines) {
+                    ctx.fillText(line, infoX, y, infoWidth);
+                    y += lineHeight;
+                }
+
+                resolve(canvas.toDataURL('image/png'));
+            } catch (error) {
+                reject(error);
+            }
+        };
+        image.onerror = () => reject(new Error('No se pudo renderizar la etiqueta.'));
+        image.src = imageDataUrl;
+    });
+}
+
+async function downloadQrImage() {
+    if (!currentQrImageUrl) return;
+    const downloadBtn = document.getElementById('qrDownloadBtn');
+    const fileName = downloadBtn?.dataset?.filename || 'qr-equipo.png';
+    let downloadUrl = currentQrImageUrl;
+
+    if (currentQrImageUrl.startsWith('data:image/gif')) {
+        try {
+            downloadUrl = await dataUrlToPngDataUrl(currentQrImageUrl);
+        } catch (_error) {
+            downloadUrl = currentQrImageUrl;
+        }
+    }
+
+    if (currentQrLabelInfo && currentQrLabelInfo.type === 'asset') {
+        try {
+            downloadUrl = await buildPrintableLabelDataUrl(
+                downloadUrl,
+                currentQrLabelInfo.details || ''
+            );
+        } catch (_error) {
+            // fallback: mantener download de QR simple si falla composiciÃƒÂ³n de etiqueta
+        }
+    }
+
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+}
+
+async function printQrLabel() {
+    if (!currentQrPayload || !currentQrImageUrl) return;
+    const details = currentQrLabelInfo?.details || formatQrDetailsText('asset', '');
+    let printableImageUrl = currentQrImageUrl;
+
+    if (currentQrLabelInfo?.type === 'asset') {
+        try {
+            printableImageUrl = await buildPrintableLabelDataUrl(currentQrImageUrl, details);
+        } catch (_error) {
+            printableImageUrl = currentQrImageUrl;
+        }
+    }
+
+    const printableImage = escapeHtml(printableImageUrl);
+    const printHtml = `
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Etiqueta QR</title>
+  <style>
+    html, body { margin: 0; padding: 0; background: #ffffff; }
+    .page { padding: 18px; display: flex; justify-content: center; }
+    .label { max-width: 840px; width: 100%; }
+    .img { display: block; width: 100%; height: auto; }
+    @media print {
+      @page { size: auto; margin: 8mm; }
+      .page { padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="label">
+      <img class="img" src="${printableImage}" alt="Etiqueta QR">
+    </div>
+  </div>
+</body>
+</html>`;
+
+    try {
+        const printFrame = document.createElement('iframe');
+        printFrame.setAttribute('aria-hidden', 'true');
+        printFrame.style.position = 'fixed';
+        printFrame.style.right = '0';
+        printFrame.style.bottom = '0';
+        printFrame.style.width = '0';
+        printFrame.style.height = '0';
+        printFrame.style.border = '0';
+        printFrame.srcdoc = printHtml;
+
+        const cleanup = () => {
+            if (printFrame.parentNode) {
+                printFrame.parentNode.removeChild(printFrame);
+            }
+        };
+
+        printFrame.onload = () => {
+            try {
+                const frameWindow = printFrame.contentWindow;
+                if (!frameWindow) {
+                    cleanup();
+                    showNotification('No se pudo preparar la impresion.', 'error');
+                    return;
+                }
+                frameWindow.focus();
+                frameWindow.print();
+                setTimeout(cleanup, 1200);
+            } catch (_error) {
+                cleanup();
+                showNotification('No se pudo abrir la impresion.', 'error');
+            }
+        };
+
+        document.body.appendChild(printFrame);
+    } catch (_error) {
+        showNotification('No se pudo abrir la impresion.', 'error');
+    }
+}
+
 async function loadAuditLogs() {
     if (!requireActiveSession()) return;
     const container = document.getElementById('auditLogs');
@@ -1439,7 +2853,7 @@ async function loadAuditLogs() {
         const logs = await api.getAuditLogs();
         renderAuditLogs(logs);
     } catch (err) {
-        container.innerHTML = '<p class="error">❌ Error cargando logs</p>';
+        container.innerHTML = '<p class="error">Ã¢ÂÅ’ Error cargando logs</p>';
     }
 }
 
@@ -1451,7 +2865,7 @@ function renderAuditLogs(logs) {
     if (!logs || !logs.length) {
         const emptyMessage = document.createElement('p');
         emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No hay logs de auditoría';
+        emptyMessage.textContent = 'No hay logs de auditorÃƒÂ­a';
         container.appendChild(emptyMessage);
         return;
     }
@@ -1472,7 +2886,7 @@ function renderAuditLogs(logs) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['🕐 Fecha', '📝 Acción', '👤 Usuario', '✅ Estado', '💻 Detalles'].forEach(label => {
+    ['Ã°Å¸â€¢Â Fecha', 'Ã°Å¸â€œÂ AcciÃƒÂ³n', 'Ã°Å¸â€˜Â¤ Usuario', 'Ã¢Å“â€¦ Estado', 'Ã°Å¸â€™Â» Detalles'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -1482,7 +2896,7 @@ function renderAuditLogs(logs) {
     const tbody = document.createElement('tbody');
 
     filteredLogs.forEach(log => {
-        const successIcon = log.success ? '✅' : '❌';
+        const successIcon = log.success ? 'Ã¢Å“â€¦' : 'Ã¢ÂÅ’';
         const successClass = log.success ? 'success' : 'failed';
         
         let details = '-';
@@ -1557,9 +2971,9 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         syncSSEForCurrentContext(true);
         
         // Show success notification
-        showNotification('✅ Bienvenido, ' + result.user.username + '!', 'success');
+        showNotification('Ã¢Å“â€¦ Bienvenido, ' + result.user.username + '!', 'success');
     } catch (err) {
-        document.getElementById('loginError').textContent = '❌ Credenciales inválidas';
+        document.getElementById('loginError').textContent = 'Ã¢ÂÅ’ Credenciales invÃƒÂ¡lidas';
         document.getElementById('loginPassword').value = '';
     }
 });
@@ -1575,7 +2989,7 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     closeSSE();
     resetProtectedViews();
     showLogin();
-    showNotification('👋 Sesión cerrada', 'info');
+    showNotification('Ã°Å¸â€˜â€¹ SesiÃƒÂ³n cerrada', 'info');
 });
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
@@ -1590,7 +3004,7 @@ document.getElementById('refreshBtn').addEventListener('click', () => {
     }, 500);
     
     loadDashboard();
-    showNotification('🔄 Dashboard actualizado', 'info');
+    showNotification('Ã°Å¸â€â€ž Dashboard actualizado', 'info');
 });
 
 document.querySelectorAll('.nav-links a').forEach(link => {
@@ -1608,12 +3022,14 @@ document.querySelectorAll('.nav-links a').forEach(link => {
         const titles = {
             dashboard: 'Dashboard',
             installations: 'Instalaciones',
+            assets: 'Equipos',
             incidents: 'Incidencias',
-            audit: 'Auditoría'
+            audit: 'AuditorÃƒÂ­a'
         };
         document.getElementById('pageTitle').textContent = titles[section] || 'Dashboard';
         
         if (section === 'installations') loadInstallations();
+        if (section === 'assets') loadAssets();
         if (section === 'audit') loadAuditLogs();
         syncSSEForCurrentContext();
     });
@@ -1623,6 +3039,29 @@ document.getElementById('applyFilters').addEventListener('click', () => {
     if (!requireActiveSession()) return;
     updateFilterChips();
     loadInstallations();
+});
+
+document.getElementById('assetsSearchBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    void loadAssets();
+});
+
+document.getElementById('assetsRefreshBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    void loadAssets();
+});
+
+document.getElementById('assetsCreateQrBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    showQrModal({ type: 'asset', value: '' });
+});
+
+document.getElementById('assetsSearchInput')?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        if (!requireActiveSession()) return;
+        void loadAssets();
+    }
 });
 
 
@@ -1647,10 +3086,101 @@ document.getElementById('photoModal').addEventListener('click', (e) => {
     }
 });
 
+document.querySelectorAll('input[name="qrType"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+        applyQrTypeMeta();
+        resetQrPreview();
+        setQrError('');
+    });
+});
+
+document.getElementById('qrGenerateBtn').addEventListener('click', () => {
+    generateQrPreview();
+});
+
+document.getElementById('qrSaveAssetBtn').addEventListener('click', () => {
+    const selectedType = document.querySelector('input[name="qrType"]:checked')?.value || 'asset';
+    if (selectedType !== 'asset') {
+        setQrError('Guardar equipo solo aplica para tipo Equipo.');
+        return;
+    }
+    void saveAssetFromQrModal({ generateAfterSave: true });
+});
+
+document.getElementById('qrEnableEditBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    if (!canCurrentUserEditAssets()) {
+        setQrError('No tienes permisos para editar equipos.');
+        return;
+    }
+    if (isQrEditSessionActive() && qrModalEditUnlocked) {
+        applyQrModalAccessState();
+        setQrError('');
+        showNotification('La edicion ya esta habilitada temporalmente.', 'info');
+        return;
+    }
+    openQrPasswordModal();
+});
+
+document.getElementById('qrValueInput').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        generateQrPreview();
+    }
+});
+
+document.getElementById('qrCopyBtn').addEventListener('click', () => {
+    void copyQrPayloadToClipboard();
+});
+
+document.getElementById('qrDownloadBtn').addEventListener('click', () => {
+    void downloadQrImage();
+});
+
+document.getElementById('qrPrintBtn').addEventListener('click', () => {
+    void printQrLabel();
+});
+
+document.querySelector('#qrModal .close').addEventListener('click', () => {
+    closeQrModal();
+});
+
+document.getElementById('qrModal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) {
+        closeQrModal();
+    }
+});
+
+document.querySelector('#qrPasswordModal .close')?.addEventListener('click', () => {
+    closeQrPasswordModal();
+});
+
+document.getElementById('qrPasswordCancelBtn')?.addEventListener('click', () => {
+    closeQrPasswordModal();
+});
+
+document.getElementById('qrPasswordConfirmBtn')?.addEventListener('click', () => {
+    void confirmQrEditUnlockFromModal();
+});
+
+document.getElementById('qrPasswordInput')?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    void confirmQrEditUnlockFromModal();
+});
+
+document.getElementById('qrPasswordModal')?.addEventListener('click', (event) => {
+    if (event.target !== event.currentTarget) return;
+    if (qrPasswordModalBusy) return;
+    closeQrPasswordModal();
+});
+
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         document.getElementById('photoModal').classList.remove('active');
+        closeQrPasswordModal();
+        closeQrModal();
     }
     if (e.ctrlKey && e.key === 'r') {
         e.preventDefault();
@@ -1720,7 +3250,7 @@ function scheduleSSEReconnect(preferredDelayMs = null) {
     if (sseReconnectAttempts >= MAX_SSE_RECONNECT_ATTEMPTS) {
         console.error('[SSE] Max reconnection attempts reached');
         updateConnectionStatus('failed');
-        showNotification('⚠️ Conexión en tiempo real perdida. Recarga la página para reconectar.', 'error');
+        showNotification('Ã¢Å¡Â Ã¯Â¸Â ConexiÃƒÂ³n en tiempo real perdida. Recarga la pÃƒÂ¡gina para reconectar.', 'error');
         return;
     }
 
@@ -1824,7 +3354,7 @@ function handleSSEMessage(data) {
     switch (data.type) {
         case 'connected':
             console.log('[SSE]', data.message);
-            showNotification('🔌 Conectado en tiempo real', 'success');
+            showNotification('Ã°Å¸â€Å’ Conectado en tiempo real', 'success');
             break;
 
         case 'installation_created':
@@ -1879,8 +3409,8 @@ function handleRealtimeInstallation(installation) {
     }
     
     // Show notification
-    const statusIcon = installation.status === 'success' ? '✅' : installation.status === 'failed' ? '❌' : '💻';
-    showNotification(`${statusIcon} Nueva instalación: ${installation.client_name || 'Sin cliente'}`, 'info');
+    const statusIcon = installation.status === 'success' ? 'Ã¢Å“â€¦' : installation.status === 'failed' ? 'Ã¢ÂÅ’' : 'Ã°Å¸â€™Â»';
+    showNotification(`${statusIcon} Nueva instalaciÃƒÂ³n: ${installation.client_name || 'Sin cliente'}`, 'info');
     
     // Refresh dashboard stats if on dashboard
     if (document.getElementById('dashboardSection')?.classList.contains('active')) {
@@ -1911,12 +3441,12 @@ function handleRealtimeInstallationDeleted(installation) {
             renderInstallationsTable(currentInstallationsData);
         }
     }
-    showNotification(`🗑️ Instalación #${installation.id} eliminada`, 'info');
+    showNotification(`Ã°Å¸â€”â€˜Ã¯Â¸Â InstalaciÃƒÂ³n #${installation.id} eliminada`, 'info');
 }
 
 function handleRealtimeIncident(incident) {
-    const severityIcon = incident.severity === 'critical' ? '🔴' : incident.severity === 'high' ? '🟠' : '⚠️';
-    showNotification(`${severityIcon} Nueva incidencia en instalación #${incident.installation_id}`, 'warning');
+    const severityIcon = incident.severity === 'critical' ? 'Ã°Å¸â€Â´' : incident.severity === 'high' ? 'Ã°Å¸Å¸Â ' : 'Ã¢Å¡Â Ã¯Â¸Â';
+    showNotification(`${severityIcon} Nueva incidencia en instalaciÃƒÂ³n #${incident.installation_id}`, 'warning');
 }
 
 function handleRealtimeStatsUpdate(stats) {
@@ -1928,17 +3458,82 @@ function handleRealtimeStatsUpdate(stats) {
     }
 }
 
-function updateConnectionStatus(status) {
-    // Remove existing status indicators
-    const existingIndicator = document.getElementById('connectionStatus');
-    if (existingIndicator) {
-        existingIndicator.remove();
+function isMobileDashboardViewport() {
+    return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function applyConnectionStatusVisualState(indicator) {
+    if (!indicator) return;
+    const hiddenByScroll = indicator.dataset.hiddenByScroll === '1';
+    const dimmed = indicator.dataset.dimmed === '1';
+    const canReconnect = indicator.dataset.canReconnect === '1';
+
+    if (hiddenByScroll) {
+        indicator.style.opacity = '0';
+        indicator.style.transform = 'translateY(-12px) scale(0.96)';
+        indicator.style.pointerEvents = 'none';
+        return;
     }
-    
-    // Create new indicator
-    const indicator = document.createElement('div');
-    indicator.id = 'connectionStatus';
-    
+
+    indicator.style.opacity = dimmed ? '0.6' : '1';
+    indicator.style.transform = dimmed ? 'scale(0.9)' : 'scale(1)';
+    indicator.style.pointerEvents = canReconnect ? 'auto' : 'none';
+}
+
+function ensureConnectionStatusMobileBindings() {
+    if (connectionStatusMobileBindingsReady) return;
+    connectionStatusMobileBindingsReady = true;
+    connectionStatusLastScrollY = window.scrollY || 0;
+
+    window.addEventListener('scroll', () => {
+        const indicator = document.getElementById('connectionStatus');
+        if (!indicator || !isMobileDashboardViewport()) return;
+
+        const now = Date.now();
+        if (now < connectionStatusForceVisibleUntil) return;
+
+        const currentScrollY = window.scrollY || 0;
+        const deltaY = currentScrollY - connectionStatusLastScrollY;
+        connectionStatusLastScrollY = currentScrollY;
+        if (Math.abs(deltaY) < 12) return;
+
+        const shouldHide = deltaY > 0 && currentScrollY > 24;
+        indicator.dataset.hiddenByScroll = shouldHide ? '1' : '0';
+        applyConnectionStatusVisualState(indicator);
+    }, { passive: true });
+
+    window.addEventListener('resize', () => {
+        const indicator = document.getElementById('connectionStatus');
+        if (!indicator) return;
+        if (!isMobileDashboardViewport()) {
+            indicator.dataset.hiddenByScroll = '0';
+            applyConnectionStatusVisualState(indicator);
+        }
+    });
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        const indicator = document.getElementById('connectionStatus');
+        if (!indicator) return;
+        indicator.dataset.hiddenByScroll = '0';
+        applyConnectionStatusVisualState(indicator);
+    });
+}
+
+function updateConnectionStatus(status) {
+    const now = Date.now();
+    const existingIndicator = document.getElementById('connectionStatus');
+    if (
+        existingIndicator &&
+        connectionStatusLastRendered.status === status &&
+        (now - connectionStatusLastRendered.at) < CONNECTION_STATUS_DEDUP_MS
+    ) {
+        return;
+    }
+
+    ensureConnectionStatusMobileBindings();
+    connectionStatusLastRendered = { status, at: now };
+
     const statusConfig = {
         connected: { icon: '🟢', text: 'En vivo', color: 'rgba(16, 185, 129, 0.9)' },
         disconnected: { icon: '🔴', text: 'Desconectado', color: 'rgba(239, 68, 68, 0.9)' },
@@ -1946,49 +3541,102 @@ function updateConnectionStatus(status) {
         paused: { icon: '⏸️', text: 'En pausa', color: 'rgba(100, 116, 139, 0.9)' },
         failed: { icon: '⚫', text: 'Error de conexión', color: 'rgba(148, 163, 184, 0.9)' }
     };
-    
+
     const config = statusConfig[status] || statusConfig.disconnected;
-    
+    const isMobileViewport = isMobileDashboardViewport();
+    const canManualReconnect = status === 'disconnected' || status === 'failed' || status === 'paused';
+    const compactMobileText = {
+        connected: 'En vivo',
+        disconnected: 'Sin red',
+        reconnecting: 'Reconectando',
+        paused: 'En pausa',
+        failed: 'Sin conexion'
+    };
+    const displayText = isMobileViewport
+        ? (compactMobileText[status] || config.text)
+        : config.text;
+    const showStatusIcon = !(isMobileViewport && status === 'reconnecting');
+
+    const indicator = existingIndicator || document.createElement('div');
+    indicator.id = 'connectionStatus';
     indicator.style.cssText = `
         position: fixed;
-        bottom: 1rem;
-        right: 1rem;
-        padding: 0.5rem 1rem;
+        ${isMobileViewport ? 'top: calc(env(safe-area-inset-top, 0px) + 0.625rem);' : 'bottom: 1rem;'}
+        right: 0.625rem;
+        ${isMobileViewport ? 'bottom: auto;' : ''}
+        padding: ${isMobileViewport ? '0.375rem 0.625rem' : '0.5rem 1rem'};
         background: ${config.color};
         color: white;
         border-radius: 9999px;
-        font-size: 0.75rem;
+        font-size: ${isMobileViewport ? '0.6875rem' : '0.75rem'};
         font-weight: 600;
         display: flex;
         align-items: center;
         gap: 0.5rem;
-        z-index: 9998;
+        z-index: ${isMobileViewport ? '950' : '9998'};
+        max-width: ${isMobileViewport ? '55vw' : 'none'};
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
-        transition: all 0.3s ease;
-        cursor: pointer;
+        transition: opacity 0.25s ease, transform 0.25s ease, background-color 0.25s ease;
+        cursor: ${canManualReconnect ? 'pointer' : 'default'};
     `;
-    indicator.innerHTML = `<span>${config.icon}</span><span>${config.text}</span>`;
-    
-    // Click to reconnect when reconnection is meaningful.
-    if (status === 'disconnected' || status === 'failed' || status === 'paused') {
-        indicator.addEventListener('click', () => {
+    indicator.innerHTML = showStatusIcon
+        ? `<span aria-hidden="true">${config.icon}</span><span>${displayText}</span>`
+        : `<span>${displayText}</span>`;
+    indicator.setAttribute('aria-live', 'polite');
+
+    indicator.dataset.canReconnect = canManualReconnect ? '1' : '0';
+    indicator.dataset.dimmed = '0';
+    indicator.dataset.hiddenByScroll = '0';
+    connectionStatusForceVisibleUntil = now + (isMobileViewport ? 3600 : 0);
+    applyConnectionStatusVisualState(indicator);
+
+    if (canManualReconnect) {
+        indicator.onclick = () => {
             showNotification('🔄 Intentando reconectar...', 'info');
             sseReconnectAttempts = 0;
             syncSSEForCurrentContext(true);
-        });
-        indicator.style.cursor = 'pointer';
+        };
         indicator.title = 'Click para reconectar';
+    } else {
+        indicator.onclick = null;
+        indicator.removeAttribute('title');
     }
-    
-    document.body.appendChild(indicator);
-    
-    // Auto-hide after 5 seconds if connected
+
+    if (!existingIndicator) {
+        document.body.appendChild(indicator);
+    }
+
+    if (connectionStatusScrollHideTimer) {
+        clearTimeout(connectionStatusScrollHideTimer);
+        connectionStatusScrollHideTimer = null;
+    }
+    if (isMobileViewport && !canManualReconnect) {
+        const hideDelayMs = status === 'connected' ? 2600 : 4200;
+        connectionStatusScrollHideTimer = setTimeout(() => {
+            const liveIndicator = document.getElementById('connectionStatus');
+            if (!liveIndicator) return;
+            if (Date.now() < connectionStatusForceVisibleUntil) return;
+            liveIndicator.dataset.hiddenByScroll = '1';
+            applyConnectionStatusVisualState(liveIndicator);
+        }, hideDelayMs);
+    }
+
     if (status === 'connected') {
+        const renderStamp = connectionStatusLastRendered.at;
         setTimeout(() => {
-            if (indicator.parentNode) {
-                indicator.style.opacity = '0.6';
-                indicator.style.transform = 'scale(0.9)';
+            const liveIndicator = document.getElementById('connectionStatus');
+            if (!liveIndicator) return;
+            if (
+                connectionStatusLastRendered.status !== 'connected' ||
+                connectionStatusLastRendered.at !== renderStamp
+            ) {
+                return;
             }
+            liveIndicator.dataset.dimmed = '1';
+            applyConnectionStatusVisualState(liveIndicator);
         }, 5000);
     }
 }
@@ -2002,6 +3650,12 @@ function closeSSE() {
         clearTimeout(sseReconnectTimer);
         sseReconnectTimer = null;
     }
+    if (connectionStatusScrollHideTimer) {
+        clearTimeout(connectionStatusScrollHideTimer);
+        connectionStatusScrollHideTimer = null;
+    }
+    connectionStatusLastRendered = { status: '', at: 0 };
+    connectionStatusForceVisibleUntil = 0;
     const indicator = document.getElementById('connectionStatus');
     if (indicator) {
         indicator.remove();
@@ -2101,7 +3755,7 @@ function toggleTheme() {
     
     // Show notification
     const themeLabel = newTheme === 'light' ? 'claro' : 'oscuro';
-    showNotification(`🎨 Tema ${themeLabel} activado`, 'info');
+    showNotification(`Ã°Å¸Å½Â¨ Tema ${themeLabel} activado`, 'info');
 }
 
 function updateChartTheme(theme) {
@@ -2140,3 +3794,6 @@ function setupThemeToggle() {
 }
 
 init();
+
+
+

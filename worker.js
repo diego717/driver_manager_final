@@ -40,6 +40,13 @@ const SSE_MAX_CLIENTS_PER_BROKER = 200;
 const SSE_CLIENT_KEY_PATTERN = /^[a-z0-9._:-]{1,96}$/;
 const REALTIME_BROKER_INSTANCE = "global";
 const DEFAULT_REALTIME_TENANT_ID = "default";
+const ASSET_EXTERNAL_CODE_MAX_LENGTH = 128;
+const ASSET_BRAND_MAX_LENGTH = 120;
+const ASSET_SERIAL_MAX_LENGTH = 128;
+const ASSET_MODEL_MAX_LENGTH = 160;
+const ASSET_CLIENT_NAME_MAX_LENGTH = 180;
+const ASSET_NOTES_MAX_LENGTH = 2000;
+const ALLOWED_ASSET_STATUSES = new Set(["active", "inactive", "retired", "maintenance"]);
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -145,6 +152,7 @@ function buildCorsPolicy(isWebRoute, routeParts) {
   if (
     isPhotoUpload ||
     first === "records" ||
+    first === "assets" ||
     first === "devices" ||
     first === "audit-logs" ||
     first === "auth" ||
@@ -158,7 +166,16 @@ function buildCorsPolicy(isWebRoute, routeParts) {
   }
 
   if (
-    ["dashboard", "dashboard.css", "dashboard.js", "dashboard-pwa.js", "manifest.json", "events", "sw.js"].includes(
+    [
+      "dashboard",
+      "dashboard.css",
+      "dashboard-qr.js",
+      "dashboard.js",
+      "dashboard-pwa.js",
+      "manifest.json",
+      "events",
+      "sw.js",
+    ].includes(
       first,
     )
   ) {
@@ -169,6 +186,11 @@ function buildCorsPolicy(isWebRoute, routeParts) {
   } else if (isRecordById) {
     methods.add("GET");
     methods.add("PUT");
+    methods.add("DELETE");
+  } else if (first === "assets") {
+    methods.add("GET");
+    methods.add("POST");
+    methods.add("PATCH");
     methods.add("DELETE");
   } else if (["records", "devices", "audit-logs"].includes(first)) {
     methods.add(first === "audit-logs" ? "GET" : "POST");
@@ -288,6 +310,7 @@ function dashboardAssetSecurityHeaders() {
 const DASHBOARD_ASSET_PATHS = {
   dashboard: "/dashboard.html",
   "dashboard.css": "/dashboard.css",
+  "dashboard-qr.js": "/dashboard-qr.js",
   "dashboard.js": "/dashboard.js",
   "dashboard-pwa.js": "/dashboard-pwa.js",
   "manifest.json": "/manifest.json",
@@ -302,7 +325,12 @@ function resolveDashboardAssetPath(routeParts) {
 function dashboardAssetContentType(assetPath) {
   if (assetPath === "/dashboard.html") return "text/html; charset=utf-8";
   if (assetPath === "/dashboard.css") return "text/css; charset=utf-8";
-  if (assetPath === "/dashboard.js" || assetPath === "/dashboard-pwa.js" || assetPath === "/sw.js") {
+  if (
+    assetPath === "/dashboard-qr.js" ||
+    assetPath === "/dashboard.js" ||
+    assetPath === "/dashboard-pwa.js" ||
+    assetPath === "/sw.js"
+  ) {
     return "application/javascript; charset=utf-8";
   }
   if (assetPath === "/manifest.json") return "application/manifest+json; charset=utf-8";
@@ -695,6 +723,105 @@ function normalizeInstallationUpdatePayload(data) {
   return {
     notes,
     installation_time_seconds: installationTimeSeconds,
+  };
+}
+
+function normalizeAssetExternalCode(value) {
+  const normalized = normalizeOptionalString(value, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, ASSET_EXTERNAL_CODE_MAX_LENGTH);
+  if (!normalized) {
+    throw new HttpError(400, "Campo 'external_code' es obligatorio.");
+  }
+  return normalized;
+}
+
+function normalizeAssetStatus(value, fallback = "active") {
+  const normalized = normalizeOptionalString(value, fallback).toLowerCase();
+  if (!ALLOWED_ASSET_STATUSES.has(normalized)) {
+    throw new HttpError(400, "Campo 'status' invalido.");
+  }
+  return normalized;
+}
+
+function normalizeAssetPayload(data, options = {}) {
+  const source = data && typeof data === "object" ? data : {};
+  const allowPartial = Boolean(options.allowPartial);
+
+  const hasExternalCode = Object.prototype.hasOwnProperty.call(source, "external_code");
+  const hasBrand = Object.prototype.hasOwnProperty.call(source, "brand");
+  const hasSerial = Object.prototype.hasOwnProperty.call(source, "serial_number");
+  const hasModel = Object.prototype.hasOwnProperty.call(source, "model");
+  const hasClientName = Object.prototype.hasOwnProperty.call(source, "client_name");
+  const hasNotes = Object.prototype.hasOwnProperty.call(source, "notes");
+  const hasStatus = Object.prototype.hasOwnProperty.call(source, "status");
+
+  if (!allowPartial || hasExternalCode) {
+    const externalCode = normalizeAssetExternalCode(source.external_code);
+    source.external_code = externalCode;
+  }
+
+  const brand = hasBrand
+    ? normalizeOptionalString(source.brand, "").slice(0, ASSET_BRAND_MAX_LENGTH)
+    : undefined;
+  const serialNumber = hasSerial
+    ? normalizeOptionalString(source.serial_number, "").slice(0, ASSET_SERIAL_MAX_LENGTH)
+    : undefined;
+  const model = hasModel
+    ? normalizeOptionalString(source.model, "").slice(0, ASSET_MODEL_MAX_LENGTH)
+    : undefined;
+  const clientName = hasClientName
+    ? normalizeOptionalString(source.client_name, "").slice(0, ASSET_CLIENT_NAME_MAX_LENGTH)
+    : undefined;
+  const notes = hasNotes
+    ? normalizeOptionalString(source.notes, "").slice(0, ASSET_NOTES_MAX_LENGTH)
+    : undefined;
+  const status = hasStatus ? normalizeAssetStatus(source.status) : undefined;
+
+  if (allowPartial) {
+    if (!hasExternalCode && !hasBrand && !hasSerial && !hasModel && !hasClientName && !hasNotes && !hasStatus) {
+      throw new HttpError(
+        400,
+        "Debes enviar al menos uno de: external_code, brand, serial_number, model, client_name, notes, status.",
+      );
+    }
+    return {
+      external_code: hasExternalCode ? source.external_code : undefined,
+      brand: hasBrand ? brand : undefined,
+      serial_number: hasSerial ? serialNumber : undefined,
+      model: hasModel ? model : undefined,
+      client_name: hasClientName ? clientName : undefined,
+      notes: hasNotes ? notes : undefined,
+      status: hasStatus ? status : undefined,
+    };
+  }
+
+  return {
+    external_code: source.external_code,
+    brand: brand || "",
+    serial_number: serialNumber || "",
+    model: model || "",
+    client_name: clientName || "",
+    notes: notes || "",
+    status: normalizeAssetStatus(source.status, "active"),
+  };
+}
+
+function isMissingAssetsTableError(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  return (
+    message.includes("no such table") &&
+    (message.includes("assets") || message.includes("asset_installation_links"))
+  );
+}
+
+function parseAssetSearchQuery(searchParams) {
+  return {
+    code: normalizeOptionalString(searchParams.get("code"), "").toLowerCase(),
+    brand: normalizeOptionalString(searchParams.get("brand"), "").toLowerCase(),
+    status: normalizeOptionalString(searchParams.get("status"), "").toLowerCase(),
+    search: normalizeOptionalString(searchParams.get("search"), "").toLowerCase(),
   };
 }
 
@@ -3536,6 +3663,9 @@ export default {
             web_import_users: "/web/auth/import-users",
             installations: "/installations",
             web_installations: "/web/installations",
+            web_assets: "/web/assets",
+            web_assets_resolve: "/web/assets/resolve",
+            web_asset_link: "/web/assets/:asset_id/link-installation",
             web_devices: "/web/devices",
             web_lookup: "/web/lookup?type=asset&code=EQ-123",
             statistics_trend: "/statistics/trend?days=7",
@@ -3762,6 +3892,9 @@ export default {
       if (routeParts.length === 1 && routeParts[0] === "lookup" && request.method === "GET") {
         const requestedType = normalizeOptionalString(url.searchParams.get("type"), "").toLowerCase();
         const code = normalizeOptionalString(url.searchParams.get("code"), "").trim();
+        const lookupTenantId = normalizeRealtimeTenantId(
+          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+        );
 
         if (!code) {
           throw new HttpError(400, "Parametro 'code' es obligatorio.");
@@ -3783,9 +3916,10 @@ export default {
             SELECT id, timestamp, status, client_name, driver_brand, driver_version
             FROM installations
             WHERE id = ?
+              AND tenant_id = ?
             LIMIT 1
           `)
-            .bind(asNumber)
+            .bind(asNumber, lookupTenantId)
             .all();
 
           if (!results?.[0]) {
@@ -3801,20 +3935,80 @@ export default {
           });
         }
 
+        let matchedAsset = null;
+        try {
+          const numericAssetId = Number.parseInt(code, 10);
+          const resolvedNumericAssetId =
+            Number.isInteger(numericAssetId) && numericAssetId > 0 ? numericAssetId : null;
+          const { results: assetMatches } = await env.DB.prepare(`
+            SELECT
+              a.id,
+              a.external_code,
+              (
+                SELECT l.installation_id
+                FROM asset_installation_links l
+                WHERE l.asset_id = a.id
+                  AND l.tenant_id = a.tenant_id
+                  AND l.unlinked_at IS NULL
+                ORDER BY l.linked_at DESC, l.id DESC
+                LIMIT 1
+              ) AS installation_id
+            FROM assets a
+            WHERE a.tenant_id = ?
+              AND (
+                LOWER(a.external_code) = ?
+                OR a.external_code = ?
+                OR (? IS NOT NULL AND a.id = ?)
+              )
+            ORDER BY a.id DESC
+            LIMIT 1
+          `)
+            .bind(
+              lookupTenantId,
+              normalizedCode,
+              code,
+              resolvedNumericAssetId,
+              resolvedNumericAssetId,
+            )
+            .all();
+          matchedAsset = assetMatches?.[0] || null;
+        } catch (error) {
+          if (!isMissingAssetsTableError(error)) {
+            throw error;
+          }
+        }
+
+        if (matchedAsset) {
+          return jsonResponse(request, env, corsPolicy, {
+            success: true,
+            match: {
+              type: "asset",
+              asset_record_id: Number(matchedAsset.id),
+              asset_id: normalizeOptionalString(matchedAsset.external_code, code),
+              external_code: normalizeOptionalString(matchedAsset.external_code, code),
+              installation_id: matchedAsset.installation_id ? Number(matchedAsset.installation_id) : null,
+            },
+          });
+        }
+
         const wildcard = `%${code}%`;
         const { results: installationMatches } = await env.DB.prepare(`
           SELECT id
           FROM installations
-          WHERE LOWER(client_name) = ?
-             OR LOWER(driver_description) = ?
-             OR LOWER(notes) = ?
-             OR client_name LIKE ?
-             OR driver_description LIKE ?
-             OR notes LIKE ?
+          WHERE tenant_id = ?
+            AND (
+              LOWER(client_name) = ?
+              OR LOWER(driver_description) = ?
+              OR LOWER(notes) = ?
+              OR client_name LIKE ?
+              OR driver_description LIKE ?
+              OR notes LIKE ?
+            )
           ORDER BY id DESC
           LIMIT 1
         `)
           .bind(
+            lookupTenantId,
             normalizedCode,
             normalizedCode,
             normalizedCode,
@@ -3835,6 +4029,799 @@ export default {
             installation_id: installationId,
           },
         });
+      }
+
+      if (routeParts.length >= 1 && routeParts[0] === "assets") {
+        const assetsTenantId = normalizeRealtimeTenantId(
+          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+        );
+
+        if (routeParts.length === 1 && request.method === "GET") {
+          const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
+          const pageSize = limit + 1;
+          const cursor = parseTimestampIdCursor(url.searchParams.get("cursor"));
+          const filters = parseAssetSearchQuery(url.searchParams);
+
+          let query = `
+            SELECT
+              id,
+              tenant_id,
+              external_code,
+              brand,
+              serial_number,
+              model,
+              client_name,
+              notes,
+              status,
+              created_at,
+              updated_at
+            FROM assets
+            WHERE tenant_id = ?
+          `;
+          const bindings = [assetsTenantId];
+
+          if (filters.code) {
+            query += " AND LOWER(external_code) = ?";
+            bindings.push(filters.code);
+          }
+
+          if (filters.brand) {
+            query += " AND LOWER(brand) = ?";
+            bindings.push(filters.brand);
+          }
+
+          if (filters.status) {
+            query += " AND status = ?";
+            bindings.push(normalizeAssetStatus(filters.status));
+          }
+
+          if (filters.search) {
+            query += `
+              AND (
+                LOWER(external_code) LIKE ?
+                OR LOWER(brand) LIKE ?
+                OR LOWER(serial_number) LIKE ?
+                OR LOWER(model) LIKE ?
+                OR LOWER(client_name) LIKE ?
+              )
+            `;
+            const wildcard = `%${filters.search}%`;
+            bindings.push(wildcard, wildcard, wildcard, wildcard, wildcard);
+          }
+
+          if (cursor) {
+            query += " AND (updated_at < ? OR (updated_at = ? AND id < ?))";
+            bindings.push(cursor.timestamp, cursor.timestamp, cursor.id);
+          }
+
+          query += " ORDER BY updated_at DESC, id DESC LIMIT ?";
+          bindings.push(pageSize);
+
+          let results;
+          try {
+            ({ results } = await env.DB.prepare(query).bind(...bindings).all());
+          } catch (error) {
+            if (isMissingAssetsTableError(error)) {
+              throw new HttpError(
+                503,
+                "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
+              );
+            }
+            throw error;
+          }
+
+          const rows = results || [];
+          const hasMore = rows.length > limit;
+          const items = hasMore ? rows.slice(0, limit) : rows;
+          const nextCursor = hasMore
+            ? buildTimestampIdCursor(
+                items[items.length - 1].updated_at,
+                items[items.length - 1].id,
+              )
+            : null;
+
+          const response = jsonResponse(request, env, corsPolicy, {
+            success: true,
+            items,
+          });
+          appendPaginationHeader(response, nextCursor);
+          return response;
+        }
+
+        if (routeParts.length === 1 && request.method === "POST") {
+          if (!isWebRoute) {
+            throw new HttpError(401, "Gestion de equipos requiere sesion web.");
+          }
+          requireAdminRole(webSession?.role);
+
+          const data = await readJsonOrThrowBadRequest(request);
+          const payload = normalizeAssetPayload(data);
+          const createdAt = nowIso();
+          const updatedAt = createdAt;
+          const createdBy = normalizeWebUsername(webSession?.sub || "unknown");
+
+          try {
+            const insertResult = await env.DB.prepare(`
+              INSERT INTO assets (
+                tenant_id,
+                external_code,
+                brand,
+                serial_number,
+                model,
+                client_name,
+                notes,
+                status,
+                created_at,
+                updated_at,
+                created_by_username
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `)
+              .bind(
+                assetsTenantId,
+                payload.external_code,
+                payload.brand,
+                payload.serial_number,
+                payload.model,
+                payload.client_name,
+                payload.notes,
+                payload.status,
+                createdAt,
+                updatedAt,
+                createdBy,
+              )
+              .run();
+
+            return jsonResponse(request, env, corsPolicy, {
+              success: true,
+              asset: {
+                id: insertResult?.meta?.last_row_id || null,
+                tenant_id: assetsTenantId,
+                external_code: payload.external_code,
+                brand: payload.brand,
+                serial_number: payload.serial_number,
+                model: payload.model,
+                client_name: payload.client_name,
+                notes: payload.notes,
+                status: payload.status,
+                created_at: createdAt,
+                updated_at: updatedAt,
+                created_by_username: createdBy,
+              },
+            }, 201);
+          } catch (error) {
+            const message = normalizeOptionalString(error?.message, "").toLowerCase();
+            if (message.includes("unique")) {
+              throw new HttpError(409, "Ya existe un equipo con ese external_code.");
+            }
+            if (isMissingAssetsTableError(error)) {
+              throw new HttpError(
+                503,
+                "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
+              );
+            }
+            throw error;
+          }
+        }
+
+        if (routeParts.length === 2 && routeParts[1] === "resolve" && request.method === "POST") {
+          const data = await readJsonOrThrowBadRequest(request);
+          const externalCode = normalizeAssetExternalCode(
+            data?.external_code ?? data?.asset_id ?? data?.code,
+          );
+          const brand = normalizeOptionalString(data?.brand, "")
+            .slice(0, ASSET_BRAND_MAX_LENGTH);
+          const serialNumber = normalizeOptionalString(data?.serial_number, "")
+            .slice(0, ASSET_SERIAL_MAX_LENGTH);
+          const model = normalizeOptionalString(data?.model, "")
+            .slice(0, ASSET_MODEL_MAX_LENGTH);
+          const clientName = normalizeOptionalString(data?.client_name, "")
+            .slice(0, ASSET_CLIENT_NAME_MAX_LENGTH);
+          const notes = normalizeOptionalString(data?.notes, "")
+            .slice(0, ASSET_NOTES_MAX_LENGTH);
+          const status = Object.prototype.hasOwnProperty.call(data || {}, "status")
+            ? normalizeAssetStatus(data?.status)
+            : "active";
+          const updateExisting = Boolean(data?.update_existing);
+          const normalizedCode = externalCode.toLowerCase();
+          const actorUsername = normalizeWebUsername(webSession?.sub || "unknown");
+          const now = nowIso();
+          const selectByCodeQuery = `
+            SELECT
+              id,
+              tenant_id,
+              external_code,
+              brand,
+              serial_number,
+              model,
+              client_name,
+              notes,
+              status,
+              created_at,
+              updated_at
+            FROM assets
+            WHERE tenant_id = ?
+              AND LOWER(external_code) = ?
+            LIMIT 1
+          `;
+
+          try {
+            const { results: existingRows } = await env.DB.prepare(selectByCodeQuery)
+              .bind(assetsTenantId, normalizedCode)
+              .all();
+
+            const existing = existingRows?.[0];
+            if (existing) {
+              const nextBrand = brand || existing.brand || "";
+              const nextSerial = serialNumber || existing.serial_number || "";
+              const nextModel = model || existing.model || "";
+              const nextClient = clientName || existing.client_name || "";
+              const nextNotes = notes || existing.notes || "";
+              const nextStatus = status || existing.status || "active";
+              const shouldPersistUpdate =
+                updateExisting ||
+                (!existing.brand && Boolean(brand)) ||
+                (!existing.serial_number && Boolean(serialNumber)) ||
+                (!existing.model && Boolean(model)) ||
+                (!existing.client_name && Boolean(clientName)) ||
+                (!existing.notes && Boolean(notes));
+
+              if (shouldPersistUpdate) {
+                await env.DB.prepare(`
+                  UPDATE assets
+                  SET brand = ?,
+                      serial_number = ?,
+                      model = ?,
+                      client_name = ?,
+                      notes = ?,
+                      status = ?,
+                      updated_at = ?,
+                      updated_by_username = ?
+                  WHERE id = ?
+                    AND tenant_id = ?
+                `)
+                  .bind(
+                    nextBrand,
+                    nextSerial,
+                    nextModel,
+                    nextClient,
+                    nextNotes,
+                    nextStatus,
+                    now,
+                    actorUsername,
+                    existing.id,
+                    assetsTenantId,
+                  )
+                  .run();
+
+                const { results: refreshedRows } = await env.DB.prepare(selectByCodeQuery)
+                  .bind(assetsTenantId, normalizedCode)
+                  .all();
+                return jsonResponse(request, env, corsPolicy, {
+                  success: true,
+                  created: false,
+                  asset: refreshedRows?.[0] || existing,
+                });
+              }
+
+              return jsonResponse(request, env, corsPolicy, {
+                success: true,
+                created: false,
+                asset: existing,
+              });
+            }
+
+            const insertResult = await env.DB.prepare(`
+              INSERT INTO assets (
+                tenant_id,
+                external_code,
+                brand,
+                serial_number,
+                model,
+                client_name,
+                notes,
+                status,
+                created_at,
+                updated_at,
+                created_by_username
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `)
+              .bind(
+                assetsTenantId,
+                externalCode,
+                brand,
+                serialNumber,
+                model,
+                clientName,
+                notes,
+                status,
+                now,
+                now,
+                actorUsername,
+              )
+              .run();
+
+            return jsonResponse(request, env, corsPolicy, {
+              success: true,
+              created: true,
+              asset: {
+                id: insertResult?.meta?.last_row_id || null,
+                tenant_id: assetsTenantId,
+                external_code: externalCode,
+                brand,
+                serial_number: serialNumber,
+                model,
+                client_name: clientName,
+                notes,
+                status,
+                created_at: now,
+                updated_at: now,
+                created_by_username: actorUsername,
+              },
+            }, 201);
+          } catch (error) {
+            const message = normalizeOptionalString(error?.message, "").toLowerCase();
+            if (message.includes("unique")) {
+              const { results: existingRows } = await env.DB.prepare(selectByCodeQuery)
+                .bind(assetsTenantId, normalizedCode)
+                .all();
+              if (existingRows?.[0]) {
+                return jsonResponse(request, env, corsPolicy, {
+                  success: true,
+                  created: false,
+                  asset: existingRows[0],
+                });
+              }
+            }
+            if (isMissingAssetsTableError(error)) {
+              throw new HttpError(
+                503,
+                "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
+              );
+            }
+            throw error;
+          }
+        }
+
+        if (routeParts.length === 2) {
+          if (routeParts[1] === "resolve") {
+            throw new HttpError(405, "Metodo no permitido para /assets/resolve.");
+          }
+          const assetId = parsePositiveInt(routeParts[1], "asset_id");
+
+          if (request.method === "GET") {
+            let results;
+            try {
+              ({ results } = await env.DB.prepare(`
+                SELECT
+                  id,
+                  tenant_id,
+                  external_code,
+                  brand,
+                  serial_number,
+                  model,
+                  client_name,
+                  notes,
+                  status,
+                  created_at,
+                  updated_at
+                FROM assets
+                WHERE id = ?
+                  AND tenant_id = ?
+                LIMIT 1
+              `)
+                .bind(assetId, assetsTenantId)
+                .all());
+            } catch (error) {
+              if (isMissingAssetsTableError(error)) {
+                throw new HttpError(
+                  503,
+                  "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
+                );
+              }
+              throw error;
+            }
+
+            const asset = results?.[0];
+            if (!asset) {
+              throw new HttpError(404, "Equipo no encontrado.");
+            }
+            return jsonResponse(request, env, corsPolicy, {
+              success: true,
+              asset,
+            });
+          }
+
+          if (request.method === "PATCH") {
+            if (!isWebRoute) {
+              throw new HttpError(401, "Gestion de equipos requiere sesion web.");
+            }
+            requireAdminRole(webSession?.role);
+
+            const data = await readJsonOrThrowBadRequest(request);
+            const updates = normalizeAssetPayload(data, { allowPartial: true });
+            const { results: existingRows } = await env.DB.prepare(`
+              SELECT id, external_code, brand, serial_number, model, client_name, notes, status
+              FROM assets
+              WHERE id = ?
+                AND tenant_id = ?
+              LIMIT 1
+            `)
+              .bind(assetId, assetsTenantId)
+              .all();
+            const existing = existingRows?.[0];
+            if (!existing) {
+              throw new HttpError(404, "Equipo no encontrado.");
+            }
+
+            const nextExternalCode =
+              updates.external_code === undefined ? existing.external_code : updates.external_code;
+            const nextBrand = updates.brand === undefined ? existing.brand : updates.brand;
+            const nextSerial =
+              updates.serial_number === undefined ? existing.serial_number : updates.serial_number;
+            const nextModel = updates.model === undefined ? existing.model : updates.model;
+            const nextClient =
+              updates.client_name === undefined ? existing.client_name : updates.client_name;
+            const nextNotes = updates.notes === undefined ? existing.notes : updates.notes;
+            const nextStatus = updates.status === undefined ? existing.status : updates.status;
+            const nextUpdatedAt = nowIso();
+
+            try {
+              await env.DB.prepare(`
+                UPDATE assets
+                SET external_code = ?,
+                    brand = ?,
+                    serial_number = ?,
+                    model = ?,
+                    client_name = ?,
+                    notes = ?,
+                    status = ?,
+                    updated_at = ?,
+                    updated_by_username = ?
+                WHERE id = ?
+                  AND tenant_id = ?
+              `)
+                .bind(
+                  nextExternalCode,
+                  nextBrand,
+                  nextSerial,
+                  nextModel,
+                  nextClient,
+                  nextNotes,
+                  nextStatus,
+                  nextUpdatedAt,
+                  normalizeWebUsername(webSession?.sub || "unknown"),
+                  assetId,
+                  assetsTenantId,
+                )
+                .run();
+            } catch (error) {
+              const message = normalizeOptionalString(error?.message, "").toLowerCase();
+              if (message.includes("unique")) {
+                throw new HttpError(409, "Ya existe un equipo con ese external_code.");
+              }
+              throw error;
+            }
+
+            return jsonResponse(request, env, corsPolicy, {
+              success: true,
+              asset: {
+                id: assetId,
+                tenant_id: assetsTenantId,
+                external_code: nextExternalCode,
+                brand: nextBrand,
+                serial_number: nextSerial,
+                model: nextModel,
+                client_name: nextClient,
+                notes: nextNotes,
+                status: nextStatus,
+                updated_at: nextUpdatedAt,
+              },
+            });
+          }
+
+          if (request.method === "DELETE") {
+            if (!isWebRoute) {
+              throw new HttpError(401, "Gestion de equipos requiere sesion web.");
+            }
+            requireAdminRole(webSession?.role);
+
+            const { results: existingRows } = await env.DB.prepare(`
+              SELECT id
+              FROM assets
+              WHERE id = ?
+                AND tenant_id = ?
+              LIMIT 1
+            `)
+              .bind(assetId, assetsTenantId)
+              .all();
+            if (!existingRows?.[0]) {
+              throw new HttpError(404, "Equipo no encontrado.");
+            }
+
+            await env.DB.prepare(`
+              DELETE FROM assets
+              WHERE id = ?
+                AND tenant_id = ?
+            `)
+              .bind(assetId, assetsTenantId)
+              .run();
+
+            return jsonResponse(request, env, corsPolicy, {
+              success: true,
+              deleted_asset_id: assetId,
+            });
+          }
+        }
+
+        if (
+          routeParts.length === 3 &&
+          routeParts[2] === "incidents"
+        ) {
+          const assetId = parsePositiveInt(routeParts[1], "asset_id");
+          if (request.method !== "GET") {
+            throw new HttpError(405, "Metodo no permitido para /assets/:id/incidents.");
+          }
+
+          const incidentLimit = parsePageLimit(url.searchParams, { fallback: 100, max: 300 });
+
+          try {
+            const { results: assetRows } = await env.DB.prepare(`
+              SELECT
+                id,
+                tenant_id,
+                external_code,
+                brand,
+                serial_number,
+                model,
+                client_name,
+                notes,
+                status,
+                created_at,
+                updated_at
+              FROM assets
+              WHERE id = ?
+                AND tenant_id = ?
+              LIMIT 1
+            `)
+              .bind(assetId, assetsTenantId)
+              .all();
+
+            const asset = assetRows?.[0];
+            if (!asset) {
+              throw new HttpError(404, "Equipo no encontrado.");
+            }
+
+            const { results: linkRows } = await env.DB.prepare(`
+              SELECT
+                l.id,
+                l.tenant_id,
+                l.asset_id,
+                l.installation_id,
+                l.linked_at,
+                l.unlinked_at,
+                l.linked_by_username,
+                l.notes,
+                inst.client_name AS installation_client_name,
+                inst.driver_brand AS installation_brand,
+                inst.driver_version AS installation_version,
+                inst.status AS installation_status
+              FROM asset_installation_links l
+              LEFT JOIN installations inst
+                ON inst.id = l.installation_id
+               AND inst.tenant_id = l.tenant_id
+              WHERE l.asset_id = ?
+                AND l.tenant_id = ?
+              ORDER BY l.linked_at DESC, l.id DESC
+            `)
+              .bind(assetId, assetsTenantId)
+              .all();
+
+            const links = linkRows || [];
+            const activeLink = links.find((link) => !link.unlinked_at) || null;
+
+            const { results: incidentRows } = await env.DB.prepare(`
+              SELECT
+                i.id,
+                i.installation_id,
+                i.reporter_username,
+                i.note,
+                i.time_adjustment_seconds,
+                i.severity,
+                i.source,
+                i.created_at,
+                inst.client_name AS installation_client_name,
+                inst.driver_brand AS installation_brand,
+                inst.driver_version AS installation_version
+              FROM incidents i
+              INNER JOIN installations inst
+                ON inst.id = i.installation_id
+              WHERE inst.tenant_id = ?
+                AND EXISTS (
+                  SELECT 1
+                  FROM asset_installation_links l
+                  WHERE l.tenant_id = ?
+                    AND l.asset_id = ?
+                    AND l.installation_id = i.installation_id
+                    AND i.created_at >= l.linked_at
+                    AND (l.unlinked_at IS NULL OR i.created_at <= l.unlinked_at)
+                )
+              ORDER BY i.created_at DESC, i.id DESC
+              LIMIT ?
+            `)
+              .bind(assetsTenantId, assetsTenantId, assetId, incidentLimit)
+              .all();
+
+            const incidents = incidentRows || [];
+            const incidentIds = incidents
+              .map((incident) => Number(incident.id))
+              .filter((incidentId) => Number.isInteger(incidentId) && incidentId > 0);
+
+            const photosByIncident = {};
+            if (incidentIds.length > 0) {
+              const placeholders = incidentIds.map(() => "?").join(", ");
+              const { results: photoRows } = await env.DB.prepare(`
+                SELECT
+                  id,
+                  incident_id,
+                  r2_key,
+                  file_name,
+                  content_type,
+                  size_bytes,
+                  sha256,
+                  created_at
+                FROM incident_photos
+                WHERE incident_id IN (${placeholders})
+                ORDER BY created_at ASC, id ASC
+              `)
+                .bind(...incidentIds)
+                .all();
+
+              for (const photo of photoRows || []) {
+                if (!photosByIncident[photo.incident_id]) {
+                  photosByIncident[photo.incident_id] = [];
+                }
+                photosByIncident[photo.incident_id].push(photo);
+              }
+            }
+
+            const enrichedIncidents = incidents.map((incident) => ({
+              ...incident,
+              photos: photosByIncident[incident.id] || [],
+            }));
+
+            return jsonResponse(request, env, corsPolicy, {
+              success: true,
+              asset,
+              active_link: activeLink,
+              links,
+              incidents: enrichedIncidents,
+            });
+          } catch (error) {
+            if (error instanceof HttpError) {
+              throw error;
+            }
+            if (isMissingAssetsTableError(error)) {
+              throw new HttpError(
+                503,
+                "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
+              );
+            }
+            throw error;
+          }
+        }
+
+        if (
+          routeParts.length === 3 &&
+          routeParts[2] === "link-installation" &&
+          request.method === "POST"
+        ) {
+          const assetId = parsePositiveInt(routeParts[1], "asset_id");
+          const data = await readJsonOrThrowBadRequest(request);
+          const installationId = parsePositiveInt(data?.installation_id, "installation_id");
+          const linkedAt = nowIso();
+          const linkedBy = normalizeWebUsername(webSession?.sub || "unknown");
+
+          try {
+            const { results: assetRows } = await env.DB.prepare(`
+              SELECT id, external_code
+              FROM assets
+              WHERE id = ?
+                AND tenant_id = ?
+              LIMIT 1
+            `)
+              .bind(assetId, assetsTenantId)
+              .all();
+            if (!assetRows?.[0]) {
+              throw new HttpError(404, "Equipo no encontrado.");
+            }
+
+            const { results: installationRows } = await env.DB.prepare(`
+              SELECT id
+              FROM installations
+              WHERE id = ?
+                AND tenant_id = ?
+              LIMIT 1
+            `)
+              .bind(installationId, assetsTenantId)
+              .all();
+            if (!installationRows?.[0]) {
+              throw new HttpError(404, "Instalacion no encontrada.");
+            }
+
+            await env.DB.prepare(`
+              UPDATE asset_installation_links
+              SET unlinked_at = ?
+              WHERE tenant_id = ?
+                AND asset_id = ?
+                AND unlinked_at IS NULL
+                AND installation_id <> ?
+            `)
+              .bind(linkedAt, assetsTenantId, assetId, installationId)
+              .run();
+
+            const { results: activeRows } = await env.DB.prepare(`
+              SELECT id
+              FROM asset_installation_links
+              WHERE tenant_id = ?
+                AND asset_id = ?
+                AND installation_id = ?
+                AND unlinked_at IS NULL
+              LIMIT 1
+            `)
+              .bind(assetsTenantId, assetId, installationId)
+              .all();
+
+            let linkId = activeRows?.[0]?.id || null;
+            if (!linkId) {
+              const insertResult = await env.DB.prepare(`
+                INSERT INTO asset_installation_links (
+                  tenant_id,
+                  asset_id,
+                  installation_id,
+                  linked_at,
+                  linked_by_username,
+                  notes
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+              `)
+                .bind(
+                  assetsTenantId,
+                  assetId,
+                  installationId,
+                  linkedAt,
+                  linkedBy,
+                  normalizeOptionalString(data?.notes, "").slice(0, 500),
+                )
+                .run();
+              linkId = insertResult?.meta?.last_row_id || null;
+            }
+
+            return jsonResponse(request, env, corsPolicy, {
+              success: true,
+              link: {
+                id: linkId,
+                tenant_id: assetsTenantId,
+                asset_id: assetId,
+                installation_id: installationId,
+                linked_at: linkedAt,
+                linked_by_username: linkedBy,
+              },
+            });
+          } catch (error) {
+            if (error instanceof HttpError) {
+              throw error;
+            }
+            if (isMissingAssetsTableError(error)) {
+              throw new HttpError(
+                503,
+                "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
+              );
+            }
+            throw error;
+          }
+        }
       }
 
       if (routeParts.length === 1 && routeParts[0] === "installations") {

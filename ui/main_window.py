@@ -24,6 +24,7 @@ from handlers.event_handlers import EventHandlers
 from handlers.report_handlers import ReportHandlers
 from managers.user_manager_v2 import UserManagerV2
 from ui.dialogs.user_management_ui import UserManagementDialog, LoginDialog
+from ui.dialogs.qr_generator_dialog import QrGeneratorDialog
 from ui.ui_components import DriversTab, HistoryTab, AdminTab, EditInstallationDialog
 from ui.theme_manager import ThemeManager
 from core.config_manager import ConfigManager
@@ -284,6 +285,10 @@ class MainWindow(QMainWindow):
         self.drivers_tab.install_btn.clicked.connect(self.event_handlers.download_and_install)
         if hasattr(self.drivers_tab, "refresh_btn"):
             self.drivers_tab.refresh_btn.clicked.connect(self.refresh_drivers_list)
+        if hasattr(self.drivers_tab, "generate_qr_btn"):
+            self.drivers_tab.generate_qr_btn.clicked.connect(self.show_qr_generator_dialog)
+        if hasattr(self.drivers_tab, "associate_asset_btn"):
+            self.drivers_tab.associate_asset_btn.clicked.connect(self.show_asset_link_dialog)
         
         # History tab
         self.history_tab.history_view_combo.currentTextChanged.connect(self.on_history_view_changed)
@@ -1867,6 +1872,110 @@ class MainWindow(QMainWindow):
         
         dialog = UserManagementDialog(self.user_manager, self)
         dialog.exec()
+
+    def show_qr_generator_dialog(self):
+        """Abrir generador QR offline para asset/installation."""
+        default_type = "asset"
+        default_value = ""
+        selected_items = self.drivers_tab.drivers_list.selectedItems()
+        if selected_items:
+            selected_driver = selected_items[0].data(Qt.ItemDataRole.UserRole) or {}
+            brand = str(selected_driver.get("brand") or "").strip()
+            version = str(selected_driver.get("version") or "").strip()
+            if brand or version:
+                default_value = f"{brand}-{version}".strip("-")
+        dialog = QrGeneratorDialog(
+            self,
+            qr_type=default_type,
+            value=default_value,
+            history_manager=self.history,
+        )
+        dialog.exec()
+
+    def show_asset_link_dialog(self):
+        """Asociar equipo a instalación sin crear incidencia."""
+        if not self.history:
+            QMessageBox.warning(self, "Error", "Módulo de historial no disponible.")
+            return
+
+        default_asset_code = ""
+        selected_items = self.drivers_tab.drivers_list.selectedItems()
+        if selected_items:
+            selected_driver = selected_items[0].data(Qt.ItemDataRole.UserRole) or {}
+            brand = str(selected_driver.get("brand") or "").strip()
+            version = str(selected_driver.get("version") or "").strip()
+            if brand or version:
+                default_asset_code = f"{brand}-{version}".strip("-")
+
+        asset_code, ok = QInputDialog.getText(
+            self,
+            "Asociar equipo",
+            "Código externo del equipo (QR/serie):",
+            QLineEdit.EchoMode.Normal,
+            default_asset_code,
+        )
+        if not ok:
+            return
+        asset_code = str(asset_code or "").strip()
+        if not asset_code:
+            QMessageBox.warning(self, "Dato inválido", "Debes ingresar el código del equipo.")
+            return
+
+        installation_id_default = ""
+        current_item = self.history_tab.history_list.currentItem() if hasattr(self.history_tab, "history_list") else None
+        if current_item and current_item.data(Qt.ItemDataRole.UserRole):
+            try:
+                installation_id_default = str(int(current_item.data(Qt.ItemDataRole.UserRole).get("id")))
+            except Exception:
+                installation_id_default = ""
+
+        installation_id_text, ok = QInputDialog.getText(
+            self,
+            "Asociar equipo",
+            "ID de instalación destino:",
+            QLineEdit.EchoMode.Normal,
+            installation_id_default,
+        )
+        if not ok:
+            return
+
+        try:
+            installation_id = int(str(installation_id_text or "").strip())
+            if installation_id <= 0:
+                raise ValueError
+        except Exception:
+            QMessageBox.warning(self, "Dato inválido", "El ID de instalación debe ser un entero positivo.")
+            return
+
+        notes, ok = QInputDialog.getMultiLineText(
+            self,
+            "Asociar equipo",
+            "Nota opcional de asociación:",
+            "",
+        )
+        if not ok:
+            return
+
+        try:
+            asset, link = self.history.associate_asset_with_installation(
+                external_code=asset_code,
+                installation_id=installation_id,
+                notes=notes,
+            )
+            resolved_code = str((asset or {}).get("external_code") or asset_code)
+            linked_installation = (link or {}).get("installation_id") or installation_id
+            QMessageBox.information(
+                self,
+                "Asociación completada",
+                (
+                    f"Equipo asociado correctamente.\n\n"
+                    f"Equipo: {resolved_code}\n"
+                    f"Instalación: #{linked_installation}"
+                ),
+            )
+            self.statusBar().showMessage("✅ Equipo asociado a instalación", 5000)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo asociar el equipo:\n{e}")
     
     def apply_theme(self):
         """Aplicar tema actual a la aplicación"""

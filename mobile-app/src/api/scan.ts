@@ -7,6 +7,7 @@ export interface LookupCodeResponse {
   match: {
     type: LookupEntityType;
     installation_id?: number | null;
+    asset_record_id?: number | null;
     asset_id?: string | null;
     external_code?: string | null;
   };

@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "jsdom": "^28.1.0",
+    "qrcode-generator": "^1.4.4",
     "wrangler": "^4.0.0"
   },
   "dependencies": {

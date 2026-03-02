@@ -25,17 +25,24 @@ export default function ScanScreen() {
   const [resolving, setResolving] = useState(false);
   const [manualCode, setManualCode] = useState("");
 
-  const navigateToUpload = (values: { installationId?: number | null; assetId?: string | null }) => {
+  const navigateToCreateIncident = (values: {
+    installationId?: number | null;
+    assetExternalCode?: string | null;
+    assetRecordId?: number | null;
+  }) => {
     const params = new URLSearchParams();
     if (values.installationId && values.installationId > 0) {
       params.set("installationId", String(values.installationId));
     }
-    if (values.assetId?.trim()) {
-      params.set("assetId", values.assetId.trim());
+    if (values.assetExternalCode?.trim()) {
+      params.set("assetExternalCode", values.assetExternalCode.trim());
+    }
+    if (values.assetRecordId && values.assetRecordId > 0) {
+      params.set("assetRecordId", String(values.assetRecordId));
     }
 
     const query = params.toString();
-    router.replace((query ? `/incident/upload?${query}` : "/incident/upload") as never);
+    router.replace((query ? `/?${query}` : "/") as never);
   };
 
   const resolveAndNavigate = async (rawValue: string) => {
@@ -45,20 +52,25 @@ export default function ScanScreen() {
         "Codigo invalido",
         "Formato esperado: dm://installation/{id} o dm://asset/{external_code}",
       );
+      setLocked(false);
       return;
     }
 
     setResolving(true);
     try {
       if (parsed.type === "installation") {
-        navigateToUpload({ installationId: parsed.installationId });
+        navigateToCreateIncident({ installationId: parsed.installationId });
         return;
       }
 
       const lookup = await lookupCode(parsed.externalCode, "asset");
-      navigateToUpload({
+      navigateToCreateIncident({
         installationId: lookup.match.installation_id ?? undefined,
-        assetId: lookup.match.asset_id ?? parsed.externalCode,
+        assetExternalCode:
+          lookup.match.external_code ??
+          lookup.match.asset_id ??
+          parsed.externalCode,
+        assetRecordId: lookup.match.asset_record_id ?? undefined,
       });
     } catch (error) {
       Alert.alert("No se pudo resolver", extractApiError(error));

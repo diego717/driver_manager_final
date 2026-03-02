@@ -7,6 +7,10 @@ const incidentsApiMocks = vi.hoisted(() => ({
   createInstallationRecord: vi.fn(),
   listInstallations: vi.fn(),
 }));
+const assetsApiMocks = vi.hoisted(() => ({
+  resolveAssetByExternalCode: vi.fn(),
+  linkAssetToInstallation: vi.fn(),
+}));
 
 const secureStorageMocks = vi.hoisted(() => ({
   getStoredWebAccessUsername: vi.fn(async () => "usuario_web"),
@@ -120,9 +124,11 @@ vi.mock("@react-navigation/native", () => ({
 }));
 vi.mock("expo-router", () => ({
   useRouter: () => routerMocks,
+  useLocalSearchParams: () => ({}),
 }));
 
 vi.mock("@/src/api/incidents", () => incidentsApiMocks);
+vi.mock("@/src/api/assets", () => assetsApiMocks);
 vi.mock("@/src/storage/secure", () => secureStorageMocks);
 vi.mock("@/src/api/webAuth", () => webAuthMocks);
 vi.mock("@/src/security/startup-session-policy", () => startupSessionPolicyMocks);

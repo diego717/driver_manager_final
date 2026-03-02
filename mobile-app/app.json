@@ -61,6 +61,16 @@
           "defaultChannel": "incidents",
           "enableBackgroundRemoteNotifications": true
         }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Permite guardar imagenes QR en la galeria.",
+          "savePhotosPermission": "Permite guardar imagenes QR en la galeria.",
+          "granularPermissions": [
+            "photo"
+          ]
+        }
       ]
     ],
     "experiments": {

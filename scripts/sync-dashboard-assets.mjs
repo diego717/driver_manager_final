@@ -8,6 +8,7 @@ const publicDir = path.join(rootDir, "public");
 const sources = {
   html: path.join(rootDir, "dashboard.html"),
   css: path.join(rootDir, "dashboard.css"),
+  qr: path.join(rootDir, "dashboard-qr.js"),
   js: path.join(rootDir, "dashboard.js"),
   pwa: path.join(rootDir, "dashboard-pwa.js"),
   manifest: path.join(rootDir, "manifest.json"),
@@ -29,6 +30,7 @@ function rewriteDashboardHtml(content, versions) {
   return content
     .replace('href="/dashboard.css"', `href="/dashboard.css?v=${versions.css}"`)
     .replace('href="/manifest.json"', `href="/manifest.json?v=${versions.manifest}"`)
+    .replace('src="/dashboard-qr.js"', `src="/dashboard-qr.js?v=${versions.qr}"`)
     .replace('src="/dashboard.js"', `src="/dashboard.js?v=${versions.js}"`)
     .replace('src="/dashboard-pwa.js"', `src="/dashboard-pwa.js?v=${versions.pwa}"`);
 }
@@ -42,6 +44,7 @@ function rewriteServiceWorker(content, versions) {
   const staticAssets = [
     "/web/dashboard",
     `/dashboard.css?v=${versions.css}`,
+    `/dashboard-qr.js?v=${versions.qr}`,
     `/dashboard.js?v=${versions.js}`,
     `/dashboard-pwa.js?v=${versions.pwa}`,
     `/manifest.json?v=${versions.manifest}`,
@@ -65,6 +68,7 @@ function writeFile(fileName, content) {
 function main() {
   const html = readFile(sources.html);
   const css = readFile(sources.css);
+  const qr = readFile(sources.qr);
   const js = readFile(sources.js);
   const pwa = readFile(sources.pwa);
   const manifest = readFile(sources.manifest);
@@ -72,17 +76,19 @@ function main() {
 
   const versions = {
     css: hashOf(css),
+    qr: hashOf(qr),
     js: hashOf(js),
     pwa: hashOf(pwa),
     manifest: hashOf(manifest),
     sw: hashOf(sw),
   };
   versions.build = hashOf(
-    [versions.css, versions.js, versions.pwa, versions.manifest, versions.sw].join(":"),
+    [versions.css, versions.qr, versions.js, versions.pwa, versions.manifest, versions.sw].join(":"),
   );
 
   fs.mkdirSync(publicDir, { recursive: true });
   writeFile("dashboard.css", css);
+  writeFile("dashboard-qr.js", qr);
   writeFile("dashboard.js", js);
   writeFile("manifest.json", manifest);
   writeFile("dashboard.html", rewriteDashboardHtml(html, versions));

@@ -869,6 +869,88 @@ class InstallationHistory:
             expect_json=False,
         )
         return response.content, response.headers.get("Content-Type", "image/jpeg")
+
+    def resolve_asset(self, external_code, **kwargs):
+        """
+        Buscar o crear un equipo por código externo.
+
+        Args:
+            external_code: Código externo del equipo (QR/serie)
+            **kwargs: Campos opcionales (serial_number, model, client_name, notes, status)
+
+        Returns:
+            dict | None: Registro del asset resuelto.
+        """
+        normalized_code = str(external_code or "").strip()
+        if not normalized_code:
+            raise ValueError("El código externo del equipo es obligatorio.")
+
+        payload = {
+            "external_code": normalized_code,
+        }
+
+        for key in (
+            "brand",
+            "serial_number",
+            "model",
+            "client_name",
+            "notes",
+            "status",
+            "update_existing",
+        ):
+            if key in kwargs and kwargs.get(key) is not None:
+                payload[key] = kwargs.get(key)
+
+        result = self._make_request("post", "assets/resolve", json=payload)
+        if isinstance(result, dict):
+            return result.get("asset")
+        return None
+
+    def link_asset_to_installation(self, asset_id, installation_id, notes=""):
+        """
+        Asociar un equipo a una instalación.
+
+        Args:
+            asset_id: ID numérico del equipo.
+            installation_id: ID numérico de la instalación.
+            notes: Nota opcional de asociación.
+
+        Returns:
+            dict | None: Registro de vínculo creado/activo.
+        """
+        normalized_asset_id = self._validate_record_id(asset_id)
+        normalized_installation_id = self._validate_record_id(installation_id)
+        payload = {
+            "installation_id": normalized_installation_id,
+            "notes": str(notes or "").strip(),
+        }
+        result = self._make_request(
+            "post",
+            f"assets/{normalized_asset_id}/link-installation",
+            json=payload,
+        )
+        if isinstance(result, dict):
+            return result.get("link")
+        return None
+
+    def associate_asset_with_installation(self, external_code, installation_id, notes=""):
+        """
+        Resolver (buscar/crear) asset por código y asociarlo a una instalación.
+
+        Args:
+            external_code: Código externo del equipo.
+            installation_id: ID de instalación destino.
+            notes: Nota opcional de vínculo.
+
+        Returns:
+            tuple(dict | None, dict | None): (asset, link)
+        """
+        asset = self.resolve_asset(external_code)
+        if not isinstance(asset, dict):
+            raise ConnectionError("No se pudo resolver el equipo en la API.")
+        asset_id = asset.get("id")
+        link = self.link_asset_to_installation(asset_id, installation_id, notes=notes)
+        return asset, link
     
     def get_statistics(self, start_date=None, end_date=None):
         """

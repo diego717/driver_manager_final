@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Alert,
@@ -13,6 +13,10 @@ import {
   View,
 } from "react-native";
 
+import {
+  linkAssetToInstallation,
+  resolveAssetByExternalCode,
+} from "@/src/api/assets";
 import {
   createIncident,
   createInstallationRecord,
@@ -55,10 +59,37 @@ const SEVERITY_OPTIONS: Array<{
 ];
 const MIN_TOUCH_TARGET_SIZE = 44;
 
+function normalizeRouteParam(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return value ?? "";
+}
+
 export default function CreateIncidentScreen() {
   const router = useRouter();
+  const queryParams = useLocalSearchParams<{
+    installationId?: string | string[];
+    assetExternalCode?: string | string[];
+    assetRecordId?: string | string[];
+  }>();
   const palette = useAppPalette();
-  const [installationId, setInstallationId] = useState("1");
+  const initialInstallationIdFromQr = useMemo(() => {
+    const raw = normalizeRouteParam(queryParams.installationId).trim();
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isInteger(parsed) && parsed > 0 ? String(parsed) : "";
+  }, [queryParams.installationId]);
+  const initialAssetExternalCodeFromQr = useMemo(
+    () => normalizeRouteParam(queryParams.assetExternalCode).trim(),
+    [queryParams.assetExternalCode],
+  );
+  const initialAssetRecordIdFromQr = useMemo(() => {
+    const raw = normalizeRouteParam(queryParams.assetRecordId).trim();
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  }, [queryParams.assetRecordId]);
+
+  const [installationId, setInstallationId] = useState(initialInstallationIdFromQr || "1");
+  const [assetExternalCode, setAssetExternalCode] = useState(initialAssetExternalCodeFromQr);
+  const [assetRecordId, setAssetRecordId] = useState<number | null>(initialAssetRecordIdFromQr);
   const [reporterUsername, setReporterUsername] = useState("");
   const [note, setNote] = useState("");
   const [timeAdjustment, setTimeAdjustment] = useState("0");
@@ -69,6 +100,7 @@ export default function CreateIncidentScreen() {
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
   const [loadingInstallations, setLoadingInstallations] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [linkingAssetOnly, setLinkingAssetOnly] = useState(false);
   const [creatingManualRecord, setCreatingManualRecord] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const [checkingSession, setCheckingSession] = useState(true);
@@ -151,6 +183,22 @@ export default function CreateIncidentScreen() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (initialInstallationIdFromQr) {
+      setInstallationId(initialInstallationIdFromQr);
+    }
+    if (initialAssetExternalCodeFromQr) {
+      setAssetExternalCode(initialAssetExternalCodeFromQr);
+    }
+    if (initialAssetRecordIdFromQr) {
+      setAssetRecordId(initialAssetRecordIdFromQr);
+    }
+  }, [
+    initialAssetExternalCodeFromQr,
+    initialAssetRecordIdFromQr,
+    initialInstallationIdFromQr,
+  ]);
 
   useEffect(() => {
     let mounted = true;
@@ -249,10 +297,47 @@ export default function CreateIncidentScreen() {
         apply_to_installation: false,
       });
 
-      notify(
-        "Incidencia creada",
-        `ID: ${response.incident.id}\nInstalacion: ${response.incident.installation_id}`,
-      );
+      const normalizedAssetCode = assetExternalCode.trim();
+      let assetLinkWarning = "";
+      if (normalizedAssetCode) {
+        try {
+          let resolvedAssetId = assetRecordId;
+          if (!resolvedAssetId || resolvedAssetId <= 0) {
+            const resolved = await resolveAssetByExternalCode(normalizedAssetCode);
+            const resolvedId = Number(resolved.asset?.id);
+            if (!Number.isInteger(resolvedId) || resolvedId <= 0) {
+              throw new Error("No se obtuvo asset_id valido al resolver el equipo.");
+            }
+            resolvedAssetId = resolvedId;
+            setAssetRecordId(resolvedId);
+          }
+
+          await linkAssetToInstallation(
+            resolvedAssetId,
+            parsedInstallationId,
+            `Asociado desde mobile para incidencia #${response.incident.id}`,
+          );
+        } catch (linkError) {
+          assetLinkWarning = extractApiError(linkError);
+        }
+      }
+
+      if (assetLinkWarning) {
+        notify(
+          "Incidencia creada con advertencia",
+          `ID: ${response.incident.id}\nInstalacion: ${response.incident.installation_id}\nNo se pudo asociar equipo QR: ${assetLinkWarning}`,
+        );
+      } else if (normalizedAssetCode) {
+        notify(
+          "Incidencia creada",
+          `ID: ${response.incident.id}\nInstalacion: ${response.incident.installation_id}\nEquipo asociado: ${normalizedAssetCode}`,
+        );
+      } else {
+        notify(
+          "Incidencia creada",
+          `ID: ${response.incident.id}\nInstalacion: ${response.incident.installation_id}`,
+        );
+      }
       setLastCreatedIncidentId(response.incident.id);
       setLastCreatedInstallationId(response.incident.installation_id);
       setNote("");
@@ -265,6 +350,66 @@ export default function CreateIncidentScreen() {
       notify("Error", message);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const onLinkAssetWithoutIncident = async () => {
+    if (!(await refreshSessionState())) {
+      notify("Sesion requerida", "Inicia sesion web en Configuracion y acceso.");
+      router.push("/modal");
+      return;
+    }
+
+    const normalizedAssetCode = assetExternalCode.trim();
+    if (!normalizedAssetCode) {
+      notify("Dato invalido", "No hay un equipo QR para asociar.");
+      return;
+    }
+
+    const parsedInstallationId = Number.parseInt(installationId, 10);
+    if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) {
+      notify("Dato invalido", "installation_id debe ser un numero positivo.");
+      return;
+    }
+
+    if (
+      installations.length > 0 &&
+      !installations.some((item) => item.id === parsedInstallationId)
+    ) {
+      notify(
+        "Instalacion no encontrada",
+        "Ese installation_id no existe en la lista cargada. Refresca la lista.",
+      );
+      return;
+    }
+
+    try {
+      setLinkingAssetOnly(true);
+      let resolvedAssetId = assetRecordId;
+      if (!resolvedAssetId || resolvedAssetId <= 0) {
+        const resolved = await resolveAssetByExternalCode(normalizedAssetCode);
+        const resolvedId = Number(resolved.asset?.id);
+        if (!Number.isInteger(resolvedId) || resolvedId <= 0) {
+          throw new Error("No se obtuvo asset_id valido al resolver el equipo.");
+        }
+        resolvedAssetId = resolvedId;
+        setAssetRecordId(resolvedId);
+      }
+
+      await linkAssetToInstallation(
+        resolvedAssetId,
+        parsedInstallationId,
+        "Asociado desde mobile sin crear incidencia",
+      );
+
+      notify(
+        "Equipo asociado",
+        `Equipo ${normalizedAssetCode} asociado a instalación #${parsedInstallationId}.`,
+      );
+    } catch (error) {
+      notify("Error", extractApiError(error));
+    } finally {
+      setLinkingAssetOnly(false);
     }
   };
 
@@ -508,6 +653,85 @@ export default function CreateIncidentScreen() {
       <View style={[styles.sectionDivider, { borderColor: palette.inputBorder }]} />
 
       <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>2) Crear incidencia sobre un registro</Text>
+
+      <View style={styles.rowBetween}>
+        <Text style={[styles.label, { color: palette.label }]}>Escaneo QR</Text>
+        <TouchableOpacity
+          style={[
+            styles.refreshButton,
+            { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+          ]}
+          onPress={() => router.push("/scan")}
+          accessibilityRole="button"
+          accessibilityLabel="Abrir escaner QR"
+        >
+          <Text style={[styles.refreshButtonText, { color: palette.refreshText }]}>Escanear QR</Text>
+        </TouchableOpacity>
+      </View>
+
+      {assetExternalCode ? (
+        <View
+          style={[
+            styles.optionalSectionCard,
+            { backgroundColor: palette.optionalCardBg, borderColor: palette.optionalCardBorder },
+          ]}
+        >
+          <Text style={[styles.optionalSectionTitle, { color: palette.optionalCardTitle }]}>
+            Equipo detectado
+          </Text>
+          <Text style={[styles.optionalSectionDescription, { color: palette.optionalCardBody }]}>
+            Codigo: {assetExternalCode}
+          </Text>
+          <Text style={[styles.optionalSectionDescription, { color: palette.optionalCardBody }]}>
+            Asset ID: {assetRecordId ? `#${assetRecordId}` : "pendiente (se resolvera al guardar)"}
+          </Text>
+          <Text style={[styles.hint, { color: palette.textMuted }]}>
+            Puedes asociarlo ahora o dejar que se asocie automáticamente al crear incidencia.
+          </Text>
+          <TouchableOpacity
+            style={[
+              styles.secondaryButton,
+              { backgroundColor: palette.secondaryButtonBg },
+              linkingAssetOnly && styles.buttonDisabled,
+            ]}
+            onPress={onLinkAssetWithoutIncident}
+            disabled={linkingAssetOnly || submitting}
+            accessibilityRole="button"
+            accessibilityLabel="Asociar equipo sin crear incidencia"
+            accessibilityState={{
+              disabled: linkingAssetOnly || submitting,
+              busy: linkingAssetOnly,
+            }}
+          >
+            {linkingAssetOnly ? (
+              <ActivityIndicator color={palette.secondaryButtonText} />
+            ) : (
+              <Text style={[styles.buttonText, { color: palette.secondaryButtonText }]}>
+                Asociar ahora
+              </Text>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.optionalSectionToggle,
+              {
+                backgroundColor: palette.optionalToggleBg,
+                borderColor: palette.optionalToggleBorder,
+              },
+            ]}
+            onPress={() => {
+              setAssetExternalCode("");
+              setAssetRecordId(null);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Quitar equipo escaneado"
+          >
+            <Text style={[styles.optionalSectionToggleText, { color: palette.optionalToggleText }]}>
+              Quitar equipo
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       <View style={styles.rowBetween}>
         <Text style={[styles.label, { color: palette.label }]}>Instalaciones disponibles</Text>

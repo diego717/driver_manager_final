@@ -6,3 +6,4 @@ requests
 pyinstaller
 PyQt6>=6.4.0
 PyQt6-Charts>=6.4.0
+qrcode[pil]>=7.4.2

@@ -5,7 +5,16 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, AppState, type AppStateStatus, StyleSheet, View } from "react-native";
+import {
+  Animated,
+  AppState,
+  Easing,
+  Image,
+  StyleSheet,
+  Text,
+  View,
+  type AppStateStatus,
+} from "react-native";
 import "react-native-reanimated";
 
 import BiometricLockScreen from "@/src/components/BiometricLockScreen";
@@ -78,6 +87,8 @@ export function RootLayoutNav() {
   const [biometricLabel, setBiometricLabel] = useState("biometria");
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const bootScaleAnim = useRef(new Animated.Value(1)).current;
+  const bootOpacityAnim = useRef(new Animated.Value(0.88)).current;
 
   const triggerBiometricUnlock = useCallback(async (allowDeviceFallback: boolean) => {
     setAuthenticating(true);
@@ -104,6 +115,50 @@ export function RootLayoutNav() {
   }, []);
 
   useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(bootScaleAnim, {
+            toValue: 1.06,
+            duration: 760,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(bootOpacityAnim, {
+            toValue: 1,
+            duration: 760,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.parallel([
+          Animated.timing(bootScaleAnim, {
+            toValue: 1,
+            duration: 760,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(bootOpacityAnim, {
+            toValue: 0.9,
+            duration: 760,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
+    );
+
+    if (lockInitializing) {
+      pulse.start();
+    } else {
+      pulse.stop();
+      bootScaleAnim.setValue(1);
+      bootOpacityAnim.setValue(1);
+    }
+    return () => pulse.stop();
+  }, [bootOpacityAnim, bootScaleAnim, lockInitializing]);
+
+  useEffect(() => {
     let mounted = true;
     const initGuardTimeout = setTimeout(() => {
       if (!mounted) return;
@@ -112,7 +167,7 @@ export function RootLayoutNav() {
         "No se pudo inicializar la seguridad biometrica. Reintenta para desbloquear.",
       );
       setLockInitializing(false);
-    }, 7000);
+    }, 5500);
 
     void (async () => {
       try {
@@ -139,7 +194,10 @@ export function RootLayoutNav() {
 
         setAppLocked(true);
         setLockInitializing(false);
-        void triggerBiometricUnlock(false);
+        setTimeout(() => {
+          if (!mounted) return;
+          void triggerBiometricUnlock(false);
+        }, 180);
       } catch (caughtError) {
         if (!mounted) return;
         setAppLocked(true);
@@ -215,7 +273,27 @@ export function RootLayoutNav() {
 
         {lockInitializing ? (
           <View style={[styles.lockLoadingOverlay, { backgroundColor: palette.overlayBg }]}>
-            <ActivityIndicator size="large" color={palette.primaryButtonText} />
+            <Animated.View
+              style={[
+                styles.bootCard,
+                {
+                  backgroundColor: palette.surface,
+                  borderColor: palette.border,
+                  opacity: bootOpacityAnim,
+                  transform: [{ scale: bootScaleAnim }],
+                },
+              ]}
+            >
+              <Image
+                source={require("../assets/images/icon.png")}
+                style={styles.bootLogo}
+                resizeMode="contain"
+              />
+              <Text style={[styles.bootTitle, { color: palette.textPrimary }]}>Driver Manager</Text>
+              <Text style={[styles.bootSubtitle, { color: palette.textSecondary }]}>
+                Inicializando seguridad...
+              </Text>
+            </Animated.View>
           </View>
         ) : null}
 
@@ -246,5 +324,29 @@ const styles = StyleSheet.create({
     zIndex: 40,
     alignItems: "center",
     justifyContent: "center",
+  },
+  bootCard: {
+    minWidth: 220,
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 22,
+    paddingVertical: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  bootLogo: {
+    width: 74,
+    height: 74,
+  },
+  bootTitle: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 18,
+    lineHeight: 22,
+  },
+  bootSubtitle: {
+    fontFamily: fontFamilies.regular,
+    fontSize: 13,
+    lineHeight: 18,
   },
 });

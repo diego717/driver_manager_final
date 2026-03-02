@@ -73,6 +73,14 @@ class DriversTab(QWidget):
         self.install_btn.setEnabled(False)
         self.install_btn.setToolTip("Descargar y ejecutar el instalador del controlador seleccionado")
         buttons_layout.addWidget(self.install_btn)
+
+        self.generate_qr_btn = QPushButton("QR equipo")
+        self.generate_qr_btn.setToolTip("Generar un codigo QR local para asociar equipos o instalaciones")
+        buttons_layout.addWidget(self.generate_qr_btn)
+
+        self.associate_asset_btn = QPushButton("Asociar equipo")
+        self.associate_asset_btn.setToolTip("Asociar un equipo a una instalación sin crear incidencia")
+        buttons_layout.addWidget(self.associate_asset_btn)
         
         buttons_layout.addStretch()
         layout.addLayout(buttons_layout)
