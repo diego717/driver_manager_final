@@ -18,7 +18,7 @@ import {
 
 import { extractApiError, getApiBaseUrl, normalizeApiBaseUrl } from "@/src/api/client";
 import { listInstallations } from "@/src/api/incidents";
-import { clearWebSession, loginWebSession, readStoredWebSession } from "@/src/api/webAuth";
+import { loginWebSession, logoutWebSession, readStoredWebSession } from "@/src/api/webAuth";
 import {
   clearStoredApiBaseUrl,
   getStoredApiBaseUrl,
@@ -212,7 +212,8 @@ export default function ApiSettingsScreen() {
   const performResetToEnv = async () => {
     try {
       setSaving(true);
-      await Promise.all([clearStoredApiBaseUrl(), clearWebSession()]);
+      await logoutWebSession();
+      await clearStoredApiBaseUrl();
 
       setApiBaseUrl(getApiBaseUrl());
       setBaseUrlFromStorage(false);
@@ -294,7 +295,7 @@ export default function ApiSettingsScreen() {
   const onClearWebSession = async () => {
     try {
       setWebClearing(true);
-      await clearWebSession();
+      await logoutWebSession();
       setWebSessionExpiresAt(null);
       setWebSessionUsername(null);
       setWebSessionRole(null);

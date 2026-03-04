@@ -201,6 +201,21 @@ export async function clearWebSession(): Promise<void> {
   await clearStoredWebSession();
 }
 
+export async function logoutWebSession(): Promise<void> {
+  try {
+    const response = await authorizedWebFetch("/web/auth/logout", {
+      method: "POST",
+    });
+    if (!response.ok) {
+      // Best effort: always clear local session, even if server-side invalidation fails.
+    }
+  } catch {
+    // Best effort: local cleanup still required.
+  } finally {
+    await clearStoredWebSession();
+  }
+}
+
 export async function listWebUsers(): Promise<WebManagedUser[]> {
   try {
     const response = await authorizedWebFetch("/web/auth/users", {
