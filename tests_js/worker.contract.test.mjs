@@ -358,13 +358,23 @@ function createMockDB({
 
           if (
             normalized.startsWith(
-              "SELECT id, installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at FROM incidents WHERE installation_id = ?",
+              "SELECT id, installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at, incident_status",
             )
           ) {
             const installationId = Number(call.bound?.[0]);
+            const tenantId = String(call.bound?.[1] ?? "default");
             const rows = state.incidents
               .filter((item) => Number(item.installation_id) === installationId)
-              .sort((a, b) => Number(b.id) - Number(a.id));
+              .filter(
+                (item) =>
+                  !normalized.includes("AND tenant_id = ?") ||
+                  String(item.tenant_id ?? "default") === tenantId,
+              )
+              .sort((a, b) => {
+                const byCreated = String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""));
+                if (byCreated !== 0) return byCreated;
+                return Number(b.id) - Number(a.id);
+              });
             return { results: rows };
           }
 
@@ -518,6 +528,42 @@ function createMockDB({
             const id = Number(call.bound?.[0]);
             const row = state.incidentPhotos.find((item) => Number(item.id) === id);
             return { results: row ? [row] : [] };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at FROM incident_photos p INNER JOIN incidents i ON i.id = p.incident_id WHERE p.id = ?",
+            )
+          ) {
+            const photoId = Number(call.bound?.[0]);
+            const photoTenantId = String(call.bound?.[1] ?? "default");
+            const incidentTenantId = String(call.bound?.[2] ?? photoTenantId);
+            const photo = state.incidentPhotos.find(
+              (item) =>
+                Number(item.id) === photoId &&
+                String(item.tenant_id ?? photoTenantId) === photoTenantId,
+            );
+            if (!photo) return { results: [] };
+            const incident = state.incidents.find(
+              (item) =>
+                Number(item.id) === Number(photo.incident_id) &&
+                String(item.tenant_id ?? incidentTenantId) === incidentTenantId,
+            );
+            if (!incident) return { results: [] };
+            return {
+              results: [
+                {
+                  id: photo.id,
+                  incident_id: photo.incident_id,
+                  r2_key: photo.r2_key,
+                  file_name: photo.file_name,
+                  content_type: photo.content_type,
+                  size_bytes: photo.size_bytes,
+                  sha256: photo.sha256,
+                  created_at: photo.created_at,
+                },
+              ],
+            };
           }
 
           if (
@@ -1096,7 +1142,7 @@ test("CORS methods and headers are route-specific in preflight", async () => {
 
   assert.equal(response.status, 204);
   assert.equal(response.headers.get("Access-Control-Allow-Origin"), "https://mobile.driver-manager.app");
-  assert.equal(response.headers.get("Access-Control-Allow-Methods"), "OPTIONS, GET, POST");
+  assert.equal(response.headers.get("Access-Control-Allow-Methods"), "OPTIONS, GET, POST, PATCH");
   assert.match(response.headers.get("Access-Control-Allow-Headers"), /Authorization/);
   assert.match(response.headers.get("Access-Control-Allow-Headers"), /Content-Type/);
   assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-File-Name/);
@@ -1621,7 +1667,11 @@ test("POST /installations/:id/incidents creates incident and can apply installat
   assert.ok(incidentInsert);
 
   const installationUpdate = db.calls.find(
-    (c) => c.sql === "UPDATE installations SET notes = ?, installation_time_seconds = ? WHERE id = ?",
+    (c) =>
+      c.sql.includes("UPDATE installations") &&
+      c.sql.includes("SET notes = ?, installation_time_seconds = ?") &&
+      c.sql.includes("WHERE id = ?") &&
+      c.sql.includes("AND tenant_id = ?"),
   );
   assert.ok(installationUpdate);
   assert.equal(installationUpdate.bound[2], 45);
@@ -1925,6 +1975,7 @@ test("POST /incidents/:id/photos requires X-Body-SHA256 for legacy HMAC auth", a
 
 test("GET /photos/:id returns binary content from R2", async () => {
   const db = createMockDB({
+    incidents: [{ id: 11, installation_id: 45 }],
     incidentPhotos: [
       {
         id: 21,
@@ -1966,6 +2017,7 @@ test("GET /photos/:id returns binary content from R2", async () => {
 
 test("GET /web/photos/:id returns binary content with web Bearer session", async () => {
   const db = createMockDB({
+    incidents: [{ id: 11, installation_id: 45 }],
     incidentPhotos: [
       {
         id: 21,

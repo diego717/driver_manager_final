@@ -94,6 +94,8 @@ function createReactNativeMock() {
       flatten: flattenStyle,
     },
     Text: ({ children, ...props }: any) => ReactModule.createElement("Text", props, children),
+    TextInput: ({ children, ...props }: any) =>
+      ReactModule.createElement("TextInput", props, children),
     TouchableOpacity: ({ children, ...props }: any) =>
       ReactModule.createElement("TouchableOpacity", props, children),
     View: ({ children, ...props }: any) => ReactModule.createElement("View", props, children),

@@ -53,13 +53,14 @@ class TestInstallationHistory(unittest.TestCase):
         )
 
         self.assertEqual(response, {"ok": True})
-        mock_request.assert_called_once_with(
-            "get",
-            "https://api.example.com/installations",
-            headers={"Content-Type": "application/json"},
-            params={"limit": 10},
-            timeout=10,
-        )
+        mock_request.assert_called_once()
+        args, kwargs = mock_request.call_args
+        self.assertEqual(args[0], "get")
+        self.assertEqual(args[1], "https://api.example.com/installations")
+        self.assertEqual(kwargs["params"], {"limit": 10})
+        self.assertEqual(kwargs["timeout"], 10)
+        self.assertEqual(kwargs["headers"]["Content-Type"], "application/json")
+        self.assertIn("X-Body-SHA256", kwargs["headers"])
 
     @patch("managers.history_manager.requests.request")
     def test_make_request_raises_connection_error(self, mock_request):

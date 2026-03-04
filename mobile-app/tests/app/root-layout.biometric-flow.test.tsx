@@ -1,6 +1,7 @@
 import React from "react";
+import Module from "node:module";
 import { act, create } from "react-test-renderer";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const appStateRef = vi.hoisted(() => ({
   current: "active",
@@ -29,12 +30,51 @@ const notificationsHookMocks = vi.hoisted(() => ({
   })),
 }));
 
+const originalModuleLoad = (Module as any)._load as (...args: any[]) => unknown;
+(Module as any)._load = function patchedLoad(request: string, parent: unknown, isMain: boolean) {
+  if (request.endsWith(".png")) {
+    return 1;
+  }
+  return originalModuleLoad.call(this, request, parent, isMain);
+};
+
 vi.mock("react-native-reanimated", () => ({}));
 
 vi.mock("react-native", () => ({
   ActivityIndicator: ({ children }: any) =>
     React.createElement("ActivityIndicator", null, children),
+  Image: ({ children, ...props }: any) => React.createElement("Image", props, children),
+  Text: ({ children, ...props }: any) => React.createElement("Text", props, children),
   View: ({ children }: any) => React.createElement("View", null, children),
+  Animated: {
+    Value: function AnimatedValue(this: any, initial: number) {
+      this._value = initial;
+      this.setValue = (next: number) => {
+        this._value = next;
+      };
+    } as any,
+    View: ({ children, ...props }: any) => React.createElement("AnimatedView", props, children),
+    timing: () => ({
+      start: (cb?: () => void) => cb?.(),
+      stop: () => undefined,
+    }),
+    sequence: () => ({
+      start: (cb?: () => void) => cb?.(),
+      stop: () => undefined,
+    }),
+    parallel: () => ({
+      start: (cb?: () => void) => cb?.(),
+      stop: () => undefined,
+    }),
+    loop: () => ({
+      start: (cb?: () => void) => cb?.(),
+      stop: () => undefined,
+    }),
+  },
+  Easing: {
+    quad: () => 0,
+    inOut: (fn: unknown) => fn,
+  },
   StyleSheet: {
     create: (styles: any) => styles,
     absoluteFillObject: {},
@@ -123,6 +163,10 @@ vi.mock("@/src/hooks/useNotifications", () => notificationsHookMocks);
 
 import { RootLayoutNav } from "@/app/_layout";
 
+afterAll(() => {
+  (Module as any)._load = originalModuleLoad;
+});
+
 function flushAsync(): Promise<void> {
   return act(async () => {
     await Promise.resolve();
@@ -162,6 +206,9 @@ describe("critical integration flow: biometric lock lifecycle", () => {
       treeRef.current = create(<RootLayoutNav />);
     });
     await flushAsync();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
 
     expect(biometricMocks.authenticateWithBiometrics).toHaveBeenCalledTimes(1);
     expect(
