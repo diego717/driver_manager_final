@@ -801,8 +801,25 @@ class InstallationHistory:
         normalized_id = self._validate_record_id(installation_id)
         payload = self._make_request("get", f"installations/{normalized_id}/incidents")
         if isinstance(payload, dict):
-            return payload.get("incidents", []) or []
+            incidents = payload.get("incidents", []) or []
+            return [self._normalize_incident_lifecycle_fields(item) for item in incidents]
         return []
+
+    def _normalize_incident_lifecycle_fields(self, incident):
+        """Garantizar estructura estable de lifecycle para incidencias."""
+        if not isinstance(incident, dict):
+            return incident
+        normalized = dict(incident)
+        status = str(normalized.get("incident_status") or "").strip().lower()
+        if status not in {"open", "in_progress", "resolved"}:
+            status = "open"
+        normalized["incident_status"] = status
+        normalized.setdefault("status_updated_at", normalized.get("created_at"))
+        normalized.setdefault("status_updated_by", normalized.get("reporter_username"))
+        normalized.setdefault("resolved_at", None)
+        normalized.setdefault("resolved_by", None)
+        normalized.setdefault("resolution_note", None)
+        return normalized
 
     def create_incident(
         self,
@@ -832,7 +849,34 @@ class InstallationHistory:
             json=payload,
         )
         if isinstance(result, dict):
-            return result.get("incident")
+            return self._normalize_incident_lifecycle_fields(result.get("incident"))
+        return None
+
+    def update_incident_status(
+        self,
+        incident_id,
+        incident_status,
+        resolution_note="",
+        reporter_username="desktop",
+    ):
+        """Actualizar estado de ciclo de vida de una incidencia."""
+        normalized_incident_id = self._validate_record_id(incident_id)
+        normalized_status = str(incident_status or "").strip().lower()
+        if normalized_status not in {"open", "in_progress", "resolved"}:
+            raise ValueError("Estado de incidencia inválido. Usa open, in_progress o resolved.")
+
+        payload = {
+            "incident_status": normalized_status,
+            "resolution_note": str(resolution_note or "").strip(),
+            "reporter_username": str(reporter_username or "desktop"),
+        }
+        result = self._make_request(
+            "patch",
+            f"incidents/{normalized_incident_id}/status",
+            json=payload,
+        )
+        if isinstance(result, dict):
+            return self._normalize_incident_lifecycle_fields(result.get("incident"))
         return None
 
     def upload_incident_photo(self, incident_id, file_path):
@@ -905,6 +949,121 @@ class InstallationHistory:
         if isinstance(result, dict):
             return result.get("asset")
         return None
+
+    def get_assets(self, limit=100, search=None, brand=None, status=None, code=None):
+        """
+        Listar equipos desde la API.
+
+        Args:
+            limit: maximo de registros a devolver.
+            search: busqueda libre por codigo/marca/modelo/serie/cliente.
+            brand: filtro exacto de marca.
+            status: filtro de estado.
+            code: filtro exacto de codigo externo.
+
+        Returns:
+            list: equipos encontrados.
+        """
+        params = {}
+        if limit:
+            params["limit"] = int(limit)
+        if search:
+            params["search"] = str(search).strip()
+        if brand:
+            params["brand"] = str(brand).strip()
+        if status:
+            params["status"] = str(status).strip()
+        if code:
+            params["code"] = str(code).strip()
+
+        payload = self._make_request("get", "assets", params=params)
+        if isinstance(payload, dict):
+            return payload.get("items") or []
+        return []
+
+    def get_asset_by_id(self, asset_id):
+        """
+        Obtener un equipo por ID.
+
+        Args:
+            asset_id: ID numerico del equipo.
+
+        Returns:
+            dict | None: equipo encontrado.
+        """
+        normalized_asset_id = self._validate_record_id(asset_id)
+        try:
+            payload = self._make_request("get", f"assets/{normalized_asset_id}")
+        except ConnectionError as error:
+            if "HTTP 404" in str(error):
+                return None
+            raise
+        if isinstance(payload, dict):
+            return payload.get("asset")
+        return None
+
+    def save_asset(self, external_code, **kwargs):
+        """
+        Guardar/actualizar equipo usando resolucion por codigo externo.
+        Usa update_existing=True para persistir cambios en campos del equipo.
+
+        Args:
+            external_code: codigo externo unico del equipo.
+            **kwargs: brand, serial_number, model, client_name, notes, status.
+
+        Returns:
+            dict | None: equipo persistido.
+        """
+        payload = dict(kwargs or {})
+        payload["update_existing"] = True
+        return self.resolve_asset(external_code, **payload)
+
+    def get_asset_incidents(self, asset_id, limit=100):
+        """
+        Obtener detalle extendido de equipo (vinculos + incidencias + fotos).
+
+        Args:
+            asset_id: ID numerico del equipo.
+            limit: maximo de incidencias.
+
+        Returns:
+            dict: estructura con keys asset, active_link, links, incidents.
+        """
+        normalized_asset_id = self._validate_record_id(asset_id)
+        params = {}
+        if limit:
+            params["limit"] = int(limit)
+        payload = self._make_request(
+            "get",
+            f"assets/{normalized_asset_id}/incidents",
+            params=params,
+        )
+        if isinstance(payload, dict):
+            payload["incidents"] = [
+                self._normalize_incident_lifecycle_fields(item)
+                for item in (payload.get("incidents") or [])
+            ]
+            return payload
+        return {
+            "asset": None,
+            "active_link": None,
+            "links": [],
+            "incidents": [],
+        }
+
+    def delete_asset(self, asset_id):
+        """
+        Eliminar un equipo por ID.
+
+        Args:
+            asset_id: ID numerico del equipo.
+
+        Returns:
+            bool: True si se elimino correctamente.
+        """
+        normalized_asset_id = self._validate_record_id(asset_id)
+        self._make_request("delete", f"assets/{normalized_asset_id}")
+        return True
 
     def link_asset_to_installation(self, asset_id, installation_id, notes=""):
         """

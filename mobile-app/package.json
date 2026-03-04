@@ -4,6 +4,8 @@
   "version": "1.0.0",
   "scripts": {
     "start": "expo start",
+    "start:lan": "expo start --clear --host lan --port 8082",
+    "start:tunnel": "expo start --clear --tunnel --port 8082",
     "dev:remote": "npm --prefix .. run dev:remote",
     "deploy:worker": "npm --prefix .. run deploy",
     "d1:migrate": "npm --prefix .. run d1:migrate",
@@ -29,6 +31,7 @@
     "expo": "~54.0.33",
     "expo-camera": "~17.0.8",
     "expo-constants": "~18.0.13",
+    "expo-document-picker": "~14.0.7",
     "expo-file-system": "~19.0.21",
     "expo-font": "~14.0.11",
     "expo-image-manipulator": "~14.0.8",

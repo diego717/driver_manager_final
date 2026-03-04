@@ -34,6 +34,13 @@ function normalizeString(value: string | null | undefined): string {
   return String(value || "").trim();
 }
 
+function incidentStatusLabel(value: string | null | undefined): string {
+  const normalized = normalizeString(value).toLowerCase();
+  if (normalized === "resolved") return "Resuelta";
+  if (normalized === "in_progress") return "En curso";
+  return "Abierta";
+}
+
 export default function AssetsTabScreen() {
   const palette = useAppPalette();
   const router = useRouter();
@@ -346,6 +353,15 @@ export default function AssetsTabScreen() {
             Nuevo equipo + QR
           </Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.ghostButton, { backgroundColor: palette.secondaryButtonBg }]}
+          onPress={() => router.push("/drivers" as never)}
+          accessibilityRole="button"
+        >
+          <Text style={[styles.ghostButtonText, { color: palette.secondaryButtonText }]}>
+            Drivers R2
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {assets.length === 0 ? (
@@ -568,7 +584,7 @@ export default function AssetsTabScreen() {
                   style={[styles.listItem, { borderColor: palette.inputBorder, backgroundColor: palette.itemBg }]}
                 >
                   <Text style={[styles.listItemTitle, { color: palette.textPrimary }]}>
-                    #{incident.id} · {incident.severity || "n/a"} · inst #{incident.installation_id}
+                    #{incident.id} · {incident.severity || "n/a"} · {incidentStatusLabel(incident.incident_status)} · inst #{incident.installation_id}
                   </Text>
                   <Text style={[styles.listItemMeta, { color: palette.textSecondary }]}>
                     {incident.note || "Sin nota"}

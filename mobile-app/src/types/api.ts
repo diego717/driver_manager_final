@@ -1,5 +1,6 @@
 export type IncidentSeverity = "low" | "medium" | "high" | "critical";
 export type IncidentSource = "desktop" | "mobile" | "web";
+export type IncidentStatus = "open" | "in_progress" | "resolved";
 
 export interface CreateIncidentInput {
   note: string;
@@ -30,6 +31,12 @@ export interface Incident {
   severity: IncidentSeverity;
   source: IncidentSource;
   created_at: string;
+  incident_status?: IncidentStatus;
+  status_updated_at?: string | null;
+  status_updated_by?: string | null;
+  resolved_at?: string | null;
+  resolved_by?: string | null;
+  resolution_note?: string | null;
   photos: IncidentPhoto[];
 }
 
@@ -59,6 +66,12 @@ export interface ApiErrorResponse {
 export interface CreateIncidentResponse {
   success: boolean;
   incident: Omit<Incident, "photos">;
+}
+
+export interface UpdateIncidentStatusInput {
+  incident_status: IncidentStatus;
+  resolution_note?: string;
+  reporter_username?: string;
 }
 
 export interface ListIncidentsResponse {

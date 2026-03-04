@@ -1,4 +1,4 @@
-﻿import bcrypt from "bcryptjs";
+import bcrypt from "bcryptjs";
 
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const MIN_PHOTO_BYTES = 1024;
@@ -47,6 +47,12 @@ const ASSET_MODEL_MAX_LENGTH = 160;
 const ASSET_CLIENT_NAME_MAX_LENGTH = 180;
 const ASSET_NOTES_MAX_LENGTH = 2000;
 const ALLOWED_ASSET_STATUSES = new Set(["active", "inactive", "retired", "maintenance"]);
+const ALLOWED_INCIDENT_STATUSES = new Set(["open", "in_progress", "resolved"]);
+const DRIVER_BRAND_MAX_LENGTH = 120;
+const DRIVER_VERSION_MAX_LENGTH = 120;
+const DRIVER_DESCRIPTION_MAX_LENGTH = 500;
+const DRIVER_MANIFEST_KEY = "manifest.json";
+const MAX_DRIVER_UPLOAD_BYTES = 300 * 1024 * 1024;
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -138,6 +144,15 @@ function buildCorsPolicy(isWebRoute, routeParts) {
   const first = routeParts[0] || "";
   const isPhotoUpload = routeParts.length === 3 && first === "incidents" && routeParts[2] === "photos";
   const isRecordById = routeParts.length === 2 && first === "installations";
+  const isIncidentStatusByIdRoute =
+    routeParts.length === 3 &&
+    first === "incidents" &&
+    routeParts[2] === "status";
+  const isInstallationIncidentStatusRoute =
+    routeParts.length === 5 &&
+    first === "installations" &&
+    routeParts[2] === "incidents" &&
+    routeParts[4] === "status";
 
   if (isWebRoute) {
     headers.add("Authorization");
@@ -151,8 +166,11 @@ function buildCorsPolicy(isWebRoute, routeParts) {
 
   if (
     isPhotoUpload ||
+    isIncidentStatusByIdRoute ||
+    isInstallationIncidentStatusRoute ||
     first === "records" ||
     first === "assets" ||
+    first === "drivers" ||
     first === "devices" ||
     first === "audit-logs" ||
     first === "auth" ||
@@ -180,6 +198,8 @@ function buildCorsPolicy(isWebRoute, routeParts) {
     )
   ) {
     methods.add("GET");
+  } else if (isInstallationIncidentStatusRoute) {
+    methods.add("PATCH");
   } else if (first === "installations" && !isRecordById) {
     methods.add("GET");
     methods.add("POST");
@@ -192,6 +212,10 @@ function buildCorsPolicy(isWebRoute, routeParts) {
     methods.add("POST");
     methods.add("PATCH");
     methods.add("DELETE");
+  } else if (first === "drivers") {
+    methods.add("GET");
+    methods.add("POST");
+    methods.add("DELETE");
   } else if (["records", "devices", "audit-logs"].includes(first)) {
     methods.add(first === "audit-logs" ? "GET" : "POST");
     methods.add("POST");
@@ -200,6 +224,7 @@ function buildCorsPolicy(isWebRoute, routeParts) {
   } else if (first === "incidents") {
     methods.add("GET");
     methods.add("POST");
+    methods.add("PATCH");
   } else if (first === "auth") {
     methods.add("GET");
     methods.add("POST");
@@ -414,7 +439,7 @@ async function serveDashboardStaticAsset(request, env, corsPolicy, routeParts) {
 function parsePositiveInt(value, label) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new HttpError(400, `${label} invÃ¡lido.`);
+    throw new HttpError(400, `${label} inválido.`);
   }
   return parsed;
 }
@@ -962,6 +987,137 @@ function appendPaginationHeader(response, nextCursor) {
   return response;
 }
 
+function getDriversBucketBinding(env) {
+  const bucket = env?.DRIVERS_BUCKET || env?.INCIDENTS_BUCKET;
+  if (
+    !bucket ||
+    typeof bucket.get !== "function" ||
+    typeof bucket.put !== "function" ||
+    typeof bucket.delete !== "function"
+  ) {
+    throw new HttpError(
+      503,
+      "No hay bucket R2 configurado para drivers (usa DRIVERS_BUCKET o INCIDENTS_BUCKET).",
+    );
+  }
+  return bucket;
+}
+
+function sanitizeStorageSegment(value, fallback = "default", maxLength = 96) {
+  const normalized = normalizeOptionalString(value, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, maxLength);
+  return normalized || fallback;
+}
+
+function normalizeDriverBrand(value) {
+  const brand = normalizeOptionalString(value, "").replace(/\s+/g, " ").trim().slice(0, DRIVER_BRAND_MAX_LENGTH);
+  if (!brand) {
+    throw new HttpError(400, "Campo 'brand' es obligatorio.");
+  }
+  return brand;
+}
+
+function normalizeDriverVersion(value) {
+  const version = normalizeOptionalString(value, "").replace(/\s+/g, " ").trim().slice(0, DRIVER_VERSION_MAX_LENGTH);
+  if (!version) {
+    throw new HttpError(400, "Campo 'version' es obligatorio.");
+  }
+  return version;
+}
+
+function normalizeDriverDescription(value) {
+  return normalizeOptionalString(value, "").replace(/\s+/g, " ").trim().slice(0, DRIVER_DESCRIPTION_MAX_LENGTH);
+}
+
+function formatLegacyDateTime(isoValue) {
+  const parsed = new Date(isoValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return nowIso().replace("T", " ").slice(0, 19);
+  }
+  return parsed.toISOString().replace("T", " ").slice(0, 19);
+}
+
+function buildDriverStorageKey({ tenantId, brand, version, fileName }) {
+  const tenantSegment = sanitizeStorageSegment(tenantId, "default");
+  const brandSegment = sanitizeStorageSegment(brand, "brand");
+  const versionSegment = sanitizeStorageSegment(version, "version");
+  return `drivers/${tenantSegment}/${brandSegment}/${versionSegment}/${fileName}`;
+}
+
+function createDefaultDriverManifest() {
+  return {
+    version: "1.0",
+    last_updated: nowIso(),
+    drivers: [],
+  };
+}
+
+function normalizeDriverManifestEntry(rawEntry) {
+  const entry = rawEntry && typeof rawEntry === "object" ? rawEntry : {};
+  const key = normalizeOptionalString(entry.key, "");
+  if (!key) return null;
+
+  const uploaded = normalizeOptionalString(entry.uploaded, nowIso());
+  const sizeBytes = Math.max(0, Number(entry.size_bytes) || 0);
+  const sizeMb = Number.isFinite(Number(entry.size_mb))
+    ? Number(entry.size_mb)
+    : Number((sizeBytes / (1024 * 1024)).toFixed(2));
+
+  return {
+    tenant_id: normalizeRealtimeTenantId(entry.tenant_id),
+    brand: normalizeOptionalString(entry.brand, ""),
+    version: normalizeOptionalString(entry.version, ""),
+    description: normalizeOptionalString(entry.description, ""),
+    key,
+    filename: normalizeOptionalString(entry.filename, key.split("/").pop() || "driver.bin"),
+    uploaded,
+    last_modified: normalizeOptionalString(entry.last_modified, formatLegacyDateTime(uploaded)),
+    size_bytes: sizeBytes,
+    size_mb: Number(sizeMb.toFixed(2)),
+  };
+}
+
+function normalizeDriverManifest(rawManifest) {
+  const source = rawManifest && typeof rawManifest === "object" ? rawManifest : {};
+  const rawDrivers = Array.isArray(source.drivers) ? source.drivers : [];
+  const drivers = rawDrivers
+    .map((entry) => normalizeDriverManifestEntry(entry))
+    .filter((entry) => Boolean(entry));
+
+  return {
+    version: normalizeOptionalString(source.version, "1.0"),
+    last_updated: normalizeOptionalString(source.last_updated, nowIso()),
+    drivers,
+  };
+}
+
+async function readDriverManifest(bucket) {
+  const object = await bucket.get(DRIVER_MANIFEST_KEY);
+  if (!object || !object.body) {
+    return createDefaultDriverManifest();
+  }
+
+  try {
+    const rawText = await object.text();
+    const parsed = rawText ? JSON.parse(rawText) : {};
+    return normalizeDriverManifest(parsed);
+  } catch {
+    return createDefaultDriverManifest();
+  }
+}
+
+async function writeDriverManifest(bucket, manifest) {
+  const normalized = normalizeDriverManifest(manifest);
+  normalized.last_updated = nowIso();
+  await bucket.put(DRIVER_MANIFEST_KEY, JSON.stringify(normalized, null, 2), {
+    httpMetadata: { contentType: "application/json" },
+  });
+  return normalized;
+}
+
 function applyInstallationFilters(installations, searchParams) {
   const clientName = normalizeOptionalString(searchParams.get("client_name"), "").toLowerCase();
   const brand = normalizeOptionalString(searchParams.get("brand"), "").toLowerCase();
@@ -1127,7 +1283,13 @@ async function getIncidentsAfterId(
       time_adjustment_seconds,
       severity,
       source,
-      created_at
+      created_at,
+      incident_status,
+      status_updated_at,
+      status_updated_by,
+      resolved_at,
+      resolved_by,
+      resolution_note
     FROM incidents
     WHERE tenant_id = ?
       AND id > ?
@@ -3514,16 +3676,16 @@ async function verifyAuth(request, env, url) {
   const providedBodyHash = normalizeOptionalString(request.headers.get("X-Body-SHA256"), "");
 
   if (!token || !timestampRaw || !signature) {
-    throw new HttpError(401, "Faltan headers de autenticaciÃ³n.");
+    throw new HttpError(401, "Faltan headers de autenticación.");
   }
 
   if (!timingSafeEqual(token, expectedToken)) {
-    throw new HttpError(401, "Token invÃ¡lido.");
+    throw new HttpError(401, "Token inválido.");
   }
 
   const timestamp = Number.parseInt(timestampRaw, 10);
   if (!Number.isInteger(timestamp)) {
-    throw new HttpError(401, "Timestamp invÃ¡lido.");
+    throw new HttpError(401, "Timestamp inválido.");
   }
 
   const drift = Math.abs(nowUnixSeconds() - timestamp);
@@ -3576,7 +3738,7 @@ async function verifyAuth(request, env, url) {
   const expectedSignature = await hmacSha256Hex(expectedSecret, canonical);
 
   if (!timingSafeEqual(signature.toLowerCase(), expectedSignature.toLowerCase())) {
-    throw new HttpError(401, "Firma invÃ¡lida.");
+    throw new HttpError(401, "Firma inválida.");
   }
 }
 
@@ -3586,9 +3748,41 @@ function buildIncidentR2Key(installationId, incidentId, extension) {
   return `incidents/${installationId}/${incidentId}/${timestamp}_${randomPart}.${extension}`;
 }
 
+function normalizeIncidentStatus(value, fallback = "open") {
+  const normalized = normalizeOptionalString(value, fallback).toLowerCase();
+  if (!ALLOWED_INCIDENT_STATUSES.has(normalized)) {
+    throw new HttpError(
+      400,
+      `Campo 'incident_status' invalido. Valores permitidos: ${[...ALLOWED_INCIDENT_STATUSES].join(", ")}.`,
+    );
+  }
+  return normalized;
+}
+
+function normalizeResolutionNote(value) {
+  const note = normalizeOptionalString(value, "").trim();
+  if (note.length > 2000) {
+    throw new HttpError(400, "Campo 'resolution_note' supera el limite permitido.");
+  }
+  return note;
+}
+
+function normalizeIncidentStatusPayload(data) {
+  if (!data || typeof data !== "object") {
+    throw new HttpError(400, "Payload invalido.");
+  }
+
+  const incidentStatus = normalizeIncidentStatus(data.incident_status ?? data.status, "open");
+  const resolutionNote = normalizeResolutionNote(data.resolution_note);
+  return {
+    incidentStatus,
+    resolutionNote: resolutionNote || null,
+  };
+}
+
 function validateIncidentPayload(data, options = {}) {
   if (!data || typeof data !== "object") {
-    throw new HttpError(400, "Payload invÃ¡lido.");
+    throw new HttpError(400, "Payload inválido.");
   }
 
   const note = typeof data.note === "string" ? data.note.trim() : "";
@@ -3596,23 +3790,23 @@ function validateIncidentPayload(data, options = {}) {
     throw new HttpError(400, "Campo 'note' es obligatorio.");
   }
   if (note.length > 5000) {
-    throw new HttpError(400, "Campo 'note' supera el lÃ­mite permitido.");
+    throw new HttpError(400, "Campo 'note' supera el límite permitido.");
   }
 
   const timeAdjustment =
     data.time_adjustment_seconds === undefined ? 0 : Number(data.time_adjustment_seconds);
   if (!Number.isInteger(timeAdjustment) || timeAdjustment < -86400 || timeAdjustment > 86400) {
-    throw new HttpError(400, "Campo 'time_adjustment_seconds' invÃ¡lido.");
+    throw new HttpError(400, "Campo 'time_adjustment_seconds' inválido.");
   }
 
   const severity = data.severity || "medium";
   if (!["low", "medium", "high", "critical"].includes(severity)) {
-    throw new HttpError(400, "Campo 'severity' invÃ¡lido.");
+    throw new HttpError(400, "Campo 'severity' inválido.");
   }
 
   const source = data.source || options.defaultSource || "mobile";
   if (!["desktop", "mobile", "web"].includes(source)) {
-    throw new HttpError(400, "Campo 'source' invÃ¡lido.");
+    throw new HttpError(400, "Campo 'source' inválido.");
   }
 
   return {
@@ -3620,6 +3814,7 @@ function validateIncidentPayload(data, options = {}) {
     timeAdjustment,
     severity,
     source,
+    incidentStatus: "open",
     applyToInstallation: Boolean(data.apply_to_installation),
     reporterUsername: normalizeOptionalString(
       data.reporter_username || data.username,
@@ -3666,6 +3861,12 @@ export default {
             web_assets: "/web/assets",
             web_assets_resolve: "/web/assets/resolve",
             web_asset_link: "/web/assets/:asset_id/link-installation",
+            web_incident_status: "/web/incidents/:incident_id/status",
+            web_installation_incident_status: "/web/installations/:installation_id/incidents/:incident_id/status",
+            web_drivers: "/web/drivers",
+            web_drivers_upload: "/web/drivers",
+            web_drivers_delete: "/web/drivers?key=drivers/default/Brand/Version/file.exe",
+            web_drivers_download: "/web/drivers/download?key=drivers/default/Brand/Version/file.exe",
             web_devices: "/web/devices",
             web_lookup: "/web/lookup?type=asset&code=EQ-123",
             statistics_trend: "/statistics/trend?days=7",
@@ -3887,6 +4088,9 @@ export default {
         await verifyAuth(request, env, url);
       }
       const realtimeTenantId = resolveRealtimeTenantId(request, webSession);
+      const incidentsTenantId = normalizeRealtimeTenantId(
+        isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+      );
 
 
       if (routeParts.length === 1 && routeParts[0] === "lookup" && request.method === "GET") {
@@ -4631,6 +4835,12 @@ export default {
                 i.severity,
                 i.source,
                 i.created_at,
+                i.incident_status,
+                i.status_updated_at,
+                i.status_updated_by,
+                i.resolved_at,
+                i.resolved_by,
+                i.resolution_note,
                 inst.client_name AS installation_client_name,
                 inst.driver_brand AS installation_brand,
                 inst.driver_version AS installation_version
@@ -4821,6 +5031,277 @@ export default {
             }
             throw error;
           }
+        }
+      }
+
+      if (routeParts.length >= 1 && routeParts[0] === "drivers") {
+        if (!isWebRoute) {
+          throw new HttpError(401, "Gestion de drivers requiere sesion web.");
+        }
+
+        const driversTenantId = normalizeRealtimeTenantId(webSession?.tenant_id);
+        const driversBucket = getDriversBucketBinding(env);
+
+        if (routeParts.length === 1 && request.method === "GET") {
+          const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
+          const brandFilter = normalizeOptionalString(url.searchParams.get("brand"), "").toLowerCase();
+          const versionFilter = normalizeOptionalString(url.searchParams.get("version"), "").toLowerCase();
+          const searchFilter = normalizeOptionalString(url.searchParams.get("search"), "").toLowerCase();
+
+          const manifest = await readDriverManifest(driversBucket);
+          let items = (manifest.drivers || []).filter(
+            (entry) => normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId,
+          );
+
+          if (brandFilter) {
+            items = items.filter(
+              (entry) => normalizeOptionalString(entry.brand, "").toLowerCase() === brandFilter,
+            );
+          }
+          if (versionFilter) {
+            items = items.filter(
+              (entry) => normalizeOptionalString(entry.version, "").toLowerCase() === versionFilter,
+            );
+          }
+          if (searchFilter) {
+            items = items.filter((entry) => {
+              const haystack = [
+                normalizeOptionalString(entry.brand, ""),
+                normalizeOptionalString(entry.version, ""),
+                normalizeOptionalString(entry.filename, ""),
+                normalizeOptionalString(entry.description, ""),
+              ]
+                .join(" ")
+                .toLowerCase();
+              return haystack.includes(searchFilter);
+            });
+          }
+
+          items.sort((a, b) => {
+            const aTime = Date.parse(normalizeOptionalString(a.uploaded, "")) || 0;
+            const bTime = Date.parse(normalizeOptionalString(b.uploaded, "")) || 0;
+            return bTime - aTime;
+          });
+
+          const total = items.length;
+          items = items.slice(0, limit);
+
+          return jsonResponse(request, env, corsPolicy, {
+            success: true,
+            total,
+            items: items.map((entry) => ({
+              ...entry,
+              download_url: `/web/drivers/download?key=${encodeURIComponent(entry.key)}`,
+            })),
+          });
+        }
+
+        if (routeParts.length === 1 && request.method === "POST") {
+          requireAdminRole(webSession?.role);
+
+          let formData;
+          try {
+            formData = await request.formData();
+          } catch {
+            throw new HttpError(400, "Payload multipart/form-data invalido.");
+          }
+
+          const brand = normalizeDriverBrand(formData.get("brand"));
+          const version = normalizeDriverVersion(formData.get("version"));
+          const description = normalizeDriverDescription(formData.get("description"));
+          const fileField = formData.get("file");
+
+          if (
+            !fileField ||
+            typeof fileField !== "object" ||
+            typeof fileField.stream !== "function" ||
+            typeof fileField.name !== "string"
+          ) {
+            throw new HttpError(400, "Campo 'file' es obligatorio.");
+          }
+
+          const fileSize = Math.max(0, Number(fileField.size) || 0);
+          if (!fileSize) {
+            throw new HttpError(400, "El archivo esta vacio.");
+          }
+          if (fileSize > MAX_DRIVER_UPLOAD_BYTES) {
+            throw new HttpError(
+              413,
+              `Archivo demasiado grande (${(fileSize / (1024 * 1024)).toFixed(1)}MB). Maximo: ${(
+                MAX_DRIVER_UPLOAD_BYTES /
+                (1024 * 1024)
+              ).toFixed(0)}MB.`,
+            );
+          }
+
+          const safeFileName = sanitizeFileName(
+            normalizeOptionalString(fileField.name, ""),
+            `driver_${Date.now()}`,
+          );
+          const contentType = normalizeContentType(fileField.type) || "application/octet-stream";
+          const driverKey = buildDriverStorageKey({
+            tenantId: driversTenantId,
+            brand,
+            version,
+            fileName: safeFileName,
+          });
+          const uploadedAt = nowIso();
+          const uploadedBy = normalizeWebUsername(webSession?.sub || "unknown");
+
+          await driversBucket.put(driverKey, fileField.stream(), {
+            httpMetadata: { contentType },
+          });
+
+          const manifest = await readDriverManifest(driversBucket);
+          const replacedEntries = (manifest.drivers || []).filter(
+            (entry) =>
+              normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId &&
+              normalizeOptionalString(entry.brand, "").toLowerCase() === brand.toLowerCase() &&
+              normalizeOptionalString(entry.version, "").toLowerCase() === version.toLowerCase() &&
+              normalizeOptionalString(entry.key, "") !== driverKey,
+          );
+
+          manifest.drivers = (manifest.drivers || []).filter((entry) => {
+            return !(
+              normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId &&
+              normalizeOptionalString(entry.brand, "").toLowerCase() === brand.toLowerCase() &&
+              normalizeOptionalString(entry.version, "").toLowerCase() === version.toLowerCase()
+            );
+          });
+
+          for (const staleEntry of replacedEntries) {
+            const staleKey = normalizeOptionalString(staleEntry?.key, "");
+            if (!staleKey) continue;
+            try {
+              await driversBucket.delete(staleKey);
+            } catch {
+              // Best effort cleanup.
+            }
+          }
+
+          const driverEntry = {
+            tenant_id: driversTenantId,
+            brand,
+            version,
+            description,
+            key: driverKey,
+            filename: safeFileName,
+            uploaded: uploadedAt,
+            last_modified: formatLegacyDateTime(uploadedAt),
+            size_bytes: fileSize,
+            size_mb: Number((fileSize / (1024 * 1024)).toFixed(2)),
+            uploaded_by_username: uploadedBy,
+          };
+          manifest.drivers.push(driverEntry);
+          await writeDriverManifest(driversBucket, manifest);
+
+          await logAuditEvent(env, {
+            action: "upload_driver",
+            username: uploadedBy,
+            success: true,
+            details: {
+              tenant_id: driversTenantId,
+              brand,
+              version,
+              key: driverKey,
+              size_bytes: fileSize,
+            },
+            ipAddress: getClientIpForRateLimit(request),
+            platform: "web",
+          });
+
+          return jsonResponse(request, env, corsPolicy, {
+            success: true,
+            driver: {
+              ...driverEntry,
+              download_url: `/web/drivers/download?key=${encodeURIComponent(driverKey)}`,
+            },
+          }, 201);
+        }
+
+        if (routeParts.length === 1 && request.method === "DELETE") {
+          requireAdminRole(webSession?.role);
+
+          const key = normalizeOptionalString(url.searchParams.get("key"), "");
+          if (!key) {
+            throw new HttpError(400, "Parametro 'key' es obligatorio.");
+          }
+
+          const manifest = await readDriverManifest(driversBucket);
+          const found = (manifest.drivers || []).find(
+            (entry) =>
+              normalizeOptionalString(entry.key, "") === key &&
+              normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId,
+          );
+          if (!found) {
+            throw new HttpError(404, "Driver no encontrado.");
+          }
+
+          await driversBucket.delete(key);
+          manifest.drivers = (manifest.drivers || []).filter(
+            (entry) =>
+              !(
+                normalizeOptionalString(entry.key, "") === key &&
+                normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId
+              ),
+          );
+          await writeDriverManifest(driversBucket, manifest);
+
+          await logAuditEvent(env, {
+            action: "delete_driver",
+            username: normalizeWebUsername(webSession?.sub || "unknown"),
+            success: true,
+            details: {
+              tenant_id: driversTenantId,
+              key,
+              brand: found.brand || "",
+              version: found.version || "",
+            },
+            ipAddress: getClientIpForRateLimit(request),
+            platform: "web",
+          });
+
+          return jsonResponse(request, env, corsPolicy, {
+            success: true,
+            deleted_key: key,
+          });
+        }
+
+        if (routeParts.length === 2 && routeParts[1] === "download" && request.method === "GET") {
+          const key = normalizeOptionalString(url.searchParams.get("key"), "");
+          if (!key) {
+            throw new HttpError(400, "Parametro 'key' es obligatorio.");
+          }
+
+          const manifest = await readDriverManifest(driversBucket);
+          const found = (manifest.drivers || []).find(
+            (entry) =>
+              normalizeOptionalString(entry.key, "") === key &&
+              normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId,
+          );
+          if (!found) {
+            throw new HttpError(404, "Driver no encontrado.");
+          }
+
+          const object = await driversBucket.get(key);
+          if (!object || !object.body) {
+            throw new HttpError(404, "Archivo de driver no encontrado en R2.");
+          }
+
+          const safeName = sanitizeFileName(
+            normalizeOptionalString(found.filename, ""),
+            "driver",
+          );
+
+          return new Response(object.body, {
+            status: 200,
+            headers: {
+              ...corsHeaders(request, env, corsPolicy),
+              "Content-Type": object.httpMetadata?.contentType || "application/octet-stream",
+              "Content-Disposition": `attachment; filename=\"${safeName}\"`,
+              "Cache-Control": "private, max-age=300",
+            },
+          });
         }
       }
 
@@ -5142,12 +5623,27 @@ export default {
 
         if (request.method === "GET") {
           const { results: incidents } = await env.DB.prepare(`
-            SELECT id, installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at
+            SELECT
+              id,
+              installation_id,
+              reporter_username,
+              note,
+              time_adjustment_seconds,
+              severity,
+              source,
+              created_at,
+              incident_status,
+              status_updated_at,
+              status_updated_by,
+              resolved_at,
+              resolved_by,
+              resolution_note
             FROM incidents
             WHERE installation_id = ?
+              AND tenant_id = ?
             ORDER BY created_at DESC, id DESC
           `)
-            .bind(installationId)
+            .bind(installationId, incidentsTenantId)
             .all();
 
           const { results: photos } = await env.DB.prepare(`
@@ -5155,9 +5651,10 @@ export default {
             FROM incident_photos p
             INNER JOIN incidents i ON i.id = p.incident_id
             WHERE i.installation_id = ?
+              AND i.tenant_id = ?
             ORDER BY p.created_at ASC, p.id ASC
           `)
-            .bind(installationId)
+            .bind(installationId, incidentsTenantId)
             .all();
 
           const photosByIncident = {};
@@ -5192,27 +5689,44 @@ export default {
             SELECT id, notes, installation_time_seconds
             FROM installations
             WHERE id = ?
+              AND tenant_id = ?
           `)
-            .bind(installationId)
+            .bind(installationId, incidentsTenantId)
             .all();
 
           const installation = installationRows?.[0];
           if (!installation) {
-            throw new HttpError(404, "InstalaciÃ³n no encontrada.");
+            throw new HttpError(404, "Instalación no encontrada.");
           }
 
           const insertResult = await env.DB.prepare(`
-            INSERT INTO incidents (installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO incidents (
+              installation_id,
+              tenant_id,
+              reporter_username,
+              note,
+              time_adjustment_seconds,
+              severity,
+              source,
+              created_at,
+              incident_status,
+              status_updated_at,
+              status_updated_by
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `)
             .bind(
               installationId,
+              incidentsTenantId,
               payload.reporterUsername,
               payload.note,
               payload.timeAdjustment,
               payload.severity,
               payload.source,
               createdAt,
+              payload.incidentStatus,
+              createdAt,
+              payload.reporterUsername,
             )
             .run();
 
@@ -5230,8 +5744,9 @@ export default {
               UPDATE installations
               SET notes = ?, installation_time_seconds = ?
               WHERE id = ?
+                AND tenant_id = ?
             `)
-              .bind(composedNotes, nextTime, installationId)
+              .bind(composedNotes, nextTime, installationId, incidentsTenantId)
               .run();
           }
 
@@ -5284,6 +5799,12 @@ export default {
             severity: payload.severity,
             source: payload.source,
             created_at: createdAt,
+            incident_status: payload.incidentStatus,
+            status_updated_at: createdAt,
+            status_updated_by: payload.reporterUsername,
+            resolved_at: null,
+            resolved_by: null,
+            resolution_note: null,
           };
 
           await publishRealtimeEvent(env, {
@@ -5319,6 +5840,149 @@ export default {
 
 
       if (
+        (
+          routeParts.length === 3 &&
+          routeParts[0] === "incidents" &&
+          routeParts[2] === "status"
+        ) ||
+        (
+          routeParts.length === 5 &&
+          routeParts[0] === "installations" &&
+          routeParts[2] === "incidents" &&
+          routeParts[4] === "status"
+        )
+      ) {
+        if (request.method !== "PATCH") {
+          throw new HttpError(405, "Metodo no permitido para actualizacion de estado de incidencia.");
+        }
+
+        if (isWebRoute) {
+          requireAdminRole(webSession?.role);
+        }
+
+        const incidentId = parsePositiveInt(
+          routeParts.length === 3 ? routeParts[1] : routeParts[3],
+          "incident_id",
+        );
+        const installationIdFromPath =
+          routeParts.length === 5 ? parsePositiveInt(routeParts[1], "installation_id") : null;
+        const data = await readJsonOrThrowBadRequest(request);
+        const payload = normalizeIncidentStatusPayload(data);
+        const statusUpdatedAt = nowIso();
+        const actorUsername = normalizeOptionalString(
+          isWebRoute ? webSession?.sub : data?.reporter_username || data?.username,
+          isWebRoute ? "web" : "api",
+        );
+
+        let query = `
+          SELECT
+            i.id,
+            i.installation_id,
+            i.reporter_username,
+            i.note,
+            i.time_adjustment_seconds,
+            i.severity,
+            i.source,
+            i.created_at,
+            i.incident_status,
+            i.status_updated_at,
+            i.status_updated_by,
+            i.resolved_at,
+            i.resolved_by,
+            i.resolution_note
+          FROM incidents i
+          INNER JOIN installations inst
+            ON inst.id = i.installation_id
+          WHERE i.id = ?
+            AND i.tenant_id = ?
+            AND inst.tenant_id = ?
+        `;
+        const bindings = [incidentId, incidentsTenantId, incidentsTenantId];
+
+        if (installationIdFromPath !== null) {
+          query += " AND i.installation_id = ?";
+          bindings.push(installationIdFromPath);
+        }
+        query += " LIMIT 1";
+
+        const { results: existingRows } = await env.DB.prepare(query).bind(...bindings).all();
+        const existingIncident = existingRows?.[0];
+        if (!existingIncident) {
+          throw new HttpError(404, "Incidencia no encontrada.");
+        }
+
+        const resolvedAt = payload.incidentStatus === "resolved" ? statusUpdatedAt : null;
+        const resolvedBy = payload.incidentStatus === "resolved" ? actorUsername : null;
+        const resolutionNote = payload.resolutionNote;
+
+        await env.DB.prepare(`
+          UPDATE incidents
+          SET
+            incident_status = ?,
+            status_updated_at = ?,
+            status_updated_by = ?,
+            resolved_at = ?,
+            resolved_by = ?,
+            resolution_note = ?
+          WHERE id = ?
+            AND tenant_id = ?
+        `)
+          .bind(
+            payload.incidentStatus,
+            statusUpdatedAt,
+            actorUsername,
+            resolvedAt,
+            resolvedBy,
+            resolutionNote,
+            incidentId,
+            incidentsTenantId,
+          )
+          .run();
+
+        const incidentEventPayload = {
+          id: existingIncident.id,
+          installation_id: existingIncident.installation_id,
+          reporter_username: existingIncident.reporter_username,
+          note: existingIncident.note,
+          time_adjustment_seconds: existingIncident.time_adjustment_seconds,
+          severity: existingIncident.severity,
+          source: existingIncident.source,
+          created_at: existingIncident.created_at,
+          incident_status: payload.incidentStatus,
+          status_updated_at: statusUpdatedAt,
+          status_updated_by: actorUsername,
+          resolved_at: resolvedAt,
+          resolved_by: resolvedBy,
+          resolution_note: resolutionNote,
+        };
+
+        await logAuditEvent(env, {
+          action: "update_incident_status",
+          username: actorUsername,
+          success: true,
+          details: {
+            incident_id: incidentId,
+            installation_id: existingIncident.installation_id,
+            previous_status: existingIncident.incident_status || "open",
+            new_status: payload.incidentStatus,
+            has_resolution_note: Boolean(resolutionNote),
+          },
+          ipAddress: getClientIpForRateLimit(request),
+          platform: isWebRoute ? "web" : "api",
+        });
+
+        await publishRealtimeEvent(env, {
+          type: "incident_status_updated",
+          incident: incidentEventPayload,
+        }, realtimeTenantId);
+
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          incident: incidentEventPayload,
+        });
+      }
+
+      if (
         routeParts.length === 3 &&
         routeParts[0] === "incidents" &&
         routeParts[2] === "photos" &&
@@ -5335,15 +5999,16 @@ export default {
         const { sizeBytes, contentType } = validateAndProcessPhoto(bodyBuffer, declaredContentType);
 
         if (!env.INCIDENTS_BUCKET || typeof env.INCIDENTS_BUCKET.put !== "function") {
-          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no estÃ¡ configurado.");
+          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no está configurado.");
         }
 
         const { results: incidentRows } = await env.DB.prepare(`
           SELECT id, installation_id
           FROM incidents
           WHERE id = ?
+            AND tenant_id = ?
         `)
-          .bind(incidentId)
+          .bind(incidentId, incidentsTenantId)
           .all();
 
         const incident = incidentRows?.[0];
@@ -5365,10 +6030,10 @@ export default {
         });
 
         const insertResult = await env.DB.prepare(`
-          INSERT INTO incident_photos (incident_id, r2_key, file_name, content_type, size_bytes, sha256, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO incident_photos (incident_id, tenant_id, r2_key, file_name, content_type, size_bytes, sha256, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `)
-          .bind(incidentId, r2Key, fileName, contentType, sizeBytes, sha256, createdAt)
+          .bind(incidentId, incidentsTenantId, r2Key, fileName, contentType, sizeBytes, sha256, createdAt)
           .run();
 
         return jsonResponse(request, env, corsPolicy,
@@ -5393,15 +6058,19 @@ export default {
         const photoId = parsePositiveInt(routeParts[1], "photo_id");
 
         if (!env.INCIDENTS_BUCKET || typeof env.INCIDENTS_BUCKET.get !== "function") {
-          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no estÃ¡ configurado.");
+          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no está configurado.");
         }
 
         const { results: photoRows } = await env.DB.prepare(`
-          SELECT id, incident_id, r2_key, file_name, content_type, size_bytes, sha256, created_at
-          FROM incident_photos
-          WHERE id = ?
+          SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
+          FROM incident_photos p
+          INNER JOIN incidents i
+            ON i.id = p.incident_id
+          WHERE p.id = ?
+            AND p.tenant_id = ?
+            AND i.tenant_id = ?
         `)
-          .bind(photoId)
+          .bind(photoId, incidentsTenantId, incidentsTenantId)
           .all();
 
         const photo = photoRows?.[0];

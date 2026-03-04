@@ -37,14 +37,45 @@ const QR_MAX_MODEL_LENGTH = 160;
 const QR_MAX_SERIAL_LENGTH = 128;
 const QR_MAX_CLIENT_LENGTH = 180;
 const QR_MAX_NOTES_LENGTH = 2000;
-const QR_LABEL_EXPORT_WIDTH = 960;
-const QR_LABEL_EXPORT_HEIGHT = 420;
-const QR_LABEL_PADDING = 28;
-const QR_LABEL_QR_SIZE = 320;
-const QR_LABEL_TEXT_GAP = 26;
-const QR_LABEL_TITLE_SIZE = 34;
-const QR_LABEL_LINE_SIZE = 24;
-const QR_LABEL_LINE_HEIGHT = 34;
+type QrLabelPreset = "small" | "medium";
+type QrLabelPresetConfig = {
+  width: number;
+  height: number;
+  padding: number;
+  qrSize: number;
+  textGap: number;
+  titleSize: number;
+  lineSize: number;
+  lineHeight: number;
+  titleY: number;
+  lineStartY: number;
+};
+const QR_LABEL_PRESETS: Record<QrLabelPreset, QrLabelPresetConfig> = {
+  small: {
+    width: 760,
+    height: 340,
+    padding: 18,
+    qrSize: 260,
+    textGap: 18,
+    titleSize: 22,
+    lineSize: 16,
+    lineHeight: 24,
+    titleY: 120,
+    lineStartY: 150,
+  },
+  medium: {
+    width: 960,
+    height: 420,
+    padding: 24,
+    qrSize: 320,
+    textGap: 24,
+    titleSize: 28,
+    lineSize: 20,
+    lineHeight: 30,
+    titleY: 150,
+    lineStartY: 190,
+  },
+};
 
 type AssetFormData = {
   external_code: string;
@@ -58,6 +89,7 @@ type AssetFormData = {
 type QrLabelRenderState = {
   qrBase64: string;
   lines: string[];
+  preset: QrLabelPreset;
 };
 
 function normalizeRouteParam(value: string | string[] | undefined): string {
@@ -146,6 +178,7 @@ export default function QrGeneratorScreen() {
   const [notes, setNotes] = useState("");
   const [payload, setPayload] = useState("");
   const [detailsText, setDetailsText] = useState("");
+  const [labelPreset, setLabelPreset] = useState<QrLabelPreset>("medium");
   const [error, setError] = useState("");
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -156,6 +189,12 @@ export default function QrGeneratorScreen() {
     toDataURL?: (callback: (base64: string) => void) => void;
   } | null>(null);
   const [qrLabelRenderState, setQrLabelRenderState] = useState<QrLabelRenderState | null>(null);
+  const exportPresetConfig = useMemo<QrLabelPresetConfig>(() => {
+    if (qrLabelRenderState?.preset) {
+      return QR_LABEL_PRESETS[qrLabelRenderState.preset];
+    }
+    return QR_LABEL_PRESETS[labelPreset];
+  }, [labelPreset, qrLabelRenderState?.preset]);
 
   const helperText = useMemo(() => {
     if (qrType === "installation") {
@@ -209,6 +248,19 @@ export default function QrGeneratorScreen() {
       params.serialNumber,
     ],
   );
+
+  const hasRoutePrefill = useMemo(() => {
+    return Object.values(prefillValues).some((value) => {
+      if (typeof value === "boolean") return value;
+      return Boolean(value);
+    });
+  }, [prefillValues]);
+  const qrModeHint = useMemo(() => {
+    if (hasRoutePrefill) {
+      return "Modo detalle: datos precargados desde un equipo seleccionado.";
+    }
+    return "Modo nuevo: crea una etiqueta desde cero.";
+  }, [hasRoutePrefill]);
 
   useEffect(() => {
     const hasAnyPrefillValue = Object.values(prefillValues).some((value) => {
@@ -288,8 +340,74 @@ export default function QrGeneratorScreen() {
   useFocusEffect(
     useCallback(() => {
       void refreshSessionState();
-    }, [refreshSessionState]),
+      return () => {
+        setQrType("asset");
+        setInstallationRawValue("");
+        setExternalCode("");
+        setBrand("");
+        setModel("");
+        setSerialNumber("");
+        setClientName("");
+        setNotes("");
+        setPayload("");
+        setDetailsText("");
+        setError("");
+        setQrLabelRenderState(null);
+        lastAppliedPrefillSignatureRef.current = "";
+        if (hasRoutePrefill) {
+          router.replace("/qr");
+        }
+      };
+    }, [hasRoutePrefill, refreshSessionState, router]),
   );
+
+  const hasDraftData = useMemo(() => {
+    return Boolean(
+      payload ||
+      installationRawValue.trim() ||
+      externalCode.trim() ||
+      brand.trim() ||
+      model.trim() ||
+      serialNumber.trim() ||
+      clientName.trim() ||
+      notes.trim(),
+    );
+  }, [brand, clientName, externalCode, installationRawValue, model, notes, payload, serialNumber]);
+
+  const resetQrForm = useCallback(() => {
+    setQrType("asset");
+    setInstallationRawValue("");
+    setExternalCode("");
+    setBrand("");
+    setModel("");
+    setSerialNumber("");
+    setClientName("");
+    setNotes("");
+    setPayload("");
+    setDetailsText("");
+    setError("");
+    setQrLabelRenderState(null);
+    lastAppliedPrefillSignatureRef.current = "";
+    if (hasRoutePrefill) {
+      router.replace("/qr");
+    }
+  }, [hasRoutePrefill, router]);
+
+  const onClearForm = useCallback(() => {
+    if (!hasDraftData) {
+      resetQrForm();
+      return;
+    }
+
+    Alert.alert(
+      "Limpiar formulario",
+      "Se borraran los datos cargados y la vista previa QR. Continuar?",
+      [
+        { text: "Cancelar", style: "cancel" },
+        { text: "Limpiar", style: "destructive", onPress: resetQrForm },
+      ],
+    );
+  }, [hasDraftData, resetQrForm]);
 
   const onGenerate = async () => {
     setGenerating(true);
@@ -467,11 +585,11 @@ export default function QrGeneratorScreen() {
   }, []);
 
   const getLabelBase64Png = useCallback(
-    async (qrBase64: string, details: string): Promise<string> => {
+    async (qrBase64: string, details: string, preset: QrLabelPreset): Promise<string> => {
       const lines = buildLabelLines(details);
       if (!lines.length) return qrBase64;
 
-      setQrLabelRenderState({ qrBase64, lines });
+      setQrLabelRenderState({ qrBase64, lines, preset });
 
       // Wait a tick so hidden SVG can mount with latest data before capture.
       await new Promise((resolve) => setTimeout(resolve, 80));
@@ -536,7 +654,7 @@ export default function QrGeneratorScreen() {
       let imageBase64 = qrBase64;
       if (qrType === "asset") {
         try {
-          imageBase64 = await getLabelBase64Png(qrBase64, detailsText);
+          imageBase64 = await getLabelBase64Png(qrBase64, detailsText, labelPreset);
         } catch {
           imageBase64 = qrBase64;
         }
@@ -619,6 +737,7 @@ export default function QrGeneratorScreen() {
     externalCode,
     getLabelBase64Png,
     getQrBase64Png,
+    labelPreset,
     payload,
     qrType,
     serialNumber,
@@ -673,249 +792,329 @@ export default function QrGeneratorScreen() {
       <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
         Alta de equipo para etiqueta fisica y asociacion a instalaciones.
       </Text>
+      <Text style={[styles.modeHint, { color: palette.textMuted }]}>{qrModeHint}</Text>
 
-      <View style={styles.typeRow}>
-        <TouchableOpacity
-          style={[
-            styles.typeButton,
-            {
-              backgroundColor: qrType === "asset" ? palette.chipSelectedBg : palette.chipBg,
-              borderColor: qrType === "asset" ? palette.chipSelectedBorder : palette.chipBorder,
-            },
-          ]}
-          onPress={() => setQrType("asset")}
-          accessibilityRole="button"
-          accessibilityState={{ selected: qrType === "asset" }}
-        >
-          <Text
+      <View style={[styles.formCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+        <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Datos del QR</Text>
+        <View style={styles.typeRow}>
+          <TouchableOpacity
             style={[
-              styles.typeButtonText,
-              { color: qrType === "asset" ? palette.chipSelectedText : palette.chipText },
+              styles.typeButton,
+              {
+                backgroundColor: qrType === "asset" ? palette.chipSelectedBg : palette.chipBg,
+                borderColor: qrType === "asset" ? palette.chipSelectedBorder : palette.chipBorder,
+              },
             ]}
+            onPress={() => setQrType("asset")}
+            accessibilityRole="button"
+            accessibilityState={{ selected: qrType === "asset" }}
           >
-            Equipo
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.typeButton,
-            {
-              backgroundColor: qrType === "installation" ? palette.chipSelectedBg : palette.chipBg,
-              borderColor: qrType === "installation" ? palette.chipSelectedBorder : palette.chipBorder,
-            },
-          ]}
-          onPress={() => setQrType("installation")}
-          accessibilityRole="button"
-          accessibilityState={{ selected: qrType === "installation" }}
-        >
-          <Text
+            <Text
+              style={[
+                styles.typeButtonText,
+                { color: qrType === "asset" ? palette.chipSelectedText : palette.chipText },
+              ]}
+            >
+              Equipo
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
             style={[
-              styles.typeButtonText,
-              { color: qrType === "installation" ? palette.chipSelectedText : palette.chipText },
+              styles.typeButton,
+              {
+                backgroundColor: qrType === "installation" ? palette.chipSelectedBg : palette.chipBg,
+                borderColor: qrType === "installation" ? palette.chipSelectedBorder : palette.chipBorder,
+              },
             ]}
+            onPress={() => setQrType("installation")}
+            accessibilityRole="button"
+            accessibilityState={{ selected: qrType === "installation" }}
           >
-            Instalacion
-          </Text>
-        </TouchableOpacity>
+            <Text
+              style={[
+                styles.typeButtonText,
+                { color: qrType === "installation" ? palette.chipSelectedText : palette.chipText },
+              ]}
+            >
+              Instalacion
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {qrType === "installation" ? (
+          <>
+            <Text style={[styles.label, { color: palette.label }]}>ID de instalacion</Text>
+            <TextInput
+              value={installationRawValue}
+              onChangeText={setInstallationRawValue}
+              keyboardType="numeric"
+              style={[
+                styles.input,
+                {
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.inputBorder,
+                  color: palette.textPrimary,
+                },
+              ]}
+              placeholder="Ej: 245"
+              placeholderTextColor={palette.placeholder}
+            />
+          </>
+        ) : (
+          <>
+            <Text style={[styles.label, { color: palette.label }]}>Codigo externo (opcional)</Text>
+            <TextInput
+              value={externalCode}
+              onChangeText={setExternalCode}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.inputBorder,
+                  color: palette.textPrimary,
+                },
+              ]}
+              placeholder="Ej: EQ-SL3-001 (si se deja vacio usa serie)"
+              placeholderTextColor={palette.placeholder}
+            />
+
+            <TouchableOpacity
+              style={[styles.inlineButton, { backgroundColor: palette.secondaryButtonBg }]}
+              onPress={() => {
+                void onLoadAsset();
+              }}
+              accessibilityRole="button"
+            >
+              {loadingAsset ? (
+                <ActivityIndicator color={palette.secondaryButtonText} />
+              ) : (
+                <Text style={[styles.inlineButtonText, { color: palette.secondaryButtonText }]}>
+                  Cargar equipo existente
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <Text style={[styles.label, { color: palette.label }]}>Marca</Text>
+            <TextInput
+              value={brand}
+              onChangeText={setBrand}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.inputBorder,
+                  color: palette.textPrimary,
+                },
+              ]}
+              placeholder="Ej: Entrust"
+              placeholderTextColor={palette.placeholder}
+            />
+
+            <Text style={[styles.label, { color: palette.label }]}>Modelo</Text>
+            <TextInput
+              value={model}
+              onChangeText={setModel}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.inputBorder,
+                  color: palette.textPrimary,
+                },
+              ]}
+              placeholder="Ej: Sigma SL3"
+              placeholderTextColor={palette.placeholder}
+            />
+
+            <Text style={[styles.label, { color: palette.label }]}>Numero de serie</Text>
+            <TextInput
+              value={serialNumber}
+              onChangeText={setSerialNumber}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.inputBorder,
+                  color: palette.textPrimary,
+                },
+              ]}
+              placeholder="Ej: SN-00112233"
+              placeholderTextColor={palette.placeholder}
+            />
+
+            <Text style={[styles.label, { color: palette.label }]}>Cliente (opcional)</Text>
+            <TextInput
+              value={clientName}
+              onChangeText={setClientName}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.inputBorder,
+                  color: palette.textPrimary,
+                },
+              ]}
+              placeholder="Ej: Cliente ACME"
+              placeholderTextColor={palette.placeholder}
+            />
+
+            <Text style={[styles.label, { color: palette.label }]}>Notas (opcional)</Text>
+            <TextInput
+              value={notes}
+              onChangeText={setNotes}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+              style={[
+                styles.input,
+                styles.notesInput,
+                {
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.inputBorder,
+                  color: palette.textPrimary,
+                },
+              ]}
+              placeholder="Observaciones del equipo"
+              placeholderTextColor={palette.placeholder}
+            />
+          </>
+        )}
+
+        <Text style={[styles.helperText, { color: palette.textMuted }]}>{helperText}</Text>
       </View>
 
-      {qrType === "installation" ? (
-        <>
-          <Text style={[styles.label, { color: palette.label }]}>ID de instalacion</Text>
-          <TextInput
-            value={installationRawValue}
-            onChangeText={setInstallationRawValue}
-            keyboardType="numeric"
-            style={[
-              styles.input,
-              {
-                backgroundColor: palette.inputBg,
-                borderColor: palette.inputBorder,
-                color: palette.textPrimary,
-              },
-            ]}
-            placeholder="Ej: 245"
-            placeholderTextColor={palette.placeholder}
-          />
-        </>
-      ) : (
-        <>
-          <Text style={[styles.label, { color: palette.label }]}>Codigo externo (opcional)</Text>
-          <TextInput
-            value={externalCode}
-            onChangeText={setExternalCode}
-            style={[
-              styles.input,
-              {
-                backgroundColor: palette.inputBg,
-                borderColor: palette.inputBorder,
-                color: palette.textPrimary,
-              },
-            ]}
-            placeholder="Ej: EQ-SL3-001 (si se deja vacio usa serie)"
-            placeholderTextColor={palette.placeholder}
-          />
-
+      <View style={[styles.formCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+        <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Acciones</Text>
+        <View style={styles.mainActionRow}>
           <TouchableOpacity
-            style={[styles.inlineButton, { backgroundColor: palette.secondaryButtonBg }]}
+            style={[styles.button, styles.mainActionPrimary, { backgroundColor: palette.primaryButtonBg }]}
             onPress={() => {
-              void onLoadAsset();
+              void onGenerate();
             }}
             accessibilityRole="button"
           >
-            {loadingAsset ? (
-              <ActivityIndicator color={palette.secondaryButtonText} />
+            {generating ? (
+              <ActivityIndicator color={palette.primaryButtonText} />
             ) : (
-              <Text style={[styles.inlineButtonText, { color: palette.secondaryButtonText }]}>
-                Cargar equipo existente
-              </Text>
+              <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>Generar QR</Text>
             )}
           </TouchableOpacity>
 
-          <Text style={[styles.label, { color: palette.label }]}>Marca</Text>
-          <TextInput
-            value={brand}
-            onChangeText={setBrand}
+          <TouchableOpacity
             style={[
-              styles.input,
-              {
-                backgroundColor: palette.inputBg,
-                borderColor: palette.inputBorder,
-                color: palette.textPrimary,
-              },
+              styles.button,
+              styles.mainActionSecondary,
+              { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
             ]}
-            placeholder="Ej: Entrust"
-            placeholderTextColor={palette.placeholder}
-          />
+            onPress={onClearForm}
+            disabled={generating || saving || loadingAsset || exportingImage}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.buttonText, { color: palette.secondaryText }]}>
+              {hasDraftData || hasRoutePrefill ? "Limpiar" : "Nuevo"}
+            </Text>
+          </TouchableOpacity>
+        </View>
 
-          <Text style={[styles.label, { color: palette.label }]}>Modelo</Text>
-          <TextInput
-            value={model}
-            onChangeText={setModel}
-            style={[
-              styles.input,
-              {
-                backgroundColor: palette.inputBg,
-                borderColor: palette.inputBorder,
-                color: palette.textPrimary,
-              },
-            ]}
-            placeholder="Ej: Sigma SL3"
-            placeholderTextColor={palette.placeholder}
-          />
+        {qrType === "asset" ? (
+          <TouchableOpacity
+            style={[styles.secondaryButton, { backgroundColor: palette.secondaryButtonBg }]}
+            onPress={() => {
+              void onSaveAsset();
+            }}
+            accessibilityRole="button"
+          >
+            {saving ? (
+              <ActivityIndicator color={palette.secondaryButtonText} />
+            ) : (
+              <Text style={[styles.buttonText, { color: palette.secondaryButtonText }]}>
+                Guardar equipo en base
+              </Text>
+            )}
+          </TouchableOpacity>
+        ) : null}
 
-          <Text style={[styles.label, { color: palette.label }]}>Numero de serie</Text>
-          <TextInput
-            value={serialNumber}
-            onChangeText={setSerialNumber}
-            style={[
-              styles.input,
-              {
-                backgroundColor: palette.inputBg,
-                borderColor: palette.inputBorder,
-                color: palette.textPrimary,
-              },
-            ]}
-            placeholder="Ej: SN-00112233"
-            placeholderTextColor={palette.placeholder}
-          />
+        {qrType === "asset" ? (
+          <>
+            <Text style={[styles.label, { color: palette.label }]}>Formato etiqueta</Text>
+            <View style={styles.presetRow}>
+              <TouchableOpacity
+                style={[
+                  styles.presetButton,
+                  {
+                    backgroundColor:
+                      labelPreset === "small" ? palette.chipSelectedBg : palette.chipBg,
+                    borderColor:
+                      labelPreset === "small" ? palette.chipSelectedBorder : palette.chipBorder,
+                  },
+                ]}
+                onPress={() => setLabelPreset("small")}
+                accessibilityRole="button"
+                accessibilityState={{ selected: labelPreset === "small" }}
+              >
+                <Text
+                  style={[
+                    styles.presetButtonText,
+                    { color: labelPreset === "small" ? palette.chipSelectedText : palette.chipText },
+                  ]}
+                >
+                  Pequeño
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.presetButton,
+                  {
+                    backgroundColor:
+                      labelPreset === "medium" ? palette.chipSelectedBg : palette.chipBg,
+                    borderColor:
+                      labelPreset === "medium" ? palette.chipSelectedBorder : palette.chipBorder,
+                  },
+                ]}
+                onPress={() => setLabelPreset("medium")}
+                accessibilityRole="button"
+                accessibilityState={{ selected: labelPreset === "medium" }}
+              >
+                <Text
+                  style={[
+                    styles.presetButtonText,
+                    { color: labelPreset === "medium" ? palette.chipSelectedText : palette.chipText },
+                  ]}
+                >
+                  Mediano
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        ) : null}
 
-          <Text style={[styles.label, { color: palette.label }]}>Cliente (opcional)</Text>
-          <TextInput
-            value={clientName}
-            onChangeText={setClientName}
-            style={[
-              styles.input,
-              {
-                backgroundColor: palette.inputBg,
-                borderColor: palette.inputBorder,
-                color: palette.textPrimary,
-              },
-            ]}
-            placeholder="Ej: Cliente ACME"
-            placeholderTextColor={palette.placeholder}
-          />
-
-          <Text style={[styles.label, { color: palette.label }]}>Notas (opcional)</Text>
-          <TextInput
-            value={notes}
-            onChangeText={setNotes}
-            multiline
-            numberOfLines={3}
-            textAlignVertical="top"
-            style={[
-              styles.input,
-              styles.notesInput,
-              {
-                backgroundColor: palette.inputBg,
-                borderColor: palette.inputBorder,
-                color: palette.textPrimary,
-              },
-            ]}
-            placeholder="Observaciones del equipo"
-            placeholderTextColor={palette.placeholder}
-          />
-        </>
-      )}
-
-      <Text style={[styles.helperText, { color: palette.textMuted }]}>{helperText}</Text>
-
-      <TouchableOpacity
-        style={[styles.button, { backgroundColor: palette.primaryButtonBg }]}
-        onPress={() => {
-          void onGenerate();
-        }}
-        accessibilityRole="button"
-      >
-        {generating ? (
-          <ActivityIndicator color={palette.primaryButtonText} />
-        ) : (
-          <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>Generar QR</Text>
-        )}
-      </TouchableOpacity>
-
-      {qrType === "asset" ? (
         <TouchableOpacity
-          style={[styles.secondaryButton, { backgroundColor: palette.secondaryButtonBg }]}
+          style={[styles.secondaryButton, { backgroundColor: palette.refreshBg }]}
           onPress={() => {
-            void onSaveAsset();
+            void onDownloadQrImage();
           }}
+          disabled={exportingImage || !payload}
           accessibilityRole="button"
         >
-          {saving ? (
-            <ActivityIndicator color={palette.secondaryButtonText} />
+          {exportingImage ? (
+            <ActivityIndicator color={palette.refreshText} />
           ) : (
-            <Text style={[styles.buttonText, { color: palette.secondaryButtonText }]}>
-              Guardar equipo en base
-            </Text>
+            <Text style={[styles.buttonText, { color: palette.refreshText }]}>Descargar imagen</Text>
           )}
         </TouchableOpacity>
-      ) : null}
-
-      <TouchableOpacity
-        style={[styles.secondaryButton, { backgroundColor: palette.refreshBg }]}
-        onPress={() => {
-          void onDownloadQrImage();
-        }}
-        disabled={exportingImage || !payload}
-        accessibilityRole="button"
-      >
-        {exportingImage ? (
-          <ActivityIndicator color={palette.refreshText} />
-        ) : (
-          <Text style={[styles.buttonText, { color: palette.refreshText }]}>Descargar imagen</Text>
-        )}
-      </TouchableOpacity>
+      </View>
 
       {error ? <Text style={[styles.errorText, { color: palette.error }]}>{error}</Text> : null}
 
       {payload ? (
         <View
           style={[
+            styles.formCard,
             styles.previewCard,
             { backgroundColor: palette.cardBg, borderColor: palette.cardBorder },
           ]}
         >
+          <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Vista previa</Text>
           <QRCode
             value={payload}
             size={240}
@@ -931,50 +1130,74 @@ export default function QrGeneratorScreen() {
       ) : null}
 
       {qrLabelRenderState ? (
-        <View pointerEvents="none" style={styles.hiddenLabelRenderer}>
+        <View
+          pointerEvents="none"
+          style={[
+            styles.hiddenLabelRenderer,
+            {
+              width: exportPresetConfig.width,
+              height: exportPresetConfig.height,
+            },
+          ]}
+        >
           <Svg
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             ref={(instance) => (qrLabelSvgRef.current = instance as any)}
-            width={QR_LABEL_EXPORT_WIDTH}
-            height={QR_LABEL_EXPORT_HEIGHT}
-            viewBox={`0 0 ${QR_LABEL_EXPORT_WIDTH} ${QR_LABEL_EXPORT_HEIGHT}`}
+            width={exportPresetConfig.width}
+            height={exportPresetConfig.height}
+            viewBox={`0 0 ${exportPresetConfig.width} ${exportPresetConfig.height}`}
           >
             <Rect
               x={0}
               y={0}
-              width={QR_LABEL_EXPORT_WIDTH}
-              height={QR_LABEL_EXPORT_HEIGHT}
+              width={exportPresetConfig.width}
+              height={exportPresetConfig.height}
               fill="#ffffff"
             />
             <SvgImage
-              x={QR_LABEL_PADDING}
-              y={(QR_LABEL_EXPORT_HEIGHT - QR_LABEL_QR_SIZE) / 2}
-              width={QR_LABEL_QR_SIZE}
-              height={QR_LABEL_QR_SIZE}
+              x={exportPresetConfig.padding}
+              y={(exportPresetConfig.height - exportPresetConfig.qrSize) / 2}
+              width={exportPresetConfig.qrSize}
+              height={exportPresetConfig.qrSize}
               href={`data:image/png;base64,${qrLabelRenderState.qrBase64}`}
               preserveAspectRatio="xMidYMid slice"
             />
             <SvgText
-              x={QR_LABEL_PADDING + QR_LABEL_QR_SIZE + QR_LABEL_TEXT_GAP}
-              y={Math.max(52, (QR_LABEL_EXPORT_HEIGHT - 230) / 2)}
-              fontSize={QR_LABEL_TITLE_SIZE}
+              x={exportPresetConfig.padding + exportPresetConfig.qrSize + exportPresetConfig.textGap}
+              y={Math.max(
+                exportPresetConfig.titleY,
+                (exportPresetConfig.height - 230) / 2,
+              )}
+              fontSize={exportPresetConfig.titleSize}
               fontWeight="700"
               fill="#0f172a"
             >
-              Etiqueta QR - Driver Manager
+              Driver Manager
             </SvgText>
             {qrLabelRenderState.lines.map((line, index) => (
               <SvgText
                 key={`qr-label-line-${index}`}
-                x={QR_LABEL_PADDING + QR_LABEL_QR_SIZE + QR_LABEL_TEXT_GAP}
-                y={Math.max(90, (QR_LABEL_EXPORT_HEIGHT - 230) / 2) + (index + 1) * QR_LABEL_LINE_HEIGHT}
-                fontSize={QR_LABEL_LINE_SIZE}
+                x={exportPresetConfig.padding + exportPresetConfig.qrSize + exportPresetConfig.textGap}
+                y={
+                  Math.max(exportPresetConfig.lineStartY, (exportPresetConfig.height - 230) / 2) +
+                  (index + 1) * exportPresetConfig.lineHeight
+                }
+                fontSize={exportPresetConfig.lineSize}
                 fontWeight="500"
                 fill="#1f2937"
               >
                 {line}
               </SvgText>
             ))}
+            <Rect
+              x={2}
+              y={2}
+              width={Math.max(0, exportPresetConfig.width - 4)}
+              height={Math.max(0, exportPresetConfig.height - 4)}
+              fill="none"
+              stroke="#222222"
+              strokeWidth={2}
+            />
           </Svg>
         </View>
       ) : null}
@@ -1009,19 +1232,40 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     padding: 20,
-    gap: 10,
+    gap: 12,
     paddingBottom: 40,
   },
   title: {
-    fontSize: 24,
+    fontSize: 26,
     fontFamily: fontFamilies.bold,
   },
   subtitle: {
     fontSize: 14,
     fontFamily: fontFamilies.regular,
-    marginBottom: 8,
+    marginBottom: 6,
+  },
+  modeHint: {
+    marginTop: -2,
+    marginBottom: 2,
+    fontSize: 12,
+    fontFamily: fontFamilies.regular,
+  },
+  formCard: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontFamily: fontFamilies.bold,
   },
   typeRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  presetRow: {
     flexDirection: "row",
     gap: 8,
   },
@@ -1034,6 +1278,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   typeButtonText: {
+    fontFamily: fontFamilies.semibold,
+    fontSize: 13,
+  },
+  presetButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  presetButtonText: {
     fontFamily: fontFamilies.semibold,
     fontSize: 13,
   },
@@ -1066,17 +1322,29 @@ const styles = StyleSheet.create({
   helperText: {
     fontSize: 12,
     fontFamily: fontFamilies.regular,
+    marginTop: 2,
+  },
+  mainActionRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 8,
   },
   button: {
-    marginTop: 6,
     borderRadius: 10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
   },
+  mainActionPrimary: {
+    flex: 1,
+  },
+  mainActionSecondary: {
+    minWidth: 112,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+  },
   secondaryButton: {
-    marginTop: 4,
     borderRadius: 10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
@@ -1092,10 +1360,6 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.regular,
   },
   previewCard: {
-    marginTop: 8,
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
     alignItems: "center",
     gap: 8,
   },
@@ -1115,7 +1379,5 @@ const styles = StyleSheet.create({
     left: -10000,
     top: -10000,
     opacity: 0,
-    width: QR_LABEL_EXPORT_WIDTH,
-    height: QR_LABEL_EXPORT_HEIGHT,
   },
 });

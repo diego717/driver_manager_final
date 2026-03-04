@@ -265,6 +265,7 @@ export function RootLayoutNav() {
           <Stack.Screen name="incident/upload" options={{ title: "Subir foto" }} />
           <Stack.Screen name="scan/index" options={{ title: "Escaner" }} />
           <Stack.Screen name="incident/photo-viewer" options={{ title: "Foto" }} />
+          <Stack.Screen name="drivers" options={{ title: "Drivers R2" }} />
           <Stack.Screen
             name="modal"
             options={{ title: "Configuracion API", presentation: "modal" }}

@@ -29,6 +29,7 @@
                 <li><a href="#" class="active" data-section="dashboard"><span class="material-symbols-outlined">dashboard</span> Dashboard</a></li>
                 <li><a href="#" data-section="installations"><span class="material-symbols-outlined">dns</span> Instalaciones</a></li>
                 <li><a href="#" data-section="assets"><span class="material-symbols-outlined">inventory_2</span> Equipos</a></li>
+                <li><a href="#" data-section="drivers"><span class="material-symbols-outlined">upload_file</span> Drivers</a></li>
                 <li><a href="#" data-section="incidents"><span class="material-symbols-outlined">warning</span> Incidencias</a></li>
                 <li><a href="#" data-section="audit"><span class="material-symbols-outlined">description</span> Auditoría</a></li>
             </ul>
@@ -196,6 +197,40 @@
                     </div>
                 </div>
             </div>
+
+            <div id="driversSection" class="section">
+                <div class="filters">
+                    <div class="filter-row">
+                        <input type="text" id="driverBrandInput" placeholder="Marca (ej: Zebra)">
+                        <input type="text" id="driverVersionInput" placeholder="Version (ej: v1.2.3)">
+                        <input type="text" id="driverDescriptionInput" placeholder="Descripcion (opcional)">
+                    </div>
+                    <div class="filter-actions">
+                        <input type="file" id="driverFileInput" style="display: none;">
+                        <button id="driverPickFileBtn" class="btn-secondary">
+                            <span class="material-symbols-outlined" style="font-size: 1rem;">attach_file</span> Seleccionar archivo
+                        </button>
+                        <button id="driverUploadBtn" class="btn-primary">
+                            <span class="material-symbols-outlined" style="font-size: 1rem;">cloud_upload</span> Subir driver
+                        </button>
+                        <button id="driversRefreshBtn" class="btn-secondary">
+                            <span class="material-symbols-outlined" style="font-size: 1rem;">refresh</span> Actualizar
+                        </button>
+                    </div>
+                </div>
+
+                <div class="results-info">
+                    <span id="driversSelectedFileLabel">Sin archivo seleccionado</span>
+                </div>
+
+                <div class="results-info">
+                    <span id="driversResultsCount">Cargando drivers...</span>
+                </div>
+
+                <div id="driversTable" class="table-container">
+                    <p class="loading">Cargando drivers...</p>
+                </div>
+            </div>
              
             <div id="auditSection" class="section">
                 <div class="filters">
@@ -300,6 +335,15 @@
                 <small id="qrAssetHelper" class="qr-helper">Requisitos: marca o modelo, y numero de serie. El codigo externo se genera automaticamente desde serie si queda vacio.</small>
             </div>
 
+            <div id="qrLabelPresetContainer" class="input-group">
+                <label for="qrLabelPresetSelect">Formato de etiqueta</label>
+                <select id="qrLabelPresetSelect">
+                    <option value="small">Sticker pequeño (50x30 mm)</option>
+                    <option value="medium" selected>Sticker mediano (70x40 mm)</option>
+                </select>
+                <small class="qr-helper">Aplica a "Descargar imagen" e "Imprimir etiqueta".</small>
+            </div>
+
             <div class="qr-actions">
                 <button type="button" id="qrGenerateBtn" class="btn-primary">Generar QR</button>
                 <button type="button" id="qrSaveAssetBtn" class="btn-secondary">Guardar equipo</button>
@@ -337,7 +381,7 @@
     </div>
     
     <script src="/dashboard-qr.js?v=d8de215faf" defer></script>
-    <script src="/dashboard.js?v=d14fffba90" defer></script>
+    <script src="/dashboard.js?v=9e66a66a31" defer></script>
     <script src="/dashboard-pwa.js?v=f2230f4810" defer></script>
 </body>
 </html>

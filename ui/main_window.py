@@ -2,6 +2,7 @@
 import sys
 import json
 import gc
+import re
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -25,6 +26,7 @@ from handlers.report_handlers import ReportHandlers
 from managers.user_manager_v2 import UserManagerV2
 from ui.dialogs.user_management_ui import UserManagementDialog, LoginDialog
 from ui.dialogs.qr_generator_dialog import QrGeneratorDialog
+from ui.dialogs.asset_management_dialog import AssetManagementDialog
 from ui.ui_components import DriversTab, HistoryTab, AdminTab, EditInstallationDialog
 from ui.theme_manager import ThemeManager
 from core.config_manager import ConfigManager
@@ -253,13 +255,16 @@ class MainWindow(QMainWindow):
         
         # Crear tabs usando los componentes refactorizados
         self.drivers_tab = DriversTab(self)
-        self.tabs.addTab(self.drivers_tab, "📦 Drivers Disponibles")
+        self.drivers_tab_index = self.tabs.addTab(self.drivers_tab, "📦 Drivers Disponibles")
         
         self.history_tab = HistoryTab(self)
-        self.tabs.addTab(self.history_tab, "📊 Historial y Reportes")
-        
+        self.history_tab_index = self.tabs.addTab(self.history_tab, "📊 Historial y Reportes")
+
+        self.incidents_tab = self.history_tab.incidents_widget
+        self.incidents_tab_index = self.tabs.addTab(self.incidents_tab, "⚠️ Incidencias")
+
         self.admin_tab = AdminTab(self)
-        self.tabs.addTab(self.admin_tab, "🔐 Administración")
+        self.admin_tab_index = self.tabs.addTab(self.admin_tab, "🔐 Administración")
         
         # Status bar
         self.statusBar().showMessage("Listo")
@@ -289,6 +294,8 @@ class MainWindow(QMainWindow):
             self.drivers_tab.generate_qr_btn.clicked.connect(self.show_qr_generator_dialog)
         if hasattr(self.drivers_tab, "associate_asset_btn"):
             self.drivers_tab.associate_asset_btn.clicked.connect(self.show_asset_link_dialog)
+        if hasattr(self.drivers_tab, "manage_assets_btn"):
+            self.drivers_tab.manage_assets_btn.clicked.connect(self.show_asset_management_dialog)
         
         # History tab
         self.history_tab.history_view_combo.currentTextChanged.connect(self.on_history_view_changed)
@@ -328,6 +335,18 @@ class MainWindow(QMainWindow):
             self.history_tab.upload_incident_photo_btn.clicked.connect(self.upload_photo_for_selected_incident)
         if hasattr(self.history_tab, "view_incident_photo_btn"):
             self.history_tab.view_incident_photo_btn.clicked.connect(self.view_selected_incident_photo)
+        if hasattr(self.history_tab, "incident_mark_open_btn"):
+            self.history_tab.incident_mark_open_btn.clicked.connect(
+                lambda: self.update_selected_incident_status("open")
+            )
+        if hasattr(self.history_tab, "incident_mark_progress_btn"):
+            self.history_tab.incident_mark_progress_btn.clicked.connect(
+                lambda: self.update_selected_incident_status("in_progress")
+            )
+        if hasattr(self.history_tab, "incident_mark_resolved_btn"):
+            self.history_tab.incident_mark_resolved_btn.clicked.connect(
+                lambda: self.update_selected_incident_status("resolved")
+            )
 
         # Conexiones para la pestaña de gestion de registros
         self.history_tab.management_history_list.currentItemChanged.connect(
@@ -345,6 +364,7 @@ class MainWindow(QMainWindow):
         # Admin tab
         self.admin_tab.login_btn.clicked.connect(self.show_login_dialog)
         self.admin_tab.logout_btn.clicked.connect(self.on_admin_logout)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         
         # Conectar botones de visibilidad en admin tab
         self.admin_tab.show_account_btn.clicked.connect(
@@ -431,6 +451,62 @@ class MainWindow(QMainWindow):
             self.history_tab.report_year_combo.currentIndexChanged.connect(
                 lambda _idx: self.report_handlers.refresh_reports_preview()
             )
+        
+        self._apply_navigation_access_control()
+
+    def _is_user_authenticated(self):
+        """Retornar si hay una sesión autenticada activa."""
+        if not self.is_authenticated:
+            return False
+        if not self.user_manager:
+            return False
+        return bool(self.user_manager.current_user)
+
+    def _current_user_role(self):
+        """Obtener rol actual de usuario autenticado."""
+        if not self.user_manager or not self.user_manager.current_user:
+            return ""
+        return str(self.user_manager.current_user.get("role") or "").strip().lower()
+
+    def _apply_navigation_access_control(self):
+        """Aplicar acceso a tabs y acciones según estado de sesión/rol."""
+        can_access_protected_tabs = self._is_user_authenticated()
+
+        self.tabs.setTabEnabled(self.drivers_tab_index, can_access_protected_tabs)
+        self.tabs.setTabEnabled(self.history_tab_index, can_access_protected_tabs)
+        self.tabs.setTabEnabled(self.incidents_tab_index, can_access_protected_tabs)
+        self.tabs.setTabEnabled(self.admin_tab_index, True)
+
+        role = self._current_user_role() if can_access_protected_tabs else ""
+        can_edit_history = role in ("admin", "super_admin")
+
+        if hasattr(self.history_tab, "create_manual_button"):
+            self.history_tab.create_manual_button.setEnabled(can_edit_history)
+        if hasattr(self.history_tab, "create_incident_btn"):
+            self.history_tab.create_incident_btn.setEnabled(False)
+        if hasattr(self.history_tab, "upload_incident_photo_btn"):
+            self.history_tab.upload_incident_photo_btn.setEnabled(False)
+        if hasattr(self.history_tab, "incident_mark_open_btn"):
+            self.history_tab.incident_mark_open_btn.setEnabled(False)
+        if hasattr(self.history_tab, "incident_mark_progress_btn"):
+            self.history_tab.incident_mark_progress_btn.setEnabled(False)
+        if hasattr(self.history_tab, "incident_mark_resolved_btn"):
+            self.history_tab.incident_mark_resolved_btn.setEnabled(False)
+
+        if not can_access_protected_tabs and self.tabs.currentIndex() != self.admin_tab_index:
+            self.tabs.setCurrentIndex(self.admin_tab_index)
+            self.statusBar().showMessage("Inicia sesión para acceder a Drivers e Historial.", 5000)
+
+    def _on_tab_changed(self, tab_index):
+        """Evitar navegación a tabs deshabilitados."""
+        if tab_index < 0:
+            return
+        if self.tabs.isTabEnabled(tab_index):
+            if tab_index == getattr(self, "incidents_tab_index", -1):
+                self.refresh_incidents_view()
+            return
+        self.tabs.setCurrentIndex(self.admin_tab_index)
+        self.statusBar().showMessage("Debes iniciar sesión para acceder a este menú.", 4000)
     
     def load_config_data(self):
         """Cargar configuración desde archivo"""
@@ -547,14 +623,12 @@ class MainWindow(QMainWindow):
         current_index = self.history_tab.history_view_combo.currentIndex()
         self.history_tab.history_stack.setCurrentIndex(current_index)
 
-        # 3: Incidencias, 4: Reportes, 5: Gestión de Registros
-        if current_index == 5:
+        # 3: Reportes, 4: Gestión de Registros
+        if current_index == 4:
             self._update_management_stats()
             self.refresh_history_view()
-        elif current_index == 4:
-            self.report_handlers.refresh_reports_preview()
         elif current_index == 3:
-            self.refresh_incidents_view()
+            self.report_handlers.refresh_reports_preview()
 
     def _on_history_item_changed(self, item, _previous=None):
         """Sincronizar estado de botones según selección de historial."""
@@ -599,10 +673,10 @@ class MainWindow(QMainWindow):
         """Actualizar la vista actual del historial incluyendo estadísticas."""
         current_index = self.history_tab.history_view_combo.currentIndex()
 
-        if current_index == 5:
+        if current_index == 4:
             self._update_management_stats()
         elif current_index == 3:
-            self.refresh_incidents_view()
+            self.report_handlers.refresh_reports_preview()
         else:
             self.refresh_history_view()
 
@@ -640,6 +714,80 @@ class MainWindow(QMainWindow):
         if "90" in label:
             return 90
         return None
+
+    def _coerce_seconds(self, raw_value, allow_negative=False):
+        """Normalizar valores de tiempo en segundos."""
+        try:
+            value = int(float(raw_value or 0))
+        except (TypeError, ValueError):
+            return 0
+        if allow_negative:
+            return value
+        return max(0, value)
+
+    def _format_duration(self, raw_value):
+        """Formatear segundos a cadena legible (d/h/m/s)."""
+        total_seconds = self._coerce_seconds(raw_value, allow_negative=True)
+        if total_seconds == 0:
+            return "0s"
+
+        sign = "-" if total_seconds < 0 else ""
+        remaining = abs(total_seconds)
+
+        days, remaining = divmod(remaining, 86400)
+        hours, remaining = divmod(remaining, 3600)
+        minutes, seconds = divmod(remaining, 60)
+
+        parts = []
+        if days:
+            parts.append(f"{days}d")
+        if hours:
+            parts.append(f"{hours}h")
+        if minutes:
+            parts.append(f"{minutes}m")
+        if seconds or not parts:
+            parts.append(f"{seconds}s")
+        return sign + " ".join(parts)
+
+    def _parse_duration_input_seconds(self, raw_value):
+        """Parsear duración ingresada por usuario: 90, 90s, 5m, 1h30m, -2m."""
+        text = str(raw_value or "").strip().lower()
+        if not text:
+            return 0
+
+        if re.fullmatch(r"[+-]?\d+", text):
+            return int(text)
+
+        sign = 1
+        if text[0] in "+-":
+            sign = -1 if text[0] == "-" else 1
+            text = text[1:].strip()
+
+        compact = text.replace(" ", "")
+        match = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?", compact)
+        if not match or not any(match.groups()):
+            raise ValueError("Formato de duración inválido")
+
+        hours = int(match.group(1) or 0)
+        minutes = int(match.group(2) or 0)
+        seconds = int(match.group(3) or 0)
+        return sign * (hours * 3600 + minutes * 60 + seconds)
+
+    def _normalize_incident_status(self, raw_value):
+        """Normalizar estado de incidencia a valores permitidos."""
+        status = str(raw_value or "").strip().lower()
+        if status in {"open", "in_progress", "resolved"}:
+            return status
+        return "open"
+
+    def _incident_status_label(self, raw_value):
+        """Etiqueta amigable para estado de incidencia."""
+        normalized = self._normalize_incident_status(raw_value)
+        if normalized == "in_progress":
+            return "En curso"
+        if normalized == "resolved":
+            return "Resuelta"
+        return "Abierta"
 
     def apply_incidents_filters(self):
         """Aplicar filtros sobre incidencias de la instalación seleccionada."""
@@ -722,6 +870,10 @@ class MainWindow(QMainWindow):
         self.history_tab.incident_detail.clear()
         self.history_tab.upload_incident_photo_btn.setEnabled(False)
         self.history_tab.view_incident_photo_btn.setEnabled(False)
+        if hasattr(self.history_tab, "incident_mark_open_btn"):
+            self.history_tab.incident_mark_open_btn.setEnabled(False)
+            self.history_tab.incident_mark_progress_btn.setEnabled(False)
+            self.history_tab.incident_mark_resolved_btn.setEnabled(False)
         if hasattr(self.history_tab, "create_incident_btn"):
             self.history_tab.create_incident_btn.setEnabled(False)
 
@@ -779,7 +931,7 @@ class MainWindow(QMainWindow):
 
         has_installation = current is not None
         if hasattr(self.history_tab, "create_incident_btn"):
-            self.history_tab.create_incident_btn.setEnabled(has_installation)
+            self.history_tab.create_incident_btn.setEnabled(has_installation and self.is_admin)
         if not has_installation:
             return
 
@@ -823,11 +975,12 @@ class MainWindow(QMainWindow):
             filtered_incidents.append(incident)
             incident_id = incident.get("id")
             severity = str(incident.get("severity") or "N/A").upper()
+            status_label = self._incident_status_label(incident.get("incident_status"))
             created_at = str(incident.get("created_at") or "")
             note_preview = (incident.get("note") or "").strip().replace("\n", " ")
             if len(note_preview) > 80:
                 note_preview = note_preview[:77] + "..."
-            text = f"#{incident_id} [{severity}] {created_at} - {note_preview or 'Sin nota'}"
+            text = f"#{incident_id} [{severity}/{status_label}] {created_at} - {note_preview or 'Sin nota'}"
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, incident)
             self.history_tab.incidents_list.addItem(item)
@@ -849,7 +1002,13 @@ class MainWindow(QMainWindow):
         self.history_tab.incident_photos_list.clear()
         self._thumbnail_item_map.clear()
         self.history_tab.view_incident_photo_btn.setEnabled(False)
-        self.history_tab.upload_incident_photo_btn.setEnabled(current is not None)
+        self.history_tab.upload_incident_photo_btn.setEnabled(current is not None and self.is_admin)
+        if hasattr(self.history_tab, "incident_mark_open_btn"):
+            self.history_tab.incident_mark_open_btn.setEnabled(False)
+        if hasattr(self.history_tab, "incident_mark_progress_btn"):
+            self.history_tab.incident_mark_progress_btn.setEnabled(False)
+        if hasattr(self.history_tab, "incident_mark_resolved_btn"):
+            self.history_tab.incident_mark_resolved_btn.setEnabled(False)
 
         if current is None:
             self.history_tab.incident_detail.clear()
@@ -861,18 +1020,28 @@ class MainWindow(QMainWindow):
             return
 
         photos = incident.get("photos") or []
+        raw_adjustment = self._coerce_seconds(incident.get("time_adjustment_seconds"), allow_negative=True)
+        incident_status = self._normalize_incident_status(incident.get("incident_status"))
         details = (
             f"ID: {incident.get('id')}\n"
             f"Instalación: {incident.get('installation_id')}\n"
             f"Severidad: {incident.get('severity')}\n"
+            f"Estado: {self._incident_status_label(incident_status)}\n"
             f"Reportado por: {incident.get('reporter_username')}\n"
             f"Origen: {incident.get('source')}\n"
-            f"Ajuste tiempo (s): {incident.get('time_adjustment_seconds')}\n"
+            f"Ajuste tiempo: {self._format_duration(raw_adjustment)} ({raw_adjustment}s)\n"
             f"Fecha: {incident.get('created_at')}\n"
+            f"Actualizado estado: {incident.get('status_updated_at') or '-'} por {incident.get('status_updated_by') or '-'}\n"
+            f"Resuelta: {incident.get('resolved_at') or '-'} por {incident.get('resolved_by') or '-'}\n"
+            f"Nota resolución: {incident.get('resolution_note') or '-'}\n"
             f"Fotos: {len(photos)}\n\n"
             f"Nota:\n{incident.get('note') or ''}"
         )
         self.history_tab.incident_detail.setText(details)
+        if self.is_admin and hasattr(self.history_tab, "incident_mark_open_btn"):
+            self.history_tab.incident_mark_open_btn.setEnabled(incident_status != "open")
+            self.history_tab.incident_mark_progress_btn.setEnabled(incident_status != "in_progress")
+            self.history_tab.incident_mark_resolved_btn.setEnabled(incident_status != "resolved")
 
         for photo in photos:
             photo_id = photo.get("id")
@@ -899,6 +1068,10 @@ class MainWindow(QMainWindow):
 
     def create_incident_from_incidents_view(self):
         """Crear incidencia usando la instalación seleccionada en el panel."""
+        if not self.is_admin:
+            QMessageBox.warning(self, "Acceso denegado", "Debes iniciar sesión como administrador.")
+            return
+
         current_installation = self.history_tab.incidents_installations_list.currentItem()
         if current_installation is None:
             QMessageBox.warning(self, "Atención", "Selecciona una instalación primero.")
@@ -914,6 +1087,10 @@ class MainWindow(QMainWindow):
 
     def upload_photo_for_selected_incident(self):
         """Subir foto para la incidencia seleccionada en el panel."""
+        if not self.is_admin:
+            QMessageBox.warning(self, "Acceso denegado", "Debes iniciar sesión como administrador.")
+            return
+
         current_incident = self.history_tab.incidents_list.currentItem()
         if current_incident is None:
             QMessageBox.warning(self, "Atención", "Selecciona una incidencia primero.")
@@ -928,6 +1105,55 @@ class MainWindow(QMainWindow):
         self._upload_photo_for_incident(incident_id)
         current_installation = self.history_tab.incidents_installations_list.currentItem()
         self._on_incidents_installation_changed(current_installation)
+
+    def update_selected_incident_status(self, new_status):
+        """Actualizar estado lifecycle de la incidencia seleccionada."""
+        if not self.is_admin:
+            QMessageBox.warning(self, "Acceso denegado", "Debes iniciar sesión como administrador.")
+            return
+
+        current_incident = self.history_tab.incidents_list.currentItem()
+        if current_incident is None:
+            QMessageBox.warning(self, "Atención", "Selecciona una incidencia primero.")
+            return
+
+        incident = current_incident.data(Qt.ItemDataRole.UserRole)
+        incident_id = incident.get("id") if isinstance(incident, dict) else None
+        if incident_id is None:
+            QMessageBox.warning(self, "Error", "No se pudo obtener el ID de incidencia.")
+            return
+
+        resolution_note = ""
+        if new_status == "resolved":
+            resolution_note, ok = QInputDialog.getMultiLineText(
+                self,
+                "Resolver incidencia",
+                "Nota de resolución (opcional):",
+                str((incident or {}).get("resolution_note") or ""),
+            )
+            if not ok:
+                return
+
+        reporter = "desktop"
+        if self.user_manager and self.user_manager.current_user:
+            reporter = self.user_manager.current_user.get("username", "desktop")
+
+        try:
+            self.history.update_incident_status(
+                incident_id=incident_id,
+                incident_status=new_status,
+                resolution_note=resolution_note,
+                reporter_username=reporter,
+            )
+            QMessageBox.information(
+                self,
+                "Estado actualizado",
+                f"Incidencia #{incident_id} actualizada a {self._incident_status_label(new_status)}.",
+            )
+            current_installation = self.history_tab.incidents_installations_list.currentItem()
+            self._on_incidents_installation_changed(current_installation)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo actualizar el estado:\n{e}")
 
     def view_selected_incident_photo(self):
         """Abrir la foto seleccionada en el visor."""
@@ -1059,6 +1285,10 @@ class MainWindow(QMainWindow):
 
     def create_manual_history_record(self):
         """Crear registro manual sin depender de instalación de driver previa."""
+        if not self.is_admin:
+            QMessageBox.warning(self, "Acceso denegado", "Debes iniciar sesión como administrador.")
+            return
+
         default_client = ""
         if self.user_manager and self.user_manager.current_user:
             default_client = self.user_manager.current_user.get("username", "")
@@ -1167,12 +1397,16 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "No se pudo obtener el ID del registro.")
             return
 
-        if self.history_tab.history_view_combo.count() >= 4:
-            self.history_tab.history_view_combo.setCurrentIndex(3)
+        if hasattr(self, "incidents_tab_index"):
+            self.tabs.setCurrentIndex(self.incidents_tab_index)
         self.refresh_incidents_view(preferred_record_id=record_id)
 
     def create_incident_for_record(self, record_id):
         """Crear una incidencia nueva para un registro existente."""
+        if not self.is_admin:
+            QMessageBox.warning(self, "Acceso denegado", "Debes iniciar sesión como administrador.")
+            return
+
         note, ok = QInputDialog.getMultiLineText(
             self,
             f"Nueva incidencia para instalación #{record_id}",
@@ -1200,16 +1434,20 @@ class MainWindow(QMainWindow):
         adjust_text, ok = QInputDialog.getText(
             self,
             "Ajuste de tiempo",
-            "Segundos a ajustar (puede ser negativo):",
+            "Duración a ajustar (ej: -90, 5m, 1h30m):",
             text="0",
         )
         if not ok:
             return
 
         try:
-            time_adjustment = int((adjust_text or "0").strip())
+            time_adjustment = self._parse_duration_input_seconds(adjust_text)
         except ValueError:
-            QMessageBox.warning(self, "Error", "El ajuste de tiempo debe ser un número entero.")
+            QMessageBox.warning(
+                self,
+                "Error",
+                "Formato inválido. Usa segundos enteros o formato 5m / 1h30m / -2m.",
+            )
             return
 
         apply_item, ok = QInputDialog.getItem(
@@ -1251,14 +1489,20 @@ class MainWindow(QMainWindow):
     def _show_incident_details(self, incident):
         """Mostrar detalle de incidencia en una ventana simple."""
         photos_count = len(incident.get("photos") or [])
+        raw_adjustment = self._coerce_seconds(incident.get("time_adjustment_seconds"), allow_negative=True)
+        incident_status = self._normalize_incident_status(incident.get("incident_status"))
         details = (
             f"ID: {incident.get('id')}\n"
             f"Instalación: {incident.get('installation_id')}\n"
             f"Severidad: {incident.get('severity')}\n"
+            f"Estado: {self._incident_status_label(incident_status)}\n"
             f"Reportado por: {incident.get('reporter_username')}\n"
             f"Origen: {incident.get('source')}\n"
-            f"Ajuste tiempo (s): {incident.get('time_adjustment_seconds')}\n"
+            f"Ajuste tiempo: {self._format_duration(raw_adjustment)} ({raw_adjustment}s)\n"
             f"Fecha: {incident.get('created_at')}\n"
+            f"Actualizado estado: {incident.get('status_updated_at') or '-'} por {incident.get('status_updated_by') or '-'}\n"
+            f"Resuelta: {incident.get('resolved_at') or '-'} por {incident.get('resolved_by') or '-'}\n"
+            f"Nota resolución: {incident.get('resolution_note') or '-'}\n"
             f"Fotos: {photos_count}\n\n"
             f"Nota:\n{incident.get('note') or ''}"
         )
@@ -1736,6 +1980,8 @@ class MainWindow(QMainWindow):
             
             self.is_authenticated = True
             self.is_admin = user_role in ["admin", "super_admin"]
+            self._apply_navigation_access_control()
+            self.tabs.setCurrentIndex(self.drivers_tab_index)
 
             # Mostrar sección de subida en DriversTab si es admin
             self.drivers_tab.toggle_upload_section(self.is_admin)
@@ -1863,6 +2109,7 @@ class MainWindow(QMainWindow):
         """Manejar cierre de sesión y actualizar UI"""
         self.event_handlers.admin_logout()
         self.drivers_tab.toggle_upload_section(False)
+        self._apply_navigation_access_control()
     
     def show_user_management(self):
         """Mostrar diálogo de gestión de usuarios"""
@@ -1976,6 +2223,27 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("✅ Equipo asociado a instalación", 5000)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"No se pudo asociar el equipo:\n{e}")
+
+    def show_asset_management_dialog(self):
+        """Abrir panel de gestion de equipos."""
+        if not self.history:
+            QMessageBox.warning(self, "Error", "Modulo de historial no disponible.")
+            return
+
+        can_delete = False
+        if self.user_manager and hasattr(self.user_manager, "is_super_admin"):
+            try:
+                can_delete = bool(self.user_manager.is_super_admin())
+            except Exception:
+                can_delete = False
+
+        dialog = AssetManagementDialog(
+            history_manager=self.history,
+            parent=self,
+            can_edit=self.is_admin,
+            can_delete=can_delete,
+        )
+        dialog.exec()
     
     def apply_theme(self):
         """Aplicar tema actual a la aplicación"""

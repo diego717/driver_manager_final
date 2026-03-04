@@ -81,6 +81,10 @@ class DriversTab(QWidget):
         self.associate_asset_btn = QPushButton("Asociar equipo")
         self.associate_asset_btn.setToolTip("Asociar un equipo a una instalación sin crear incidencia")
         buttons_layout.addWidget(self.associate_asset_btn)
+
+        self.manage_assets_btn = QPushButton("Gestion equipos")
+        self.manage_assets_btn.setToolTip("Abrir panel de gestion de equipos")
+        buttons_layout.addWidget(self.manage_assets_btn)
         
         buttons_layout.addStretch()
         layout.addLayout(buttons_layout)
@@ -225,7 +229,6 @@ class HistoryTab(QWidget):
             "Últimas Instalaciones",
             "Por Cliente", 
             "Estadísticas",
-            "⚠️ Incidencias",
             "Generar Reportes",
             "🗑️ Gestión de Registros"
         ])
@@ -303,8 +306,8 @@ class HistoryTab(QWidget):
 
     def _create_incidents_view(self):
         """Crear vista dedicada a incidencias y fotos."""
-        incidents_widget = QWidget()
-        incidents_layout = QVBoxLayout(incidents_widget)
+        self.incidents_widget = QWidget()
+        incidents_layout = QVBoxLayout(self.incidents_widget)
 
         title = QLabel("⚠️ Incidencias y Evidencias")
         title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
@@ -364,6 +367,18 @@ class HistoryTab(QWidget):
         self.view_incident_photo_btn = QPushButton("🖼️ Ver Foto")
         self.view_incident_photo_btn.setEnabled(False)
         incident_actions.addWidget(self.view_incident_photo_btn)
+
+        self.incident_mark_open_btn = QPushButton("🟢 Abrir")
+        self.incident_mark_open_btn.setEnabled(False)
+        incident_actions.addWidget(self.incident_mark_open_btn)
+
+        self.incident_mark_progress_btn = QPushButton("🟠 En curso")
+        self.incident_mark_progress_btn.setEnabled(False)
+        incident_actions.addWidget(self.incident_mark_progress_btn)
+
+        self.incident_mark_resolved_btn = QPushButton("✅ Resolver")
+        self.incident_mark_resolved_btn.setEnabled(False)
+        incident_actions.addWidget(self.incident_mark_resolved_btn)
         incident_actions.addStretch()
         incidents_container.addLayout(incident_actions)
 
@@ -388,8 +403,7 @@ class HistoryTab(QWidget):
 
         split_layout.addLayout(incidents_container, 2)
         incidents_layout.addLayout(split_layout)
-
-        self.history_stack.addWidget(incidents_widget)
+        # Esta vista se usa como pestaña independiente en MainWindow.
     
     def _create_reports_view(self):
         """Crear vista de reportes"""

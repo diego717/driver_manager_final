@@ -9,12 +9,13 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 
 import { extractApiError } from "@/src/api/client";
-import { listIncidentsByInstallation } from "@/src/api/incidents";
+import { listIncidentsByInstallation, updateIncidentStatus } from "@/src/api/incidents";
 import {
   fetchIncidentPhotoDataUri,
   type IncidentPhotoPreviewTarget,
@@ -40,6 +41,37 @@ function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatDuration(value: number): string {
+  const totalSeconds = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+  if (totalSeconds <= 0) return "0s";
+
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const parts: string[] = [];
+  if (days) parts.push(`${days}d`);
+  if (hours) parts.push(`${hours}h`);
+  if (minutes) parts.push(`${minutes}m`);
+  if (seconds || parts.length === 0) parts.push(`${seconds}s`);
+  return parts.join(" ");
+}
+
+function normalizeIncidentStatus(value: string | null | undefined): "open" | "in_progress" | "resolved" {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "in_progress") return "in_progress";
+  if (normalized === "resolved") return "resolved";
+  return "open";
+}
+
+function incidentStatusLabel(value: string | null | undefined): string {
+  const status = normalizeIncidentStatus(value);
+  if (status === "in_progress") return "En curso";
+  if (status === "resolved") return "Resuelta";
+  return "Abierta";
 }
 
 async function loadWithConcurrency<T>(
@@ -79,6 +111,8 @@ export default function IncidentDetailScreen() {
   );
   const [failedPhotoIds, setFailedPhotoIds] = useState<Record<number, boolean>>({});
   const [loadingPhotoPreviews, setLoadingPhotoPreviews] = useState(false);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [resolutionNote, setResolutionNote] = useState("");
   const loadIncident = useCallback(async () => {
     if (!Number.isInteger(installationId) || installationId <= 0) {
       setErrorMessage("installation_id invalido.");
@@ -172,6 +206,29 @@ export default function IncidentDetailScreen() {
       isMounted = false;
     };
   }, [incident]);
+
+  const onChangeStatus = useCallback(
+    async (nextStatus: "open" | "in_progress" | "resolved") => {
+      if (!incident) return;
+      const currentStatus = normalizeIncidentStatus(incident.incident_status);
+      if (currentStatus === nextStatus) return;
+
+      try {
+        setUpdatingStatus(true);
+        await updateIncidentStatus(incident.id, {
+          incident_status: nextStatus,
+          resolution_note: nextStatus === "resolved" ? resolutionNote.trim() : "",
+          reporter_username: incident.reporter_username || "mobile_user",
+        });
+        await loadIncident();
+      } catch (error) {
+        Alert.alert("Error", extractApiError(error));
+      } finally {
+        setUpdatingStatus(false);
+      }
+    },
+    [incident, loadIncident, resolutionNote],
+  );
 
   const onAddEvidence = useCallback(() => {
     if (!incident) return;
@@ -276,8 +333,57 @@ export default function IncidentDetailScreen() {
             <Text style={[styles.cardText, { color: palette.textSecondary }]}>Fuente: {incident.source}</Text>
             <Text style={[styles.cardText, { color: palette.textSecondary }]}>Usuario: {incident.reporter_username}</Text>
             <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-              Ajuste tiempo: {incident.time_adjustment_seconds} s
+              Ajuste tiempo: {formatDuration(incident.time_adjustment_seconds ?? 0)}
             </Text>
+            <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+              Estado: {incidentStatusLabel(incident.incident_status)}
+            </Text>
+            {incident.resolved_at ? (
+              <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                Resuelta: {formatDate(incident.resolved_at)}
+              </Text>
+            ) : null}
+            <View style={styles.statusButtonsRow}>
+              <TouchableOpacity
+                style={[styles.statusButton, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
+                onPress={() => void onChangeStatus("open")}
+                disabled={updatingStatus || normalizeIncidentStatus(incident.incident_status) === "open"}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.statusButtonText, { color: palette.refreshText }]}>Abrir</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.statusButton, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
+                onPress={() => void onChangeStatus("in_progress")}
+                disabled={updatingStatus || normalizeIncidentStatus(incident.incident_status) === "in_progress"}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.statusButtonText, { color: palette.refreshText }]}>En curso</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.statusButton, { backgroundColor: palette.primaryButtonBg }]}
+                onPress={() => void onChangeStatus("resolved")}
+                disabled={updatingStatus || normalizeIncidentStatus(incident.incident_status) === "resolved"}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.statusButtonText, { color: palette.primaryButtonText }]}>Resolver</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              value={resolutionNote}
+              onChangeText={setResolutionNote}
+              style={[
+                styles.resolutionInput,
+                {
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.inputBorder,
+                  color: palette.textPrimary,
+                },
+              ]}
+              multiline
+              placeholder="Nota de resolución (opcional)"
+              placeholderTextColor={palette.textMuted}
+            />
             <Text style={[styles.cardText, { color: palette.textSecondary }]}>Fecha: {formatDate(incident.created_at)}</Text>
           </View>
 
@@ -386,6 +492,35 @@ const styles = StyleSheet.create({
   cardText: {
     fontSize: 13,
     fontFamily: fontFamilies.regular,
+  },
+  statusButtonsRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 6,
+  },
+  statusButton: {
+    flex: 1,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
+  statusButtonText: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bold,
+  },
+  resolutionInput: {
+    borderWidth: 1,
+    borderRadius: 10,
+    minHeight: MIN_TOUCH_TARGET_SIZE * 1.4,
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 13,
+    fontFamily: fontFamilies.regular,
+    textAlignVertical: "top",
   },
   hintText: {
     fontSize: 13,

@@ -27,14 +27,49 @@ QR_MAX_SERIAL_LENGTH = 128
 QR_MAX_CLIENT_NAME_LENGTH = 180
 QR_MAX_NOTES_LENGTH = 2000
 
+QR_LABEL_PRESETS = {
+    "small": {
+        "title": "Sticker pequeno (50x30 mm)",
+        "qr_size": 260,
+        "min_width": 700,
+        "min_height": 340,
+        "side_padding": 20,
+        "top_padding": 18,
+        "right_padding": 20,
+        "gap": 18,
+        "title_size": 24,
+        "body_size": 18,
+    },
+    "medium": {
+        "title": "Sticker mediano (70x40 mm)",
+        "qr_size": 320,
+        "min_width": 840,
+        "min_height": 390,
+        "side_padding": 24,
+        "top_padding": 22,
+        "right_padding": 24,
+        "gap": 24,
+        "title_size": 28,
+        "body_size": 22,
+    },
+}
+
 
 class QrGeneratorDialog(QDialog):
     """Dialogo para generar QR localmente y opcionalmente registrar equipo en API."""
 
-    def __init__(self, parent=None, qr_type="asset", value="", history_manager=None):
+    def __init__(
+        self,
+        parent=None,
+        qr_type="asset",
+        value="",
+        history_manager=None,
+        prefill_data=None,
+        auto_generate=False,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Alta de equipo y QR")
-        self.setMinimumSize(640, 680)
+        self.setMinimumSize(760, 760)
 
         self._history_manager = history_manager
         self._current_payload = ""
@@ -90,6 +125,10 @@ class QrGeneratorDialog(QDialog):
         self.copy_payload_button = QPushButton("Copiar payload")
         self.save_button = QPushButton("Guardar PNG")
         self.close_button = QPushButton("Cerrar")
+        self.label_preset_combo = QComboBox()
+        self.label_preset_combo.addItem(QR_LABEL_PRESETS["small"]["title"], "small")
+        self.label_preset_combo.addItem(QR_LABEL_PRESETS["medium"]["title"], "medium")
+        self.label_preset_combo.setCurrentIndex(1)
 
         self.copy_payload_button.setEnabled(False)
         self.save_button.setEnabled(False)
@@ -97,12 +136,16 @@ class QrGeneratorDialog(QDialog):
         self._build_layout()
         self._setup_connections()
         self._set_initial_state(qr_type, value)
+        self._apply_prefill_data(prefill_data)
+        if auto_generate:
+            self.generate_qr()
 
     def _build_layout(self):
         main_layout = QVBoxLayout(self)
         form_layout = QFormLayout()
+        self.value_label = QLabel("ID instalacion:")
         form_layout.addRow("Tipo:", self.type_combo)
-        form_layout.addRow("ID instalacion:", self.value_input)
+        form_layout.addRow(self.value_label, self.value_input)
         main_layout.addLayout(form_layout)
 
         self.asset_fields_container = QWidget(self)
@@ -122,6 +165,9 @@ class QrGeneratorDialog(QDialog):
         main_layout.addWidget(QLabel("Payload:"))
         main_layout.addWidget(self.payload_value)
         main_layout.addWidget(self.details_label)
+        preset_layout = QFormLayout()
+        preset_layout.addRow("Formato etiqueta:", self.label_preset_combo)
+        main_layout.addLayout(preset_layout)
 
         buttons_layout = QHBoxLayout()
         buttons_layout.addWidget(self.generate_button)
@@ -154,6 +200,32 @@ class QrGeneratorDialog(QDialog):
         self.asset_code_input.setText(text_value if normalized_type == "asset" else "")
         self._apply_type_meta()
 
+    def _apply_prefill_data(self, prefill_data):
+        if not isinstance(prefill_data, dict):
+            return
+
+        if self._selected_type() != "asset":
+            return
+
+        self.asset_code_input.setText(
+            self._normalize_asset_code(prefill_data.get("external_code", ""))
+        )
+        self.brand_input.setText(
+            self._normalize_form_text(prefill_data.get("brand", ""), QR_MAX_BRAND_LENGTH)
+        )
+        self.model_input.setText(
+            self._normalize_form_text(prefill_data.get("model", ""), QR_MAX_MODEL_LENGTH)
+        )
+        self.serial_input.setText(
+            self._normalize_form_text(prefill_data.get("serial_number", ""), QR_MAX_SERIAL_LENGTH)
+        )
+        self.client_input.setText(
+            self._normalize_form_text(prefill_data.get("client_name", ""), QR_MAX_CLIENT_NAME_LENGTH)
+        )
+        self.notes_input.setPlainText(
+            self._normalize_form_text(prefill_data.get("notes", ""), QR_MAX_NOTES_LENGTH)
+        )
+
     def _apply_type_meta(self):
         selected_type = self._selected_type()
         self._current_type = selected_type
@@ -162,12 +234,18 @@ class QrGeneratorDialog(QDialog):
         self.save_asset_button.setVisible(is_asset)
 
         if selected_type == "installation":
+            self.value_label.setText("ID instalacion:")
+            self.value_label.setVisible(True)
+            self.value_input.setVisible(True)
             self.value_input.setPlaceholderText("Ej: 245")
             self.helper_label.setText(
                 "Modo instalacion: genera dm://installation/{id}. "
                 "El ID debe ser entero positivo."
             )
         else:
+            self.value_label.setText("Codigo sugerido:")
+            self.value_label.setVisible(False)
+            self.value_input.setVisible(False)
             self.helper_label.setText(
                 "Modo equipo: requiere marca o modelo, y numero de serie. "
                 "Puedes generar QR offline y guardar el equipo en API cuando haya sesion."
@@ -365,6 +443,54 @@ class QrGeneratorDialog(QDialog):
         clipboard.setText(self._current_payload)
         QMessageBox.information(self, "Copiado", "Payload QR copiado al portapapeles.")
 
+    def _load_print_fonts(self, fallback_font, title_size, body_size):
+        """Intentar cargar fuentes legibles para etiqueta."""
+        try:
+            from PIL import ImageFont
+        except Exception:
+            return fallback_font, fallback_font
+
+        candidate_paths = [
+            "C:/Windows/Fonts/segoeui.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+        for path in candidate_paths:
+            try:
+                title_font = ImageFont.truetype(path, int(title_size))
+                body_font = ImageFont.truetype(path, int(body_size))
+                return title_font, body_font
+            except Exception:
+                continue
+        return fallback_font, fallback_font
+
+    def _selected_label_preset(self):
+        preset = self.label_preset_combo.currentData()
+        if preset in QR_LABEL_PRESETS:
+            return preset
+        return "medium"
+
+    def _build_sticker_lines(self):
+        """Construir lineas compactas para sticker."""
+        code = self._normalize_asset_code(self.asset_code_input.text())
+        brand = self._normalize_form_text(self.brand_input.text(), QR_MAX_BRAND_LENGTH)
+        model = self._normalize_form_text(self.model_input.text(), QR_MAX_MODEL_LENGTH)
+        serial = self._normalize_form_text(self.serial_input.text(), QR_MAX_SERIAL_LENGTH)
+        client = self._normalize_form_text(self.client_input.text(), QR_MAX_CLIENT_NAME_LENGTH)
+
+        label_model = " / ".join([part for part in (brand, model) if part]).strip()
+        if not label_model:
+            label_model = "-"
+
+        lines = [
+            f"Codigo: {code or '-'}",
+            f"Modelo: {label_model}",
+            f"Serie: {serial or '-'}",
+        ]
+        if client:
+            lines.append(f"Cliente: {client}")
+        return lines
+
     def _build_printable_png_bytes(self):
         if not self._current_png_bytes:
             return b""
@@ -377,27 +503,69 @@ class QrGeneratorDialog(QDialog):
             return self._current_png_bytes
 
         qr_image = Image.open(io.BytesIO(self._current_png_bytes)).convert("RGB")
-        lines = self._current_details_text.split("\n")
-        title = "Etiqueta QR - Driver Manager"
-        font = ImageFont.load_default()
+        lines = self._build_sticker_lines()
+        title = "Driver Manager"
+        preset = QR_LABEL_PRESETS.get(self._selected_label_preset(), QR_LABEL_PRESETS["medium"])
+        fallback_font = ImageFont.load_default()
+        title_font, body_font = self._load_print_fonts(
+            fallback_font,
+            int(preset["title_size"]),
+            int(preset["body_size"]),
+        )
+        draw_probe = ImageDraw.Draw(Image.new("RGB", (10, 10), "white"))
+        sample_bbox = draw_probe.textbbox((0, 0), "Ag", font=body_font)
+        line_height = max(int(preset["body_size"]) + 6, (sample_bbox[3] - sample_bbox[1]) + 8)
 
-        line_height = 18
-        side_padding = 24
-        top_padding = 20
-        details_height = line_height * (len(lines) + 2)
-        canvas_width = max(qr_image.width + side_padding * 2, 560)
-        canvas_height = top_padding + qr_image.height + 14 + details_height + 20
+        side_padding = int(preset["side_padding"])
+        top_padding = int(preset["top_padding"])
+        right_padding = int(preset["right_padding"])
+        gap = int(preset["gap"])
+
+        try:
+            resampling = Image.Resampling.NEAREST
+        except Exception:
+            resampling = Image.NEAREST
+        qr_target = int(preset["qr_size"])
+        if qr_image.width != qr_target:
+            qr_image = qr_image.resize((qr_target, qr_target), resampling)
+
+        text_width = 0
+        for line in [title, *lines]:
+            font_for_line = title_font if line == title else body_font
+            bbox = draw_probe.textbbox((0, 0), line, font=font_for_line)
+            text_width = max(text_width, bbox[2] - bbox[0])
+
+        title_bbox = draw_probe.textbbox((0, 0), title, font=title_font)
+        title_height = max(32, title_bbox[3] - title_bbox[1] + 4)
+        text_block_height = title_height + 8 + line_height * len(lines)
+        content_height = max(qr_image.height, text_block_height)
+        canvas_width = max(
+            int(preset["min_width"]),
+            side_padding + qr_image.width + gap + text_width + right_padding,
+        )
+        canvas_height = max(int(preset["min_height"]), top_padding + content_height + top_padding)
 
         canvas = Image.new("RGB", (canvas_width, canvas_height), "white")
         draw = ImageDraw.Draw(canvas)
-        qr_x = (canvas_width - qr_image.width) // 2
-        canvas.paste(qr_image, (qr_x, top_padding))
-        draw.text((side_padding, top_padding + qr_image.height + 10), title, fill="black", font=font)
 
-        y = top_padding + qr_image.height + 10 + line_height
+        qr_x = side_padding
+        qr_y = top_padding + max(0, (content_height - qr_image.height) // 2)
+        canvas.paste(qr_image, (qr_x, qr_y))
+
+        text_x = qr_x + qr_image.width + gap
+        text_y = top_padding
+        draw.text((text_x, text_y), title, fill="black", font=title_font)
+
+        y = text_y + title_height + 4
         for line in lines:
-            draw.text((side_padding, y), line, fill="black", font=font)
+            draw.text((text_x, y), line, fill="black", font=body_font)
             y += line_height
+
+        draw.rectangle(
+            [(2, 2), (canvas_width - 3, canvas_height - 3)],
+            outline=(35, 35, 35),
+            width=2,
+        )
 
         output = io.BytesIO()
         canvas.save(output, format="PNG")

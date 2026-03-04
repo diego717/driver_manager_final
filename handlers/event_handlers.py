@@ -259,11 +259,14 @@ class EventHandlers:
         if ok and password:
             if self.main.auth_manager.verify_password(password):
                 logger.security_event("admin_login", "admin", True, details={'method': 'legacy'})
+                self.main.is_authenticated = True
                 self.main.is_admin = True
                 self.main.admin_tab.auth_status.setText("🔓 Autenticado como Administrador")
                 self.main.admin_tab.login_btn.setVisible(False)
                 self.main.admin_tab.logout_btn.setVisible(True)
                 self.main.admin_tab.admin_content.setVisible(True)
+                if hasattr(self.main, "_apply_navigation_access_control"):
+                    self.main._apply_navigation_access_control()
                 
                 # Cargar configuración R2 en el panel
                 self.load_r2_config_to_admin_panel()
@@ -314,6 +317,9 @@ class EventHandlers:
         
         # Actualizar (limpiar) la vista de logs
         self.main.refresh_audit_logs()
+
+        if hasattr(self.main, "_apply_navigation_access_control"):
+            self.main._apply_navigation_access_control()
     
     def toggle_visibility(self, line_edit, button):
         """Alternar visibilidad de campo de texto"""

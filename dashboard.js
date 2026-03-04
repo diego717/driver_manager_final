@@ -34,6 +34,8 @@ let currentInstallationsData = [];
 let currentSelectedInstallationId = null;
 let currentAssetsData = [];
 let currentSelectedAssetId = null;
+let currentDriversData = [];
+let selectedDriverFile = null;
 
 // WebSocket/SSE State
 let eventSource = null;
@@ -50,7 +52,7 @@ const SSE_RECONNECT_BASE_DELAY = 2500;
 const SSE_RECONNECT_MAX_DELAY = 30000;
 const SSE_MIN_CONNECT_GAP_MS = 1200;
 const CONNECTION_STATUS_DEDUP_MS = 700;
-const SSE_ACTIVE_SECTIONS = new Set(['dashboard', 'installations', 'assets', 'incidents']);
+const SSE_ACTIVE_SECTIONS = new Set(['dashboard', 'installations', 'assets', 'drivers', 'incidents']);
 const FORCE_LOGIN_ON_OPEN = true;
 const QR_MAX_ASSET_CODE_LENGTH = 128;
 const QR_MAX_BRAND_LENGTH = 120;
@@ -59,10 +61,37 @@ const QR_MAX_SERIAL_LENGTH = 128;
 const QR_MAX_CLIENT_LENGTH = 180;
 const QR_MAX_NOTES_LENGTH = 2000;
 const QR_PREVIEW_SIZE_PX = 320;
+const QR_LABEL_PRESETS = {
+    small: {
+        key: 'small',
+        width: 760,
+        height: 340,
+        padding: 18,
+        qrSize: 260,
+        textGap: 18,
+        titleSize: 22,
+        bodySize: 16,
+        lineHeight: 24,
+        titleLineHeight: 30,
+    },
+    medium: {
+        key: 'medium',
+        width: 960,
+        height: 420,
+        padding: 24,
+        qrSize: 320,
+        textGap: 24,
+        titleSize: 28,
+        bodySize: 20,
+        lineHeight: 30,
+        titleLineHeight: 38,
+    },
+};
 
 let currentQrPayload = '';
 let currentQrImageUrl = '';
 let currentQrLabelInfo = null;
+let currentQrLabelPreset = 'medium';
 let qrModalReadOnly = false;
 let qrModalEditUnlocked = false;
 let qrModalEditUnlockUntil = 0;
@@ -214,6 +243,13 @@ const api = {
         });
     },
 
+    updateIncidentStatus(incidentId, payload) {
+        return this.request('/web/incidents/' + incidentId + '/status', {
+            method: 'PATCH',
+            body: JSON.stringify(payload || {})
+        });
+    },
+
     resolveAsset(payload) {
         return this.request('/web/assets/resolve', {
             method: 'POST',
@@ -236,6 +272,55 @@ const api = {
         return this.request('/web/assets/' + assetId + '/link-installation', {
             method: 'POST',
             body: JSON.stringify(payload || {})
+        });
+    },
+
+    getDrivers(params = {}) {
+        const query = new URLSearchParams(params).toString();
+        return this.request(query ? `/web/drivers?${query}` : '/web/drivers');
+    },
+
+    async uploadDriver(file, metadata = {}) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('brand', String(metadata.brand || '').trim());
+        formData.append('version', String(metadata.version || '').trim());
+        formData.append('description', String(metadata.description || '').trim());
+
+        const authHeaders = webAccessToken
+            ? { Authorization: 'Bearer ' + webAccessToken }
+            : {};
+
+        const response = await fetch(API_BASE + '/web/drivers', {
+            method: 'POST',
+            headers: {
+                ...authHeaders
+            },
+            body: formData,
+            credentials: 'include'
+        });
+
+        const payload = await parseApiResponsePayload(response);
+
+        if (response.status === 401) {
+            currentUser = null;
+            webAccessToken = '';
+            closeSSE();
+            resetProtectedViews();
+            showLogin();
+            throw new Error(extractApiErrorMessage(payload, response) || 'No autorizado');
+        }
+        if (!response.ok) {
+            throw new Error(extractApiErrorMessage(payload, response));
+        }
+
+        return payload || {};
+    },
+
+    deleteDriver(key) {
+        const encodedKey = encodeURIComponent(String(key || '').trim());
+        return this.request('/web/drivers?key=' + encodedKey, {
+            method: 'DELETE'
         });
     },
 
@@ -453,25 +538,25 @@ async function createIncidentFromWeb(installationId) {
 }
 
 async function associateAssetFromWeb() {
-    const externalCodeRaw = prompt('CÃƒÂ³digo externo del equipo (QR/serie):', '') ?? '';
+    const externalCodeRaw = prompt('Código externo del equipo (QR/serie):', '') ?? '';
     const externalCode = String(externalCodeRaw || '').trim();
     if (!externalCode) {
-        showNotification('Debes ingresar un cÃƒÂ³digo de equipo vÃƒÂ¡lido.', 'error');
+        showNotification('Debes ingresar un código de equipo válido.', 'error');
         return;
     }
 
     const installationInput = prompt(
-        'ID de instalaciÃƒÂ³n destino:',
+        'ID de instalación destino:',
         currentSelectedInstallationId ? String(currentSelectedInstallationId) : ''
     );
     if (installationInput === null) return;
     const installationId = Number.parseInt(String(installationInput).trim(), 10);
     if (!Number.isInteger(installationId) || installationId <= 0) {
-        showNotification('installation_id invÃƒÂ¡lido para asociaciÃƒÂ³n.', 'error');
+        showNotification('installation_id inválido para asociación.', 'error');
         return;
     }
 
-    const notes = prompt('Nota opcional de asociaciÃƒÂ³n:', '') ?? '';
+    const notes = prompt('Nota opcional de asociación:', '') ?? '';
 
     try {
         const resolved = await api.resolveAsset({
@@ -488,7 +573,7 @@ async function associateAssetFromWeb() {
         });
 
         showNotification(
-            `Equipo ${externalCode} asociado a instalaciÃƒÂ³n #${installationId}.`,
+            `Equipo ${externalCode} asociado a instalación #${installationId}.`,
             'success'
         );
         currentSelectedInstallationId = installationId;
@@ -603,7 +688,7 @@ function renderSuccessChart(stats) {
     charts.success = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Ãƒâ€°xito', 'Fallido', 'Otro'],
+            labels: ['Éxito', 'Fallido', 'Otro'],
             datasets: [{
                 data: [success, failed, Math.max(0, other)],
                 backgroundColor: [
@@ -849,7 +934,7 @@ function renderRecentInstallations(installations) {
 
     installations.forEach(inst => {
         const statusClass = inst.status || 'unknown';
-        const statusIcon = inst.status === 'success' ? 'Ã¢Å“â€¦' : inst.status === 'failed' ? 'Ã¢ÂÅ’' : 'Ã¢Ââ€œ';
+        const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
 
         const row = document.createElement('tr');
 
@@ -925,31 +1010,31 @@ function updateFilterChips() {
         const removeSpan = document.createElement('span');
         removeSpan.className = 'chip-remove';
         removeSpan.dataset.filter = filterType;
-        removeSpan.textContent = 'Ãƒâ€”';
+        removeSpan.textContent = '×';
 
         chip.append(labelSpan, valueSpan, removeSpan);
         chipsContainer.appendChild(chip);
     };
 
     if (filters.search) {
-        appendChip('Ã°Å¸â€Â', `"${filters.search}"`, 'search');
+        appendChip('🔍', `"${filters.search}"`, 'search');
     }
 
     if (filters.brand) {
-        appendChip('Ã°Å¸ÂÂ·Ã¯Â¸Â Marca:', filters.brand, 'brand');
+        appendChip('🏷️ Marca:', filters.brand, 'brand');
     }
 
     if (filters.status) {
-        const statusLabel = filters.status === 'success' ? 'Ã¢Å“â€¦ Ãƒâ€°xito' : 
-                           filters.status === 'failed' ? 'Ã¢ÂÅ’ Fallido' : 'Ã¢Ââ€œ Desconocido';
-        appendChip('Ã°Å¸â€œÅ  Estado:', statusLabel, 'status');
+        const statusLabel = filters.status === 'success' ? '✅ Éxito' : 
+                           filters.status === 'failed' ? '❌ Fallido' : '❓ Desconocido';
+        appendChip('📊 Estado:', statusLabel, 'status');
     }
 
     if (filters.startDate || filters.endDate) {
         const dateLabel = filters.startDate && filters.endDate ? 
             `${filters.startDate} - ${filters.endDate}` :
             filters.startDate ? `Desde: ${filters.startDate}` : `Hasta: ${filters.endDate}`;
-        appendChip('Ã°Å¸â€œâ€¦', dateLabel, 'date');
+        appendChip('📅', dateLabel, 'date');
     }
     
     // Add click handlers to remove buttons
@@ -995,6 +1080,29 @@ function clearAllFilters() {
     debouncedSearch();
 }
 
+function toDurationSeconds(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return 0;
+    return Math.floor(parsed);
+}
+
+function formatDuration(value) {
+    const totalSeconds = toDurationSeconds(value);
+    if (totalSeconds <= 0) return '0s';
+
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    const parts = [];
+    if (days) parts.push(`${days}d`);
+    if (hours) parts.push(`${hours}h`);
+    if (minutes) parts.push(`${minutes}m`);
+    if (seconds || !parts.length) parts.push(`${seconds}s`);
+    return parts.join(' ');
+}
+
 // Export Functions
 function sanitizeSpreadsheetCell(value) {
     const normalized = String(value ?? '')
@@ -1025,12 +1133,12 @@ function toExcelCell(value) {
 }
 function exportToCSV(data, filename = 'instalaciones.csv') {
     if (!data || !data.length) {
-        showNotification('Ã¢ÂÅ’ No hay datos para exportar', 'error');
+        showNotification('❌ No hay datos para exportar', 'error');
         return;
     }
     
     // CSV Headers
-    const headers = ['ID', 'Cliente', 'Marca', 'VersiÃƒÂ³n', 'Estado', 'Tiempo (s)', 'Notas', 'Fecha'];
+    const headers = ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo', 'Notas', 'Fecha'];
     
     // Convert data to CSV rows
     const rows = data.map(inst => [
@@ -1039,7 +1147,7 @@ function exportToCSV(data, filename = 'instalaciones.csv') {
         inst.driver_brand || 'N/A',
         inst.driver_version || 'N/A',
         inst.status || 'unknown',
-        inst.installation_time_seconds || 0,
+        formatDuration(inst.installation_time_seconds || 0),
         inst.notes || '',
         inst.timestamp
     ]);
@@ -1062,12 +1170,12 @@ function exportToCSV(data, filename = 'instalaciones.csv') {
     link.click();
     document.body.removeChild(link);
     
-    showNotification(`Ã¢Å“â€¦ Exportado: ${filename}`, 'success');
+    showNotification(`✅ Exportado: ${filename}`, 'success');
 }
 
 function exportToExcel(data, filename = 'instalaciones.xls') {
     if (!data || !data.length) {
-        showNotification('Ã¢ÂÅ’ No hay datos para exportar', 'error');
+        showNotification('❌ No hay datos para exportar', 'error');
         return;
     }
     
@@ -1078,7 +1186,7 @@ function exportToExcel(data, filename = 'instalaciones.xls') {
     
     // Headers
     html += '<tr>';
-    ['ID', 'Cliente', 'Marca', 'VersiÃƒÂ³n', 'Estado', 'Tiempo (s)', 'Notas', 'Fecha'].forEach(header => {
+    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo', 'Notas', 'Fecha'].forEach(header => {
         html += `<th>${escapeHtml(header)}</th>`;
     });
     html += '</tr>';
@@ -1091,7 +1199,7 @@ function exportToExcel(data, filename = 'instalaciones.xls') {
         html += `<td>${toExcelCell(inst.driver_brand || 'N/A')}</td>`;
         html += `<td>${toExcelCell(inst.driver_version || 'N/A')}</td>`;
         html += `<td>${toExcelCell(inst.status || 'unknown')}</td>`;
-        html += `<td>${toExcelCell(inst.installation_time_seconds || 0)}</td>`;
+        html += `<td>${toExcelCell(formatDuration(inst.installation_time_seconds || 0))}</td>`;
         html += `<td>${toExcelCell((inst.notes || '').substring(0, 100))}</td>`;
         html += `<td>${toExcelCell(inst.timestamp)}</td>`;
         html += '</tr>';
@@ -1111,7 +1219,7 @@ function exportToExcel(data, filename = 'instalaciones.xls') {
     link.click();
     document.body.removeChild(link);
     
-    showNotification(`Ã¢Å“â€¦ Exportado: ${filename}`, 'success');
+    showNotification(`✅ Exportado: ${filename}`, 'success');
 }
 
 function setupExportButtons() {
@@ -1126,7 +1234,7 @@ function setupExportButtons() {
         exportDropdown.style.cssText = 'position: relative; display: inline-block;';
         
         exportDropdown.innerHTML = `
-            <button id="exportBtn" class="btn-secondary">Ã°Å¸â€œÂ¥ Exportar Ã¢â€“Â¼</button>
+            <button id="exportBtn" class="btn-secondary">📥 Exportar ▼</button>
             <div class="export-menu" style="
                 display: none;
                 position: absolute;
@@ -1152,7 +1260,7 @@ function setupExportButtons() {
                     cursor: pointer;
                     font-size: 0.875rem;
                     text-align: left;
-                ">Ã°Å¸â€œâ€ž Exportar CSV</button>
+                ">📄 Exportar CSV</button>
                 <button class="export-option" data-format="excel" style="
                     display: flex;
                     align-items: center;
@@ -1166,7 +1274,7 @@ function setupExportButtons() {
                     font-size: 0.875rem;
                     text-align: left;
                     border-top: 1px solid var(--border);
-                ">Ã°Å¸â€œÅ  Exportar Excel</button>
+                ">📊 Exportar Excel</button>
             </div>
         `;
         
@@ -1296,7 +1404,7 @@ function setupAdvancedFilters() {
         const createRecordBtn = document.createElement('button');
         createRecordBtn.id = 'createManualRecordBtn';
         createRecordBtn.className = 'btn-secondary';
-        createRecordBtn.textContent = 'Ã°Å¸â€œÂ Registrar nuevo equipo';
+        createRecordBtn.textContent = '📝 Registrar nuevo equipo';
         createRecordBtn.addEventListener('click', () => {
             void createManualRecordFromWeb();
         });
@@ -1384,7 +1492,7 @@ async function loadInstallations() {
         // Update filter chips (in case they were cleared externally)
         updateFilterChips();
     } catch (err) {
-        container.innerHTML = '<p class="error">Ã¢ÂÅ’ Error cargando instalaciones</p>';
+        container.innerHTML = '<p class="error">❌ Error cargando instalaciones</p>';
         if (resultsCount) {
             resultsCount.textContent = 'Error al cargar';
         }
@@ -1407,7 +1515,7 @@ function renderInstallationsTable(installations) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'VersiÃƒÂ³n', 'Estado', 'Tiempo', 'Notas', 'Fecha', 'QR'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo', 'Notas', 'Fecha', 'QR'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -1418,7 +1526,7 @@ function renderInstallationsTable(installations) {
 
     installations.forEach(inst => {
         const statusClass = inst.status || 'unknown';
-        const statusIcon = inst.status === 'success' ? 'Ã¢Å“â€¦' : inst.status === 'failed' ? 'Ã¢ÂÅ’' : 'Ã¢Ââ€œ';
+        const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
 
         const row = document.createElement('tr');
         row.dataset.id = String(inst.id ?? '');
@@ -1444,7 +1552,7 @@ function renderInstallationsTable(installations) {
         statusCell.appendChild(statusBadge);
 
         const timeCell = document.createElement('td');
-        timeCell.textContent = `${inst.installation_time_seconds ?? 0}s`;
+        timeCell.textContent = formatDuration(inst.installation_time_seconds ?? 0);
 
         const notesCell = document.createElement('td');
         notesCell.textContent = inst.notes ? `${inst.notes.substring(0, 30)}...` : '-';
@@ -1490,7 +1598,7 @@ async function showIncidentsForInstallation(installationId) {
         const data = await api.getIncidents(installationId);
         renderIncidents(data.incidents || [], installationId);
     } catch (err) {
-        container.innerHTML = '<p class="error">Ã¢ÂÅ’ Error cargando incidencias</p>';
+        container.innerHTML = '<p class="error">❌ Error cargando incidencias</p>';
     }
 }
 
@@ -1501,10 +1609,85 @@ function normalizeAssetStatusLabel(status) {
 }
 
 function getSeverityIcon(severity) {
-    if (severity === 'critical') return 'Ã°Å¸â€Â´';
-    if (severity === 'high') return 'Ã°Å¸Å¸Â ';
-    if (severity === 'medium') return 'Ã°Å¸Å¸Â¡';
-    return 'Ã°Å¸â€Âµ';
+    if (severity === 'critical') return '🔴';
+    if (severity === 'high') return '🟠';
+    if (severity === 'medium') return '🟡';
+    return '🔵';
+}
+
+function normalizeIncidentStatus(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'in_progress') return 'in_progress';
+    if (normalized === 'resolved') return 'resolved';
+    return 'open';
+}
+
+function incidentStatusLabel(value) {
+    const normalized = normalizeIncidentStatus(value);
+    if (normalized === 'resolved') return 'Resuelta';
+    if (normalized === 'in_progress') return 'En curso';
+    return 'Abierta';
+}
+
+function incidentStatusIcon(value) {
+    const normalized = normalizeIncidentStatus(value);
+    if (normalized === 'resolved') return '✅';
+    if (normalized === 'in_progress') return '🟠';
+    return '🟢';
+}
+
+function buildIncidentStatusText(incident) {
+    const status = normalizeIncidentStatus(incident?.incident_status);
+    let text = `${incidentStatusIcon(status)} ${incidentStatusLabel(status)}`;
+    if (status === 'resolved' && incident?.resolved_at) {
+        text += ` · ${new Date(incident.resolved_at).toLocaleString('es-ES')}`;
+    } else if (incident?.status_updated_at) {
+        text += ` · ${new Date(incident.status_updated_at).toLocaleString('es-ES')}`;
+    }
+    return text;
+}
+
+async function updateIncidentStatusFromWeb(incident, targetStatus, options = {}) {
+    if (!requireActiveSession()) return;
+    const incidentId = Number.parseInt(String(incident?.id), 10);
+    if (!Number.isInteger(incidentId) || incidentId <= 0) {
+        showNotification('Incidencia inválida para actualizar estado.', 'error');
+        return;
+    }
+
+    const normalizedStatus = normalizeIncidentStatus(targetStatus);
+    let resolutionNote = '';
+    if (normalizedStatus === 'resolved') {
+        const noteInput = prompt('Nota de resolución (opcional):', incident?.resolution_note || '');
+        if (noteInput === null) return;
+        resolutionNote = String(noteInput || '').trim();
+    }
+
+    try {
+        await api.updateIncidentStatus(incidentId, {
+            incident_status: normalizedStatus,
+            resolution_note: resolutionNote,
+            reporter_username: currentUser?.username || 'web_user',
+        });
+        showNotification(
+            `Incidencia #${incidentId} actualizada a "${incidentStatusLabel(normalizedStatus)}".`,
+            'success',
+        );
+
+        if (Number.isInteger(options.installationId) && options.installationId > 0) {
+            await showIncidentsForInstallation(options.installationId);
+            return;
+        }
+        if (Number.isInteger(options.assetId) && options.assetId > 0) {
+            await loadAssetDetail(options.assetId, { keepSelection: true });
+            return;
+        }
+        if (currentSelectedInstallationId) {
+            await showIncidentsForInstallation(currentSelectedInstallationId);
+        }
+    } catch (err) {
+        showNotification(`No se pudo actualizar estado: ${err.message || err}`, 'error');
+    }
 }
 
 async function loadAssets() {
@@ -1543,9 +1726,202 @@ async function loadAssets() {
             }
         }
     } catch (err) {
-        tableContainer.innerHTML = '<p class="error">Ã¢ÂÅ’ Error cargando equipos</p>';
+        tableContainer.innerHTML = '<p class="error">❌ Error cargando equipos</p>';
         if (resultsCount) {
             resultsCount.textContent = 'Error al cargar';
+        }
+    }
+}
+
+function formatDriverSize(bytes, sizeMb) {
+    const numericBytes = Number(bytes);
+    if (Number.isFinite(numericBytes) && numericBytes > 0) {
+        if (numericBytes >= 1024 * 1024) {
+            return `${(numericBytes / (1024 * 1024)).toFixed(2)} MB`;
+        }
+        return `${(numericBytes / 1024).toFixed(1)} KB`;
+    }
+    const numericMb = Number(sizeMb);
+    if (Number.isFinite(numericMb) && numericMb > 0) {
+        return `${numericMb.toFixed(2)} MB`;
+    }
+    return 'N/A';
+}
+
+function updateDriverSelectedFileLabel() {
+    const label = document.getElementById('driversSelectedFileLabel');
+    if (!label) return;
+    if (!selectedDriverFile) {
+        label.textContent = 'Sin archivo seleccionado';
+        return;
+    }
+    label.textContent = `${selectedDriverFile.name} (${formatDriverSize(selectedDriverFile.size, null)})`;
+}
+
+async function loadDrivers() {
+    if (!requireActiveSession()) return;
+    const tableContainer = document.getElementById('driversTable');
+    const resultsCount = document.getElementById('driversResultsCount');
+    if (!tableContainer) return;
+
+    tableContainer.innerHTML = '<p class="loading">Cargando drivers...</p>';
+    if (resultsCount) {
+        resultsCount.innerHTML = '<span class="loading">Buscando...</span>';
+    }
+
+    try {
+        const response = await api.getDrivers({ limit: 200 });
+        const items = Array.isArray(response?.items) ? response.items : [];
+        currentDriversData = items;
+        renderDriversTable(items);
+
+        if (resultsCount) {
+            const count = items.length;
+            resultsCount.innerHTML = `Mostrando <span class="count">${count}</span> driver${count !== 1 ? 's' : ''}`;
+        }
+    } catch (err) {
+        tableContainer.innerHTML = '<p class="error">Error cargando drivers</p>';
+        if (resultsCount) {
+            resultsCount.textContent = 'Error al cargar';
+        }
+    }
+}
+
+function renderDriversTable(drivers) {
+    const container = document.getElementById('driversTable');
+    if (!container) return;
+    container.replaceChildren();
+
+    if (!drivers || !drivers.length) {
+        const emptyMessage = document.createElement('p');
+        emptyMessage.className = 'loading';
+        emptyMessage.textContent = 'No hay drivers cargados.';
+        container.appendChild(emptyMessage);
+        return;
+    }
+
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    ['Marca', 'Version', 'Archivo', 'Tamano', 'Subido', 'Acciones'].forEach((label) => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+
+    const tbody = document.createElement('tbody');
+    for (const driver of drivers) {
+        const row = document.createElement('tr');
+
+        const brandCell = document.createElement('td');
+        brandCell.textContent = driver.brand || '-';
+
+        const versionCell = document.createElement('td');
+        versionCell.textContent = driver.version || '-';
+
+        const fileCell = document.createElement('td');
+        fileCell.textContent = driver.filename || '-';
+
+        const sizeCell = document.createElement('td');
+        sizeCell.textContent = formatDriverSize(driver.size_bytes, driver.size_mb);
+
+        const uploadedCell = document.createElement('td');
+        uploadedCell.textContent = driver.last_modified
+            ? String(driver.last_modified)
+            : (driver.uploaded ? new Date(driver.uploaded).toLocaleString('es-ES') : '-');
+
+        const actionsCell = document.createElement('td');
+        const downloadBtn = document.createElement('button');
+        downloadBtn.type = 'button';
+        downloadBtn.className = 'btn-secondary table-action-btn';
+        downloadBtn.textContent = 'Descargar';
+        downloadBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const key = String(driver.key || '').trim();
+            if (!key) return;
+            window.open(`/web/drivers/download?key=${encodeURIComponent(key)}`, '_blank', 'noopener');
+        });
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'btn-secondary table-action-btn';
+        deleteBtn.textContent = 'Eliminar';
+        deleteBtn.style.marginLeft = '0.35rem';
+        deleteBtn.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const key = String(driver.key || '').trim();
+            if (!key) return;
+            if (!confirm(`Eliminar driver ${driver.brand || ''} ${driver.version || ''}?`)) return;
+            try {
+                await api.deleteDriver(key);
+                showNotification('Driver eliminado', 'success');
+                await loadDrivers();
+            } catch (err) {
+                showNotification(`No se pudo eliminar driver: ${err.message || err}`, 'error');
+            }
+        });
+
+        actionsCell.append(downloadBtn, deleteBtn);
+
+        row.append(brandCell, versionCell, fileCell, sizeCell, uploadedCell, actionsCell);
+        tbody.appendChild(row);
+    }
+
+    table.append(thead, tbody);
+    container.appendChild(table);
+}
+
+async function uploadDriverFromWeb() {
+    if (!requireActiveSession()) return;
+    const brandInput = document.getElementById('driverBrandInput');
+    const versionInput = document.getElementById('driverVersionInput');
+    const descriptionInput = document.getElementById('driverDescriptionInput');
+    const uploadBtn = document.getElementById('driverUploadBtn');
+    const brand = String(brandInput?.value || '').trim();
+    const version = String(versionInput?.value || '').trim();
+    const description = String(descriptionInput?.value || '').trim();
+
+    if (!brand) {
+        showNotification('La marca es obligatoria.', 'error');
+        return;
+    }
+    if (!version) {
+        showNotification('La version es obligatoria.', 'error');
+        return;
+    }
+    if (!selectedDriverFile) {
+        showNotification('Selecciona un archivo para subir.', 'error');
+        return;
+    }
+
+    const previousText = uploadBtn?.textContent || '';
+    if (uploadBtn) {
+        uploadBtn.disabled = true;
+        uploadBtn.textContent = 'Subiendo...';
+    }
+
+    try {
+        await api.uploadDriver(selectedDriverFile, {
+            brand,
+            version,
+            description
+        });
+        showNotification(`Driver ${brand} ${version} subido correctamente.`, 'success');
+        selectedDriverFile = null;
+        if (descriptionInput) descriptionInput.value = '';
+        if (versionInput) versionInput.value = '';
+        if (brandInput) brandInput.value = '';
+        updateDriverSelectedFileLabel();
+        await loadDrivers();
+    } catch (err) {
+        showNotification(`No se pudo subir driver: ${err.message || err}`, 'error');
+    } finally {
+        if (uploadBtn) {
+            uploadBtn.disabled = false;
+            uploadBtn.textContent = previousText || 'Subir driver';
         }
     }
 }
@@ -1756,7 +2132,7 @@ async function loadAssetDetail(assetId, options = {}) {
         await renderAssetDetail(data);
     } catch (err) {
         if (detailContainer) {
-            detailContainer.innerHTML = `<p class="error">Ã¢ÂÅ’ ${escapeHtml(err.message || String(err))}</p>`;
+            detailContainer.innerHTML = `<p class="error">❌ ${escapeHtml(err.message || String(err))}</p>`;
         }
     }
 }
@@ -1905,11 +2281,11 @@ async function renderAssetDetail(data) {
         badge.className = `badge ${incident.severity || 'low'}`;
         badge.textContent = `${getSeverityIcon(incident.severity)} ${incident.severity || 'low'}`;
         const meta = document.createElement('small');
-        meta.textContent = `inst #${incident.installation_id} Ã‚Â· ${incident.reporter_username || 'desconocido'}`;
+        meta.textContent = `inst #${incident.installation_id} · ${incident.reporter_username || 'desconocido'}`;
         left.append(badge, document.createTextNode(' '), meta);
 
         const created = document.createElement('small');
-        created.textContent = `Ã°Å¸â€¢Â ${new Date(incident.created_at).toLocaleString('es-ES')}`;
+        created.textContent = `🕐 ${new Date(incident.created_at).toLocaleString('es-ES')}`;
         header.append(left, created);
 
         const note = document.createElement('p');
@@ -1917,13 +2293,54 @@ async function renderAssetDetail(data) {
         note.style.lineHeight = '1.6';
         note.textContent = incident.note || '';
 
+        const statusMeta = document.createElement('small');
+        statusMeta.className = 'asset-muted';
+        statusMeta.textContent = `Estado: ${buildIncidentStatusText(incident)}`;
+        const resolutionMeta = document.createElement('small');
+        resolutionMeta.className = 'asset-muted';
+        resolutionMeta.textContent = incident.resolution_note
+            ? `Resolución: ${incident.resolution_note}`
+            : 'Resolución: -';
+
         const sub = document.createElement('small');
         sub.className = 'asset-muted';
         sub.textContent =
-            `Cliente: ${incident.installation_client_name || '-'} Ã‚Â· ` +
+            `Cliente: ${incident.installation_client_name || '-'} · ` +
             `${incident.installation_brand || '-'} ${incident.installation_version || ''}`.trim();
 
-        card.append(header, note, sub);
+        card.append(header, note, statusMeta, resolutionMeta, sub);
+
+        const statusActions = document.createElement('div');
+        statusActions.style.display = 'flex';
+        statusActions.style.gap = '0.5rem';
+        statusActions.style.flexWrap = 'wrap';
+        statusActions.style.marginTop = '0.5rem';
+        const incidentStatus = normalizeIncidentStatus(incident.incident_status);
+
+        const makeStatusBtn = (label, statusValue) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'btn-secondary';
+            button.textContent = label;
+            const canUpdateIncident = canCurrentUserEditAssets();
+            button.disabled = !canUpdateIncident || incidentStatus === statusValue;
+            if (!canUpdateIncident) {
+                button.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
+            }
+            button.addEventListener('click', () => {
+                void updateIncidentStatusFromWeb(incident, statusValue, {
+                    assetId: Number.parseInt(String(asset.id), 10),
+                    installationId: Number.parseInt(String(incident.installation_id), 10),
+                });
+            });
+            return button;
+        };
+        statusActions.append(
+            makeStatusBtn('Abrir', 'open'),
+            makeStatusBtn('En curso', 'in_progress'),
+            makeStatusBtn('Resolver', 'resolved'),
+        );
+        card.appendChild(statusActions);
 
         const uploadBtn = document.createElement('button');
         uploadBtn.className = 'btn-secondary';
@@ -1990,18 +2407,18 @@ async function renderIncidents(incidents, installationId) {
     header.style.marginBottom = '1.5rem';
 
     const heading = document.createElement('h3');
-    heading.textContent = `Ã¢Å¡Â Ã¯Â¸Â Incidencias de InstalaciÃƒÂ³n #${installationId}`;
+    heading.textContent = `⚠️ Incidencias de Instalación #${installationId}`;
 
     const backButton = document.createElement('button');
     backButton.className = 'btn-secondary';
-    backButton.textContent = 'Ã¢â€ Â Volver';
+    backButton.textContent = '← Volver';
     backButton.addEventListener('click', () => {
         document.querySelector('[data-section="installations"]')?.click();
     });
 
     const createIncidentBtn = document.createElement('button');
     createIncidentBtn.className = 'btn-primary';
-    createIncidentBtn.textContent = 'Ã¢Å¡Â Ã¯Â¸Â Crear incidencia';
+    createIncidentBtn.textContent = '⚠️ Crear incidencia';
     createIncidentBtn.addEventListener('click', () => {
         void createIncidentFromWeb(installationId);
     });
@@ -2017,13 +2434,13 @@ async function renderIncidents(incidents, installationId) {
     if (!incidents || !incidents.length) {
         const emptyMessage = document.createElement('p');
         emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No hay incidencias para esta instalaciÃƒÂ³n';
+        emptyMessage.textContent = 'No hay incidencias para esta instalación';
         container.appendChild(emptyMessage);
         return;
     }
 
     for (const inc of incidents) {
-        const severityIcon = inc.severity === 'critical' ? 'Ã°Å¸â€Â´' : inc.severity === 'high' ? 'Ã°Å¸Å¸Â ' : inc.severity === 'medium' ? 'Ã°Å¸Å¸Â¡' : 'Ã°Å¸â€Âµ';
+        const severityIcon = inc.severity === 'critical' ? '🔴' : inc.severity === 'high' ? '🟠' : inc.severity === 'medium' ? '🟡' : '🔵';
 
         const incidentCard = document.createElement('div');
         incidentCard.className = 'incident-card';
@@ -2043,7 +2460,7 @@ async function renderIncidents(incidents, installationId) {
         leftMeta.append(severityBadge, document.createTextNode(' '), reporter);
 
         const createdAt = document.createElement('small');
-        createdAt.textContent = `Ã°Å¸â€¢Â ${new Date(inc.created_at).toLocaleString('es-ES')}`;
+        createdAt.textContent = `🕐 ${new Date(inc.created_at).toLocaleString('es-ES')}`;
 
         incidentHeader.append(leftMeta, createdAt);
 
@@ -2052,11 +2469,51 @@ async function renderIncidents(incidents, installationId) {
         note.style.lineHeight = '1.6';
         note.textContent = inc.note || '';
 
-        incidentCard.append(incidentHeader, note);
+        const statusMeta = document.createElement('small');
+        statusMeta.className = 'asset-muted';
+        statusMeta.textContent = `Estado: ${buildIncidentStatusText(inc)}`;
+        const resolutionMeta = document.createElement('small');
+        resolutionMeta.className = 'asset-muted';
+        resolutionMeta.textContent = inc.resolution_note
+            ? `Resolución: ${inc.resolution_note}`
+            : 'Resolución: -';
+
+        incidentCard.append(incidentHeader, note, statusMeta, resolutionMeta);
+
+        const statusActions = document.createElement('div');
+        statusActions.style.display = 'flex';
+        statusActions.style.gap = '0.5rem';
+        statusActions.style.flexWrap = 'wrap';
+        statusActions.style.marginTop = '0.5rem';
+        const incidentStatus = normalizeIncidentStatus(inc.incident_status);
+
+        const makeStatusBtn = (label, statusValue) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'btn-secondary';
+            button.textContent = label;
+            const canUpdateIncident = canCurrentUserEditAssets();
+            button.disabled = !canUpdateIncident || incidentStatus === statusValue;
+            if (!canUpdateIncident) {
+                button.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
+            }
+            button.addEventListener('click', () => {
+                void updateIncidentStatusFromWeb(inc, statusValue, {
+                    installationId: Number.parseInt(String(installationId), 10),
+                });
+            });
+            return button;
+        };
+        statusActions.append(
+            makeStatusBtn('Abrir', 'open'),
+            makeStatusBtn('En curso', 'in_progress'),
+            makeStatusBtn('Resolver', 'resolved'),
+        );
+        incidentCard.appendChild(statusActions);
 
         const uploadPhotoBtn = document.createElement('button');
         uploadPhotoBtn.className = 'btn-secondary';
-        uploadPhotoBtn.textContent = 'Ã°Å¸â€œÂ¤ Subir foto';
+        uploadPhotoBtn.textContent = '📤 Subir foto';
         uploadPhotoBtn.style.marginTop = '0.5rem';
         uploadPhotoBtn.addEventListener('click', () => {
             void selectAndUploadIncidentPhoto(inc.id, installationId);
@@ -2340,12 +2797,15 @@ function applyQrTypeMeta() {
     const selectedType = document.querySelector('input[name="qrType"]:checked')?.value || 'asset';
     const installationFields = document.getElementById('qrInstallationFields');
     const assetFields = document.getElementById('qrAssetFields');
+    const presetContainer = document.getElementById('qrLabelPresetContainer');
     if (selectedType === 'installation') {
         installationFields?.classList.remove('is-hidden');
         assetFields?.classList.add('is-hidden');
+        presetContainer?.classList.add('is-hidden');
     } else {
         installationFields?.classList.add('is-hidden');
         assetFields?.classList.remove('is-hidden');
+        presetContainer?.classList.remove('is-hidden');
     }
     const helperText = document.getElementById('qrHelperText');
     if (helperText) {
@@ -2373,6 +2833,15 @@ function resetQrPreview() {
     if (copyBtn) copyBtn.disabled = true;
     if (downloadBtn) downloadBtn.disabled = true;
     if (printBtn) printBtn.disabled = true;
+}
+
+function getQrLabelPresetConfig() {
+    const select = document.getElementById('qrLabelPresetSelect');
+    const selected = String(select?.value || currentQrLabelPreset || 'medium').toLowerCase();
+    currentQrLabelPreset = Object.prototype.hasOwnProperty.call(QR_LABEL_PRESETS, selected)
+        ? selected
+        : 'medium';
+    return QR_LABEL_PRESETS[currentQrLabelPreset];
 }
 
 function buildQrPayload(qrType, rawValue, assetData = null) {
@@ -2432,6 +2901,7 @@ function showQrModal(options = {}) {
     const serialInput = document.getElementById('qrAssetSerialInput');
     const clientInput = document.getElementById('qrAssetClientInput');
     const notesInput = document.getElementById('qrAssetNotesInput');
+    const presetSelect = document.getElementById('qrLabelPresetSelect');
     const type = options.type === 'installation' ? 'installation' : 'asset';
     const value = String(options.value || '');
     const asset = options.asset && typeof options.asset === 'object' ? options.asset : {};
@@ -2448,6 +2918,9 @@ function showQrModal(options = {}) {
     if (serialInput) serialInput.value = normalizeAssetFormText(asset.serial_number, QR_MAX_SERIAL_LENGTH);
     if (clientInput) clientInput.value = normalizeAssetFormText(asset.client_name, QR_MAX_CLIENT_LENGTH);
     if (notesInput) notesInput.value = normalizeAssetFormText(asset.notes, QR_MAX_NOTES_LENGTH);
+    if (presetSelect) {
+        presetSelect.value = currentQrLabelPreset;
+    }
     applyQrTypeMeta();
     applyQrModalAccessState();
     resetQrPreview();
@@ -2545,7 +3018,13 @@ function generateQrPreview(options = {}) {
         const details = formatQrDetailsText(selectedType, rawValue, assetData);
         currentQrPayload = payload;
         currentQrImageUrl = imageUrl;
-        currentQrLabelInfo = { type: selectedType, rawValue, assetData, details };
+        currentQrLabelInfo = {
+            type: selectedType,
+            rawValue,
+            assetData,
+            details,
+            labelPreset: getQrLabelPresetConfig().key,
+        };
 
         previewImage.src = imageUrl;
         previewImage.alt = `QR ${selectedType}`;
@@ -2663,31 +3142,27 @@ function dataUrlToPngDataUrl(dataUrl) {
     });
 }
 
-function buildPrintableLabelDataUrl(imageDataUrl, details) {
+function buildPrintableLabelDataUrl(imageDataUrl, details, presetKey = 'medium') {
     return new Promise((resolve, reject) => {
         const image = new Image();
         image.onload = () => {
             try {
-                const qrWidth = image.naturalWidth || image.width || QR_PREVIEW_SIZE_PX;
-                const qrHeight = image.naturalHeight || image.height || QR_PREVIEW_SIZE_PX;
+                const preset = QR_LABEL_PRESETS[presetKey] || QR_LABEL_PRESETS.medium;
+                const qrNaturalWidth = image.naturalWidth || image.width || QR_PREVIEW_SIZE_PX;
+                const qrNaturalHeight = image.naturalHeight || image.height || QR_PREVIEW_SIZE_PX;
+                const qrSize = Math.max(180, Math.floor(preset.qrSize));
                 const detailsLines = String(details || '')
                     .split('\n')
                     .map((line) => line.trim())
-                    .filter((line) => line && !line.toLowerCase().startsWith('tipo:'));
+                    .filter((line) => line && !line.toLowerCase().startsWith('tipo:'))
+                    .slice(0, 8);
 
-                const outerPadding = 24;
-                const innerGap = 24;
-                const infoPanelWidth = 330;
-                const lineHeight = 28;
-                const titleHeight = 34;
-                const detailsHeight = Math.max(lineHeight * detailsLines.length, lineHeight * 4);
-
-                const canvasWidth = Math.max(
-                    700,
-                    outerPadding * 2 + qrWidth + innerGap + infoPanelWidth
-                );
-                const contentHeight = Math.max(qrHeight, titleHeight + detailsHeight);
-                const canvasHeight = outerPadding * 2 + contentHeight;
+                const outerPadding = Math.max(12, preset.padding);
+                const innerGap = Math.max(10, preset.textGap);
+                const lineHeight = Math.max(18, preset.lineHeight);
+                const titleLineHeight = Math.max(22, preset.titleLineHeight);
+                const canvasWidth = Math.max(640, preset.width);
+                const canvasHeight = Math.max(280, preset.height);
                 const canvas = document.createElement('canvas');
                 canvas.width = canvasWidth;
                 canvas.height = canvasHeight;
@@ -2701,25 +3176,31 @@ function buildPrintableLabelDataUrl(imageDataUrl, details) {
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
 
                 const qrX = outerPadding;
-                const qrY = Math.floor((canvasHeight - qrHeight) / 2);
-                ctx.drawImage(image, qrX, qrY, qrWidth, qrHeight);
+                const qrY = Math.floor((canvasHeight - qrSize) / 2);
+                ctx.imageSmoothingEnabled = false;
+                ctx.drawImage(image, 0, 0, qrNaturalWidth, qrNaturalHeight, qrX, qrY, qrSize, qrSize);
+                ctx.imageSmoothingEnabled = true;
 
-                const infoX = qrX + qrWidth + innerGap;
+                const infoX = qrX + qrSize + innerGap;
                 const infoWidth = canvasWidth - infoX - outerPadding;
-                const textBlockHeight = titleHeight + detailsHeight;
+                const textBlockHeight = titleLineHeight + lineHeight * detailsLines.length;
                 const textStartY = Math.floor((canvasHeight - textBlockHeight) / 2);
-                let y = textStartY + 22;
+                let y = textStartY + Math.max(16, preset.titleSize);
                 ctx.fillStyle = '#0f172a';
-                ctx.font = '700 18px Inter, Arial, sans-serif';
-                ctx.fillText('Etiqueta Equipo - Driver Manager', infoX, y, infoWidth);
+                ctx.font = `700 ${Math.max(16, preset.titleSize)}px Inter, Arial, sans-serif`;
+                ctx.fillText('Driver Manager', infoX, y, infoWidth);
 
-                y += 34;
+                y += titleLineHeight;
                 ctx.fillStyle = '#1f2937';
-                ctx.font = '500 14px Inter, Arial, sans-serif';
+                ctx.font = `500 ${Math.max(12, preset.bodySize)}px Inter, Arial, sans-serif`;
                 for (const line of detailsLines) {
                     ctx.fillText(line, infoX, y, infoWidth);
                     y += lineHeight;
                 }
+
+                ctx.strokeStyle = '#222222';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
 
                 resolve(canvas.toDataURL('image/png'));
             } catch (error) {
@@ -2747,12 +3228,14 @@ async function downloadQrImage() {
 
     if (currentQrLabelInfo && currentQrLabelInfo.type === 'asset') {
         try {
+            const labelPreset = currentQrLabelInfo.labelPreset || getQrLabelPresetConfig().key;
             downloadUrl = await buildPrintableLabelDataUrl(
                 downloadUrl,
-                currentQrLabelInfo.details || ''
+                currentQrLabelInfo.details || '',
+                labelPreset
             );
         } catch (_error) {
-            // fallback: mantener download de QR simple si falla composiciÃƒÂ³n de etiqueta
+            // fallback: mantener download de QR simple si falla composición de etiqueta
         }
     }
 
@@ -2771,7 +3254,8 @@ async function printQrLabel() {
 
     if (currentQrLabelInfo?.type === 'asset') {
         try {
-            printableImageUrl = await buildPrintableLabelDataUrl(currentQrImageUrl, details);
+            const labelPreset = currentQrLabelInfo.labelPreset || getQrLabelPresetConfig().key;
+            printableImageUrl = await buildPrintableLabelDataUrl(currentQrImageUrl, details, labelPreset);
         } catch (_error) {
             printableImageUrl = currentQrImageUrl;
         }
@@ -2853,7 +3337,7 @@ async function loadAuditLogs() {
         const logs = await api.getAuditLogs();
         renderAuditLogs(logs);
     } catch (err) {
-        container.innerHTML = '<p class="error">Ã¢ÂÅ’ Error cargando logs</p>';
+        container.innerHTML = '<p class="error">❌ Error cargando logs</p>';
     }
 }
 
@@ -2865,7 +3349,7 @@ function renderAuditLogs(logs) {
     if (!logs || !logs.length) {
         const emptyMessage = document.createElement('p');
         emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No hay logs de auditorÃƒÂ­a';
+        emptyMessage.textContent = 'No hay logs de auditoría';
         container.appendChild(emptyMessage);
         return;
     }
@@ -2886,7 +3370,7 @@ function renderAuditLogs(logs) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['Ã°Å¸â€¢Â Fecha', 'Ã°Å¸â€œÂ AcciÃƒÂ³n', 'Ã°Å¸â€˜Â¤ Usuario', 'Ã¢Å“â€¦ Estado', 'Ã°Å¸â€™Â» Detalles'].forEach(label => {
+    ['🕐 Fecha', '📝 Acción', '👤 Usuario', '✅ Estado', '💻 Detalles'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -2896,7 +3380,7 @@ function renderAuditLogs(logs) {
     const tbody = document.createElement('tbody');
 
     filteredLogs.forEach(log => {
-        const successIcon = log.success ? 'Ã¢Å“â€¦' : 'Ã¢ÂÅ’';
+        const successIcon = log.success ? '✅' : '❌';
         const successClass = log.success ? 'success' : 'failed';
         
         let details = '-';
@@ -2971,9 +3455,9 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         syncSSEForCurrentContext(true);
         
         // Show success notification
-        showNotification('Ã¢Å“â€¦ Bienvenido, ' + result.user.username + '!', 'success');
+        showNotification('✅ Bienvenido, ' + result.user.username + '!', 'success');
     } catch (err) {
-        document.getElementById('loginError').textContent = 'Ã¢ÂÅ’ Credenciales invÃƒÂ¡lidas';
+        document.getElementById('loginError').textContent = '❌ Credenciales inválidas';
         document.getElementById('loginPassword').value = '';
     }
 });
@@ -2989,7 +3473,7 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     closeSSE();
     resetProtectedViews();
     showLogin();
-    showNotification('Ã°Å¸â€˜â€¹ SesiÃƒÂ³n cerrada', 'info');
+    showNotification('👋 Sesión cerrada', 'info');
 });
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
@@ -3004,7 +3488,7 @@ document.getElementById('refreshBtn').addEventListener('click', () => {
     }, 500);
     
     loadDashboard();
-    showNotification('Ã°Å¸â€â€ž Dashboard actualizado', 'info');
+    showNotification('🔄 Dashboard actualizado', 'info');
 });
 
 document.querySelectorAll('.nav-links a').forEach(link => {
@@ -3023,13 +3507,15 @@ document.querySelectorAll('.nav-links a').forEach(link => {
             dashboard: 'Dashboard',
             installations: 'Instalaciones',
             assets: 'Equipos',
+            drivers: 'Drivers',
             incidents: 'Incidencias',
-            audit: 'AuditorÃƒÂ­a'
+            audit: 'Auditoría'
         };
         document.getElementById('pageTitle').textContent = titles[section] || 'Dashboard';
         
         if (section === 'installations') loadInstallations();
         if (section === 'assets') loadAssets();
+        if (section === 'drivers') loadDrivers();
         if (section === 'audit') loadAuditLogs();
         syncSSEForCurrentContext();
     });
@@ -3055,6 +3541,28 @@ document.getElementById('assetsCreateQrBtn')?.addEventListener('click', () => {
     if (!requireActiveSession()) return;
     showQrModal({ type: 'asset', value: '' });
 });
+
+document.getElementById('driversRefreshBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    void loadDrivers();
+});
+
+document.getElementById('driverPickFileBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    document.getElementById('driverFileInput')?.click();
+});
+
+document.getElementById('driverFileInput')?.addEventListener('change', (event) => {
+    const input = event.target;
+    const nextFile = input?.files?.[0] || null;
+    selectedDriverFile = nextFile;
+    updateDriverSelectedFileLabel();
+});
+
+document.getElementById('driverUploadBtn')?.addEventListener('click', () => {
+    void uploadDriverFromWeb();
+});
+updateDriverSelectedFileLabel();
 
 document.getElementById('assetsSearchInput')?.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
@@ -3139,6 +3647,13 @@ document.getElementById('qrDownloadBtn').addEventListener('click', () => {
 
 document.getElementById('qrPrintBtn').addEventListener('click', () => {
     void printQrLabel();
+});
+
+document.getElementById('qrLabelPresetSelect')?.addEventListener('change', () => {
+    const preset = getQrLabelPresetConfig().key;
+    if (currentQrLabelInfo && currentQrLabelInfo.type === 'asset') {
+        currentQrLabelInfo.labelPreset = preset;
+    }
 });
 
 document.querySelector('#qrModal .close').addEventListener('click', () => {
@@ -3250,7 +3765,7 @@ function scheduleSSEReconnect(preferredDelayMs = null) {
     if (sseReconnectAttempts >= MAX_SSE_RECONNECT_ATTEMPTS) {
         console.error('[SSE] Max reconnection attempts reached');
         updateConnectionStatus('failed');
-        showNotification('Ã¢Å¡Â Ã¯Â¸Â ConexiÃƒÂ³n en tiempo real perdida. Recarga la pÃƒÂ¡gina para reconectar.', 'error');
+        showNotification('⚠️ Conexión en tiempo real perdida. Recarga la página para reconectar.', 'error');
         return;
     }
 
@@ -3354,7 +3869,7 @@ function handleSSEMessage(data) {
     switch (data.type) {
         case 'connected':
             console.log('[SSE]', data.message);
-            showNotification('Ã°Å¸â€Å’ Conectado en tiempo real', 'success');
+            showNotification('🔌 Conectado en tiempo real', 'success');
             break;
 
         case 'installation_created':
@@ -3371,6 +3886,10 @@ function handleSSEMessage(data) {
 
         case 'incident_created':
             handleRealtimeIncident(data.incident);
+            break;
+
+        case 'incident_status_updated':
+            handleRealtimeIncidentStatusUpdate(data.incident);
             break;
 
         case 'stats_update':
@@ -3409,8 +3928,8 @@ function handleRealtimeInstallation(installation) {
     }
     
     // Show notification
-    const statusIcon = installation.status === 'success' ? 'Ã¢Å“â€¦' : installation.status === 'failed' ? 'Ã¢ÂÅ’' : 'Ã°Å¸â€™Â»';
-    showNotification(`${statusIcon} Nueva instalaciÃƒÂ³n: ${installation.client_name || 'Sin cliente'}`, 'info');
+    const statusIcon = installation.status === 'success' ? '✅' : installation.status === 'failed' ? '❌' : '💻';
+    showNotification(`${statusIcon} Nueva instalación: ${installation.client_name || 'Sin cliente'}`, 'info');
     
     // Refresh dashboard stats if on dashboard
     if (document.getElementById('dashboardSection')?.classList.contains('active')) {
@@ -3441,12 +3960,30 @@ function handleRealtimeInstallationDeleted(installation) {
             renderInstallationsTable(currentInstallationsData);
         }
     }
-    showNotification(`Ã°Å¸â€”â€˜Ã¯Â¸Â InstalaciÃƒÂ³n #${installation.id} eliminada`, 'info');
+    showNotification(`🗑️ Instalación #${installation.id} eliminada`, 'info');
 }
 
 function handleRealtimeIncident(incident) {
-    const severityIcon = incident.severity === 'critical' ? 'Ã°Å¸â€Â´' : incident.severity === 'high' ? 'Ã°Å¸Å¸Â ' : 'Ã¢Å¡Â Ã¯Â¸Â';
-    showNotification(`${severityIcon} Nueva incidencia en instalaciÃƒÂ³n #${incident.installation_id}`, 'warning');
+    const severityIcon = incident.severity === 'critical' ? '🔴' : incident.severity === 'high' ? '🟠' : '⚠️';
+    showNotification(`${severityIcon} Nueva incidencia en instalación #${incident.installation_id}`, 'warning');
+}
+
+function handleRealtimeIncidentStatusUpdate(incident) {
+    if (!incident || !incident.id) return;
+    showNotification(
+        `ℹ️ Incidencia #${incident.id} ahora está "${incidentStatusLabel(incident.incident_status)}".`,
+        'info',
+    );
+
+    const activeIncidentsSection = document.getElementById('incidentsSection')?.classList.contains('active');
+    const activeAssetsSection = document.getElementById('assetsSection')?.classList.contains('active');
+
+    if (activeIncidentsSection && currentSelectedInstallationId) {
+        void showIncidentsForInstallation(currentSelectedInstallationId);
+    }
+    if (activeAssetsSection && currentSelectedAssetId) {
+        void loadAssetDetail(currentSelectedAssetId, { keepSelection: true });
+    }
 }
 
 function handleRealtimeStatsUpdate(stats) {
@@ -3755,7 +4292,7 @@ function toggleTheme() {
     
     // Show notification
     const themeLabel = newTheme === 'light' ? 'claro' : 'oscuro';
-    showNotification(`Ã°Å¸Å½Â¨ Tema ${themeLabel} activado`, 'info');
+    showNotification(`🎨 Tema ${themeLabel} activado`, 'info');
 }
 
 function updateChartTheme(theme) {
@@ -3794,6 +4331,3 @@ function setupThemeToggle() {
 }
 
 init();
-
-
-

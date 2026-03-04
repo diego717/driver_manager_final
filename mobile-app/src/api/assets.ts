@@ -47,6 +47,12 @@ export interface AssetIncidentRecord {
   severity?: string;
   source?: string;
   created_at?: string;
+  incident_status?: "open" | "in_progress" | "resolved";
+  status_updated_at?: string | null;
+  status_updated_by?: string | null;
+  resolved_at?: string | null;
+  resolved_by?: string | null;
+  resolution_note?: string | null;
   installation_client_name?: string | null;
   installation_brand?: string | null;
   installation_version?: string | null;
