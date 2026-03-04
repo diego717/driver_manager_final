@@ -1682,27 +1682,70 @@ function normalizeNotificationData(rawData) {
 // Single audit persistence path (audit_logs).
 async function logAuditEvent(
   env,
-  { action, username, success, details, computerName, ipAddress, platform, timestamp },
+  { action, username, success, details, computerName, ipAddress, platform, timestamp, tenantId },
   options = {},
 ) {
   const swallowErrors = options?.swallowErrors !== false;
   try {
     const detailsJson = details && typeof details === "object" ? JSON.stringify(details) : "{}";
-    await env.DB.prepare(`
-      INSERT INTO audit_logs (timestamp, action, username, success, details, computer_name, ip_address, platform)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-      .bind(
-        normalizeOptionalString(timestamp, nowIso()),
-        normalizeOptionalString(action, "unknown"),
-        normalizeOptionalString(username, "unknown"),
-        success ? 1 : 0,
-        detailsJson,
-        normalizeOptionalString(computerName, ""),
-        normalizeOptionalString(ipAddress, ""),
-        normalizeOptionalString(platform, "")
-      )
-      .run();
+    const normalizedTenantId = normalizeRealtimeTenantId(
+      tenantId || details?.tenant_id || DEFAULT_REALTIME_TENANT_ID,
+    );
+    const normalizedTimestamp = normalizeOptionalString(timestamp, nowIso());
+    const normalizedAction = normalizeOptionalString(action, "unknown");
+    const normalizedUsername = normalizeOptionalString(username, "unknown");
+    const normalizedComputerName = normalizeOptionalString(computerName, "");
+    const normalizedIpAddress = normalizeOptionalString(ipAddress, "");
+    const normalizedPlatform = normalizeOptionalString(platform, "");
+
+    try {
+      await env.DB.prepare(`
+        INSERT INTO audit_logs (
+          tenant_id,
+          timestamp,
+          action,
+          username,
+          success,
+          details,
+          computer_name,
+          ip_address,
+          platform
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+        .bind(
+          normalizedTenantId,
+          normalizedTimestamp,
+          normalizedAction,
+          normalizedUsername,
+          success ? 1 : 0,
+          detailsJson,
+          normalizedComputerName,
+          normalizedIpAddress,
+          normalizedPlatform,
+        )
+        .run();
+    } catch (error) {
+      if (!isMissingTenantColumnError(error)) {
+        throw error;
+      }
+
+      await env.DB.prepare(`
+        INSERT INTO audit_logs (timestamp, action, username, success, details, computer_name, ip_address, platform)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+        .bind(
+          normalizedTimestamp,
+          normalizedAction,
+          normalizedUsername,
+          success ? 1 : 0,
+          detailsJson,
+          normalizedComputerName,
+          normalizedIpAddress,
+          normalizedPlatform,
+        )
+        .run();
+    }
   } catch (err) {
     if (!swallowErrors) {
       throw err;
@@ -3018,41 +3061,93 @@ async function authenticateWebUserByCredentials(env, { username, password }) {
 
 async function upsertDeviceTokenForWebUser(
   env,
-  { userId, fcmToken, deviceModel = "", appVersion = "", platform = "android" },
+  {
+    userId,
+    fcmToken,
+    tenantId = DEFAULT_REALTIME_TENANT_ID,
+    deviceModel = "",
+    appVersion = "",
+    platform = "android",
+  },
 ) {
   const registeredAt = nowIso();
+  const normalizedTenantId = normalizeRealtimeTenantId(tenantId);
   try {
-    await env.DB.prepare(`
-      INSERT INTO device_tokens (user_id, fcm_token, device_model, app_version, platform, registered_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(fcm_token) DO UPDATE
-      SET user_id = excluded.user_id,
-          device_model = excluded.device_model,
-          app_version = excluded.app_version,
-          platform = excluded.platform,
-          registered_at = excluded.registered_at,
-          updated_at = excluded.updated_at
-    `)
-      .bind(
-        userId,
-        fcmToken,
-        normalizeOptionalString(deviceModel, ""),
-        normalizeOptionalString(appVersion, ""),
-        normalizeOptionalString(platform, "android"),
-        registeredAt,
-        registeredAt,
-      )
-      .run();
+    try {
+      await env.DB.prepare(`
+        INSERT INTO device_tokens (
+          tenant_id,
+          user_id,
+          fcm_token,
+          device_model,
+          app_version,
+          platform,
+          registered_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(fcm_token) DO UPDATE
+        SET tenant_id = excluded.tenant_id,
+            user_id = excluded.user_id,
+            device_model = excluded.device_model,
+            app_version = excluded.app_version,
+            platform = excluded.platform,
+            registered_at = excluded.registered_at,
+            updated_at = excluded.updated_at
+      `)
+        .bind(
+          normalizedTenantId,
+          userId,
+          fcmToken,
+          normalizeOptionalString(deviceModel, ""),
+          normalizeOptionalString(appVersion, ""),
+          normalizeOptionalString(platform, "android"),
+          registeredAt,
+          registeredAt,
+        )
+        .run();
+    } catch (error) {
+      if (!isMissingTenantColumnError(error)) {
+        throw error;
+      }
+
+      await env.DB.prepare(`
+        INSERT INTO device_tokens (user_id, fcm_token, device_model, app_version, platform, registered_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(fcm_token) DO UPDATE
+        SET user_id = excluded.user_id,
+            device_model = excluded.device_model,
+            app_version = excluded.app_version,
+            platform = excluded.platform,
+            registered_at = excluded.registered_at,
+            updated_at = excluded.updated_at
+      `)
+        .bind(
+          userId,
+          fcmToken,
+          normalizeOptionalString(deviceModel, ""),
+          normalizeOptionalString(appVersion, ""),
+          normalizeOptionalString(platform, "android"),
+          registeredAt,
+          registeredAt,
+        )
+        .run();
+    }
   } catch (error) {
     ensureDeviceTokensTableAvailable(error);
   }
 }
 
-async function listDeviceTokensForWebRoles(env, roles = []) {
+async function listDeviceTokensForWebRoles(
+  env,
+  roles = [],
+  tenantId = DEFAULT_REALTIME_TENANT_ID,
+) {
   const normalizedRoles = (roles || [])
     .map((role) => normalizeOptionalString(role, "").toLowerCase())
     .filter((role) => role);
   if (!normalizedRoles.length) return [];
+  const normalizedTenantId = normalizeRealtimeTenantId(tenantId);
 
   const placeholders = normalizedRoles.map(() => "?").join(", ");
 
@@ -3063,9 +3158,11 @@ async function listDeviceTokensForWebRoles(env, roles = []) {
       INNER JOIN web_users wu ON wu.id = dt.user_id
       WHERE wu.is_active = 1
         AND wu.role IN (${placeholders})
+        AND wu.tenant_id = ?
+        AND dt.tenant_id = ?
         AND NULLIF(TRIM(dt.fcm_token), '') IS NOT NULL
     `)
-      .bind(...normalizedRoles)
+      .bind(...normalizedRoles, normalizedTenantId, normalizedTenantId)
       .all();
 
     return (results || [])
@@ -3073,6 +3170,12 @@ async function listDeviceTokensForWebRoles(env, roles = []) {
       .filter((token) => token);
   } catch (error) {
     const message = normalizeOptionalString(error?.message, "").toLowerCase();
+    if (message.includes("no such column") && message.includes("tenant_id")) {
+      throw new HttpError(
+        500,
+        "Falta esquema multi-tenant en D1 para push notifications. Ejecuta migraciones recientes.",
+      );
+    }
     if (message.includes("no such table") && message.includes("web_users")) {
       ensureWebUsersTableAvailable(error);
     }
@@ -3193,6 +3296,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
           action: "web_login_failed",
           username: username,
           success: false,
+          tenantId: DEFAULT_REALTIME_TENANT_ID,
           details: {
             reason: error.message,
             status_code: error.status
@@ -3211,6 +3315,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       action: "web_login_success",
       username: user.username,
       success: true,
+      tenantId: user.tenant_id,
       details: {
         role: user.role,
         user_id: Number(user.id)
@@ -3394,6 +3499,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       action: "web_user_created",
       username: session.sub,
       success: true,
+      tenantId: createdUser.tenant_id,
       details: {
         created_user: createdUser.username,
         created_user_id: createdUser.id,
@@ -3471,6 +3577,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       action: "web_user_updated",
       username: session.sub,
       success: true,
+      tenantId: existingUser.tenant_id,
       details: {
         updated_user_id: userId,
         updated_user: existingUser.username,
@@ -3528,6 +3635,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       action: "web_password_reset",
       username: session.sub,
       success: true,
+      tenantId: existingUser.tenant_id,
       details: {
         target_user_id: userId,
         target_user: existingUser.username,
@@ -3597,6 +3705,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       action: "web_users_imported",
       username: session.sub,
       success: true,
+      tenantId: sessionTenantId,
       details: {
         total_imported: processedUsers.length,
         created,
@@ -5199,6 +5308,7 @@ export default {
             action: "upload_driver",
             username: uploadedBy,
             success: true,
+            tenantId: driversTenantId,
             details: {
               tenant_id: driversTenantId,
               brand,
@@ -5251,6 +5361,7 @@ export default {
             action: "delete_driver",
             username: normalizeWebUsername(webSession?.sub || "unknown"),
             success: true,
+            tenantId: driversTenantId,
             details: {
               tenant_id: driversTenantId,
               key,
@@ -5306,6 +5417,10 @@ export default {
       }
 
       if (routeParts.length === 1 && routeParts[0] === "installations") {
+        const installationsTenantId = normalizeRealtimeTenantId(
+          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+        );
+
         if (request.method === "GET") {
           const clientName = normalizeOptionalString(
             url.searchParams.get("client_name"),
@@ -5319,8 +5434,8 @@ export default {
           const cursor = parseTimestampIdCursor(url.searchParams.get("cursor"));
           const pageSize = limit + 1;
 
-          let query = "SELECT * FROM installations WHERE 1 = 1";
-          const bindings = [];
+          let query = "SELECT * FROM installations WHERE tenant_id = ?";
+          const bindings = [installationsTenantId];
 
           if (clientName) {
             query += " AND LOWER(COALESCE(client_name, '')) LIKE ?";
@@ -5371,8 +5486,19 @@ export default {
           const payload = normalizeInstallationPayload(data, "unknown");
 
           const insertResult = await env.DB.prepare(`
-            INSERT INTO installations (timestamp, driver_brand, driver_version, status, client_name, driver_description, installation_time_seconds, os_info, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO installations (
+              timestamp,
+              driver_brand,
+              driver_version,
+              status,
+              client_name,
+              driver_description,
+              installation_time_seconds,
+              os_info,
+              notes,
+              tenant_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `)
             .bind(
               payload.timestamp,
@@ -5384,11 +5510,13 @@ export default {
               payload.installation_time_seconds,
               payload.os_info,
               payload.notes,
+              installationsTenantId,
             )
             .run();
           const installationId = insertResult?.meta?.last_row_id || null;
           const installationEventPayload = {
             id: installationId,
+            tenant_id: installationsTenantId,
             ...payload,
           };
 
@@ -5397,11 +5525,13 @@ export default {
             action: "installation_created",
             username: webSession?.sub || "api",
             success: true,
+            tenantId: installationsTenantId,
             details: {
               driver_brand: payload.driver_brand,
               driver_version: payload.driver_version,
               status: payload.status,
-              client_name: payload.client_name
+              client_name: payload.client_name,
+              tenant_id: installationsTenantId,
             },
             ipAddress: getClientIpForRateLimit(request),
             platform: isWebRoute ? "web" : "api"
@@ -5446,6 +5576,7 @@ export default {
           action: "maintenance_cleanup_orphans",
           username: webSession?.sub || "api",
           success: true,
+          tenantId: targetTenantId,
           details: {
             tenant_id: targetTenantId,
             dry_run: dryRun,
@@ -5467,11 +5598,22 @@ export default {
       }
 
       if (routeParts.length === 1 && routeParts[0] === "audit-logs") {
+        const auditTenantId = normalizeRealtimeTenantId(
+          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+        );
+
         if (request.method === "POST") {
+          if (isWebRoute) {
+            requireAdminRole(webSession?.role);
+          }
+
           const data = await request.json();
 
           const action = normalizeOptionalString(data?.action, "");
-          const username = normalizeOptionalString(data?.username, "");
+          const payloadUsername = normalizeOptionalString(data?.username, "");
+          const username = isWebRoute
+            ? normalizeWebUsername(webSession?.sub || "unknown")
+            : payloadUsername;
 
           if (!action) {
             throw new HttpError(400, "Campo 'action' es obligatorio.");
@@ -5489,6 +5631,7 @@ export default {
               action,
               username,
               success: Boolean(data?.success),
+              tenantId: auditTenantId,
               details: rawDetails,
               computerName: data?.computer_name,
               ipAddress: data?.ip_address,
@@ -5502,6 +5645,10 @@ export default {
         }
 
         if (request.method === "GET") {
+          if (isWebRoute) {
+            requireAdminRole(webSession?.role);
+          }
+
           const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
           const cursor = parseTimestampIdCursor(url.searchParams.get("cursor"));
           const pageSize = limit + 1;
@@ -5509,10 +5656,11 @@ export default {
           let query = `
             SELECT id, timestamp, action, username, success, details, computer_name, ip_address, platform
             FROM audit_logs
+            WHERE tenant_id = ?
           `;
-          const bindings = [];
+          const bindings = [auditTenantId];
           if (cursor) {
-            query += " WHERE (timestamp < ? OR (timestamp = ? AND id < ?))";
+            query += " AND (timestamp < ? OR (timestamp = ? AND id < ?))";
             bindings.push(cursor.timestamp, cursor.timestamp, cursor.id);
           }
           query += `
@@ -5554,6 +5702,7 @@ export default {
         await upsertDeviceTokenForWebUser(env, {
           userId: Number(webSession.user_id),
           fcmToken,
+          tenantId: webSession?.tenant_id,
           deviceModel: data?.device_model,
           appVersion: data?.app_version,
           platform: data?.platform || "android",
@@ -5569,6 +5718,9 @@ export default {
       }
 
       if (routeParts.length === 1 && routeParts[0] === "records" && request.method === "POST") {
+        const recordsTenantId = normalizeRealtimeTenantId(
+          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+        );
         const data = await readJsonOrThrowBadRequest(request);
         const payload = normalizeInstallationPayload(data, "manual");
 
@@ -5579,8 +5731,19 @@ export default {
         if (!payload.os_info) payload.os_info = "manual";
 
         const insertResult = await env.DB.prepare(`
-          INSERT INTO installations (timestamp, driver_brand, driver_version, status, client_name, driver_description, installation_time_seconds, os_info, notes)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO installations (
+            timestamp,
+            driver_brand,
+            driver_version,
+            status,
+            client_name,
+            driver_description,
+            installation_time_seconds,
+            os_info,
+            notes,
+            tenant_id
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
           .bind(
             payload.timestamp,
@@ -5592,10 +5755,12 @@ export default {
             payload.installation_time_seconds,
             payload.os_info,
             payload.notes,
+            recordsTenantId,
           )
           .run();
         const record = {
           id: insertResult?.meta?.last_row_id || null,
+          tenant_id: recordsTenantId,
           ...payload,
         };
 
@@ -5755,6 +5920,7 @@ export default {
               const fcmTokens = await listDeviceTokensForWebRoles(
                 env,
                 CRITICAL_INCIDENT_PUSH_ROLES,
+                incidentsTenantId,
               );
               if (fcmTokens.length > 0) {
                 await sendPushNotification(env, fcmTokens, {
@@ -5778,12 +5944,14 @@ export default {
             action: "create_incident",
             username: payload.reporterUsername,
             success: true,
+            tenantId: incidentsTenantId,
             details: {
               incident_id: incidentId,
               installation_id: installationId,
               severity: payload.severity,
               source: payload.source,
-              note_preview: payload.note.substring(0, 100)
+              note_preview: payload.note.substring(0, 100),
+              tenant_id: incidentsTenantId,
             },
             computerName: "",
             ipAddress: getClientIpForRateLimit(request),
@@ -5960,6 +6128,7 @@ export default {
           action: "update_incident_status",
           username: actorUsername,
           success: true,
+          tenantId: incidentsTenantId,
           details: {
             incident_id: incidentId,
             installation_id: existingIncident.installation_id,
@@ -6098,14 +6267,17 @@ export default {
       }
 
       if (routeParts.length === 2 && routeParts[0] === "installations") {
+        const installationsTenantId = normalizeRealtimeTenantId(
+          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+        );
         const recordId = routeParts[1];
 
         if (request.method === "GET") {
           const installationId = parsePositiveInt(recordId, "id");
           const { results } = await env.DB.prepare(
-            "SELECT * FROM installations WHERE id = ? LIMIT 1",
+            "SELECT * FROM installations WHERE id = ? AND tenant_id = ? LIMIT 1",
           )
-            .bind(installationId)
+            .bind(installationId, installationsTenantId)
             .all();
 
           if (!results?.length) {
@@ -6119,13 +6291,18 @@ export default {
           const installationId = parsePositiveInt(recordId, "id");
           const data = await readJsonOrThrowBadRequest(request);
           const payload = normalizeInstallationUpdatePayload(data);
-          await env.DB.prepare(`
+          const updateResult = await env.DB.prepare(`
             UPDATE installations
             SET notes = ?, installation_time_seconds = ?
             WHERE id = ?
+              AND tenant_id = ?
           `)
-            .bind(payload.notes, payload.installation_time_seconds, installationId)
+            .bind(payload.notes, payload.installation_time_seconds, installationId, installationsTenantId)
             .run();
+
+          if (!Number(updateResult?.meta?.changes || 0)) {
+            throw new HttpError(404, "Registro no encontrado.");
+          }
 
           await publishRealtimeEvent(env, {
             type: "installation_updated",
@@ -6146,7 +6323,7 @@ export default {
           }
 
           const installationId = parsePositiveInt(recordId, "id");
-          const normalizedTenantId = normalizeRealtimeTenantId(realtimeTenantId);
+          const normalizedTenantId = installationsTenantId;
           const installationExists = await ensureInstallationExistsForDelete(
             env,
             installationId,
@@ -6168,9 +6345,11 @@ export default {
             action: "installation_deleted",
             username: webSession?.sub || "api",
             success: true,
+            tenantId: normalizedTenantId,
             details: {
               deleted_id: installationId,
               deleted_incident_photos: incidentPhotoKeys.length,
+              tenant_id: normalizedTenantId,
             },
             ipAddress: getClientIpForRateLimit(request),
             platform: isWebRoute ? "web" : "api"
@@ -6189,6 +6368,9 @@ export default {
       }
 
       if (routeParts.length === 2 && routeParts[0] === "statistics" && routeParts[1] === "trend") {
+        const statsTenantId = normalizeRealtimeTenantId(
+          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+        );
         if (request.method !== "GET") {
           return textResponse(request, env, corsPolicy, "Ruta no encontrada.", 404);
         }
@@ -6216,12 +6398,13 @@ export default {
             SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_installations,
             SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_installations
           FROM installations
-          WHERE timestamp >= ?
+          WHERE tenant_id = ?
+            AND timestamp >= ?
             AND timestamp < ?
           GROUP BY substr(timestamp, 1, 10)
           ORDER BY day ASC
         `)
-          .bind(startInclusive.toISOString(), endExclusive.toISOString())
+          .bind(statsTenantId, startInclusive.toISOString(), endExclusive.toISOString())
           .all();
 
         const byDay = new Map();
@@ -6264,6 +6447,9 @@ export default {
       }
 
       if (routeParts.length === 1 && routeParts[0] === "statistics") {
+        const statsTenantId = normalizeRealtimeTenantId(
+          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+        );
         const startDate = parseDateOrNull(url.searchParams.get("start_date"));
         const endDate = parseDateOrNull(url.searchParams.get("end_date"));
         const startFilter = startDate ? startDate.toISOString() : null;
@@ -6284,34 +6470,37 @@ export default {
             ) AS average_time_minutes,
             COUNT(DISTINCT NULLIF(TRIM(client_name), '')) AS unique_clients
           FROM installations
-          WHERE (? IS NULL OR timestamp >= ?)
+          WHERE tenant_id = ?
+            AND (? IS NULL OR timestamp >= ?)
             AND (? IS NULL OR timestamp < ?)
         `)
-          .bind(startFilter, startFilter, endFilter, endFilter)
+          .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
           .all();
 
         const { results: byBrandRows } = await env.DB.prepare(`
           SELECT driver_brand AS brand, COUNT(*) AS count
           FROM installations
-          WHERE (? IS NULL OR timestamp >= ?)
+          WHERE tenant_id = ?
+            AND (? IS NULL OR timestamp >= ?)
             AND (? IS NULL OR timestamp < ?)
             AND NULLIF(TRIM(driver_brand), '') IS NOT NULL
           GROUP BY driver_brand
           ORDER BY count DESC
         `)
-          .bind(startFilter, startFilter, endFilter, endFilter)
+          .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
           .all();
 
         const { results: topDriverRows } = await env.DB.prepare(`
           SELECT TRIM(driver_brand) AS brand, TRIM(driver_version) AS version, COUNT(*) AS count
           FROM installations
-          WHERE (? IS NULL OR timestamp >= ?)
+          WHERE tenant_id = ?
+            AND (? IS NULL OR timestamp >= ?)
             AND (? IS NULL OR timestamp < ?)
             AND NULLIF(TRIM(driver_brand || ' ' || driver_version), '') IS NOT NULL
           GROUP BY TRIM(driver_brand), TRIM(driver_version)
           ORDER BY count DESC
         `)
-          .bind(startFilter, startFilter, endFilter, endFilter)
+          .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
           .all();
 
         const totals = totalsRows?.[0] || {};

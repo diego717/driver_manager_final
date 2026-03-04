@@ -98,7 +98,10 @@ function createMockDB({
 } = {}) {
   const calls = [];
   const state = {
-    installations: installations.map((row) => ({ ...row })),
+    installations: installations.map((row) => ({
+      tenant_id: "default",
+      ...row,
+    })),
     byBrand: byBrand.map((row) => ({ ...row })),
     incidents: incidents.map((row) => ({
       tenant_id: "default",
@@ -108,14 +111,20 @@ function createMockDB({
       tenant_id: "default",
       ...row,
     })),
-    auditLogs: auditLogs.map((row) => ({ ...row })),
+    auditLogs: auditLogs.map((row) => ({
+      tenant_id: "default",
+      ...row,
+    })),
     webUsers: webUsers.map((row) => ({
       password_hash_type: "pbkdf2_sha256",
       is_active: 1,
       tenant_id: "default",
       ...row,
     })),
-    deviceTokens: deviceTokens.map((row) => ({ ...row })),
+    deviceTokens: deviceTokens.map((row) => ({
+      tenant_id: "default",
+      ...row,
+    })),
   };
 
   let nextInstallationId = 100;
@@ -158,13 +167,19 @@ function createMockDB({
           return this;
         },
         async all() {
-          if (normalized.startsWith("SELECT * FROM installations WHERE id = ? LIMIT 1")) {
+          if (normalized.startsWith("SELECT * FROM installations WHERE id = ?")) {
             const id = Number(call.bound?.[0]);
-            const row = state.installations.find((item) => Number(item.id) === id);
-            return { results: row ? [row] : [] };
+            let rows = state.installations.filter((item) => Number(item.id) === id);
+            if (normalized.includes("AND tenant_id = ?")) {
+              const tenantId = String(call.bound?.[1] ?? "default");
+              rows = rows.filter(
+                (item) => String(item.tenant_id ?? "default") === tenantId,
+              );
+            }
+            return { results: rows.slice(0, 1) };
           }
 
-          if (normalized.startsWith("SELECT * FROM installations WHERE 1 = 1")) {
+          if (normalized.startsWith("SELECT * FROM installations WHERE")) {
             let rows = [...state.installations].sort((a, b) => {
               const byTimestamp = String(b.timestamp ?? "").localeCompare(String(a.timestamp ?? ""));
               if (byTimestamp !== 0) return byTimestamp;
@@ -172,6 +187,12 @@ function createMockDB({
             });
 
             let bindIndex = 0;
+            if (normalized.includes("tenant_id = ?")) {
+              const tenantId = String(call.bound?.[bindIndex++] ?? "default");
+              rows = rows.filter(
+                (row) => String(row.tenant_id ?? "default") === tenantId,
+              );
+            }
             if (normalized.includes("LOWER(COALESCE(client_name, '')) LIKE ?")) {
               const clientPattern = String(call.bound?.[bindIndex++] ?? "").toLowerCase();
               const clientNeedle = clientPattern.replace(/%/g, "");
@@ -218,9 +239,18 @@ function createMockDB({
             normalized.includes("COUNT(*) AS total_installations") &&
             !normalized.includes("substr(timestamp, 1, 10) AS day")
           ) {
-            const start = call.bound?.[1] ?? call.bound?.[0] ?? null;
-            const end = call.bound?.[3] ?? call.bound?.[2] ?? null;
-            const filtered = applyDateRange(state.installations, start, end);
+            let filtered = [...state.installations];
+            let bindOffset = 0;
+            if (normalized.includes("WHERE tenant_id = ?")) {
+              const tenantId = String(call.bound?.[bindOffset++] ?? "default");
+              filtered = filtered.filter(
+                (row) => String(row.tenant_id ?? "default") === tenantId,
+              );
+            }
+
+            const start = call.bound?.[bindOffset + 1] ?? call.bound?.[bindOffset] ?? null;
+            const end = call.bound?.[bindOffset + 3] ?? call.bound?.[bindOffset + 2] ?? null;
+            filtered = applyDateRange(filtered, start, end);
 
             const total = filtered.length;
             const successful = filtered.filter((row) => normalizeStatus(row.status) === "success").length;
@@ -250,9 +280,17 @@ function createMockDB({
           }
 
           if (normalized.startsWith("SELECT driver_brand AS brand, COUNT(*) AS count FROM installations")) {
-            const start = call.bound?.[1] ?? call.bound?.[0] ?? null;
-            const end = call.bound?.[3] ?? call.bound?.[2] ?? null;
-            const filtered = applyDateRange(state.installations, start, end);
+            let filtered = [...state.installations];
+            let bindOffset = 0;
+            if (normalized.includes("WHERE tenant_id = ?")) {
+              const tenantId = String(call.bound?.[bindOffset++] ?? "default");
+              filtered = filtered.filter(
+                (row) => String(row.tenant_id ?? "default") === tenantId,
+              );
+            }
+            const start = call.bound?.[bindOffset + 1] ?? call.bound?.[bindOffset] ?? null;
+            const end = call.bound?.[bindOffset + 3] ?? call.bound?.[bindOffset + 2] ?? null;
+            filtered = applyDateRange(filtered, start, end);
             const counts = new Map();
 
             for (const row of filtered) {
@@ -271,9 +309,18 @@ function createMockDB({
             normalized.includes("COUNT(*) AS total_installations") &&
             normalized.includes("GROUP BY substr(timestamp, 1, 10) ORDER BY day ASC")
           ) {
-            const start = String(call.bound?.[0] ?? "");
-            const end = String(call.bound?.[1] ?? "");
-            const filtered = state.installations.filter((row) => {
+            let bindOffset = 0;
+            let filtered = [...state.installations];
+            if (normalized.includes("WHERE tenant_id = ?")) {
+              const tenantId = String(call.bound?.[bindOffset++] ?? "default");
+              filtered = filtered.filter(
+                (row) => String(row.tenant_id ?? "default") === tenantId,
+              );
+            }
+
+            const start = String(call.bound?.[bindOffset] ?? "");
+            const end = String(call.bound?.[bindOffset + 1] ?? "");
+            filtered = filtered.filter((row) => {
               const ts = String(row.timestamp ?? "");
               return ts.localeCompare(start) >= 0 && ts.localeCompare(end) < 0;
             });
@@ -307,9 +354,17 @@ function createMockDB({
               "SELECT TRIM(driver_brand) AS brand, TRIM(driver_version) AS version, COUNT(*) AS count FROM installations",
             )
           ) {
-            const start = call.bound?.[1] ?? call.bound?.[0] ?? null;
-            const end = call.bound?.[3] ?? call.bound?.[2] ?? null;
-            const filtered = applyDateRange(state.installations, start, end);
+            let filtered = [...state.installations];
+            let bindOffset = 0;
+            if (normalized.includes("WHERE tenant_id = ?")) {
+              const tenantId = String(call.bound?.[bindOffset++] ?? "default");
+              filtered = filtered.filter(
+                (row) => String(row.tenant_id ?? "default") === tenantId,
+              );
+            }
+            const start = call.bound?.[bindOffset + 1] ?? call.bound?.[bindOffset] ?? null;
+            const end = call.bound?.[bindOffset + 3] ?? call.bound?.[bindOffset + 2] ?? null;
+            filtered = applyDateRange(filtered, start, end);
             const counts = new Map();
 
             for (const row of filtered) {
@@ -578,7 +633,23 @@ function createMockDB({
             });
 
             let bindIndex = 0;
+            if (normalized.includes("WHERE tenant_id = ?")) {
+              const tenantId = String(call.bound?.[bindIndex++] ?? "default");
+              rows = rows.filter(
+                (row) => String(row.tenant_id ?? "default") === tenantId,
+              );
+            }
             if (normalized.includes("WHERE (timestamp < ? OR (timestamp = ? AND id < ?))")) {
+              const cursorTs = String(call.bound?.[bindIndex++] ?? "");
+              const cursorTsEq = String(call.bound?.[bindIndex++] ?? "");
+              const cursorId = Number(call.bound?.[bindIndex++] ?? 0);
+              rows = rows.filter((row) => {
+                const ts = String(row.timestamp ?? "");
+                if (ts.localeCompare(cursorTs) < 0) return true;
+                return ts === cursorTsEq && Number(row.id) < cursorId;
+              });
+            }
+            if (normalized.includes("AND (timestamp < ? OR (timestamp = ? AND id < ?))")) {
               const cursorTs = String(call.bound?.[bindIndex++] ?? "");
               const cursorTsEq = String(call.bound?.[bindIndex++] ?? "");
               const cursorId = Number(call.bound?.[bindIndex++] ?? 0);
@@ -664,14 +735,26 @@ function createMockDB({
               "SELECT DISTINCT dt.fcm_token FROM device_tokens dt INNER JOIN web_users wu ON wu.id = dt.user_id WHERE wu.is_active = 1 AND wu.role IN (",
             )
           ) {
-            const roles = (call.bound || []).map((value) => String(value ?? "").toLowerCase());
+            let roleBindings = [...(call.bound || [])];
+            let tenantId = null;
+            if (
+              normalized.includes("AND wu.tenant_id = ?") &&
+              normalized.includes("AND dt.tenant_id = ?") &&
+              roleBindings.length >= 2
+            ) {
+              tenantId = String(roleBindings[roleBindings.length - 2] ?? "default");
+              roleBindings = roleBindings.slice(0, -2);
+            }
+
+            const roles = roleBindings.map((value) => String(value ?? "").toLowerCase());
             const allowedRoles = new Set(roles);
             const activeUserIds = new Set(
               state.webUsers
                 .filter(
                   (user) =>
                     Number(user.is_active) === 1 &&
-                    allowedRoles.has(String(user.role ?? "").toLowerCase()),
+                    allowedRoles.has(String(user.role ?? "").toLowerCase()) &&
+                    (!tenantId || String(user.tenant_id ?? "default") === tenantId),
                 )
                 .map((user) => Number(user.id)),
             );
@@ -681,6 +764,7 @@ function createMockDB({
               const token = String(row.fcm_token ?? "").trim();
               if (!token) continue;
               if (!activeUserIds.has(Number(row.user_id))) continue;
+              if (tenantId && String(row.tenant_id ?? "default") !== tenantId) continue;
               unique.add(token);
             }
 
@@ -694,13 +778,24 @@ function createMockDB({
         async run() {
           if (
             normalized.startsWith(
-              "INSERT INTO audit_logs (timestamp, action, username, success, details, computer_name, ip_address, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              "INSERT INTO audit_logs ( tenant_id, timestamp, action, username, success, details, computer_name, ip_address, platform ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
           ) {
             const id = nextAuditLogId++;
-            const [timestamp, action, username, success, details, computerName, ipAddress, platform] = call.bound;
+            const [
+              tenantId,
+              timestamp,
+              action,
+              username,
+              success,
+              details,
+              computerName,
+              ipAddress,
+              platform,
+            ] = call.bound;
             state.auditLogs.push({
               id,
+              tenant_id: tenantId,
               timestamp,
               action,
               username,
@@ -710,12 +805,45 @@ function createMockDB({
               ip_address: ipAddress,
               platform,
             });
-            return { success: true, meta: { last_row_id: id } };
+            return { success: true, meta: { last_row_id: id, changes: 1 } };
+          }
+
+          if (
+            normalized.startsWith(
+              "INSERT INTO audit_logs (timestamp, action, username, success, details, computer_name, ip_address, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+          ) {
+            const id = nextAuditLogId++;
+            const [timestamp, action, username, success, details, computerName, ipAddress, platform] = call.bound;
+            state.auditLogs.push({
+              id,
+              tenant_id: "default",
+              timestamp,
+              action,
+              username,
+              success,
+              details,
+              computer_name: computerName,
+              ip_address: ipAddress,
+              platform,
+            });
+            return { success: true, meta: { last_row_id: id, changes: 1 } };
           }
 
           if (normalized.startsWith("INSERT INTO installations")) {
             const id = nextInstallationId++;
-            const [timestamp, driverBrand, driverVersion, status, clientName, driverDescription, installationTime, osInfo, notes] =
+            const [
+              timestamp,
+              driverBrand,
+              driverVersion,
+              status,
+              clientName,
+              driverDescription,
+              installationTime,
+              osInfo,
+              notes,
+              tenantId,
+            ] =
               call.bound;
             state.installations.push({
               id,
@@ -728,18 +856,24 @@ function createMockDB({
               installation_time_seconds: installationTime,
               os_info: osInfo,
               notes,
+              tenant_id: tenantId || "default",
             });
-            return { success: true, meta: { last_row_id: id } };
+            return { success: true, meta: { last_row_id: id, changes: 1 } };
           }
 
           if (normalized.startsWith("UPDATE installations SET notes = ?, installation_time_seconds = ? WHERE id = ?")) {
-            const [notes, installationTimeSeconds, id] = call.bound;
-            const row = state.installations.find((item) => String(item.id) === String(id));
+            const [notes, installationTimeSeconds, id, tenantId] = call.bound;
+            const row = state.installations.find(
+              (item) =>
+                String(item.id) === String(id) &&
+                (!normalized.includes("AND tenant_id = ?") ||
+                  String(item.tenant_id ?? "default") === String(tenantId ?? "default")),
+            );
             if (row) {
               row.notes = notes;
               row.installation_time_seconds = installationTimeSeconds;
             }
-            return { success: true };
+            return { success: true, meta: { changes: row ? 1 : 0 } };
           }
 
           if (
@@ -989,6 +1123,51 @@ function createMockDB({
 
           if (
             normalized.startsWith(
+              "INSERT INTO device_tokens ( tenant_id, user_id, fcm_token, device_model, app_version, platform, registered_at, updated_at )",
+            )
+          ) {
+            const [
+              tenantId,
+              userId,
+              fcmToken,
+              deviceModel,
+              appVersion,
+              platform,
+              registeredAt,
+              updatedAt,
+            ] = call.bound;
+            const existing = state.deviceTokens.find(
+              (item) => String(item.fcm_token) === String(fcmToken),
+            );
+
+            if (existing) {
+              existing.tenant_id = tenantId || "default";
+              existing.user_id = userId;
+              existing.device_model = deviceModel;
+              existing.app_version = appVersion;
+              existing.platform = platform;
+              existing.registered_at = registeredAt;
+              existing.updated_at = updatedAt;
+              return { success: true, meta: { last_row_id: existing.id, changes: 1 } };
+            }
+
+            const id = nextDeviceTokenId++;
+            state.deviceTokens.push({
+              id,
+              tenant_id: tenantId || "default",
+              user_id: userId,
+              fcm_token: fcmToken,
+              device_model: deviceModel,
+              app_version: appVersion,
+              platform,
+              registered_at: registeredAt,
+              updated_at: updatedAt,
+            });
+            return { success: true, meta: { last_row_id: id, changes: 1 } };
+          }
+
+          if (
+            normalized.startsWith(
               "INSERT INTO device_tokens (user_id, fcm_token, device_model, app_version, platform, registered_at, updated_at)",
             )
           ) {
@@ -1005,7 +1184,7 @@ function createMockDB({
               existing.platform = platform;
               existing.registered_at = registeredAt;
               existing.updated_at = updatedAt;
-              return { success: true, meta: { last_row_id: existing.id } };
+              return { success: true, meta: { last_row_id: existing.id, changes: 1 } };
             }
 
             const id = nextDeviceTokenId++;
@@ -1019,7 +1198,7 @@ function createMockDB({
               registered_at: registeredAt,
               updated_at: updatedAt,
             });
-            return { success: true, meta: { last_row_id: id } };
+            return { success: true, meta: { last_row_id: id, changes: 1 } };
           }
 
           return { success: true };
@@ -1199,7 +1378,9 @@ test("GET /installations returns DB rows as JSON", async () => {
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.deepEqual(body, [{ id: 1, driver_brand: "Zebra", status: "success" }]);
+  assert.deepEqual(body, [
+    { id: 1, driver_brand: "Zebra", status: "success", tenant_id: "default" },
+  ]);
   assert.equal(db.calls.length, 1);
   assert.ok(db.calls[0].sql.startsWith("SELECT * FROM installations"));
 });
@@ -1302,11 +1483,12 @@ test("POST /installations inserts record with defaults and returns 201", async (
 
   const insertCall = db.calls.find((c) => c.sql.startsWith("INSERT INTO installations"));
   assert.ok(insertCall);
-  assert.equal(insertCall.bound.length, 9);
+  assert.equal(insertCall.bound.length, 10);
   assert.equal(insertCall.bound[1], "Magicard");
   assert.equal(insertCall.bound[2], "2.0.0");
   assert.equal(insertCall.bound[3], "unknown");
   assert.equal(insertCall.bound[6], 0);
+  assert.equal(insertCall.bound[9], "default");
 });
 
 test("POST /installations with empty payload uses fallback defaults", async () => {
@@ -1335,6 +1517,7 @@ test("POST /installations with empty payload uses fallback defaults", async () =
   assert.equal(insertCall.bound[6], 0);
   assert.equal(insertCall.bound[7], "");
   assert.equal(insertCall.bound[8], "");
+  assert.equal(insertCall.bound[9], "default");
 });
 
 test("POST /records creates manual record with explicit defaults", async () => {
@@ -1389,7 +1572,9 @@ test("POST /records respects provided fields", async () => {
 });
 
 test("PUT /installations/:id updates notes and installation time", async () => {
-  const db = createMockDB();
+  const db = createMockDB({
+    installations: [{ id: 42, notes: "", installation_time_seconds: 0 }],
+  });
   const request = new Request("https://worker.example/installations/42", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -1407,11 +1592,13 @@ test("PUT /installations/:id updates notes and installation time", async () => {
 
   const updateCall = db.calls.find((c) => c.sql.startsWith("UPDATE installations"));
   assert.ok(updateCall);
-  assert.deepEqual(updateCall.bound, ["Actualizado", 150, 42]);
+  assert.deepEqual(updateCall.bound, ["Actualizado", 150, 42, "default"]);
 });
 
 test("PUT /installations/:id with missing fields binds null values", async () => {
-  const db = createMockDB();
+  const db = createMockDB({
+    installations: [{ id: 77, notes: "", installation_time_seconds: 0 }],
+  });
   const request = new Request("https://worker.example/installations/77", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -1426,7 +1613,7 @@ test("PUT /installations/:id with missing fields binds null values", async () =>
 
   const updateCall = db.calls.find((c) => c.sql.startsWith("UPDATE installations"));
   assert.ok(updateCall);
-  assert.deepEqual(updateCall.bound, [null, null, 77]);
+  assert.deepEqual(updateCall.bound, [null, null, 77, "default"]);
 });
 
 test("PUT /installations/:id rejects invalid installation id", async () => {
@@ -2782,7 +2969,9 @@ test("POST /web/auth/login issues access token for web routes", async () => {
   const listBody = await listResponse.json();
 
   assert.equal(listResponse.status, 200);
-  assert.deepEqual(listBody, [{ id: 1, driver_brand: "Zebra", status: "success" }]);
+  assert.deepEqual(listBody, [
+    { id: 1, driver_brand: "Zebra", status: "success", tenant_id: "default" },
+  ]);
 });
 
 test("POST /web/auth/bootstrap creates first web user with hashed password", async () => {
@@ -3913,7 +4102,9 @@ test("accepts signed requests when auth secrets are configured", async () => {
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.deepEqual(body, [{ id: 1, driver_brand: "Zebra", status: "success" }]);
+  assert.deepEqual(body, [
+    { id: 1, driver_brand: "Zebra", status: "success", tenant_id: "default" },
+  ]);
 });
 
 

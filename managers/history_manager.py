@@ -268,39 +268,56 @@ class InstallationHistory:
             if api_url:
                 self.api_url = api_url.rstrip('/')
                 logger.info(f"API URL configured: {self.api_url[:30]}...")
-            
-            # Cargar credenciales de autenticación
-            # Prioridad: env de escritorio > config.enc > fallback mobile-app/.env
+
+            # Cargar credenciales de autenticacion
+            # Prioridad segura: env de escritorio > config.enc.
+            # Fallback a mobile-app/.env solo si se habilita explicitamente.
+            allow_mobile_secret_fallback = str(
+                os.getenv("DRIVER_MANAGER_ALLOW_MOBILE_ENV_FALLBACK", "")
+            ).strip().lower() in {"1", "true", "yes", "on"}
             self.api_token = (
                 os.getenv("DRIVER_MANAGER_API_TOKEN")
                 or config.get('api_token')
-                or local_env.get("EXPO_PUBLIC_API_TOKEN")
+                or (
+                    local_env.get("EXPO_PUBLIC_API_TOKEN")
+                    if allow_mobile_secret_fallback
+                    else None
+                )
             )
             self.api_secret = (
                 os.getenv("DRIVER_MANAGER_API_SECRET")
                 or config.get('api_secret')
-                or local_env.get("EXPO_PUBLIC_API_SECRET")
+                or (
+                    local_env.get("EXPO_PUBLIC_API_SECRET")
+                    if allow_mobile_secret_fallback
+                    else None
+                )
             )
-            
             if self.api_token and self.api_secret:
                 logger.info("API authentication configured successfully")
                 if (
+                    allow_mobile_secret_fallback
+                    and
                     not os.getenv("DRIVER_MANAGER_API_TOKEN")
                     and not config.get('api_token')
                     and local_env.get("EXPO_PUBLIC_API_TOKEN")
                 ):
                     logger.warning(
                         "Usando API token desde mobile-app/.env (fallback). "
-                        "Para desktop productivo define DRIVER_MANAGER_API_TOKEN o guarda api_token en config.enc."
+                        "Para desktop productivo deshabilita DRIVER_MANAGER_ALLOW_MOBILE_ENV_FALLBACK "
+                        "y define DRIVER_MANAGER_API_TOKEN o guarda api_token en config.enc."
                     )
                 if (
+                    allow_mobile_secret_fallback
+                    and
                     not os.getenv("DRIVER_MANAGER_API_SECRET")
                     and not config.get('api_secret')
                     and local_env.get("EXPO_PUBLIC_API_SECRET")
                 ):
                     logger.warning(
                         "Usando API secret desde mobile-app/.env (fallback). "
-                        "Para desktop productivo define DRIVER_MANAGER_API_SECRET o guarda api_secret en config.enc."
+                        "Para desktop productivo deshabilita DRIVER_MANAGER_ALLOW_MOBILE_ENV_FALLBACK "
+                        "y define DRIVER_MANAGER_API_SECRET o guarda api_secret en config.enc."
                     )
             else:
                 logger.warning(
