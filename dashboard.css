@@ -1240,6 +1240,21 @@ tr[data-id] {
     font-size: 0.8125rem;
 }
 
+.incident-meta-line {
+    display: block;
+    line-height: 1.45;
+    margin-top: 0.22rem;
+    word-break: break-word;
+}
+
+.incident-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.55rem;
+    align-items: center;
+}
+
 .asset-links-list {
     display: grid;
     gap: 0.5rem;
@@ -1363,6 +1378,16 @@ tr[data-id] {
 
     .modal-content.qr-modal {
         max-width: 100%;
+    }
+
+    .incident-actions {
+        gap: 0.45rem;
+    }
+
+    .incident-actions .btn-secondary,
+    .incident-actions .btn-primary {
+        padding: 0.45rem 0.72rem;
+        font-size: 0.82rem;
     }
 }
 

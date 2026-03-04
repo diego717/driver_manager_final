@@ -383,6 +383,7 @@ const api = {
 
 function showLogin() {
     resetProtectedViews();
+    syncRoleBasedNavigationAccess();
     document.getElementById('loginModal').classList.add('active');
     document.body.style.overflow = 'hidden';
 }
@@ -413,6 +414,7 @@ function resetProtectedViews() {
     currentSelectedInstallationId = null;
     currentAssetsData = [];
     currentSelectedAssetId = null;
+    syncRoleBasedNavigationAccess();
 }
 
 function hasActiveSession() {
@@ -425,6 +427,21 @@ function requireActiveSession() {
     return false;
 }
 
+function canCurrentUserAccessAudit() {
+    const role = String(currentUser?.role || '').toLowerCase();
+    return role === 'admin' || role === 'super_admin';
+}
+
+function syncRoleBasedNavigationAccess() {
+    const auditLink = document.querySelector('.nav-links a[data-section="audit"]');
+    if (!auditLink) return;
+    const shouldShowAudit = canCurrentUserAccessAudit();
+    const parent = auditLink.closest('li');
+    if (parent) {
+        parent.classList.toggle('is-hidden', !shouldShowAudit);
+    }
+}
+
 function applyAuthenticatedUser(user) {
     currentUser = user;
     document.getElementById('username').textContent = user.username || 'Usuario';
@@ -432,6 +449,7 @@ function applyAuthenticatedUser(user) {
     const initial = (user.username || 'U').charAt(0).toUpperCase();
     const avatarEl = document.getElementById('userInitial');
     if (avatarEl) avatarEl.textContent = initial;
+    syncRoleBasedNavigationAccess();
 }
 
 function normalizeSeverity(input) {
@@ -2294,10 +2312,10 @@ async function renderAssetDetail(data) {
         note.textContent = incident.note || '';
 
         const statusMeta = document.createElement('small');
-        statusMeta.className = 'asset-muted';
+        statusMeta.className = 'asset-muted incident-meta-line';
         statusMeta.textContent = `Estado: ${buildIncidentStatusText(incident)}`;
         const resolutionMeta = document.createElement('small');
-        resolutionMeta.className = 'asset-muted';
+        resolutionMeta.className = 'asset-muted incident-meta-line';
         resolutionMeta.textContent = incident.resolution_note
             ? `Resolución: ${incident.resolution_note}`
             : 'Resolución: -';
@@ -2311,10 +2329,7 @@ async function renderAssetDetail(data) {
         card.append(header, note, statusMeta, resolutionMeta, sub);
 
         const statusActions = document.createElement('div');
-        statusActions.style.display = 'flex';
-        statusActions.style.gap = '0.5rem';
-        statusActions.style.flexWrap = 'wrap';
-        statusActions.style.marginTop = '0.5rem';
+        statusActions.className = 'incident-actions';
         const incidentStatus = normalizeIncidentStatus(incident.incident_status);
 
         const makeStatusBtn = (label, statusValue) => {
@@ -2470,10 +2485,10 @@ async function renderIncidents(incidents, installationId) {
         note.textContent = inc.note || '';
 
         const statusMeta = document.createElement('small');
-        statusMeta.className = 'asset-muted';
+        statusMeta.className = 'asset-muted incident-meta-line';
         statusMeta.textContent = `Estado: ${buildIncidentStatusText(inc)}`;
         const resolutionMeta = document.createElement('small');
-        resolutionMeta.className = 'asset-muted';
+        resolutionMeta.className = 'asset-muted incident-meta-line';
         resolutionMeta.textContent = inc.resolution_note
             ? `Resolución: ${inc.resolution_note}`
             : 'Resolución: -';
@@ -2481,10 +2496,7 @@ async function renderIncidents(incidents, installationId) {
         incidentCard.append(incidentHeader, note, statusMeta, resolutionMeta);
 
         const statusActions = document.createElement('div');
-        statusActions.style.display = 'flex';
-        statusActions.style.gap = '0.5rem';
-        statusActions.style.flexWrap = 'wrap';
-        statusActions.style.marginTop = '0.5rem';
+        statusActions.className = 'incident-actions';
         const incidentStatus = normalizeIncidentStatus(inc.incident_status);
 
         const makeStatusBtn = (label, statusValue) => {
@@ -3496,6 +3508,10 @@ document.querySelectorAll('.nav-links a').forEach(link => {
         e.preventDefault();
         if (!requireActiveSession()) return;
         const section = link.dataset.section;
+        if (section === 'audit' && !canCurrentUserAccessAudit()) {
+            showNotification('No tienes permisos para acceder a Auditoria.', 'error');
+            return;
+        }
         
         document.querySelectorAll('.nav-links a').forEach(l => l.classList.remove('active'));
         link.classList.add('active');
