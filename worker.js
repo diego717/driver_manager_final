@@ -1635,7 +1635,9 @@ async function getIncidentsAfterId(
       status_updated_by,
       resolved_at,
       resolved_by,
-      resolution_note
+      resolution_note,
+      checklist_json,
+      evidence_note
     FROM incidents
     WHERE tenant_id = ?
       AND id > ?
@@ -1645,7 +1647,7 @@ async function getIncidentsAfterId(
     .bind(normalizedTenantId, lastId, limit)
     .all();
 
-  return results || [];
+  return (results || []).map((incident) => mapIncidentRow(incident));
 }
 
 async function getSseStatisticsSnapshot(env, tenantId = DEFAULT_REALTIME_TENANT_ID) {
@@ -4326,6 +4328,106 @@ function normalizeIncidentStatusPayload(data) {
   };
 }
 
+function parseIncidentChecklistItems(rawValue) {
+  if (rawValue === null || rawValue === undefined || rawValue === "") {
+    return [];
+  }
+
+  let parsed = rawValue;
+  if (typeof rawValue === "string") {
+    try {
+      parsed = JSON.parse(rawValue);
+    } catch {
+      return [];
+    }
+  }
+
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+
+  const deduped = [];
+  const seen = new Set();
+  for (const item of parsed) {
+    const normalized = normalizeOptionalString(item, "").trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    deduped.push(normalized);
+    if (deduped.length >= 30) break;
+  }
+  return deduped;
+}
+
+function normalizeIncidentEvidencePayload(data) {
+  if (!data || typeof data !== "object") {
+    throw new HttpError(400, "Payload invalido.");
+  }
+
+  const hasChecklistItems = Object.prototype.hasOwnProperty.call(data, "checklist_items");
+  const hasEvidenceNote = Object.prototype.hasOwnProperty.call(data, "evidence_note");
+
+  if (!hasChecklistItems && !hasEvidenceNote) {
+    throw new HttpError(400, "Debes enviar checklist_items o evidence_note.");
+  }
+
+  let checklistItems = null;
+  if (hasChecklistItems) {
+    if (data.checklist_items === null) {
+      checklistItems = [];
+    } else if (!Array.isArray(data.checklist_items)) {
+      throw new HttpError(400, "Campo 'checklist_items' invalido.");
+    } else {
+      checklistItems = [];
+      const seen = new Set();
+      for (const item of data.checklist_items) {
+        const normalized = normalizeOptionalString(item, "").trim();
+        if (!normalized || seen.has(normalized)) continue;
+        if (normalized.length > 180) {
+          throw new HttpError(400, "Cada item de checklist debe tener hasta 180 caracteres.");
+        }
+        seen.add(normalized);
+        checklistItems.push(normalized);
+        if (checklistItems.length > 30) {
+          throw new HttpError(400, "Campo 'checklist_items' supera el maximo permitido (30).");
+        }
+      }
+    }
+  }
+
+  let evidenceNote = null;
+  if (hasEvidenceNote) {
+    const normalizedNote = normalizeOptionalString(data.evidence_note, "").trim();
+    if (normalizedNote.length > 2000) {
+      throw new HttpError(400, "Campo 'evidence_note' supera el limite permitido.");
+    }
+    evidenceNote = normalizedNote || null;
+  }
+
+  return {
+    hasChecklistItems,
+    checklistItems,
+    hasEvidenceNote,
+    evidenceNote,
+  };
+}
+
+function mapIncidentRow(incident, photos = undefined) {
+  const safeIncident = incident && typeof incident === "object" ? incident : {};
+  const { checklist_json: _ignoredChecklistJson, ...rest } = safeIncident;
+
+  const mapped = {
+    ...rest,
+    checklist_items: parseIncidentChecklistItems(safeIncident.checklist_json),
+    evidence_note: normalizeOptionalString(safeIncident.evidence_note, "").trim() || null,
+  };
+
+  if (photos !== undefined) {
+    mapped.photos = photos;
+  }
+
+  return mapped;
+}
+
 function validateIncidentPayload(data, options = {}) {
   if (!data || typeof data !== "object") {
     throw new HttpError(400, "Payload inválido.");
@@ -4409,7 +4511,9 @@ export default {
             web_assets_resolve: "/web/assets/resolve",
             web_asset_link: "/web/assets/:asset_id/link-installation",
             web_incident_status: "/web/incidents/:incident_id/status",
+            web_incident_evidence: "/web/incidents/:incident_id/evidence",
             web_installation_incident_status: "/web/installations/:installation_id/incidents/:incident_id/status",
+            incident_evidence: "/incidents/:incident_id/evidence",
             web_drivers: "/web/drivers",
             web_drivers_upload: "/web/drivers",
             web_drivers_delete: "/web/drivers?key=drivers/default/Brand/Version/file.exe",
@@ -5372,7 +5476,7 @@ export default {
             const links = linkRows || [];
             const activeLink = links.find((link) => !link.unlinked_at) || null;
 
-            const { results: incidentRows } = await env.DB.prepare(`
+          const { results: incidentRows } = await env.DB.prepare(`
               SELECT
                 i.id,
                 i.installation_id,
@@ -5388,6 +5492,8 @@ export default {
                 i.resolved_at,
                 i.resolved_by,
                 i.resolution_note,
+                i.checklist_json,
+                i.evidence_note,
                 inst.client_name AS installation_client_name,
                 inst.driver_brand AS installation_brand,
                 inst.driver_version AS installation_version
@@ -5443,10 +5549,9 @@ export default {
               }
             }
 
-            const enrichedIncidents = incidents.map((incident) => ({
-              ...incident,
-              photos: photosByIncident[incident.id] || [],
-            }));
+            const enrichedIncidents = incidents.map((incident) =>
+              mapIncidentRow(incident, photosByIncident[incident.id] || [])
+            );
 
             return jsonResponse(request, env, corsPolicy, {
               success: true,
@@ -6251,7 +6356,9 @@ export default {
               status_updated_by,
               resolved_at,
               resolved_by,
-              resolution_note
+              resolution_note,
+              checklist_json,
+              evidence_note
             FROM incidents
             WHERE installation_id = ?
               AND tenant_id = ?
@@ -6279,10 +6386,9 @@ export default {
             photosByIncident[photo.incident_id].push(photo);
           }
 
-          const enriched = incidents.map((incident) => ({
-            ...incident,
-            photos: photosByIncident[incident.id] || [],
-          }));
+          const enriched = incidents.map((incident) =>
+            mapIncidentRow(incident, photosByIncident[incident.id] || [])
+          );
 
           return jsonResponse(request, env, corsPolicy,{
             success: true,
@@ -6407,7 +6513,7 @@ export default {
             platform: payload.source
           });
 
-          const incidentEventPayload = {
+          const incidentEventPayload = mapIncidentRow({
             id: incidentId,
             installation_id: installationId,
             reporter_username: payload.reporterUsername,
@@ -6422,7 +6528,9 @@ export default {
             resolved_at: null,
             resolved_by: null,
             resolution_note: null,
-          };
+            checklist_json: null,
+            evidence_note: null,
+          });
 
           await publishRealtimeEvent(env, {
             type: "incident_created",
@@ -6455,6 +6563,116 @@ export default {
         }
       }
 
+
+      if (
+        routeParts.length === 3 &&
+        routeParts[0] === "incidents" &&
+        routeParts[2] === "evidence"
+      ) {
+        if (request.method !== "PATCH") {
+          throw new HttpError(405, "Metodo no permitido para actualizar evidencia de incidencia.");
+        }
+
+        if (isWebRoute) {
+          requireAdminRole(webSession?.role);
+        }
+
+        const incidentId = parsePositiveInt(routeParts[1], "incident_id");
+        const data = await readJsonOrThrowBadRequest(request);
+        const payload = normalizeIncidentEvidencePayload(data);
+        const actorUsername = normalizeOptionalString(
+          isWebRoute ? webSession?.sub : data?.reporter_username || data?.username,
+          isWebRoute ? "web" : "api",
+        );
+
+        const { results: existingRows } = await env.DB.prepare(`
+          SELECT
+            i.id,
+            i.installation_id,
+            i.reporter_username,
+            i.note,
+            i.time_adjustment_seconds,
+            i.severity,
+            i.source,
+            i.created_at,
+            i.incident_status,
+            i.status_updated_at,
+            i.status_updated_by,
+            i.resolved_at,
+            i.resolved_by,
+            i.resolution_note,
+            i.checklist_json,
+            i.evidence_note
+          FROM incidents i
+          INNER JOIN installations inst
+            ON inst.id = i.installation_id
+          WHERE i.id = ?
+            AND i.tenant_id = ?
+            AND inst.tenant_id = ?
+          LIMIT 1
+        `)
+          .bind(incidentId, incidentsTenantId, incidentsTenantId)
+          .all();
+
+        const existingIncident = existingRows?.[0];
+        if (!existingIncident) {
+          throw new HttpError(404, "Incidencia no encontrada.");
+        }
+
+        const nextChecklistItems = payload.hasChecklistItems
+          ? payload.checklistItems
+          : parseIncidentChecklistItems(existingIncident.checklist_json);
+        const nextEvidenceNote = payload.hasEvidenceNote
+          ? payload.evidenceNote
+          : (normalizeOptionalString(existingIncident.evidence_note, "").trim() || null);
+
+        await env.DB.prepare(`
+          UPDATE incidents
+          SET
+            checklist_json = ?,
+            evidence_note = ?
+          WHERE id = ?
+            AND tenant_id = ?
+        `)
+          .bind(
+            JSON.stringify(nextChecklistItems || []),
+            nextEvidenceNote,
+            incidentId,
+            incidentsTenantId,
+          )
+          .run();
+
+        const incidentEventPayload = mapIncidentRow({
+          ...existingIncident,
+          checklist_json: JSON.stringify(nextChecklistItems || []),
+          evidence_note: nextEvidenceNote,
+        });
+
+        await logAuditEvent(env, {
+          action: "update_incident_evidence",
+          username: actorUsername,
+          success: true,
+          tenantId: incidentsTenantId,
+          details: {
+            incident_id: incidentId,
+            installation_id: existingIncident.installation_id,
+            checklist_items_count: (nextChecklistItems || []).length,
+            has_evidence_note: Boolean(nextEvidenceNote),
+          },
+          ipAddress: getClientIpForRateLimit(request),
+          platform: isWebRoute ? "web" : "api",
+        });
+
+        await publishRealtimeEvent(env, {
+          type: "incident_evidence_updated",
+          incident: incidentEventPayload,
+        }, realtimeTenantId);
+
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          incident: incidentEventPayload,
+        });
+      }
 
       if (
         (
@@ -6506,7 +6724,9 @@ export default {
             i.status_updated_by,
             i.resolved_at,
             i.resolved_by,
-            i.resolution_note
+            i.resolution_note,
+            i.checklist_json,
+            i.evidence_note
           FROM incidents i
           INNER JOIN installations inst
             ON inst.id = i.installation_id
@@ -6556,7 +6776,7 @@ export default {
           )
           .run();
 
-        const incidentEventPayload = {
+        const incidentEventPayload = mapIncidentRow({
           id: existingIncident.id,
           installation_id: existingIncident.installation_id,
           reporter_username: existingIncident.reporter_username,
@@ -6571,7 +6791,9 @@ export default {
           resolved_at: resolvedAt,
           resolved_by: resolvedBy,
           resolution_note: resolutionNote,
-        };
+          checklist_json: existingIncident.checklist_json,
+          evidence_note: existingIncident.evidence_note,
+        });
 
         await logAuditEvent(env, {
           action: "update_incident_status",

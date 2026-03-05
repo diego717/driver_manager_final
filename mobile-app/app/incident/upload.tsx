@@ -16,6 +16,7 @@ import {
 } from "react-native";
 
 import { uploadIncidentPhoto } from "@/src/api/photos";
+import { updateIncidentEvidence } from "@/src/api/incidents";
 import { extractApiError } from "@/src/api/client";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
@@ -384,8 +385,21 @@ export default function UploadIncidentPhotoScreen() {
 
     const failed: ConfirmedEvidence[] = [];
     let successCount = 0;
+    let metadataSaved = false;
+    let metadataError = "";
 
     try {
+      try {
+        const appliedChecklistItems = CHECKLIST_ITEMS.filter((label) => Boolean(selectedChecklist[label]));
+        await updateIncidentEvidence(parsedIncidentId, {
+          checklist_items: appliedChecklistItems,
+          evidence_note: note.trim() || null,
+        });
+        metadataSaved = true;
+      } catch (error) {
+        metadataError = extractApiError(error);
+      }
+
       for (const evidence of confirmedEvidence) {
         try {
           await uploadIncidentPhoto({
@@ -405,9 +419,11 @@ export default function UploadIncidentPhotoScreen() {
 
       if (failed.length === 0) {
         publishFeedback({
-          title: "Evidencias guardadas",
-          message: `Se subieron ${successCount} fotos para la incidencia #${parsedIncidentId}.`,
-          tone: "success",
+          title: metadataSaved ? "Evidencias guardadas" : "Evidencias parciales",
+          message: metadataSaved
+            ? `Se subieron ${successCount} fotos y se guardo checklist/nota para la incidencia #${parsedIncidentId}.`
+            : `Se subieron ${successCount} fotos, pero no se pudo guardar checklist/nota (${metadataError || "error desconocido"}).`,
+          tone: metadataSaved ? "success" : "info",
         });
         setConfirmedEvidence([]);
         setSelectedImage(null);
@@ -420,7 +436,9 @@ export default function UploadIncidentPhotoScreen() {
       setConfirmedEvidence(failed);
       publishFeedback({
         title: "Sincronizacion pendiente",
-        message: `Se subieron ${successCount}. Pendientes: ${failed.length}. Revisa conexion/permisos y vuelve a intentar confirmar.`,
+        message: metadataSaved
+          ? `Se subieron ${successCount}. Pendientes: ${failed.length}. Checklist/nota guardados. Revisa conexion/permisos y vuelve a intentar confirmar.`
+          : `Se subieron ${successCount}. Pendientes: ${failed.length}. Checklist/nota pendientes (${metadataError || "error desconocido"}).`,
         tone: "error",
       });
     } catch (error) {

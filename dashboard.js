@@ -1775,6 +1775,27 @@ function buildIncidentStatusText(incident) {
     return text;
 }
 
+function normalizeIncidentChecklistItems(value) {
+    if (Array.isArray(value)) {
+        return value
+            .map((item) => String(item || '').trim())
+            .filter((item) => item.length > 0);
+    }
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) {
+                return parsed
+                    .map((item) => String(item || '').trim())
+                    .filter((item) => item.length > 0);
+            }
+        } catch {
+            return [];
+        }
+    }
+    return [];
+}
+
 async function updateIncidentStatusFromWeb(incident, targetStatus, options = {}) {
     if (!requireActiveSession()) return;
     const incidentId = Number.parseInt(String(incident?.id), 10);
@@ -2424,6 +2445,20 @@ async function renderAssetDetail(data) {
         const statusMeta = document.createElement('small');
         statusMeta.className = 'asset-muted incident-meta-line';
         statusMeta.textContent = `Estado: ${buildIncidentStatusText(incident)}`;
+        const timeMeta = document.createElement('small');
+        timeMeta.className = 'asset-muted incident-meta-line';
+        timeMeta.textContent = `Ajuste tiempo: ${formatDuration(incident.time_adjustment_seconds ?? 0)}`;
+        const checklistItems = normalizeIncidentChecklistItems(incident.checklist_items);
+        const checklistMeta = document.createElement('small');
+        checklistMeta.className = 'asset-muted incident-meta-line';
+        checklistMeta.textContent = checklistItems.length
+            ? `Checklist: ${checklistItems.join(' · ')}`
+            : 'Checklist: -';
+        const evidenceMeta = document.createElement('small');
+        evidenceMeta.className = 'asset-muted incident-meta-line';
+        evidenceMeta.textContent = incident.evidence_note
+            ? `Nota operativa: ${incident.evidence_note}`
+            : 'Nota operativa: -';
         const resolutionMeta = document.createElement('small');
         resolutionMeta.className = 'asset-muted incident-meta-line';
         resolutionMeta.textContent = incident.resolution_note
@@ -2436,7 +2471,7 @@ async function renderAssetDetail(data) {
             `Cliente: ${incident.installation_client_name || '-'} · ` +
             `${incident.installation_brand || '-'} ${incident.installation_version || ''}`.trim();
 
-        card.append(header, note, statusMeta, resolutionMeta, sub);
+        card.append(header, note, statusMeta, timeMeta, checklistMeta, evidenceMeta, resolutionMeta, sub);
 
         const statusActions = document.createElement('div');
         statusActions.className = 'incident-actions';
@@ -2597,13 +2632,27 @@ async function renderIncidents(incidents, installationId) {
         const statusMeta = document.createElement('small');
         statusMeta.className = 'asset-muted incident-meta-line';
         statusMeta.textContent = `Estado: ${buildIncidentStatusText(inc)}`;
+        const timeMeta = document.createElement('small');
+        timeMeta.className = 'asset-muted incident-meta-line';
+        timeMeta.textContent = `Ajuste tiempo: ${formatDuration(inc.time_adjustment_seconds ?? 0)}`;
+        const checklistItems = normalizeIncidentChecklistItems(inc.checklist_items);
+        const checklistMeta = document.createElement('small');
+        checklistMeta.className = 'asset-muted incident-meta-line';
+        checklistMeta.textContent = checklistItems.length
+            ? `Checklist: ${checklistItems.join(' · ')}`
+            : 'Checklist: -';
+        const evidenceMeta = document.createElement('small');
+        evidenceMeta.className = 'asset-muted incident-meta-line';
+        evidenceMeta.textContent = inc.evidence_note
+            ? `Nota operativa: ${inc.evidence_note}`
+            : 'Nota operativa: -';
         const resolutionMeta = document.createElement('small');
         resolutionMeta.className = 'asset-muted incident-meta-line';
         resolutionMeta.textContent = inc.resolution_note
             ? `Resolución: ${inc.resolution_note}`
             : 'Resolución: -';
 
-        incidentCard.append(incidentHeader, note, statusMeta, resolutionMeta);
+        incidentCard.append(incidentHeader, note, statusMeta, timeMeta, checklistMeta, evidenceMeta, resolutionMeta);
 
         const statusActions = document.createElement('div');
         statusActions.className = 'incident-actions';

@@ -393,6 +393,25 @@ export default function IncidentDetailScreen() {
           </View>
 
           <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+            <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>Checklist aplicado</Text>
+            {incident.checklist_items?.length ? (
+              incident.checklist_items.map((item, index) => (
+                <Text key={`${item}-${index}`} style={[styles.cardText, { color: palette.textSecondary }]}>
+                  • {item}
+                </Text>
+              ))
+            ) : (
+              <Text style={[styles.hintText, { color: palette.textMuted }]}>
+                Sin checklist guardado.
+              </Text>
+            )}
+            <Text style={[styles.cardTitle, { color: palette.textPrimary, marginTop: 10 }]}>Nota operativa</Text>
+            <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+              {incident.evidence_note?.trim() ? incident.evidence_note : "Sin nota operativa."}
+            </Text>
+          </View>
+
+          <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
             <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>Fotos ({incident.photos?.length ?? 0})</Text>
             {!incident.photos?.length ? (
               <Text style={[styles.hintText, { color: palette.textMuted }]}>Esta incidencia aun no tiene fotos adjuntas.</Text>

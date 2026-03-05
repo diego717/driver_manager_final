@@ -37,6 +37,8 @@ export interface Incident {
   resolved_at?: string | null;
   resolved_by?: string | null;
   resolution_note?: string | null;
+  checklist_items?: string[];
+  evidence_note?: string | null;
   photos: IncidentPhoto[];
 }
 
@@ -77,6 +79,12 @@ export interface CreateIncidentResponse {
 export interface UpdateIncidentStatusInput {
   incident_status: IncidentStatus;
   resolution_note?: string;
+  reporter_username?: string;
+}
+
+export interface UpdateIncidentEvidenceInput {
+  checklist_items?: string[];
+  evidence_note?: string | null;
   reporter_username?: string;
 }
 
