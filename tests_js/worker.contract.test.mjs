@@ -3028,7 +3028,7 @@ test("POST /web/auth/login rejects oversized JSON payload without content-length
 
   assert.equal(response.status, 413);
   assert.equal(body.success, false);
-  assert.equal(body.error.code, "INVALID_REQUEST");
+  assert.equal(body.error.code, "PAYLOAD_TOO_LARGE");
 });
 
 test("POST /web/auth/bootstrap creates first web user with hashed password", async () => {
