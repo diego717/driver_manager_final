@@ -11,6 +11,8 @@ const WEB_SESSION_COOKIE_NAME = "__Host-web_session";
 const WEB_SESSION_STORE_TTL_SECONDS = WEB_ACCESS_TTL_SECONDS + 60;
 const WEB_LOGIN_RATE_LIMIT_MAX_ATTEMPTS = 5;
 const WEB_LOGIN_RATE_LIMIT_LOCKOUT_SECONDS = 15 * 60;
+const WEB_PASSWORD_VERIFY_RATE_LIMIT_MAX_ATTEMPTS = 8;
+const WEB_PASSWORD_VERIFY_RATE_LIMIT_LOCKOUT_SECONDS = 10 * 60;
 const MAX_WEB_AUTH_DEFAULT_BODY_BYTES = 64 * 1024;
 const MAX_WEB_AUTH_IMPORT_BODY_BYTES = 2 * 1024 * 1024;
 const WEB_PASSWORD_MIN_LENGTH = 12;
@@ -658,6 +660,18 @@ function buildWebBootstrapRateLimitIdentifier(request) {
   return `${getClientIpForRateLimit(request)}:bootstrap`;
 }
 
+function buildWebPasswordVerifyRateLimitKey(identifier) {
+  return `web_password_verify_attempts:${identifier}`;
+}
+
+function buildWebPasswordVerifyRateLimitIdentifier(request, session) {
+  const userId = Number.parseInt(String(session?.user_id ?? ""), 10);
+  const identityPart = Number.isInteger(userId) && userId > 0
+    ? String(userId)
+    : normalizeWebUsername(session?.sub || "unknown");
+  return `${getClientIpForRateLimit(request)}:${identityPart}`;
+}
+
 async function checkWebLoginRateLimit(env, identifier) {
   const kv = getRateLimitKv(env);
   if (!kv) return;
@@ -685,6 +699,36 @@ async function clearWebLoginRateLimit(env, identifier) {
   if (!kv) return;
 
   const key = buildWebLoginRateLimitKey(identifier);
+  await kv.delete(key);
+}
+
+async function checkWebPasswordVerifyRateLimit(env, identifier) {
+  const kv = getRateLimitKv(env);
+  if (!kv) return;
+
+  const key = buildWebPasswordVerifyRateLimitKey(identifier);
+  const attempts = normalizeRateLimitCounter(await kv.get(key));
+  if (attempts >= WEB_PASSWORD_VERIFY_RATE_LIMIT_MAX_ATTEMPTS) {
+    throw new HttpError(429, "Demasiados intentos fallidos. Intenta nuevamente en unos minutos.");
+  }
+}
+
+async function recordFailedWebPasswordVerifyAttempt(env, identifier) {
+  const kv = getRateLimitKv(env);
+  if (!kv) return;
+
+  const key = buildWebPasswordVerifyRateLimitKey(identifier);
+  const currentAttempts = normalizeRateLimitCounter(await kv.get(key));
+  await kv.put(key, String(currentAttempts + 1), {
+    expirationTtl: WEB_PASSWORD_VERIFY_RATE_LIMIT_LOCKOUT_SECONDS,
+  });
+}
+
+async function clearWebPasswordVerifyRateLimit(env, identifier) {
+  const kv = getRateLimitKv(env);
+  if (!kv) return;
+
+  const key = buildWebPasswordVerifyRateLimitKey(identifier);
   await kv.delete(key);
 }
 
@@ -3077,6 +3121,49 @@ async function authenticateWebUserByCredentials(env, { username, password }) {
   return user;
 }
 
+async function verifyCurrentWebUserPassword(env, session, password) {
+  if (!session) {
+    throw new HttpError(401, "Sesion web invalida.");
+  }
+
+  const sessionUserId = Number.parseInt(String(session.user_id ?? ""), 10);
+  const userBySessionId =
+    Number.isInteger(sessionUserId) && sessionUserId > 0
+      ? await getWebUserById(env, sessionUserId)
+      : null;
+  const user = userBySessionId || (await getWebUserByUsername(env, session.sub));
+
+  if (!user) {
+    throw new HttpError(401, "Sesion web invalida.");
+  }
+  if (!user.is_active) {
+    throw new HttpError(403, "Usuario web inactivo.");
+  }
+
+  const userTenantId = normalizeRealtimeTenantId(user.tenant_id);
+  const sessionTenantId = normalizeRealtimeTenantId(session.tenant_id);
+  if (userTenantId !== sessionTenantId) {
+    throw new HttpError(401, "Sesion web invalida.");
+  }
+
+  const hashType = normalizeWebHashType(user.password_hash_type, user.password_hash);
+  const validPassword = await verifyWebPassword(password, user.password_hash, hashType);
+  if (!validPassword) {
+    throw new HttpError(401, "Contrasena incorrecta.");
+  }
+
+  // Keep storage modernized without forcing a full login flow.
+  if (hashType === WEB_HASH_TYPE_BCRYPT) {
+    await migrateWebUserPasswordHashToPbkdf2(env, {
+      userId: Number(user.id),
+      password,
+    });
+    user.password_hash_type = WEB_HASH_TYPE_PBKDF2;
+  }
+
+  return user;
+}
+
 async function upsertDeviceTokenForWebUser(
   env,
   {
@@ -3370,6 +3457,61 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     );
     response.headers.append("Set-Cookie", buildWebSessionCookie(token.token, token.expires_in));
     return response;
+  }
+
+  if (pathParts[1] === "verify-password" && request.method === "POST") {
+    ensureDbBinding(env);
+    const session = await verifyWebAccessToken(request, env);
+    const rateLimitIdentifier = buildWebPasswordVerifyRateLimitIdentifier(request, session);
+    await checkWebPasswordVerifyRateLimit(env, rateLimitIdentifier);
+
+    const body = await readJsonOrThrowBadRequest(request, "Payload invalido.", {
+      maxBytes: MAX_WEB_AUTH_DEFAULT_BODY_BYTES,
+    });
+    const providedPassword = normalizeOptionalString(body?.password, "");
+    if (!providedPassword) {
+      throw new HttpError(400, "Campo 'password' es obligatorio.");
+    }
+
+    try {
+      const user = await verifyCurrentWebUserPassword(env, session, providedPassword);
+      await clearWebPasswordVerifyRateLimit(env, rateLimitIdentifier);
+
+      await logAuditEvent(env, {
+        action: "web_password_verified",
+        username: session.sub,
+        success: true,
+        tenantId: user.tenant_id,
+        details: {
+          user_id: Number(user.id),
+          role: user.role,
+        },
+        ipAddress: getClientIpForRateLimit(request),
+        platform: "web",
+      });
+
+      return jsonResponse(request, env, corsPolicy, {
+        success: true,
+        verified: true,
+      });
+    } catch (error) {
+      if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
+        await recordFailedWebPasswordVerifyAttempt(env, rateLimitIdentifier);
+        await logAuditEvent(env, {
+          action: "web_password_verify_failed",
+          username: session.sub || "unknown",
+          success: false,
+          tenantId: session.tenant_id,
+          details: {
+            reason: error.message,
+            status_code: error.status,
+          },
+          ipAddress: getClientIpForRateLimit(request),
+          platform: "web",
+        });
+      }
+      throw error;
+    }
   }
 
   if (pathParts[1] === "bootstrap" && request.method === "POST") {
@@ -3966,6 +4108,7 @@ export default {
           docs: {
             health: "/health",
             web_login: "/web/auth/login",
+            web_verify_password: "/web/auth/verify-password",
             web_bootstrap: "/web/auth/bootstrap",
             web_users: "/web/auth/users",
             web_user_update: "/web/auth/users/:user_id",

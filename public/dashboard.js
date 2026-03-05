@@ -2714,45 +2714,17 @@ function applyQrModalAccessState() {
 }
 
 async function verifyCurrentUserPassword(password) {
-    const username = normalizeAssetFormText(currentUser?.username || '', 128);
     const candidate = String(password || '');
-    if (!username) {
-        throw new Error('No se pudo validar usuario actual.');
-    }
     if (!candidate.trim()) {
         throw new Error('Debes ingresar tu contrasena.');
     }
 
-    const response = await fetch(API_BASE + '/web/auth/login', {
+    await api.request('/web/auth/verify-password', {
         method: 'POST',
-        credentials: 'include',
-        headers: {
-            'Content-Type': 'application/json'
-        },
         body: JSON.stringify({
-            username,
             password: candidate
-        }),
+        })
     });
-
-    const payload = await parseApiResponsePayload(response);
-
-    if (!response.ok) {
-        let errorMessage = 'Contrasena incorrecta o sesion invalida.';
-        if (payload && typeof payload === 'object') {
-            errorMessage = payload?.error?.message || payload?.message || errorMessage;
-        }
-        throw new Error(errorMessage);
-    }
-
-    // /web/auth/login rota session_version; sin refrescar el bearer local,
-    // las siguientes llamadas fallan con "Sesion web invalida o cerrada".
-    if (typeof payload?.access_token === 'string' && payload.access_token.trim()) {
-        webAccessToken = payload.access_token.trim();
-    }
-    if (payload?.user && typeof payload.user === 'object') {
-        applyAuthenticatedUser(payload.user);
-    }
 }
 
 function setQrPasswordModalError(message = '') {

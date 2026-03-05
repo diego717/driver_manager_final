@@ -3088,6 +3088,92 @@ test("POST /web/auth/login accepts username/password after bootstrap", async () 
   assert.equal(meBody.role, "admin");
 });
 
+test("POST /web/auth/verify-password validates current user password without re-login", async () => {
+  const db = createMockDB();
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const bootstrapBody = await bootstrapResponse.json();
+  assert.equal(bootstrapResponse.status, 201);
+
+  const verifyRequest = new Request("https://worker.example/web/auth/verify-password", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bootstrapBody.access_token}`,
+    },
+    body: JSON.stringify({
+      password: "StrongPass#2026",
+    }),
+  });
+
+  const verifyResponse = await workerFetch(verifyRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const verifyBody = await verifyResponse.json();
+
+  assert.equal(verifyResponse.status, 200);
+  assert.equal(verifyBody.success, true);
+  assert.equal(verifyBody.verified, true);
+});
+
+test("POST /web/auth/verify-password rejects wrong password", async () => {
+  const db = createMockDB();
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const bootstrapBody = await bootstrapResponse.json();
+  assert.equal(bootstrapResponse.status, 201);
+
+  const verifyRequest = new Request("https://worker.example/web/auth/verify-password", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bootstrapBody.access_token}`,
+    },
+    body: JSON.stringify({
+      password: "WrongPass#2026",
+    }),
+  });
+
+  const verifyResponse = await workerFetch(verifyRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const verifyBody = await verifyResponse.json();
+
+  assert.equal(verifyResponse.status, 401);
+  assert.equal(verifyBody.success, false);
+  assert.match(String(verifyBody?.error?.message || ""), /contrasena/i);
+});
+
 test("POST /web/installations/:id/incidents uses web session user as reporter by default", async () => {
   const db = createMockDB({
     installations: [{ id: 45, notes: "", installation_time_seconds: 0 }],
