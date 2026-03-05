@@ -64,6 +64,28 @@ function normalizeRouteParam(value: string | string[] | undefined): string {
   return value ?? "";
 }
 
+function normalizeRecordAttentionState(value: unknown): "clear" | "open" | "in_progress" | "resolved" | "critical" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (
+    normalized === "open" ||
+    normalized === "in_progress" ||
+    normalized === "resolved" ||
+    normalized === "critical"
+  ) {
+    return normalized;
+  }
+  return "clear";
+}
+
+function recordAttentionStateLabel(value: unknown): string {
+  const normalized = normalizeRecordAttentionState(value);
+  if (normalized === "critical") return "Critica";
+  if (normalized === "in_progress") return "En curso";
+  if (normalized === "open") return "Abierta";
+  if (normalized === "resolved") return "Resuelta";
+  return "Sin incidencias";
+}
+
 export default function CreateIncidentScreen() {
   const router = useRouter();
   const queryParams = useLocalSearchParams<{
@@ -164,7 +186,7 @@ export default function CreateIncidentScreen() {
         return current;
       });
     } catch (error) {
-      notify("Error", `No se pudo cargar instalaciones: ${extractApiError(error)}`);
+      notify("Error", `No se pudo cargar registros: ${extractApiError(error)}`);
     } finally {
       setLoadingInstallations(false);
     }
@@ -241,7 +263,7 @@ export default function CreateIncidentScreen() {
       }
       notify(
         "Registro creado",
-        `ID: ${createdId ?? "N/A"}\nAhora puedes adjuntar incidencia sin instalacion previa.`,
+        `ID: ${createdId ?? "N/A"}\nAhora puedes adjuntar incidencia sin registro previo.`,
       );
       setManualClientName("");
       setManualNotes("");
@@ -264,7 +286,7 @@ export default function CreateIncidentScreen() {
     const parsedTimeAdjustment = Number.parseInt(timeAdjustment, 10);
 
     if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) {
-      notify("Dato invalido", "installation_id debe ser un numero positivo.");
+      notify("Dato invalido", "El ID de registro debe ser un numero positivo.");
       return;
     }
     if (
@@ -272,8 +294,8 @@ export default function CreateIncidentScreen() {
       !installations.some((item) => item.id === parsedInstallationId)
     ) {
       notify(
-        "Instalacion no encontrada",
-        "Ese installation_id no existe en la lista cargada. Refresca o crea un registro manual.",
+        "Registro no encontrado",
+        "Ese ID de registro no existe en la lista cargada. Refresca o crea un registro manual.",
       );
       return;
     }
@@ -325,17 +347,17 @@ export default function CreateIncidentScreen() {
       if (assetLinkWarning) {
         notify(
           "Incidencia creada con advertencia",
-          `ID: ${response.incident.id}\nInstalacion: ${response.incident.installation_id}\nNo se pudo asociar equipo QR: ${assetLinkWarning}`,
+          `ID: ${response.incident.id}\nRegistro: ${response.incident.installation_id}\nNo se pudo asociar equipo QR: ${assetLinkWarning}`,
         );
       } else if (normalizedAssetCode) {
         notify(
           "Incidencia creada",
-          `ID: ${response.incident.id}\nInstalacion: ${response.incident.installation_id}\nEquipo asociado: ${normalizedAssetCode}`,
+          `ID: ${response.incident.id}\nRegistro: ${response.incident.installation_id}\nEquipo asociado: ${normalizedAssetCode}`,
         );
       } else {
         notify(
           "Incidencia creada",
-          `ID: ${response.incident.id}\nInstalacion: ${response.incident.installation_id}`,
+          `ID: ${response.incident.id}\nRegistro: ${response.incident.installation_id}`,
         );
       }
       setLastCreatedIncidentId(response.incident.id);
@@ -368,7 +390,7 @@ export default function CreateIncidentScreen() {
 
     const parsedInstallationId = Number.parseInt(installationId, 10);
     if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) {
-      notify("Dato invalido", "installation_id debe ser un numero positivo.");
+      notify("Dato invalido", "El ID de registro debe ser un numero positivo.");
       return;
     }
 
@@ -377,8 +399,8 @@ export default function CreateIncidentScreen() {
       !installations.some((item) => item.id === parsedInstallationId)
     ) {
       notify(
-        "Instalacion no encontrada",
-        "Ese installation_id no existe en la lista cargada. Refresca la lista.",
+        "Registro no encontrado",
+        "Ese ID de registro no existe en la lista cargada. Refresca la lista.",
       );
       return;
     }
@@ -416,6 +438,7 @@ export default function CreateIncidentScreen() {
   const renderInstallationChip = useCallback(
     ({ item }: { item: InstallationRecord }) => {
       const selected = String(item.id) === installationId;
+      const attentionLabel = recordAttentionStateLabel(item.attention_state);
       return (
         <TouchableOpacity
           style={[
@@ -428,7 +451,7 @@ export default function CreateIncidentScreen() {
           ]}
           onPress={() => setInstallationId(String(item.id))}
           accessibilityRole="button"
-          accessibilityLabel={`Seleccionar instalacion ${item.id}${item.client_name ? ` de ${item.client_name}` : ""}`}
+          accessibilityLabel={`Seleccionar registro ${item.id}${item.client_name ? ` de ${item.client_name}` : ""} con estado ${attentionLabel}`}
           accessibilityState={{ selected }}
         >
           <Text
@@ -438,7 +461,7 @@ export default function CreateIncidentScreen() {
               selected && { color: palette.chipSelectedText },
             ]}
           >
-            #{item.id} {item.client_name ? `- ${item.client_name}` : ""}
+            #{item.id} [{attentionLabel}] {item.client_name ? `- ${item.client_name}` : ""}
           </Text>
         </TouchableOpacity>
       );
@@ -553,10 +576,10 @@ export default function CreateIncidentScreen() {
         ]}
       >
         <Text style={[styles.optionalSectionTitle, { color: palette.optionalCardTitle }]}>
-          No tengo instalacion previa
+          No tengo registro previo
         </Text>
         <Text style={[styles.optionalSectionDescription, { color: palette.optionalCardBody }]}>
-          Crea primero un registro base solo si no aparece tu instalacion en la lista.
+          Crea primero un registro base solo si no aparece tu registro en la lista.
         </Text>
         <TouchableOpacity
           style={[
@@ -734,7 +757,7 @@ export default function CreateIncidentScreen() {
       ) : null}
 
       <View style={styles.rowBetween}>
-        <Text style={[styles.label, { color: palette.label }]}>Instalaciones disponibles</Text>
+        <Text style={[styles.label, { color: palette.label }]}>Registros disponibles</Text>
         <TouchableOpacity
           style={[
             styles.refreshButton,
@@ -745,7 +768,7 @@ export default function CreateIncidentScreen() {
           }}
           disabled={loadingInstallations}
           accessibilityRole="button"
-          accessibilityLabel="Refrescar lista de instalaciones"
+          accessibilityLabel="Refrescar lista de registros"
           accessibilityState={{ disabled: loadingInstallations, busy: loadingInstallations }}
         >
           {loadingInstallations ? (
@@ -756,12 +779,12 @@ export default function CreateIncidentScreen() {
         </TouchableOpacity>
       </View>
       {installations.length === 0 ? (
-        <Text style={[styles.hint, { color: palette.textMuted }]}>No hay instalaciones para seleccionar.</Text>
+        <Text style={[styles.hint, { color: palette.textMuted }]}>No hay registros para seleccionar.</Text>
       ) : (
         <>
           {installations.length > 30 ? (
             <Text style={[styles.hint, { color: palette.textMuted }]}>
-              Mostrando 30 de {installations.length}. Usa Installation ID para buscar otras.
+              Mostrando 30 de {installations.length}. Usa ID de registro para buscar otros.
             </Text>
           ) : null}
           <FlatList
@@ -780,7 +803,7 @@ export default function CreateIncidentScreen() {
         </>
       )}
 
-      <Text style={[styles.label, { color: palette.label }]}>Installation ID</Text>
+      <Text style={[styles.label, { color: palette.label }]}>ID de registro</Text>
       <TextInput
         value={installationId}
         onChangeText={setInstallationId}
@@ -788,7 +811,7 @@ export default function CreateIncidentScreen() {
         style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
         placeholder="1"
         placeholderTextColor={palette.placeholder}
-        accessibilityLabel="ID de instalacion para la incidencia"
+        accessibilityLabel="ID de registro para la incidencia"
       />
 
       <Text style={[styles.label, { color: palette.label }]}>Usuario</Text>

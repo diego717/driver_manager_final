@@ -51,6 +51,12 @@ export interface InstallationRecord {
   installation_time_seconds?: number;
   os_info?: string;
   notes?: string;
+  incident_open_count?: number;
+  incident_in_progress_count?: number;
+  incident_resolved_count?: number;
+  incident_active_count?: number;
+  incident_critical_active_count?: number;
+  attention_state?: "clear" | "open" | "in_progress" | "resolved" | "critical" | string;
 }
 
 export type CreateRecordInput = Omit<InstallationRecord, "id">;

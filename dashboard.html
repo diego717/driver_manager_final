@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0f756d">
-    <meta name="description" content="Dashboard de gestión de instalaciones de drivers">
+    <meta name="description" content="Dashboard de gestión de registros de drivers">
     <title>Driver Manager Dashboard</title>
-    <link rel="stylesheet" href="/dashboard.css">
-    <link rel="manifest" href="/manifest.json">
+    <link rel="stylesheet" href="/dashboard.css?v=92ac4b0b88">
+    <link rel="manifest" href="/manifest.json?v=c0f933f797">
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -27,7 +27,7 @@
             </div>
             <ul class="nav-links">
                 <li><a href="#" class="active" data-section="dashboard"><span class="material-symbols-outlined">dashboard</span> Dashboard</a></li>
-                <li><a href="#" data-section="installations"><span class="material-symbols-outlined">dns</span> Instalaciones</a></li>
+                <li><a href="#" data-section="installations"><span class="material-symbols-outlined">dns</span> Registros</a></li>
                 <li><a href="#" data-section="assets"><span class="material-symbols-outlined">inventory_2</span> Equipos</a></li>
                 <li><a href="#" data-section="drivers"><span class="material-symbols-outlined">upload_file</span> Drivers</a></li>
                 <li><a href="#" data-section="incidents"><span class="material-symbols-outlined">warning</span> Incidencias</a></li>
@@ -64,7 +64,7 @@
                     <div class="stat-card">
                         <div class="stat-icon total"><span class="material-symbols-outlined">inventory_2</span></div>
                         <div class="stat-info">
-                            <h3>Total Instalaciones</h3>
+                            <h3>Total Registros</h3>
                             <p id="totalInstallations">-</p>
                         </div>
                     </div>
@@ -98,18 +98,18 @@
                         <canvas id="successChart"></canvas>
                     </div>
                     <div class="chart-card">
-                        <h3><span class="material-symbols-outlined">sell</span> Instalaciones por Marca</h3>
+                        <h3><span class="material-symbols-outlined">sell</span> Registros por Marca</h3>
                         <canvas id="brandChart"></canvas>
                     </div>
                     <div class="chart-card wide">
-                        <h3><span class="material-symbols-outlined">trending_up</span> Tendencia de Instalaciones (Últimos 7 días)</h3>
+                        <h3><span class="material-symbols-outlined">trending_up</span> Tendencia de Registros (Últimos 7 días)</h3>
                         <canvas id="trendChart"></canvas>
                     </div>
                 </div>
                 
                 <!-- Recent Activity -->
                 <div class="recent-section">
-                    <h3><span class="material-symbols-outlined">schedule</span> Instalaciones Recientes</h3>
+                    <h3><span class="material-symbols-outlined">schedule</span> Registros Recientes</h3>
                     <div id="recentInstallations" class="table-container">
                         <p class="loading">Cargando...</p>
                     </div>
@@ -158,7 +158,7 @@
                 </div>
                 
                 <div id="installationsTable" class="table-container">
-                    <p class="loading">Cargando instalaciones...</p>
+                    <p class="loading">Cargando registros...</p>
                 </div>
             </div>
             
@@ -241,7 +241,7 @@
                         <option value="create_web_user">👤 Crear usuario</option>
                         <option value="update_web_user">✏️ Actualizar usuario</option>
                         <option value="create_incident">⚠️ Crear incidencia</option>
-                        <option value="create_installation">💻 Crear instalación</option>
+                        <option value="create_installation">💻 Crear registro</option>
                     </select>
                     <button id="refreshAudit" class="btn-secondary"><span class="material-symbols-outlined" style="font-size: 1rem;">refresh</span> Actualizar</button>
                 </div>
@@ -284,7 +284,7 @@
         <div class="modal-content qr-modal">
             <button type="button" class="close" aria-label="Cerrar generador QR">&times;</button>
             <h3>Alta de equipo y QR</h3>
-            <p class="qr-modal-subtitle">Genera codigos compatibles con mobile y guarda el equipo (marca/modelo/serie/cliente) para asociarlo luego a instalaciones o incidencias.</p>
+            <p class="qr-modal-subtitle">Genera codigos compatibles con mobile y guarda el equipo (marca/modelo/serie/cliente) para asociarlo luego a registros o incidencias.</p>
 
             <div class="qr-type-selector">
                 <label>
@@ -380,9 +380,9 @@
         </div>
     </div>
     
-    <script src="/dashboard-qr.js" defer></script>
-    <script src="/dashboard.js" defer></script>
-    <script src="/dashboard-pwa.js" defer></script>
+    <script src="/dashboard-qr.js?v=d8de215faf" defer></script>
+    <script src="/dashboard.js?v=66a480caaa" defer></script>
+    <script src="/dashboard-pwa.js?v=f2230f4810" defer></script>
 </body>
 </html>
 

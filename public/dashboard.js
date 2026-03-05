@@ -618,7 +618,7 @@ async function associateAssetFromWeb() {
     }
 
     const installationInput = prompt(
-        'ID de instalación destino:',
+        'ID de registro destino:',
         currentSelectedInstallationId ? String(currentSelectedInstallationId) : ''
     );
     if (installationInput === null) return;
@@ -645,7 +645,7 @@ async function associateAssetFromWeb() {
         });
 
         showNotification(
-            `Equipo ${externalCode} asociado a instalación #${installationId}.`,
+            `Equipo ${externalCode} asociado a registro #${installationId}.`,
             'success'
         );
         currentSelectedInstallationId = installationId;
@@ -835,7 +835,7 @@ function renderBrandChart(stats) {
         data: {
             labels: brands.map(b => b[0]),
             datasets: [{
-                label: 'Instalaciones',
+                label: 'Registros',
                 data: brands.map(b => b[1]),
                 backgroundColor: colors,
                 borderColor: colors.map(c => c.replace('0.8', '1')),
@@ -913,7 +913,7 @@ async function renderTrendChart() {
             data: {
                 labels: labels,
                 datasets: [{
-                    label: 'Instalaciones',
+                    label: 'Registros',
                     data: data,
                     borderColor: 'rgba(6, 182, 212, 1)',
                     backgroundColor: 'rgba(6, 182, 212, 0.1)',
@@ -987,7 +987,7 @@ function renderRecentInstallations(installations) {
     if (!installations || !installations.length) {
         const emptyMessage = document.createElement('p');
         emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No hay instalaciones recientes';
+        emptyMessage.textContent = 'No hay registros recientes';
         container.appendChild(emptyMessage);
         return;
     }
@@ -995,7 +995,7 @@ function renderRecentInstallations(installations) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'Estado', 'Fecha'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'Estado', 'Atención', 'Fecha'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -1027,10 +1027,17 @@ function renderRecentInstallations(installations) {
         statusBadge.textContent = `${statusIcon} ${inst.status || 'unknown'}`;
         statusCell.appendChild(statusBadge);
 
+        const attentionCell = document.createElement('td');
+        const attentionBadge = document.createElement('span');
+        const attentionMeta = buildRecordAttentionBadge(inst);
+        attentionBadge.className = `badge ${attentionMeta.stateClass}`;
+        attentionBadge.textContent = attentionMeta.text;
+        attentionCell.appendChild(attentionBadge);
+
         const dateCell = document.createElement('td');
         dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
 
-        row.append(idCell, clientCell, brandCell, statusCell, dateCell);
+        row.append(idCell, clientCell, brandCell, statusCell, attentionCell, dateCell);
         tbody.appendChild(row);
     });
 
@@ -1175,6 +1182,48 @@ function formatDuration(value) {
     return parts.join(' ');
 }
 
+function normalizeRecordAttentionState(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'critical' || normalized === 'in_progress' || normalized === 'open' || normalized === 'resolved') {
+        return normalized;
+    }
+    return 'clear';
+}
+
+function recordAttentionStateLabel(value) {
+    const normalized = normalizeRecordAttentionState(value);
+    if (normalized === 'critical') return 'Crítica';
+    if (normalized === 'in_progress') return 'En curso';
+    if (normalized === 'open') return 'Abierta';
+    if (normalized === 'resolved') return 'Resuelta';
+    return 'Sin incidencias';
+}
+
+function recordAttentionStateIcon(value) {
+    const normalized = normalizeRecordAttentionState(value);
+    if (normalized === 'critical') return '🚨';
+    if (normalized === 'in_progress') return '🟠';
+    if (normalized === 'open') return '🟡';
+    if (normalized === 'resolved') return '✅';
+    return '🟢';
+}
+
+function buildRecordAttentionBadge(record) {
+    const state = normalizeRecordAttentionState(record?.attention_state);
+    const activeCount = Number(record?.incident_active_count || 0);
+    const resolvedCount = Number(record?.incident_resolved_count || 0);
+    let countLabel = '';
+    if (state === 'resolved' && resolvedCount > 0) {
+        countLabel = ` (${resolvedCount})`;
+    } else if (activeCount > 0) {
+        countLabel = ` (${activeCount})`;
+    }
+    return {
+        stateClass: `attention-${state}`,
+        text: `${recordAttentionStateIcon(state)} ${recordAttentionStateLabel(state)}${countLabel}`,
+    };
+}
+
 // Export Functions
 function sanitizeSpreadsheetCell(value) {
     const normalized = String(value ?? '')
@@ -1203,7 +1252,7 @@ function escapeHtml(value) {
 function toExcelCell(value) {
     return escapeHtml(sanitizeSpreadsheetCell(value)).replace(/\n/g, '<br>');
 }
-function exportToCSV(data, filename = 'instalaciones.csv') {
+function exportToCSV(data, filename = 'registros.csv') {
     if (!data || !data.length) {
         showNotification('❌ No hay datos para exportar', 'error');
         return;
@@ -1245,7 +1294,7 @@ function exportToCSV(data, filename = 'instalaciones.csv') {
     showNotification(`✅ Exportado: ${filename}`, 'success');
 }
 
-function exportToExcel(data, filename = 'instalaciones.xls') {
+function exportToExcel(data, filename = 'registros.xls') {
     if (!data || !data.length) {
         showNotification('❌ No hay datos para exportar', 'error');
         return;
@@ -1476,7 +1525,7 @@ function setupAdvancedFilters() {
         const createRecordBtn = document.createElement('button');
         createRecordBtn.id = 'createManualRecordBtn';
         createRecordBtn.className = 'btn-secondary';
-        createRecordBtn.textContent = '📝 Registrar nuevo equipo';
+        createRecordBtn.textContent = '📝 Nuevo registro manual';
         createRecordBtn.addEventListener('click', () => {
             void createManualRecordFromWeb();
         });
@@ -1564,7 +1613,7 @@ async function loadInstallations() {
         // Update filter chips (in case they were cleared externally)
         updateFilterChips();
     } catch (err) {
-        container.innerHTML = '<p class="error">❌ Error cargando instalaciones</p>';
+        container.innerHTML = '<p class="error">❌ Error cargando registros</p>';
         if (resultsCount) {
             resultsCount.textContent = 'Error al cargar';
         }
@@ -1579,7 +1628,7 @@ function renderInstallationsTable(installations) {
     if (!installations || !installations.length) {
         const emptyMessage = document.createElement('p');
         emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No se encontraron instalaciones';
+        emptyMessage.textContent = 'No se encontraron registros';
         container.appendChild(emptyMessage);
         return;
     }
@@ -1587,7 +1636,7 @@ function renderInstallationsTable(installations) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo', 'Notas', 'Fecha', 'QR'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Atención', 'Tiempo', 'Notas', 'Fecha', 'QR'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -1623,6 +1672,13 @@ function renderInstallationsTable(installations) {
         statusBadge.textContent = `${statusIcon} ${inst.status || 'unknown'}`;
         statusCell.appendChild(statusBadge);
 
+        const attentionCell = document.createElement('td');
+        const attentionBadge = document.createElement('span');
+        const attentionMeta = buildRecordAttentionBadge(inst);
+        attentionBadge.className = `badge ${attentionMeta.stateClass}`;
+        attentionBadge.textContent = attentionMeta.text;
+        attentionCell.appendChild(attentionBadge);
+
         const timeCell = document.createElement('td');
         timeCell.textContent = formatDuration(inst.installation_time_seconds ?? 0);
 
@@ -1644,7 +1700,7 @@ function renderInstallationsTable(installations) {
         });
         qrCell.appendChild(qrButton);
 
-        row.append(idCell, clientCell, brandCell, versionCell, statusCell, timeCell, notesCell, dateCell, qrCell);
+        row.append(idCell, clientCell, brandCell, versionCell, statusCell, attentionCell, timeCell, notesCell, dateCell, qrCell);
         tbody.appendChild(row);
     });
 
@@ -2112,7 +2168,7 @@ async function createIncidentForAsset(assetId) {
         const activeInstallationId = Number(detail?.active_link?.installation_id);
         let targetInstallationId = activeInstallationId;
         if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-            const input = prompt('No hay instalacion activa para este equipo. ID de instalacion destino:', '');
+            const input = prompt('No hay registro activo para este equipo. ID de registro destino:', '');
             if (input === null) return;
             targetInstallationId = Number.parseInt(String(input).trim(), 10);
             if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
@@ -2166,7 +2222,7 @@ async function createIncidentForAsset(assetId) {
 
 async function linkAssetFromDetail(assetId) {
     if (!requireActiveSession()) return;
-    const installationInput = prompt('ID de instalacion a vincular con este equipo:', '');
+    const installationInput = prompt('ID de registro a vincular con este equipo:', '');
     if (installationInput === null) return;
     const installationId = Number.parseInt(String(installationInput).trim(), 10);
     if (!Number.isInteger(installationId) || installationId <= 0) {
@@ -2179,7 +2235,7 @@ async function linkAssetFromDetail(assetId) {
             installation_id: installationId,
             notes: 'Vinculo manual desde detalle de equipo',
         });
-        showNotification(`Equipo vinculado a instalacion #${installationId}.`, 'success');
+        showNotification(`Equipo vinculado a registro #${installationId}.`, 'success');
         await loadAssetDetail(assetId, { keepSelection: true });
     } catch (err) {
         showNotification(`No se pudo vincular equipo: ${err.message || err}`, 'error');
@@ -2476,7 +2532,7 @@ async function renderIncidents(incidents, installationId) {
     header.style.marginBottom = '1.5rem';
 
     const heading = document.createElement('h3');
-    heading.textContent = `⚠️ Incidencias de Instalación #${installationId}`;
+    heading.textContent = `⚠️ Incidencias de Registro #${installationId}`;
 
     const backButton = document.createElement('button');
     backButton.className = 'btn-secondary';
@@ -2503,7 +2559,7 @@ async function renderIncidents(incidents, installationId) {
     if (!incidents || !incidents.length) {
         const emptyMessage = document.createElement('p');
         emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No hay incidencias para esta instalación';
+        emptyMessage.textContent = 'No hay incidencias para este registro';
         container.appendChild(emptyMessage);
         return;
     }
@@ -2886,7 +2942,7 @@ function buildQrPayload(qrType, rawValue, assetData = null) {
     if (qrType === 'installation') {
         const installationId = Number.parseInt(String(rawValue || '').trim(), 10);
         if (!Number.isInteger(installationId) || installationId <= 0) {
-            throw new Error('El ID de instalacion debe ser un entero positivo.');
+            throw new Error('El ID de registro debe ser un entero positivo.');
         }
         return `dm://installation/${encodeURIComponent(String(installationId))}`;
     }
@@ -3547,7 +3603,7 @@ document.querySelectorAll('.nav-links a').forEach(link => {
         
         const titles = {
             dashboard: 'Dashboard',
-            installations: 'Instalaciones',
+            installations: 'Registros',
             assets: 'Equipos',
             drivers: 'Drivers',
             incidents: 'Incidencias',
@@ -3971,7 +4027,7 @@ function handleRealtimeInstallation(installation) {
     
     // Show notification
     const statusIcon = installation.status === 'success' ? '✅' : installation.status === 'failed' ? '❌' : '💻';
-    showNotification(`${statusIcon} Nueva instalación: ${installation.client_name || 'Sin cliente'}`, 'info');
+    showNotification(`${statusIcon} Nuevo registro: ${installation.client_name || 'Sin cliente'}`, 'info');
     
     // Refresh dashboard stats if on dashboard
     if (document.getElementById('dashboardSection')?.classList.contains('active')) {
@@ -4002,12 +4058,12 @@ function handleRealtimeInstallationDeleted(installation) {
             renderInstallationsTable(currentInstallationsData);
         }
     }
-    showNotification(`🗑️ Instalación #${installation.id} eliminada`, 'info');
+    showNotification(`🗑️ Registro #${installation.id} eliminado`, 'info');
 }
 
 function handleRealtimeIncident(incident) {
     const severityIcon = incident.severity === 'critical' ? '🔴' : incident.severity === 'high' ? '🟠' : '⚠️';
-    showNotification(`${severityIcon} Nueva incidencia en instalación #${incident.installation_id}`, 'warning');
+    showNotification(`${severityIcon} Nueva incidencia en registro #${incident.installation_id}`, 'warning');
 }
 
 function handleRealtimeIncidentStatusUpdate(incident) {

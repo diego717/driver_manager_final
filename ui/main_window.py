@@ -495,7 +495,7 @@ class MainWindow(QMainWindow):
 
         if not can_access_protected_tabs and self.tabs.currentIndex() != self.admin_tab_index:
             self.tabs.setCurrentIndex(self.admin_tab_index)
-            self.statusBar().showMessage("Inicia sesión para acceder a Drivers e Historial.", 5000)
+            self.statusBar().showMessage("Inicia sesión para acceder a Drivers y Registros.", 5000)
 
     def _on_tab_changed(self, tab_index):
         """Evitar navegación a tabs deshabilitados."""
@@ -659,9 +659,16 @@ class MainWindow(QMainWindow):
                 
                 brand = inst.get('driver_brand') or "N/A"
                 version = inst.get('driver_version') or "N/A"
+                attention_label = self._record_attention_label(inst.get("attention_state"))
+                attention_icon = self._record_attention_icon(inst.get("attention_state"))
+                active_incidents = self._coerce_seconds(inst.get("incident_active_count"), allow_negative=False)
                 text = f"{status_icon} {date_str} - {brand} v{version}"
                 if inst['client_name']:
                     text += f" ({inst['client_name']})"
+                if active_incidents > 0:
+                    text += f" | {attention_icon} {attention_label} ({active_incidents})"
+                else:
+                    text += f" | {attention_icon} {attention_label}"
                 
                 item = QListWidgetItem(text)
                 item.setData(Qt.ItemDataRole.UserRole, inst['id']) # Guardamos el ID
@@ -789,6 +796,39 @@ class MainWindow(QMainWindow):
             return "Resuelta"
         return "Abierta"
 
+    def _normalize_record_attention_state(self, raw_value):
+        """Normalizar estado operativo del registro según incidencias."""
+        state = str(raw_value or "").strip().lower()
+        if state in {"clear", "open", "in_progress", "resolved", "critical"}:
+            return state
+        return "clear"
+
+    def _record_attention_label(self, raw_value):
+        """Etiqueta amigable para el estado operativo del registro."""
+        normalized = self._normalize_record_attention_state(raw_value)
+        if normalized == "critical":
+            return "Crítica"
+        if normalized == "in_progress":
+            return "En curso"
+        if normalized == "open":
+            return "Abierta"
+        if normalized == "resolved":
+            return "Resuelta"
+        return "Sin incidencias"
+
+    def _record_attention_icon(self, raw_value):
+        """Icono corto para el estado operativo del registro."""
+        normalized = self._normalize_record_attention_state(raw_value)
+        if normalized == "critical":
+            return "!"
+        if normalized == "in_progress":
+            return "~"
+        if normalized == "open":
+            return "*"
+        if normalized == "resolved":
+            return "+"
+        return "-"
+
     def apply_incidents_filters(self):
         """Aplicar filtros sobre incidencias de la instalación seleccionada."""
         if not hasattr(self.history_tab, "incidents_installations_list"):
@@ -880,7 +920,7 @@ class MainWindow(QMainWindow):
         try:
             installations = self.history.get_installations(limit=limit)
         except Exception as e:
-            self.history_tab.incident_detail.setText(f"Error cargando instalaciones: {e}")
+            self.history_tab.incident_detail.setText(f"Error cargando registros: {e}")
             return
 
         selected_item = None
@@ -905,6 +945,13 @@ class MainWindow(QMainWindow):
             version = inst.get("driver_version") or "N/A"
             client = inst.get("client_name") or "Sin cliente"
             text = f"#{record_id} {status_icon} {date_str} - {brand} v{version} ({client})"
+            attention_label = self._record_attention_label(inst.get("attention_state"))
+            attention_icon = self._record_attention_icon(inst.get("attention_state"))
+            active_incidents = self._coerce_seconds(inst.get("incident_active_count"), allow_negative=False)
+            if active_incidents > 0:
+                text += f" | {attention_icon} {attention_label} ({active_incidents})"
+            else:
+                text += f" | {attention_icon} {attention_label}"
 
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, inst)
@@ -918,7 +965,7 @@ class MainWindow(QMainWindow):
         elif self.history_tab.incidents_installations_list.count() > 0:
             self.history_tab.incidents_installations_list.setCurrentRow(0)
         else:
-            self.history_tab.incident_detail.setText("No hay instalaciones para mostrar en este rango.")
+            self.history_tab.incident_detail.setText("No hay registros para mostrar en este rango.")
 
     def _on_incidents_installation_changed(self, current, _previous=None):
         """Recargar incidencias cuando cambia la instalación seleccionada."""
@@ -994,7 +1041,7 @@ class MainWindow(QMainWindow):
                 )
             else:
                 self.history_tab.incident_detail.setText(
-                    f"No hay incidencias para la instalación #{record_id}."
+                    f"No hay incidencias para el registro #{record_id}."
                 )
 
     def _on_incident_item_changed(self, current, _previous=None):
@@ -1024,7 +1071,7 @@ class MainWindow(QMainWindow):
         incident_status = self._normalize_incident_status(incident.get("incident_status"))
         details = (
             f"ID: {incident.get('id')}\n"
-            f"Instalación: {incident.get('installation_id')}\n"
+            f"Registro: {incident.get('installation_id')}\n"
             f"Severidad: {incident.get('severity')}\n"
             f"Estado: {self._incident_status_label(incident_status)}\n"
             f"Reportado por: {incident.get('reporter_username')}\n"
@@ -1074,13 +1121,13 @@ class MainWindow(QMainWindow):
 
         current_installation = self.history_tab.incidents_installations_list.currentItem()
         if current_installation is None:
-            QMessageBox.warning(self, "Atención", "Selecciona una instalación primero.")
+            QMessageBox.warning(self, "Atención", "Selecciona un registro primero.")
             return
 
         installation = current_installation.data(Qt.ItemDataRole.UserRole)
         record_id = installation.get("id") if isinstance(installation, dict) else None
         if record_id is None:
-            QMessageBox.warning(self, "Error", "No se pudo obtener el ID de instalación.")
+            QMessageBox.warning(self, "Error", "No se pudo obtener el ID de registro.")
             return
 
         self.create_incident_for_record(record_id)
@@ -1409,7 +1456,7 @@ class MainWindow(QMainWindow):
 
         note, ok = QInputDialog.getMultiLineText(
             self,
-            f"Nueva incidencia para instalación #{record_id}",
+            f"Nueva incidencia para registro #{record_id}",
             "Detalle de la incidencia:",
             "",
         )
@@ -1452,8 +1499,8 @@ class MainWindow(QMainWindow):
 
         apply_item, ok = QInputDialog.getItem(
             self,
-            "Aplicar a instalación",
-            "¿Aplicar nota/tiempo al registro de instalación?",
+            "Aplicar a registro",
+            "¿Aplicar nota/tiempo al registro?",
             ["No", "Sí"],
             0,
             False,
@@ -1493,7 +1540,7 @@ class MainWindow(QMainWindow):
         incident_status = self._normalize_incident_status(incident.get("incident_status"))
         details = (
             f"ID: {incident.get('id')}\n"
-            f"Instalación: {incident.get('installation_id')}\n"
+            f"Registro: {incident.get('installation_id')}\n"
             f"Severidad: {incident.get('severity')}\n"
             f"Estado: {self._incident_status_label(incident_status)}\n"
             f"Reportado por: {incident.get('reporter_username')}\n"
@@ -2179,7 +2226,7 @@ class MainWindow(QMainWindow):
         installation_id_text, ok = QInputDialog.getText(
             self,
             "Asociar equipo",
-            "ID de instalación destino:",
+            "ID de registro destino:",
             QLineEdit.EchoMode.Normal,
             installation_id_default,
         )
@@ -2191,7 +2238,7 @@ class MainWindow(QMainWindow):
             if installation_id <= 0:
                 raise ValueError
         except Exception:
-            QMessageBox.warning(self, "Dato inválido", "El ID de instalación debe ser un entero positivo.")
+            QMessageBox.warning(self, "Dato inválido", "El ID de registro debe ser un entero positivo.")
             return
 
         notes, ok = QInputDialog.getMultiLineText(
@@ -2217,10 +2264,10 @@ class MainWindow(QMainWindow):
                 (
                     f"Equipo asociado correctamente.\n\n"
                     f"Equipo: {resolved_code}\n"
-                    f"Instalación: #{linked_installation}"
+                    f"Registro: #{linked_installation}"
                 ),
             )
-            self.statusBar().showMessage("✅ Equipo asociado a instalación", 5000)
+            self.statusBar().showMessage("✅ Equipo asociado a registro", 5000)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"No se pudo asociar el equipo:\n{e}")
 

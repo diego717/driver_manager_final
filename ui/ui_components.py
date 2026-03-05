@@ -226,7 +226,7 @@ class HistoryTab(QWidget):
         view_layout.addWidget(QLabel("Vista:"))
         self.history_view_combo = QComboBox()
         self.history_view_combo.addItems([
-            "Últimas Instalaciones",
+            "Últimos Registros",
             "Por Cliente", 
             "Estadísticas",
             "Generar Reportes",
@@ -248,7 +248,7 @@ class HistoryTab(QWidget):
     
     def _create_history_views(self):
         """Crear las diferentes vistas del historial"""
-        # Vista 1: Últimas instalaciones
+        # Vista 1: Últimos registros
         inst_widget = QWidget()
         inst_layout = QVBoxLayout(inst_widget)
         
@@ -314,7 +314,7 @@ class HistoryTab(QWidget):
         incidents_layout.addWidget(title)
 
         controls_layout = QHBoxLayout()
-        controls_layout.addWidget(QLabel("Instalaciones:"))
+        controls_layout.addWidget(QLabel("Registros:"))
         self.incidents_installations_limit = QComboBox()
         self.incidents_installations_limit.addItems(["Últimas 10", "Últimas 25", "Últimas 50", "Últimas 100"])
         controls_layout.addWidget(self.incidents_installations_limit)
@@ -343,7 +343,7 @@ class HistoryTab(QWidget):
         split_layout = QHBoxLayout()
 
         installations_container = QVBoxLayout()
-        installations_container.addWidget(QLabel("Registros de Instalación"))
+        installations_container.addWidget(QLabel("Registros"))
         self.incidents_installations_list = QListWidget()
         self.incidents_installations_list.setMinimumWidth(320)
         installations_container.addWidget(self.incidents_installations_list)

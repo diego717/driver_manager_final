@@ -714,6 +714,11 @@ tr[data-id] {
 .badge.success { background: rgba(13, 159, 110, 0.1); color: var(--success); }
 .badge.failed { background: rgba(220, 38, 38, 0.1); color: var(--error); }
 .badge.unknown { background: rgba(95, 107, 122, 0.1); color: var(--text-secondary); }
+.badge.attention-clear { background: rgba(13, 159, 110, 0.1); color: var(--success); }
+.badge.attention-open { background: rgba(217, 119, 6, 0.1); color: var(--warning); }
+.badge.attention-in_progress { background: rgba(29, 78, 216, 0.12); color: #1d4ed8; }
+.badge.attention-resolved { background: rgba(13, 159, 110, 0.16); color: var(--success); }
+.badge.attention-critical { background: rgba(220, 38, 38, 0.18); color: var(--error); animation: pulse 2s infinite; }
 .badge.low { background: rgba(15, 117, 109, 0.1); color: var(--accent-primary); }
 .badge.medium { background: rgba(217, 119, 6, 0.1); color: var(--warning); }
 .badge.high { background: rgba(220, 38, 38, 0.1); color: var(--error); }

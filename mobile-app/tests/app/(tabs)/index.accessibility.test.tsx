@@ -162,7 +162,7 @@ describe("CreateIncidentScreen accessibility", () => {
       expect(incidentsApiMocks.listInstallations).toHaveBeenCalled();
     });
 
-    expect(view.getByLabelText("ID de instalacion para la incidencia")).toBeTruthy();
+    expect(view.getByLabelText("ID de registro para la incidencia")).toBeTruthy();
     expect(view.getByLabelText("Usuario reportante de la incidencia")).toBeTruthy();
     expect(view.getByLabelText("Nota de la incidencia")).toBeTruthy();
     expect(view.getByLabelText("Ajuste de tiempo en segundos")).toBeTruthy();
@@ -174,7 +174,7 @@ describe("CreateIncidentScreen accessibility", () => {
     );
     expect(flattenStyle(toggleManual.props.style).minHeight).toBeGreaterThanOrEqual(44);
 
-    const refreshButton = view.getByLabelText("Refrescar lista de instalaciones");
+    const refreshButton = view.getByLabelText("Refrescar lista de registros");
     expect(refreshButton.props.accessibilityRole).toBe("button");
     expect(refreshButton.props.accessibilityState).toEqual(
       expect.objectContaining({ disabled: false, busy: false }),
@@ -208,11 +208,11 @@ describe("CreateIncidentScreen accessibility", () => {
       .filter(Boolean);
 
     expect(labels.indexOf("Mostrar formulario de registro manual")).toBeGreaterThanOrEqual(0);
-    expect(labels.indexOf("Refrescar lista de instalaciones")).toBeGreaterThan(
+    expect(labels.indexOf("Refrescar lista de registros")).toBeGreaterThan(
       labels.indexOf("Mostrar formulario de registro manual"),
     );
     expect(labels.indexOf("Crear incidencia")).toBeGreaterThan(
-      labels.indexOf("Refrescar lista de instalaciones"),
+      labels.indexOf("Refrescar lista de registros"),
     );
   });
 
@@ -234,7 +234,7 @@ describe("CreateIncidentScreen accessibility", () => {
     expect(installationList.props.initialNumToRender).toBe(8);
     expect(installationList.props.windowSize).toBe(5);
     expect(installationList.props.removeClippedSubviews).toBe(true);
-    expect(view.queryByText("#9 - Cliente 9")).toBeNull();
+    expect(view.queryByText("#9 [Sin incidencias] - Cliente 9")).toBeNull();
 
     fireEvent.scroll(installationList, {
       nativeEvent: {
@@ -244,6 +244,6 @@ describe("CreateIncidentScreen accessibility", () => {
       },
     });
 
-    expect(view.getByText("#9 - Cliente 9")).toBeTruthy();
+    expect(view.getByText("#9 [Sin incidencias] - Cliente 9")).toBeTruthy();
   });
 });

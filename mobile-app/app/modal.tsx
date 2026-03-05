@@ -256,7 +256,7 @@ export default function ApiSettingsScreen() {
     try {
       setTesting(true);
       const records = await listInstallations();
-      notify("Conexion OK", `Instalaciones visibles: ${records.length}`);
+      notify("Conexion OK", `Registros visibles: ${records.length}`);
     } catch (error) {
       notify("Fallo de conexion", extractApiError(error));
     } finally {

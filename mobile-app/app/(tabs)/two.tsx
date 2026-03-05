@@ -21,6 +21,28 @@ import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 import { type Incident, type InstallationRecord } from "@/src/types/api";
 
+function normalizeRecordAttentionState(value: unknown): "clear" | "open" | "in_progress" | "resolved" | "critical" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (
+    normalized === "open" ||
+    normalized === "in_progress" ||
+    normalized === "resolved" ||
+    normalized === "critical"
+  ) {
+    return normalized;
+  }
+  return "clear";
+}
+
+function recordAttentionStateLabel(value: unknown): string {
+  const normalized = normalizeRecordAttentionState(value);
+  if (normalized === "critical") return "Critica";
+  if (normalized === "in_progress") return "En curso";
+  if (normalized === "open") return "Abierta";
+  if (normalized === "resolved") return "Resuelta";
+  return "Sin incidencias";
+}
+
 export default function IncidentListScreen() {
   const palette = useAppPalette();
   const router = useRouter();
@@ -62,7 +84,7 @@ export default function IncidentListScreen() {
         return;
       }
       if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-        Alert.alert("Dato invalido", "installation_id debe ser un numero positivo.");
+        Alert.alert("Dato invalido", "El ID de registro debe ser un numero positivo.");
         return;
       }
 
@@ -99,7 +121,7 @@ export default function IncidentListScreen() {
           return current;
         });
       } catch (error) {
-        Alert.alert("Error", `No se pudo cargar instalaciones: ${extractApiError(error)}`);
+        Alert.alert("Error", `No se pudo cargar registros: ${extractApiError(error)}`);
       } finally {
         setLoadingInstallations(false);
       }
@@ -188,7 +210,7 @@ export default function IncidentListScreen() {
       <Text style={[styles.title, { color: palette.textPrimary }]}>Incidencias</Text>
 
       <View style={styles.rowBetween}>
-        <Text style={[styles.label, { color: palette.textSecondary }]}>Instalaciones disponibles</Text>
+        <Text style={[styles.label, { color: palette.textSecondary }]}>Registros disponibles</Text>
         <TouchableOpacity
           style={[
             styles.refreshButton,
@@ -207,17 +229,18 @@ export default function IncidentListScreen() {
         </TouchableOpacity>
       </View>
       {installations.length === 0 ? (
-        <Text style={[styles.emptyText, { color: palette.textMuted }]}>No hay instalaciones para seleccionar.</Text>
+        <Text style={[styles.emptyText, { color: palette.textMuted }]}>No hay registros para seleccionar.</Text>
       ) : (
         <>
           {installations.length > 30 ? (
             <Text style={[styles.emptyText, { color: palette.textMuted }]}>
-              Mostrando 30 de {installations.length}. Usa Installation ID para buscar otras.
+              Mostrando 30 de {installations.length}. Usa ID de registro para buscar otras.
             </Text>
           ) : null}
           <View style={styles.chipsWrap}>
             {installations.slice(0, 30).map((item) => {
               const selected = String(item.id) === installationId;
+              const attentionLabel = recordAttentionStateLabel(item.attention_state);
               return (
                 <TouchableOpacity
                   key={item.id}
@@ -241,7 +264,7 @@ export default function IncidentListScreen() {
                       selected && { color: palette.chipSelectedText },
                     ]}
                   >
-                    #{item.id} {item.client_name ? `- ${item.client_name}` : ""}
+                    #{item.id} [{attentionLabel}] {item.client_name ? `- ${item.client_name}` : ""}
                   </Text>
                 </TouchableOpacity>
               );
@@ -250,7 +273,7 @@ export default function IncidentListScreen() {
         </>
       )}
 
-      <Text style={[styles.label, { color: palette.textSecondary }]}>Installation ID</Text>
+      <Text style={[styles.label, { color: palette.textSecondary }]}>ID de registro</Text>
       <TextInput
         value={installationId}
         onChangeText={setInstallationId}
@@ -287,7 +310,7 @@ export default function IncidentListScreen() {
 
       <View style={styles.section}>
         {incidents.length === 0 ? (
-          <Text style={[styles.emptyText, { color: palette.textMuted }]}>Sin datos cargados.</Text>
+          <Text style={[styles.emptyText, { color: palette.textMuted }]}>Sin incidencias cargadas.</Text>
         ) : (
           incidents.map((incident) => (
             <View

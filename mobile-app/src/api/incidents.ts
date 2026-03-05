@@ -38,9 +38,21 @@ function normalizeInstallationId(rawId: number | string): number {
 }
 
 function normalizeInstallationRecord(record: RawInstallationRecord): InstallationRecord {
+  const asOptionalNonNegativeInt = (value: unknown): number | undefined => {
+    if (value === null || value === undefined || value === "") return undefined;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return 0;
+    return Math.trunc(parsed);
+  };
+
   return {
     ...record,
     id: normalizeInstallationId(record.id),
+    incident_open_count: asOptionalNonNegativeInt(record.incident_open_count),
+    incident_in_progress_count: asOptionalNonNegativeInt(record.incident_in_progress_count),
+    incident_resolved_count: asOptionalNonNegativeInt(record.incident_resolved_count),
+    incident_active_count: asOptionalNonNegativeInt(record.incident_active_count),
+    incident_critical_active_count: asOptionalNonNegativeInt(record.incident_critical_active_count),
   };
 }
 
