@@ -435,6 +435,65 @@ function createMockDB({
 
           if (
             normalized.startsWith(
+              "SELECT installation_id, SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'open' THEN 1 ELSE 0 END) AS incident_open_count",
+            ) &&
+            normalized.includes("FROM incidents") &&
+            normalized.includes("GROUP BY installation_id")
+          ) {
+            let bindIndex = 0;
+            let tenantId = null;
+            if (normalized.includes("WHERE tenant_id = ?")) {
+              tenantId = String(call.bound?.[bindIndex++] ?? "default");
+            }
+
+            const installationIds = (call.bound || [])
+              .slice(bindIndex)
+              .map((value) => Number(value))
+              .filter((value) => Number.isInteger(value) && value > 0);
+            const installationIdSet = new Set(installationIds);
+
+            const grouped = new Map();
+            for (const incident of state.incidents) {
+              const installationId = Number(incident.installation_id);
+              if (!installationIdSet.has(installationId)) continue;
+              if (tenantId && String(incident.tenant_id ?? "default") !== tenantId) continue;
+
+              const status = String(incident.incident_status ?? "open").toLowerCase();
+              const normalizedStatus =
+                status === "in_progress" || status === "resolved" ? status : "open";
+              const severity = String(incident.severity ?? "").toLowerCase();
+              const current = grouped.get(installationId) || {
+                installation_id: installationId,
+                incident_open_count: 0,
+                incident_in_progress_count: 0,
+                incident_resolved_count: 0,
+                incident_active_count: 0,
+                incident_critical_active_count: 0,
+              };
+
+              if (normalizedStatus === "resolved") {
+                current.incident_resolved_count += 1;
+              } else if (normalizedStatus === "in_progress") {
+                current.incident_in_progress_count += 1;
+                current.incident_active_count += 1;
+                if (severity === "critical") {
+                  current.incident_critical_active_count += 1;
+                }
+              } else {
+                current.incident_open_count += 1;
+                current.incident_active_count += 1;
+                if (severity === "critical") {
+                  current.incident_critical_active_count += 1;
+                }
+              }
+              grouped.set(installationId, current);
+            }
+
+            return { results: [...grouped.values()] };
+          }
+
+          if (
+            normalized.startsWith(
               "SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at FROM incident_photos p INNER JOIN incidents i ON i.id = p.incident_id WHERE i.installation_id = ?",
             )
           ) {
@@ -1379,9 +1438,20 @@ test("GET /installations returns DB rows as JSON", async () => {
 
   assert.equal(response.status, 200);
   assert.deepEqual(body, [
-    { id: 1, driver_brand: "Zebra", status: "success", tenant_id: "default" },
+    {
+      id: 1,
+      driver_brand: "Zebra",
+      status: "success",
+      tenant_id: "default",
+      incident_open_count: 0,
+      incident_in_progress_count: 0,
+      incident_resolved_count: 0,
+      incident_active_count: 0,
+      incident_critical_active_count: 0,
+      attention_state: "clear",
+    },
   ]);
-  assert.equal(db.calls.length, 1);
+  assert.equal(db.calls.length, 2);
   assert.ok(db.calls[0].sql.startsWith("SELECT * FROM installations"));
 });
 
@@ -3019,7 +3089,18 @@ test("POST /web/auth/login issues access token for web routes", async () => {
 
   assert.equal(listResponse.status, 200);
   assert.deepEqual(listBody, [
-    { id: 1, driver_brand: "Zebra", status: "success", tenant_id: "default" },
+    {
+      id: 1,
+      driver_brand: "Zebra",
+      status: "success",
+      tenant_id: "default",
+      incident_open_count: 0,
+      incident_in_progress_count: 0,
+      incident_resolved_count: 0,
+      incident_active_count: 0,
+      incident_critical_active_count: 0,
+      attention_state: "clear",
+    },
   ]);
 });
 
@@ -4295,7 +4376,18 @@ test("accepts signed requests when auth secrets are configured", async () => {
 
   assert.equal(response.status, 200);
   assert.deepEqual(body, [
-    { id: 1, driver_brand: "Zebra", status: "success", tenant_id: "default" },
+    {
+      id: 1,
+      driver_brand: "Zebra",
+      status: "success",
+      tenant_id: "default",
+      incident_open_count: 0,
+      incident_in_progress_count: 0,
+      incident_resolved_count: 0,
+      incident_active_count: 0,
+      incident_critical_active_count: 0,
+      attention_state: "clear",
+    },
   ]);
 });
 

@@ -914,6 +914,133 @@ function normalizeInstallationUpdatePayload(data) {
   };
 }
 
+function normalizeIncidentLifecycleStatus(value) {
+  const normalized = normalizeOptionalString(value, "open").toLowerCase();
+  if (normalized === "in_progress" || normalized === "resolved") {
+    return normalized;
+  }
+  return "open";
+}
+
+function deriveInstallationAttentionState(summary) {
+  const criticalActive = normalizeNonNegativeInteger(summary?.incident_critical_active_count, 0);
+  if (criticalActive > 0) return "critical";
+
+  const inProgress = normalizeNonNegativeInteger(summary?.incident_in_progress_count, 0);
+  if (inProgress > 0) return "in_progress";
+
+  const open = normalizeNonNegativeInteger(summary?.incident_open_count, 0);
+  if (open > 0) return "open";
+
+  const resolved = normalizeNonNegativeInteger(summary?.incident_resolved_count, 0);
+  if (resolved > 0) return "resolved";
+
+  return "clear";
+}
+
+function buildDefaultInstallationOperationalSummary() {
+  return {
+    incident_open_count: 0,
+    incident_in_progress_count: 0,
+    incident_resolved_count: 0,
+    incident_active_count: 0,
+    incident_critical_active_count: 0,
+    attention_state: "clear",
+  };
+}
+
+function mapInstallationWithOperationalState(installation, summaryById) {
+  const installationId = Number(installation?.id);
+  const summary =
+    (Number.isInteger(installationId) ? summaryById.get(installationId) : null) ||
+    buildDefaultInstallationOperationalSummary();
+  return {
+    ...installation,
+    ...summary,
+  };
+}
+
+function isMissingIncidentsTableError(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  return message.includes("no such table") && message.includes("incidents");
+}
+
+async function loadInstallationOperationalSummaries(env, installationIds, tenantId) {
+  const ids = [...new Set(
+    (installationIds || [])
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value > 0),
+  )];
+  const summaryById = new Map();
+  if (!ids.length) {
+    return summaryById;
+  }
+
+  const placeholders = ids.map(() => "?").join(", ");
+  const mapRows = (rows) => {
+    for (const row of rows || []) {
+      const installationId = Number(row?.installation_id);
+      if (!Number.isInteger(installationId) || installationId <= 0) continue;
+      const summary = {
+        incident_open_count: normalizeNonNegativeInteger(row?.incident_open_count, 0),
+        incident_in_progress_count: normalizeNonNegativeInteger(row?.incident_in_progress_count, 0),
+        incident_resolved_count: normalizeNonNegativeInteger(row?.incident_resolved_count, 0),
+        incident_active_count: normalizeNonNegativeInteger(row?.incident_active_count, 0),
+        incident_critical_active_count: normalizeNonNegativeInteger(
+          row?.incident_critical_active_count,
+          0,
+        ),
+      };
+      summary.attention_state = deriveInstallationAttentionState(summary);
+      summaryById.set(installationId, summary);
+    }
+  };
+
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT
+        installation_id,
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'open' THEN 1 ELSE 0 END) AS incident_open_count,
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'resolved' THEN 1 ELSE 0 END) AS incident_resolved_count,
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') THEN 1 ELSE 0 END) AS incident_active_count,
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count
+      FROM incidents
+      WHERE tenant_id = ?
+        AND installation_id IN (${placeholders})
+      GROUP BY installation_id
+    `)
+      .bind(tenantId, ...ids)
+      .all();
+    mapRows(results);
+    return summaryById;
+  } catch (error) {
+    if (isMissingIncidentsTableError(error)) {
+      return summaryById;
+    }
+    if (!isMissingTenantColumnError(error)) {
+      throw error;
+    }
+  }
+
+  const { results } = await env.DB.prepare(`
+    SELECT
+      installation_id,
+      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'open' THEN 1 ELSE 0 END) AS incident_open_count,
+      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
+      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'resolved' THEN 1 ELSE 0 END) AS incident_resolved_count,
+      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') THEN 1 ELSE 0 END) AS incident_active_count,
+      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count
+    FROM incidents
+    WHERE installation_id IN (${placeholders})
+    GROUP BY installation_id
+  `)
+    .bind(...ids)
+    .all();
+  mapRows(results);
+  return summaryById;
+}
+
 function normalizeAssetExternalCode(value) {
   const normalized = normalizeOptionalString(value, "")
     .replace(/\s+/g, " ")
@@ -5787,7 +5914,16 @@ export default {
               )
             : null;
 
-          const response = jsonResponse(request, env, corsPolicy, items);
+          const operationalSummary = await loadInstallationOperationalSummaries(
+            env,
+            items.map((row) => row?.id),
+            installationsTenantId,
+          );
+          const enrichedItems = items.map((item) =>
+            mapInstallationWithOperationalState(item, operationalSummary),
+          );
+
+          const response = jsonResponse(request, env, corsPolicy, enrichedItems);
           appendPaginationHeader(response, nextCursor);
           return response;
         }
@@ -5829,6 +5965,7 @@ export default {
             id: installationId,
             tenant_id: installationsTenantId,
             ...payload,
+            ...buildDefaultInstallationOperationalSummary(),
           };
 
           // Log audit event for installation creation
@@ -6073,6 +6210,7 @@ export default {
           id: insertResult?.meta?.last_row_id || null,
           tenant_id: recordsTenantId,
           ...payload,
+          ...buildDefaultInstallationOperationalSummary(),
         };
 
         await publishRealtimeEvent(env, {
@@ -6629,7 +6767,14 @@ export default {
             throw new HttpError(404, "Registro no encontrado.");
           }
 
-          return jsonResponse(request, env, corsPolicy,results[0]);
+          const summaryById = await loadInstallationOperationalSummaries(
+            env,
+            [installationId],
+            installationsTenantId,
+          );
+          const enrichedRecord = mapInstallationWithOperationalState(results[0], summaryById);
+
+          return jsonResponse(request, env, corsPolicy, enrichedRecord);
         }
 
         if (request.method === "PUT") {
