@@ -2160,6 +2160,53 @@ test("POST /incidents/:id/photos requires X-Body-SHA256 for legacy HMAC auth", a
   assert.match(body.error.message, /X-Body-SHA256/i);
 });
 
+test("POST /incidents/:id/photos rejects legacy request when signed body hash does not match uploaded bytes", async () => {
+  const db = createMockDB({
+    incidents: [{ id: 11, installation_id: 45 }],
+  });
+
+  let uploaded = false;
+  const bucket = {
+    async put() {
+      uploaded = true;
+    },
+  };
+
+  const payload = new Uint8Array(1500);
+  payload.set([0xff, 0xd8, 0xff], 0);
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const forgedBodyHash = "0".repeat(64);
+  const canonical = `POST|/incidents/11/photos|${timestamp}|${forgedBodyHash}`;
+  const signature = crypto
+    .createHmac("sha256", DEFAULT_API_SECRET)
+    .update(canonical)
+    .digest("hex");
+
+  const request = new Request("https://worker.example/incidents/11/photos", {
+    method: "POST",
+    headers: {
+      "Content-Type": "image/jpeg",
+      "X-API-Token": DEFAULT_API_TOKEN,
+      "X-Request-Timestamp": timestamp,
+      "X-Request-Signature": signature,
+      "X-Body-SHA256": forgedBodyHash,
+    },
+    body: payload,
+  });
+
+  const response = await workerFetch(request, {
+    DB: db,
+    INCIDENTS_BUCKET: bucket,
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 401);
+  assert.equal(body.success, false);
+  assert.equal(body.error.code, "UNAUTHORIZED");
+  assert.match(body.error.message, /integridad|X-Body-SHA256/i);
+  assert.equal(uploaded, false);
+});
+
 test("GET /photos/:id returns binary content from R2", async () => {
   const db = createMockDB({
     incidents: [{ id: 11, installation_id: 45 }],

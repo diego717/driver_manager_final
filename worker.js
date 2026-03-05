@@ -6413,6 +6413,20 @@ export default {
         );
         const r2Key = buildIncidentR2Key(incident.installation_id, incidentId, extension);
         const sha256 = await sha256Hex(bodyBuffer);
+        const providedBodyHash = normalizeOptionalString(request.headers.get("X-Body-SHA256"), "").toLowerCase();
+        if (providedBodyHash) {
+          if (!/^[a-f0-9]{64}$/i.test(providedBodyHash)) {
+            throw new HttpError(400, "Header X-Body-SHA256 inválido.");
+          }
+          if (providedBodyHash !== sha256) {
+            throw new HttpError(
+              isWebRoute ? 400 : 401,
+              isWebRoute
+                ? "El hash del body no coincide con la imagen enviada."
+                : "Integridad inválida: X-Body-SHA256 no coincide con el body.",
+            );
+          }
+        }
         const createdAt = nowIso();
 
         await env.INCIDENTS_BUCKET.put(r2Key, bodyBuffer, {
