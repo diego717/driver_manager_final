@@ -1,6 +1,7 @@
 // API base URL:
 // - By default uses same-origin (recommended and safest).
 // - Optional override via window.__DM_API_BASE__ or localStorage.dm_api_base_url.
+// - Cross-origin overrides are blocked unless explicitly enabled for debug.
 const API_BASE = (() => {
     const normalizeBase = (value) => {
         if (!value || typeof value !== 'string') return '';
@@ -9,15 +10,68 @@ const API_BASE = (() => {
         return trimmed.replace(/\/+$/, '');
     };
 
-    const globalOverride = normalizeBase(window.__DM_API_BASE__);
-    if (globalOverride) {
-        return globalOverride;
-    }
+    const isLoopbackHost = (hostname) => {
+        const normalized = String(hostname || '').toLowerCase();
+        return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
+    };
+
+    const allowRemoteOverride = (() => {
+        try {
+            const params = new URLSearchParams(window.location.search || '');
+            const flag = String(params.get('dm_allow_remote_api') || '').toLowerCase();
+            if (flag === '1' || flag === 'true' || flag === 'yes') {
+                return true;
+            }
+        } catch {
+            // Ignore malformed query string and keep secure default.
+        }
+        return window.__DM_ALLOW_REMOTE_API_BASE__ === true;
+    })();
+
+    const normalizeAndValidateApiBase = (rawValue, sourceLabel) => {
+        const candidate = normalizeBase(rawValue);
+        if (!candidate) return '';
+
+        let parsed;
+        try {
+            parsed = new URL(candidate, window.location.origin);
+        } catch {
+            console.warn(`[security] Ignoring invalid API base override from ${sourceLabel}.`);
+            return '';
+        }
+
+        const isHttps = parsed.protocol === 'https:';
+        const isLoopback = isLoopbackHost(parsed.hostname);
+        if (!isHttps && !isLoopback) {
+            console.warn(`[security] Ignoring insecure API base override from ${sourceLabel}.`);
+            return '';
+        }
+
+        const overrideOrigin = parsed.origin;
+        const isSameOrigin = overrideOrigin === window.location.origin;
+        if (!isSameOrigin && !allowRemoteOverride) {
+            console.warn(
+                `[security] Ignoring cross-origin API override from ${sourceLabel}. ` +
+                'Use ?dm_allow_remote_api=1 only in controlled debug sessions.',
+            );
+            return '';
+        }
+
+        return normalizeBase(overrideOrigin);
+    };
+
+    const globalOverride = normalizeAndValidateApiBase(window.__DM_API_BASE__, 'window.__DM_API_BASE__');
+    if (globalOverride) return globalOverride;
 
     try {
-        const storedOverride = normalizeBase(window.localStorage.getItem('dm_api_base_url'));
+        const storedRawValue = window.localStorage.getItem('dm_api_base_url');
+        const storedOverride = normalizeAndValidateApiBase(storedRawValue, 'localStorage.dm_api_base_url');
         if (storedOverride) {
             return storedOverride;
+        }
+        if (storedRawValue) {
+            // Prevent persisting poisoned/invalid values.
+            window.localStorage.removeItem('dm_api_base_url');
         }
     } catch {
         // localStorage unavailable (privacy mode/policies). Use same-origin.
