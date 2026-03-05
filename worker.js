@@ -11,6 +11,8 @@ const WEB_SESSION_COOKIE_NAME = "__Host-web_session";
 const WEB_SESSION_STORE_TTL_SECONDS = WEB_ACCESS_TTL_SECONDS + 60;
 const WEB_LOGIN_RATE_LIMIT_MAX_ATTEMPTS = 5;
 const WEB_LOGIN_RATE_LIMIT_LOCKOUT_SECONDS = 15 * 60;
+const MAX_WEB_AUTH_DEFAULT_BODY_BYTES = 64 * 1024;
+const MAX_WEB_AUTH_IMPORT_BODY_BYTES = 2 * 1024 * 1024;
 const WEB_PASSWORD_MIN_LENGTH = 12;
 const WEB_PASSWORD_SPECIAL_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?";
 const WEB_PASSWORD_PBKDF2_ITERATIONS = 100000;
@@ -885,7 +887,16 @@ function parseOptionalPositiveInt(value, label) {
   return parsePositiveInt(value, label);
 }
 
-async function readJsonOrThrowBadRequest(request, message = "Payload invalido.") {
+async function readJsonOrThrowBadRequest(request, message = "Payload invalido.", options = {}) {
+  const maxBytes = Number.isInteger(options.maxBytes) ? options.maxBytes : null;
+  if (maxBytes && maxBytes > 0) {
+    const contentLengthRaw = normalizeOptionalString(request.headers.get("content-length"), "");
+    const contentLength = Number.parseInt(contentLengthRaw, 10);
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+      throw new HttpError(413, `Payload supera el limite permitido (${maxBytes} bytes).`);
+    }
+  }
+
   try {
     return await request.json();
   } catch {
@@ -3266,11 +3277,9 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     ensureWebSessionSecret(env);
 
     let body = {};
-    try {
-      body = await request.json();
-    } catch {
-      throw new HttpError(400, "Payload invalido.");
-    }
+    body = await readJsonOrThrowBadRequest(request, "Payload invalido.", {
+      maxBytes: MAX_WEB_AUTH_DEFAULT_BODY_BYTES,
+    });
 
     const providedPassword = normalizeOptionalString(body?.password, "");
     if (!providedPassword) {
@@ -3382,11 +3391,9 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     }
 
     let body = {};
-    try {
-      body = await request.json();
-    } catch {
-      throw new HttpError(400, "Payload invalido.");
-    }
+    body = await readJsonOrThrowBadRequest(request, "Payload invalido.", {
+      maxBytes: MAX_WEB_AUTH_DEFAULT_BODY_BYTES,
+    });
 
     const bootstrapPassword = normalizeOptionalString(body?.bootstrap_password, "");
     if (!bootstrapPassword) {
@@ -3478,11 +3485,9 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     requireAdminRole(session.role);
 
     let body = {};
-    try {
-      body = await request.json();
-    } catch {
-      throw new HttpError(400, "Payload invalido.");
-    }
+    body = await readJsonOrThrowBadRequest(request, "Payload invalido.", {
+      maxBytes: MAX_WEB_AUTH_DEFAULT_BODY_BYTES,
+    });
 
     const username = validateWebUsername(body?.username);
     const password = validateWebPassword(body?.password);
@@ -3546,11 +3551,9 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     assertSameTenantOrSuperAdmin(session, existingUser.tenant_id);
 
     let body = {};
-    try {
-      body = await request.json();
-    } catch {
-      throw new HttpError(400, "Payload invalido.");
-    }
+    body = await readJsonOrThrowBadRequest(request, "Payload invalido.", {
+      maxBytes: MAX_WEB_AUTH_DEFAULT_BODY_BYTES,
+    });
 
     const requestedRole = body?.role === undefined ? null : normalizeWebRole(body.role);
     const requestedActive = parseBooleanOrNull(body?.is_active);
@@ -3628,11 +3631,9 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     assertSameTenantOrSuperAdmin(session, existingUser.tenant_id);
 
     let body = {};
-    try {
-      body = await request.json();
-    } catch {
-      throw new HttpError(400, "Payload invalido.");
-    }
+    body = await readJsonOrThrowBadRequest(request, "Payload invalido.", {
+      maxBytes: MAX_WEB_AUTH_IMPORT_BODY_BYTES,
+    });
 
     const newPassword = validateWebPassword(body?.new_password, "new_password");
     await forceResetWebUserPassword(env, { userId, newPassword });
@@ -3672,11 +3673,9 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     }
 
     let body = {};
-    try {
-      body = await request.json();
-    } catch {
-      throw new HttpError(400, "Payload invalido.");
-    }
+    body = await readJsonOrThrowBadRequest(request, "Payload invalido.", {
+      maxBytes: MAX_WEB_AUTH_IMPORT_BODY_BYTES,
+    });
 
     const users = Array.isArray(body?.users) ? body.users : [];
     if (!users.length) {
