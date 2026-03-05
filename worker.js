@@ -298,20 +298,43 @@ function setHeaderWithVaryMerge(headers, key, value) {
   headers.set(key, value);
 }
 
+function shouldDisableCachingForRequest(request) {
+  if (!request?.url) return false;
+  try {
+    const pathname = new URL(request.url).pathname || "";
+    return pathname === "/web" || pathname.startsWith("/web/");
+  } catch {
+    return false;
+  }
+}
+
 function jsonResponse(request, env, corsPolicy, body, status = 200) {
+  const headers = {
+    ...corsHeaders(request, env, corsPolicy),
+    "Content-Type": "application/json",
+  };
+
+  if (shouldDisableCachingForRequest(request)) {
+    headers["Cache-Control"] = "no-store";
+    headers.Pragma = "no-cache";
+  }
+
   return new Response(JSON.stringify(body), {
     status,
-    headers: {
-      ...corsHeaders(request, env, corsPolicy),
-      "Content-Type": "application/json",
-    },
+    headers,
   });
 }
 
 function textResponse(request, env, corsPolicy, text, status = 200) {
+  const headers = corsHeaders(request, env, corsPolicy);
+  if (shouldDisableCachingForRequest(request)) {
+    headers["Cache-Control"] = "no-store";
+    headers.Pragma = "no-cache";
+  }
+
   return new Response(text, {
     status,
-    headers: corsHeaders(request, env, corsPolicy),
+    headers,
   });
 }
 
@@ -933,18 +956,65 @@ function parseOptionalPositiveInt(value, label) {
 
 async function readJsonOrThrowBadRequest(request, message = "Payload invalido.", options = {}) {
   const maxBytes = Number.isInteger(options.maxBytes) ? options.maxBytes : null;
-  if (maxBytes && maxBytes > 0) {
+  const resolvedMaxBytes = maxBytes && maxBytes > 0 ? maxBytes : null;
+  if (resolvedMaxBytes) {
     const contentLengthRaw = normalizeOptionalString(request.headers.get("content-length"), "");
     const contentLength = Number.parseInt(contentLengthRaw, 10);
-    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-      throw new HttpError(413, `Payload supera el limite permitido (${maxBytes} bytes).`);
+    if (Number.isFinite(contentLength) && contentLength > resolvedMaxBytes) {
+      throw new HttpError(413, `Payload supera el limite permitido (${resolvedMaxBytes} bytes).`);
     }
   }
 
   try {
-    return await request.json();
-  } catch {
-    throw new HttpError(400, message);
+    if (!request.body) {
+      throw new HttpError(400, message);
+    }
+
+    const reader = request.body.getReader();
+    const chunks = [];
+    let totalBytes = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value || 0);
+      totalBytes += chunk.byteLength;
+
+      if (resolvedMaxBytes && totalBytes > resolvedMaxBytes) {
+        throw new HttpError(413, `Payload supera el limite permitido (${resolvedMaxBytes} bytes).`);
+      }
+
+      chunks.push(chunk);
+    }
+
+    if (!totalBytes) {
+      throw new HttpError(400, message);
+    }
+
+    const bodyBytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bodyBytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+
+    const rawBody = new TextDecoder().decode(bodyBytes).replace(/^\uFEFF/, "");
+    if (!rawBody.trim()) {
+      throw new HttpError(400, message);
+    }
+
+    return JSON.parse(rawBody);
+  } catch (error) {
+    if (error instanceof HttpError) {
+      throw error;
+    }
+
+    if (error instanceof SyntaxError) {
+      throw new HttpError(400, message);
+    }
+
+    throw error;
   }
 }
 

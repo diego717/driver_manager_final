@@ -2974,6 +2974,63 @@ test("POST /web/auth/login issues access token for web routes", async () => {
   ]);
 });
 
+test("web JSON responses include no-store headers", async () => {
+  const db = createMockDB();
+
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+  const bootstrapResponse = await workerFetch(bootstrapRequest, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+
+  assert.equal(bootstrapResponse.status, 201);
+  assert.equal(bootstrapResponse.headers.get("cache-control"), "no-store");
+  assert.equal(bootstrapResponse.headers.get("pragma"), "no-cache");
+});
+
+test("POST /web/auth/login rejects oversized JSON payload without content-length", async () => {
+  const db = createMockDB();
+  const oversizedPayload = JSON.stringify({
+    username: "u".repeat(70 * 1024),
+    password: "StrongPass#2026",
+  });
+  const oversizedStream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(oversizedPayload));
+      controller.close();
+    },
+  });
+
+  const request = new Request("https://worker.example/web/auth/login", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: oversizedStream,
+    duplex: "half",
+  });
+
+  const response = await workerFetch(request, {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 413);
+  assert.equal(body.success, false);
+  assert.equal(body.error.code, "INVALID_REQUEST");
+});
+
 test("POST /web/auth/bootstrap creates first web user with hashed password", async () => {
   const db = createMockDB();
   const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
