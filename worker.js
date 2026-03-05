@@ -311,6 +311,13 @@ function textResponse(request, env, corsPolicy, text, status = 200) {
   });
 }
 
+function applyNoStoreHeaders(response) {
+  if (!(response instanceof Response)) return response;
+  response.headers.set("Cache-Control", "no-store");
+  response.headers.set("Pragma", "no-cache");
+  return response;
+}
+
 function dashboardAssetSecurityHeaders() {
   return {
     "X-Frame-Options": "DENY",
@@ -4182,7 +4189,7 @@ export default {
       if (isWebRoute) {
         const webAuthResponse = await handleWebAuthRoute(request, env, routeParts, corsPolicy);
         if (webAuthResponse) {
-          return webAuthResponse;
+          return applyNoStoreHeaders(webAuthResponse);
         }
       }
 
