@@ -1,4 +1,4 @@
-// Service Worker for Driver Manager Dashboard PWA
+// Service Worker for SiteOps Dashboard PWA
 const CACHE_NAME = 'driver-manager-v1';
 const STATIC_ASSETS = [
   '/web/dashboard',
@@ -213,7 +213,7 @@ self.addEventListener('push', (event) => {
     
     event.waitUntil(
       self.registration.showNotification(
-        data.title || 'Driver Manager',
+        data.title || 'SiteOps',
         options
       )
     );

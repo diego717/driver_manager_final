@@ -1,12 +1,12 @@
-// Service Worker for Driver Manager Dashboard PWA
-const CACHE_NAME = 'driver-manager-3187211cb0';
+// Service Worker for SiteOps Dashboard PWA
+const CACHE_NAME = 'driver-manager-435b7cb713';
 const STATIC_ASSETS = [
   '/web/dashboard',
   '/dashboard.css?v=6825da5723',
   '/dashboard-qr.js?v=d8de215faf',
-  '/dashboard.js?v=f062288a3f',
+  '/dashboard.js?v=f0f4d14ea0',
   '/dashboard-pwa.js?v=f2230f4810',
-  '/manifest.json?v=c0f933f797'
+  '/manifest.json?v=9130a5f920'
 ];
 
 const STATIC_ASSET_PATHS = new Set([
@@ -214,7 +214,7 @@ self.addEventListener('push', (event) => {
     
     event.waitUntil(
       self.registration.showNotification(
-        data.title || 'Driver Manager',
+        data.title || 'SiteOps',
         options
       )
     );

@@ -1,6 +1,6 @@
 {
-  "name": "Driver Manager Dashboard",
-  "short_name": "Driver Manager",
+  "name": "SiteOps Dashboard",
+  "short_name": "SiteOps",
   "description": "Dashboard de gestión de instalaciones de drivers",
   "start_url": "/web/dashboard",
   "display": "standalone",

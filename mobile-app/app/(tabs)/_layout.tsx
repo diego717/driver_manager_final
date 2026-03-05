@@ -1,7 +1,7 @@
 import React from "react";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { Link, Tabs } from "expo-router";
-import { Pressable } from "react-native";
+import { Image, Pressable, StyleSheet, View } from "react-native";
 
 import { useClientOnlyValue } from "@/components/useClientOnlyValue";
 import { useAppPalette } from "@/src/theme/palette";
@@ -16,6 +16,7 @@ function TabBarIcon(props: {
 
 export default function TabLayout() {
   const palette = useAppPalette();
+  const logoSource = require("../../assets/images/Logotipo.png");
 
   return (
     <Tabs
@@ -32,11 +33,25 @@ export default function TabLayout() {
         },
         headerStyle: {
           backgroundColor: palette.surface,
+          height: 88,
+        },
+        headerTitleAlign: "left",
+        headerTitleContainerStyle: {
+          left: 12,
+          right: 12,
+        },
+        headerRightContainerStyle: {
+          paddingRight: 6,
         },
         headerTitleStyle: {
           color: palette.textPrimary,
           fontFamily: fontFamilies.semibold,
         },
+        headerRight: () => (
+          <View style={styles.headerLogoWrap}>
+            <Image source={logoSource} style={styles.headerLogo} resizeMode="contain" />
+          </View>
+        ),
         headerTintColor: palette.textPrimary,
         headerShown: useClientOnlyValue(false, true),
       }}
@@ -47,18 +62,21 @@ export default function TabLayout() {
           title: "Crear",
           tabBarIcon: ({ color }) => <TabBarIcon name="plus-circle" color={color} />,
           headerRight: () => (
-            <Link href="/modal" asChild>
-              <Pressable>
-                {({ pressed }) => (
-                  <FontAwesome
-                    name="cog"
-                    size={25}
-                    color={palette.textPrimary}
-                    style={{ marginRight: 15, opacity: pressed ? 0.5 : 1 }}
-                  />
-                )}
-              </Pressable>
-            </Link>
+            <View style={styles.headerActions}>
+              <Image source={logoSource} style={styles.headerLogo} resizeMode="contain" />
+              <Link href="/modal" asChild>
+                <Pressable>
+                  {({ pressed }) => (
+                    <FontAwesome
+                      name="cog"
+                      size={25}
+                      color={palette.textPrimary}
+                      style={{ marginRight: 12, opacity: pressed ? 0.5 : 1 }}
+                    />
+                  )}
+                </Pressable>
+              </Link>
+            </View>
           ),
         }}
       />
@@ -86,3 +104,22 @@ export default function TabLayout() {
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    width: 184,
+    gap: 10,
+  },
+  headerLogoWrap: {
+    marginRight: 10,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  headerLogo: {
+    width: 132,
+    height: 48,
+  },
+});

@@ -78,11 +78,11 @@ except ImportError:
 except Exception as e:
     logger.warning(f"Error cargando configuración portable: {e}")
 class MainWindow(QMainWindow):
-    """Ventana principal de Driver Manager"""
+    """Ventana principal de SiteOps"""
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Driver Manager - Impresoras de Tarjetas")
+        self.setWindowTitle("SiteOps - Impresoras de Tarjetas")
         self.setGeometry(100, 100, 1000, 700)
         
         # 1. Crear ConfigManager
@@ -189,7 +189,7 @@ class MainWindow(QMainWindow):
                     None,
                     "Configuración Completa",
                     "✅ Sistema inicializado correctamente.\n\n"
-                    "Ya puedes usar Driver Manager."
+                    "Ya puedes usar SiteOps."
                 )
             else:
                 QMessageBox.critical(
@@ -244,7 +244,7 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         
         # Header
-        header = QLabel("🖨️ Gestor de Drivers - Impresoras de Tarjetas")
+        header = QLabel("🖨️ SiteOps - Impresoras de Tarjetas")
         header.setFont(QFont("Arial", 16, QFont.Weight.Bold))
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(header)

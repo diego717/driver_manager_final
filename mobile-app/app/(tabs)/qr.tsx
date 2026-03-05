@@ -696,7 +696,7 @@ export default function QrGeneratorScreen() {
       if (canWriteToGallery) {
         const createdAsset = await MediaLibrary.createAssetAsync(qrFile.uri);
         try {
-          const albumName = "Driver Manager";
+          const albumName = "SiteOps";
           const existingAlbum = await MediaLibrary.getAlbumAsync(albumName);
           if (existingAlbum) {
             await MediaLibrary.addAssetsToAlbumAsync([createdAsset], existingAlbum, false);
@@ -1172,7 +1172,7 @@ export default function QrGeneratorScreen() {
               fontWeight="700"
               fill="#0f172a"
             >
-              Driver Manager
+              SiteOps
             </SvgText>
             {qrLabelRenderState.lines.map((line, index) => (
               <SvgText

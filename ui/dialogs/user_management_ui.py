@@ -481,7 +481,7 @@ class LoginDialog(QDialog):
     def __init__(self, user_manager, parent=None):
         super().__init__(parent)
         self.user_manager = user_manager
-        self.setWindowTitle("Iniciar Sesión - Driver Manager")
+        self.setWindowTitle("Iniciar Sesión - SiteOps")
         self.setModal(True)
         self.setFixedSize(420, 240)
 

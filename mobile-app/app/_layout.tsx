@@ -18,6 +18,7 @@ import {
 import "react-native-reanimated";
 
 import BiometricLockScreen from "@/src/components/BiometricLockScreen";
+import AppHeaderTitle from "@/src/components/AppHeaderTitle";
 import { useNotifications } from "@/src/hooks/useNotifications";
 import { getNavigationTheme, useAppPalette } from "@/src/theme/palette";
 import {
@@ -97,7 +98,7 @@ export function RootLayoutNav() {
     try {
       const authResult = await authenticateWithBiometrics({
         allowDeviceFallback,
-        promptMessage: "Desbloquea Driver Manager",
+        promptMessage: "Desbloquea SiteOps",
         cancelLabel: "Cancelar",
         fallbackLabel: "Usar codigo",
       });
@@ -251,7 +252,9 @@ export function RootLayoutNav() {
           screenOptions={{
             headerStyle: { backgroundColor: palette.surface },
             headerTintColor: palette.textPrimary,
+            headerTitleAlign: "center",
             headerTitleStyle: { fontFamily: fontFamilies.semibold },
+            headerTitle: ({ children }) => <AppHeaderTitle title={String(children || "SiteOps")} />,
             headerShadowVisible: false,
             headerBackTitleStyle: { fontFamily: fontFamilies.regular },
             contentStyle: { backgroundColor: palette.screenBg },
@@ -290,7 +293,7 @@ export function RootLayoutNav() {
                 style={styles.bootLogo}
                 resizeMode="contain"
               />
-              <Text style={[styles.bootTitle, { color: palette.textPrimary }]}>Driver Manager</Text>
+              <Text style={[styles.bootTitle, { color: palette.textPrimary }]}>SiteOps</Text>
               <Text style={[styles.bootSubtitle, { color: palette.textSecondary }]}>
                 Inicializando seguridad...
               </Text>

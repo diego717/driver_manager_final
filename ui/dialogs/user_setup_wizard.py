@@ -17,13 +17,13 @@ class WelcomePage(QWizardPage):
     
     def __init__(self):
         super().__init__()
-        self.setTitle("🎉 Bienvenido a Driver Manager")
+        self.setTitle("🎉 Bienvenido a SiteOps")
         
         layout = QVBoxLayout()
         
         welcome_text = QLabel(
             "<h2>¡Bienvenido!</h2>"
-            "<p>Esta es la primera vez que ejecutas Driver Manager.</p>"
+            "<p>Esta es la primera vez que ejecutas SiteOps.</p>"
             "<p>Este asistente te guiará en la configuración inicial:</p>"
             "<ul>"
             "<li>✅ Crear tu cuenta de super administrador</li>"
@@ -257,7 +257,7 @@ class SecurityPage(QWizardPage):
         layout = QVBoxLayout()
         
         intro = QLabel(
-            "Driver Manager utiliza cifrado AES-256 para proteger tus credenciales. "
+            "SiteOps utiliza cifrado AES-256 para proteger tus credenciales. "
             "A continuación, configura las opciones de seguridad adicionales:"
         )
         intro.setWordWrap(True)
@@ -328,7 +328,7 @@ class CompletePage(QWizardPage):
             "   Ve a la pestaña 'Administración' y configura tus credenciales<br><br>"
             "2️⃣ <b>Crear usuarios adicionales</b><br>"
             "   Usa el botón 'Gestionar Usuarios' para crear más cuentas<br><br>"
-            "3️⃣ <b>Comenzar a usar Driver Manager</b><br>"
+            "3️⃣ <b>Comenzar a usar SiteOps</b><br>"
             "   Descarga e instala drivers para tus impresoras de tarjetas"
         )
         next_steps.setWordWrap(True)
@@ -369,7 +369,7 @@ class UserSetupWizard(QWizard):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Configuración Inicial - Driver Manager")
+        self.setWindowTitle("Configuración Inicial - SiteOps")
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.setFixedSize(600, 500)
         

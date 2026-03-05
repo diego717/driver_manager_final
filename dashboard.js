@@ -3331,7 +3331,7 @@ function buildPrintableLabelDataUrl(imageDataUrl, details, presetKey = 'medium')
                 let y = textStartY + Math.max(16, preset.titleSize);
                 ctx.fillStyle = '#0f172a';
                 ctx.font = `700 ${Math.max(16, preset.titleSize)}px Inter, Arial, sans-serif`;
-                ctx.fillText('Driver Manager', infoX, y, infoWidth);
+                ctx.fillText('SiteOps', infoX, y, infoWidth);
 
                 y += titleLineHeight;
                 ctx.fillStyle = '#1f2937';

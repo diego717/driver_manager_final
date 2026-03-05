@@ -113,7 +113,7 @@ export async function authenticateWithBiometrics(
   try {
     const allowDeviceFallback = options.allowDeviceFallback ?? false;
     const result = await LocalAuthentication.authenticateAsync({
-      promptMessage: options.promptMessage ?? "Desbloquea Driver Manager",
+      promptMessage: options.promptMessage ?? "Desbloquea SiteOps",
       cancelLabel: options.cancelLabel ?? "Cancelar",
       disableDeviceFallback: !allowDeviceFallback,
       fallbackLabel: allowDeviceFallback

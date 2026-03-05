@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 
 # --- ConfiguraciÃ³n ---
-APP_NAME = "DriverManager"
+APP_NAME = "SiteOps"
 ENTRY_POINT = "main.py"
 # Icono opcional para el ejecutable.
 ICON_FILE = "assets/app_icon.ico"

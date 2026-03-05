@@ -504,7 +504,7 @@ class QrGeneratorDialog(QDialog):
 
         qr_image = Image.open(io.BytesIO(self._current_png_bytes)).convert("RGB")
         lines = self._build_sticker_lines()
-        title = "Driver Manager"
+        title = "SiteOps"
         preset = QR_LABEL_PRESETS.get(self._selected_label_preset(), QR_LABEL_PRESETS["medium"])
         fallback_font = ImageFont.load_default()
         title_font, body_font = self._load_print_fonts(

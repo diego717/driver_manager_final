@@ -412,11 +412,11 @@ function dashboardFallbackHtml() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Driver Manager Dashboard</title>
+  <title>SiteOps Dashboard</title>
 </head>
 <body>
   <main>
-    <h1>Driver Manager Dashboard</h1>
+    <h1>SiteOps Dashboard</h1>
     <p>No se encontró el binding de assets estáticos. Revisa wrangler.toml ([assets]).</p>
   </main>
 </body>

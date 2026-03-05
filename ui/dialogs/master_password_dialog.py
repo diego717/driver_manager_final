@@ -30,7 +30,7 @@ class MasterPasswordDialog(QDialog):
         self.init_ui()
 
     def init_ui(self):
-        self.setWindowTitle("Contraseña Maestra - Driver Manager")
+        self.setWindowTitle("Contraseña Maestra - SiteOps")
         self.setModal(True)
         self.setFixedSize(450, 360)
 
@@ -82,7 +82,7 @@ class MasterPasswordDialog(QDialog):
 
         if self.is_first_time:
             desc_text = (
-                "Driver Manager cifra la configuración sensible con una contraseña maestra.\n\n"
+                "SiteOps cifra la configuración sensible con una contraseña maestra.\n\n"
                 "Importante: si la olvidas, puedes perder acceso a la configuración cifrada."
             )
         else:

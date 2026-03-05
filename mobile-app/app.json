@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "mobile-app",
+    "name": "SiteOps",
     "slug": "mobile-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -18,7 +18,7 @@
       "bundleIdentifier": "com.diego717.drivermanager",
       "buildNumber": "1",
       "infoPlist": {
-        "NSFaceIDUsageDescription": "Permite desbloquear Driver Manager con Face ID.",
+        "NSFaceIDUsageDescription": "Permite desbloquear SiteOps con Face ID.",
         "UIBackgroundModes": [
           "remote-notification"
         ]
@@ -50,7 +50,7 @@
       [
         "expo-local-authentication",
         {
-          "faceIDPermission": "Permite desbloquear Driver Manager con Face ID."
+          "faceIDPermission": "Permite desbloquear SiteOps con Face ID."
         }
       ],
       [

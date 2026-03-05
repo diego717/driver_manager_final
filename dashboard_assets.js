@@ -6,7 +6,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Driver Manager Dashboard</title>
+    <title>SiteOps Dashboard</title>
     <style>
 PLACEHOLDER_CSS
     </style>
@@ -15,7 +15,7 @@ PLACEHOLDER_CSS
     <div id="app">
         <nav class="sidebar">
             <div class="logo">
-                <h1>Driver Manager</h1>
+                <h1>SiteOps</h1>
             </div>
             <ul class="nav-links">
                 <li><a href="#" class="active" data-section="dashboard">Dashboard</a></li>
