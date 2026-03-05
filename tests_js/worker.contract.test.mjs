@@ -2115,8 +2115,10 @@ test("POST /incidents/:id/photos uploads to R2 and persists metadata", async () 
   assert.equal(body.success, true);
   assert.equal(body.photo.incident_id, 11);
   assert.equal(body.photo.content_type, "image/png");
+  assert.match(body.photo.file_name, /^inst-45_inc-11_cliente-/);
   assert.equal(uploaded.length, 1);
   assert.match(uploaded[0].key, /^incidents\/45\/11\//);
+  assert.match(uploaded[0].key, /inst-45-inc-11/);
   assert.equal(uploaded[0].options.httpMetadata.contentType, "image/png");
 });
 

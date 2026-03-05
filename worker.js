@@ -187,6 +187,8 @@ function buildCorsPolicy(isWebRoute, routeParts) {
   }
   if (isPhotoUpload) {
     headers.add("X-File-Name");
+    headers.add("X-Client-Name");
+    headers.add("X-Asset-Code");
   }
 
   if (
@@ -489,6 +491,89 @@ function sanitizeFileName(input, fallbackBase) {
   const candidate = (input || `${fallbackBase}.jpg`).trim();
   const normalized = candidate.replace(/[^a-zA-Z0-9._-]/g, "_");
   return normalized || `${fallbackBase}.jpg`;
+}
+
+function sanitizeDescriptorPart(value, fallback = "na", maxLength = 40) {
+  const normalized = normalizeOptionalString(value, "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, maxLength);
+  return normalized || fallback;
+}
+
+function buildIncidentPhotoDescriptor({ installationId, incidentId, clientName, assetCode }) {
+  const clientPart = sanitizeDescriptorPart(clientName, "sin-cliente", 36);
+  const assetPart = assetCode
+    ? `_equipo-${sanitizeDescriptorPart(assetCode, "sin-equipo", 32)}`
+    : "";
+  return `inst-${installationId}_inc-${incidentId}_cliente-${clientPart}${assetPart}`;
+}
+
+function buildIncidentPhotoFileName({ installationId, incidentId, clientName, assetCode, extension }) {
+  const descriptor = buildIncidentPhotoDescriptor({
+    installationId,
+    incidentId,
+    clientName,
+    assetCode,
+  });
+  return `${descriptor}.${sanitizeDescriptorPart(extension, "jpg", 5)}`;
+}
+
+async function resolveIncidentPhotoMetadata(env, request, incident, tenantId) {
+  let clientName = normalizeOptionalString(request.headers.get("X-Client-Name"), "")
+    .slice(0, ASSET_CLIENT_NAME_MAX_LENGTH);
+  let assetCode = normalizeOptionalString(request.headers.get("X-Asset-Code"), "")
+    .slice(0, ASSET_EXTERNAL_CODE_MAX_LENGTH);
+
+  if (!env?.DB || typeof env.DB.prepare !== "function") {
+    return { clientName, assetCode };
+  }
+
+  if (!clientName) {
+    try {
+      const { results } = await env.DB.prepare(`
+        SELECT client_name
+        FROM installations
+        WHERE id = ?
+          AND tenant_id = ?
+        LIMIT 1
+      `)
+        .bind(incident.installation_id, tenantId)
+        .all();
+      clientName = normalizeOptionalString(results?.[0]?.client_name, "")
+        .slice(0, ASSET_CLIENT_NAME_MAX_LENGTH);
+    } catch {
+      // Best-effort metadata enrichment.
+    }
+  }
+
+  if (!assetCode) {
+    try {
+      const { results } = await env.DB.prepare(`
+        SELECT a.external_code
+        FROM asset_installation_links l
+        INNER JOIN assets a
+          ON a.id = l.asset_id
+          AND a.tenant_id = l.tenant_id
+        WHERE l.installation_id = ?
+          AND l.tenant_id = ?
+          AND l.unlinked_at IS NULL
+        ORDER BY l.linked_at DESC, l.id DESC
+        LIMIT 1
+      `)
+        .bind(incident.installation_id, tenantId)
+        .all();
+      assetCode = normalizeOptionalString(results?.[0]?.external_code, "")
+        .slice(0, ASSET_EXTERNAL_CODE_MAX_LENGTH);
+    } catch {
+      // Best-effort metadata enrichment.
+    }
+  }
+
+  return { clientName, assetCode };
 }
 
 function extensionFromType(contentType) {
@@ -4071,10 +4156,15 @@ async function verifyAuth(request, env, url) {
   }
 }
 
-function buildIncidentR2Key(installationId, incidentId, extension) {
+function buildIncidentR2Key(installationId, incidentId, extension, descriptor = "") {
   const timestamp = nowIso().replace(/[-:.TZ]/g, "");
   const randomPart = Math.random().toString(36).slice(2, 10);
-  return `incidents/${installationId}/${incidentId}/${timestamp}_${randomPart}.${extension}`;
+  const safeDescriptor = sanitizeDescriptorPart(
+    descriptor || `inst-${installationId}-inc-${incidentId}`,
+    "foto",
+    84,
+  );
+  return `incidents/${installationId}/${incidentId}/${timestamp}_${safeDescriptor}_${randomPart}.${extension}`;
 }
 
 function normalizeIncidentStatus(value, fallback = "open") {
@@ -6407,11 +6497,31 @@ export default {
         }
 
         const extension = extensionFromType(contentType);
-        const fileName = sanitizeFileName(
-          request.headers.get("X-File-Name"),
-          `incident_${incidentId}`,
+        const metadata = await resolveIncidentPhotoMetadata(
+          env,
+          request,
+          incident,
+          incidentsTenantId,
         );
-        const r2Key = buildIncidentR2Key(incident.installation_id, incidentId, extension);
+        const descriptor = buildIncidentPhotoDescriptor({
+          installationId: incident.installation_id,
+          incidentId,
+          clientName: metadata.clientName,
+          assetCode: metadata.assetCode,
+        });
+        const fileName = buildIncidentPhotoFileName({
+          installationId: incident.installation_id,
+          incidentId,
+          clientName: metadata.clientName,
+          assetCode: metadata.assetCode,
+          extension,
+        });
+        const r2Key = buildIncidentR2Key(
+          incident.installation_id,
+          incidentId,
+          extension,
+          descriptor,
+        );
         const sha256 = await sha256Hex(bodyBuffer);
         const providedBodyHash = normalizeOptionalString(request.headers.get("X-Body-SHA256"), "").toLowerCase();
         if (providedBodyHash) {
