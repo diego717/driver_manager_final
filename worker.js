@@ -376,7 +376,7 @@ function dashboardAssetSecurityHeaders() {
 }
 
 const DASHBOARD_ASSET_PATHS = {
-  dashboard: "/dashboard.html",
+  dashboard: "/dashboard",
   "dashboard.css": "/dashboard.css",
   "dashboard-qr.js": "/dashboard-qr.js",
   "dashboard.js": "/dashboard.js",
@@ -391,7 +391,7 @@ function resolveDashboardAssetPath(routeParts) {
 }
 
 function dashboardAssetContentType(assetPath) {
-  if (assetPath === "/dashboard.html") return "text/html; charset=utf-8";
+  if (assetPath === "/dashboard" || assetPath === "/dashboard.html") return "text/html; charset=utf-8";
   if (assetPath === "/dashboard.css") return "text/css; charset=utf-8";
   if (
     assetPath === "/dashboard-qr.js" ||
@@ -406,7 +406,9 @@ function dashboardAssetContentType(assetPath) {
 }
 
 function dashboardAssetCacheControl(assetPath) {
-  if (assetPath === "/dashboard.html") return "public, max-age=0, must-revalidate";
+  if (assetPath === "/dashboard" || assetPath === "/dashboard.html") {
+    return "public, max-age=0, must-revalidate";
+  }
   if (assetPath === "/sw.js") return "no-cache";
   return "public, max-age=31536000, immutable";
 }
@@ -434,7 +436,7 @@ async function serveDashboardStaticAsset(request, env, corsPolicy, routeParts) {
   if (!assetPath) return null;
 
   if (!env?.ASSETS || typeof env.ASSETS.fetch !== "function") {
-    if (assetPath === "/dashboard.html") {
+    if (assetPath === "/dashboard" || assetPath === "/dashboard.html") {
       return new Response(dashboardFallbackHtml(), {
         status: 200,
         headers: {
