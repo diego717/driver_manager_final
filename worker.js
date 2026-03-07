@@ -15,6 +15,7 @@ const WEB_PASSWORD_VERIFY_RATE_LIMIT_MAX_ATTEMPTS = 8;
 const WEB_PASSWORD_VERIFY_RATE_LIMIT_LOCKOUT_SECONDS = 10 * 60;
 const MAX_WEB_AUTH_DEFAULT_BODY_BYTES = 64 * 1024;
 const MAX_WEB_AUTH_IMPORT_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_JSON_BODY_BYTES = 256 * 1024;
 const WEB_PASSWORD_MIN_LENGTH = 12;
 const WEB_PASSWORD_SPECIAL_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?";
 const WEB_PASSWORD_PBKDF2_ITERATIONS = 100000;
@@ -367,7 +368,7 @@ function dashboardAssetSecurityHeaders() {
       "object-src 'none'",
       "img-src 'self' data: blob:",
       "font-src 'self' data: https://fonts.gstatic.com",
-      "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
+      "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://cdn.jsdelivr.net",
       "script-src 'self' https://cdn.jsdelivr.net",
       "style-src 'self' https://fonts.googleapis.com",
       "manifest-src 'self'",
@@ -386,8 +387,22 @@ const DASHBOARD_ASSET_PATHS = {
 };
 
 function resolveDashboardAssetPath(routeParts) {
-  if (!Array.isArray(routeParts) || routeParts.length !== 1) return null;
-  return DASHBOARD_ASSET_PATHS[routeParts[0]] || null;
+  if (!Array.isArray(routeParts) || routeParts.length === 0) return null;
+  if (routeParts.some((part) => part === "." || part === ".." || part.includes("\\") || part.includes("\0"))) {
+    return null;
+  }
+
+  if (routeParts.length === 1) {
+    const first = routeParts[0];
+    if (first === "favicon.ico") return "/icons/icon-192x192.png";
+    return DASHBOARD_ASSET_PATHS[first] || null;
+  }
+
+  if ((routeParts[0] === "icons" || routeParts[0] === "screenshots") && routeParts.length >= 2) {
+    return `/${routeParts.join("/")}`;
+  }
+
+  return null;
 }
 
 function dashboardAssetContentType(assetPath) {
@@ -972,6 +987,17 @@ function isMissingIncidentsTableError(error) {
   return message.includes("no such table") && message.includes("incidents");
 }
 
+function isMissingIncidentLifecycleColumnError(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  if (!(message.includes("no such column") && message.includes("incidents"))) {
+    return false;
+  }
+  return (
+    message.includes("incident_status") ||
+    message.includes("severity")
+  );
+}
+
 async function loadInstallationOperationalSummaries(env, installationIds, tenantId) {
   const ids = [...new Set(
     (installationIds || [])
@@ -1002,7 +1028,6 @@ async function loadInstallationOperationalSummaries(env, installationIds, tenant
       summaryById.set(installationId, summary);
     }
   };
-
   try {
     const { results } = await env.DB.prepare(`
       SELECT
@@ -1025,26 +1050,39 @@ async function loadInstallationOperationalSummaries(env, installationIds, tenant
     if (isMissingIncidentsTableError(error)) {
       return summaryById;
     }
+    if (isMissingIncidentLifecycleColumnError(error)) {
+      return summaryById;
+    }
     if (!isMissingTenantColumnError(error)) {
       throw error;
     }
   }
 
-  const { results } = await env.DB.prepare(`
-    SELECT
-      installation_id,
-      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'open' THEN 1 ELSE 0 END) AS incident_open_count,
-      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
-      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'resolved' THEN 1 ELSE 0 END) AS incident_resolved_count,
-      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') THEN 1 ELSE 0 END) AS incident_active_count,
-      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count
-    FROM incidents
-    WHERE installation_id IN (${placeholders})
-    GROUP BY installation_id
-  `)
-    .bind(...ids)
-    .all();
-  mapRows(results);
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT
+        installation_id,
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'open' THEN 1 ELSE 0 END) AS incident_open_count,
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'resolved' THEN 1 ELSE 0 END) AS incident_resolved_count,
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') THEN 1 ELSE 0 END) AS incident_active_count,
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count
+      FROM incidents
+      WHERE installation_id IN (${placeholders})
+      GROUP BY installation_id
+    `)
+      .bind(...ids)
+      .all();
+    mapRows(results);
+  } catch (error) {
+    if (isMissingIncidentsTableError(error)) {
+      return summaryById;
+    }
+    if (isMissingIncidentLifecycleColumnError(error)) {
+      return summaryById;
+    }
+    throw error;
+  }
   return summaryById;
 }
 
@@ -1170,13 +1208,21 @@ function toUtcDayKey(date) {
   return date.toISOString().slice(0, 10);
 }
 
+function parseIsoToUnixSeconds(value) {
+  const normalized = normalizeOptionalString(value, "");
+  if (!normalized) return null;
+  const parsedMs = Date.parse(normalized);
+  if (!Number.isFinite(parsedMs)) return null;
+  return Math.floor(parsedMs / 1000);
+}
+
 function parseOptionalPositiveInt(value, label) {
   if (value === null || value === undefined || value === "") return null;
   return parsePositiveInt(value, label);
 }
 
 async function readJsonOrThrowBadRequest(request, message = "Payload invalido.", options = {}) {
-  const maxBytes = Number.isInteger(options.maxBytes) ? options.maxBytes : null;
+  const maxBytes = Number.isInteger(options.maxBytes) ? options.maxBytes : MAX_JSON_BODY_BYTES;
   const resolvedMaxBytes = maxBytes && maxBytes > 0 ? maxBytes : null;
   if (resolvedMaxBytes) {
     const contentLengthRaw = normalizeOptionalString(request.headers.get("content-length"), "");
@@ -1341,19 +1387,25 @@ function appendPaginationHeader(response, nextCursor) {
 }
 
 function getDriversBucketBinding(env) {
-  const bucket = env?.DRIVERS_BUCKET || env?.INCIDENTS_BUCKET;
+  const bucket = env?.DRIVERS_BUCKET || env?.DRIVER_STORAGE_BUCKET;
+  const allowIncidentsFallback =
+    normalizeOptionalString(env?.ALLOW_INCIDENTS_BUCKET_FOR_DRIVERS, "").toLowerCase() === "true" ||
+    normalizeOptionalString(env?.ALLOW_INCIDENTS_BUCKET_FOR_DRIVERS, "") === "1";
+  const selectedBucket =
+    bucket ||
+    (allowIncidentsFallback ? env?.INCIDENTS_BUCKET : null);
   if (
-    !bucket ||
-    typeof bucket.get !== "function" ||
-    typeof bucket.put !== "function" ||
-    typeof bucket.delete !== "function"
+    !selectedBucket ||
+    typeof selectedBucket.get !== "function" ||
+    typeof selectedBucket.put !== "function" ||
+    typeof selectedBucket.delete !== "function"
   ) {
     throw new HttpError(
       503,
-      "No hay bucket R2 configurado para drivers (usa DRIVERS_BUCKET o INCIDENTS_BUCKET).",
+      "No hay bucket R2 configurado para drivers (configura DRIVERS_BUCKET apuntando a driver-storage).",
     );
   }
-  return bucket;
+  return selectedBucket;
 }
 
 function sanitizeStorageSegment(value, fallback = "default", maxLength = 96) {
@@ -3392,15 +3444,33 @@ async function verifyWebAccessToken(request, env) {
   }
 
   const userId = Number.isInteger(payload.user_id) ? payload.user_id : null;
+  if (!userId || userId <= 0) {
+    throw new HttpError(401, "Token web invalido.");
+  }
+
+  const tokenIssuedAt = Number(payload.iat || 0);
+  if (!Number.isInteger(tokenIssuedAt) || tokenIssuedAt <= 0) {
+    throw new HttpError(401, "Token web invalido.");
+  }
+
   const tokenSessionVersion = Number(payload.sv || 0);
-  if (
-    getWebSessionStore(env) &&
-    userId &&
-    Number.isInteger(tokenSessionVersion) &&
-    tokenSessionVersion > 0
-  ) {
+  const sessionStore = getWebSessionStore(env);
+  if (sessionStore) {
+    if (!Number.isInteger(tokenSessionVersion) || tokenSessionVersion <= 0) {
+      throw new HttpError(401, "Token web invalido.");
+    }
     const activeSessionVersion = await resolveActiveWebSessionVersion(env, userId);
     if (!activeSessionVersion || activeSessionVersion !== tokenSessionVersion) {
+      throw new HttpError(401, "Sesion web invalida o cerrada.");
+    }
+  } else {
+    const user = await getWebUserById(env, userId);
+    if (!user || normalizeActiveFlag(user.is_active, 1) !== 1) {
+      throw new HttpError(401, "Sesion web invalida o cerrada.");
+    }
+
+    const userUpdatedAtUnix = parseIsoToUnixSeconds(user.updated_at || user.last_login_at || "");
+    if (Number.isInteger(userUpdatedAtUnix) && userUpdatedAtUnix > tokenIssuedAt) {
       throw new HttpError(401, "Sesion web invalida o cerrada.");
     }
   }
@@ -3412,7 +3482,7 @@ async function verifyWebAccessToken(request, env) {
     tenant_id: normalizeRealtimeTenantId(payload.tenant_id),
     user_id: userId,
     session_version: Number.isInteger(tokenSessionVersion) ? tokenSessionVersion : null,
-    iat: Number(payload.iat || 0),
+    iat: tokenIssuedAt,
     exp,
   };
 }
@@ -4051,6 +4121,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       role: nextRole,
       isActive: nextIsActive,
     });
+    await invalidateWebSessionVersion(env, userId);
 
     // Log audit event for user update
     await logAuditEvent(env, {
@@ -4107,6 +4178,7 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
 
     const newPassword = validateWebPassword(body?.new_password, "new_password");
     await forceResetWebUserPassword(env, { userId, newPassword });
+    await invalidateWebSessionVersion(env, userId);
 
     // Log audit event for password reset
     await logAuditEvent(env, {
@@ -4166,7 +4238,16 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       imported.tenantId = normalizeRealtimeTenantId(targetTenantId);
       const result = await upsertWebUserFromImport(env, imported);
       if (result === "created") created += 1;
-      if (result === "updated") updated += 1;
+      if (result === "updated") {
+        updated += 1;
+        const updatedUser = await getWebUserByUsername(env, imported.username);
+        if (
+          updatedUser &&
+          normalizeRealtimeTenantId(updatedUser.tenant_id) === imported.tenantId
+        ) {
+          await invalidateWebSessionVersion(env, Number(updatedUser.id));
+        }
+      }
       processedUsers.push({
         username: imported.username,
         role: imported.role,
@@ -6018,8 +6099,21 @@ export default {
           const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
           const cursor = parseTimestampIdCursor(url.searchParams.get("cursor"));
           const pageSize = limit + 1;
+          const compactMode = isWebRoute && parseBooleanOrNull(url.searchParams.get("compact")) === true;
 
-          let query = "SELECT * FROM installations WHERE tenant_id = ?";
+          let query = compactMode
+            ? `SELECT
+                id,
+                timestamp,
+                driver_brand,
+                driver_version,
+                status,
+                client_name,
+                installation_time_seconds,
+                SUBSTR(COALESCE(notes, ''), 1, 1200) AS notes,
+                tenant_id
+              FROM installations WHERE tenant_id = ?`
+            : "SELECT * FROM installations WHERE tenant_id = ?";
           const bindings = [installationsTenantId];
 
           if (clientName) {

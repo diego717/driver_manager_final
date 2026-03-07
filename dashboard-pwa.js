@@ -31,6 +31,12 @@ if ("serviceWorker" in navigator) {
 
 let deferredPrompt;
 window.addEventListener("beforeinstallprompt", (event) => {
+  const useCustomInstallFlow = window.__DM_USE_CUSTOM_INSTALL_PROMPT__ === true;
+  if (!useCustomInstallFlow) {
+    deferredPrompt = null;
+    return;
+  }
+
   event.preventDefault();
   deferredPrompt = event;
   console.log("[PWA] Install prompt available");

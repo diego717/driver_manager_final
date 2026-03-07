@@ -3,6 +3,7 @@ const CACHE_NAME = 'driver-manager-v1';
 const STATIC_ASSETS = [
   '/web/dashboard',
   '/dashboard.css',
+  '/dashboard-qr.js',
   '/dashboard.js',
   '/dashboard-pwa.js',
   '/manifest.json'
@@ -11,6 +12,7 @@ const STATIC_ASSETS = [
 const STATIC_ASSET_PATHS = new Set([
   '/web/dashboard',
   '/dashboard.css',
+  '/dashboard-qr.js',
   '/dashboard.js',
   '/dashboard-pwa.js',
   '/manifest.json',
@@ -43,7 +45,7 @@ async function shouldCacheResponse(requestOrUrl, response) {
   }
 
   try {
-    const body = await response.clone().arrayBuffer();
+    const body = await response.arrayBuffer();
     if (!body || body.byteLength <= 0) {
       console.warn('[SW] Skip caching empty asset body:', path);
       return false;
@@ -68,7 +70,8 @@ self.addEventListener('install', (event) => {
           try {
             const request = new Request(asset, { cache: 'no-store' });
             const networkResponse = await fetch(request);
-            if (!(await shouldCacheResponse(request, networkResponse))) {
+            const validationResponse = networkResponse.clone();
+            if (!(await shouldCacheResponse(request, validationResponse))) {
               continue;
             }
             await cache.put(request, networkResponse.clone());
@@ -128,8 +131,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   
-  // Skip external requests (Chart.js CDN)
-  if (!url.origin.includes(self.location.origin)) {
+  // Skip external requests.
+  if (url.origin !== self.location.origin) {
     return;
   }
 
@@ -138,9 +141,11 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then(async (networkResponse) => {
-          if (await shouldCacheResponse(request, networkResponse)) {
+          const responseToCache = networkResponse.clone();
+          const validationResponse = responseToCache.clone();
+          if (await shouldCacheResponse(request, validationResponse)) {
             caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, networkResponse.clone());
+              cache.put(request, responseToCache);
             });
           }
           return networkResponse;
@@ -162,10 +167,12 @@ self.addEventListener('fetch', (event) => {
           // Fetch new version in background (stale-while-revalidate)
           fetch(request)
             .then(async (networkResponse) => {
-              if (await shouldCacheResponse(request, networkResponse)) {
+              const responseToCache = networkResponse.clone();
+              const validationResponse = responseToCache.clone();
+              if (await shouldCacheResponse(request, validationResponse)) {
                 caches.open(CACHE_NAME)
                   .then((cache) => {
-                    cache.put(request, networkResponse.clone());
+                    cache.put(request, responseToCache);
                   });
               }
             })
@@ -179,7 +186,8 @@ self.addEventListener('fetch', (event) => {
         // No cache, fetch from network
         return fetch(request)
           .then(async (networkResponse) => {
-            if (!(await shouldCacheResponse(request, networkResponse))) {
+            const validationResponse = networkResponse.clone();
+            if (!(await shouldCacheResponse(request, validationResponse))) {
               return networkResponse;
             }
             
@@ -275,7 +283,9 @@ if ('periodicSync' in self.registration) {
   self.registration.periodicSync.register('update-stats', {
     minInterval: 24 * 60 * 60 * 1000 // 24 hours
   }).catch((err) => {
-    console.log('[SW] Periodic sync not granted:', err);
+    if (err?.name !== 'NotAllowedError') {
+      console.log('[SW] Periodic sync registration failed:', err);
+    }
   });
 }
 

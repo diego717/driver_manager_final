@@ -1,3 +1,5 @@
+// Domain: core (globals, utilities, registry helpers)
+
 // API base URL:
 // - By default uses same-origin (recommended and safest).
 // - Optional override via window.__DM_API_BASE__ or localStorage.dm_api_base_url.
@@ -85,11 +87,15 @@ let webAccessToken = '';
 let charts = {};
 let searchDebounceTimer = null;
 let currentInstallationsData = [];
+let installationsLoadInFlight = false;
+let lastInstallationsLoadStartedAt = 0;
 let currentSelectedInstallationId = null;
 let currentAssetsData = [];
 let currentSelectedAssetId = null;
 let currentDriversData = [];
 let selectedDriverFile = null;
+const API_REQUEST_TIMEOUT_MS = 15000;
+const API_RESPONSE_PARSE_TIMEOUT_MS = 15000;
 
 // WebSocket/SSE State
 let eventSource = null;
@@ -154,6 +160,20 @@ let qrModalEditUnlocked = false;
 let qrModalEditUnlockUntil = 0;
 let qrPasswordModalBusy = false;
 const QR_EDIT_UNLOCK_TTL_MS = 10 * 60 * 1000;
+let loginModalLastFocusedElement = null;
+const LOGIN_MODAL_FOCUSABLE_SELECTOR =
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+const dashboardModuleRegistry = Object.create(null);
+
+function registerDashboardModule(name, moduleApi) {
+    const moduleName = normalizeOptionalString(name, '');
+    if (!moduleName) return;
+    dashboardModuleRegistry[moduleName] = Object.freeze({ ...(moduleApi || {}) });
+}
+
+function exposeDashboardModules() {
+    window.__DM_DASHBOARD_MODULES__ = Object.freeze({ ...dashboardModuleRegistry });
+}
 
 
 // Chart.js default configuration
@@ -175,11 +195,29 @@ function applyChartDefaults(theme = 'light') {
 
 applyChartDefaults('light');
 
+function normalizeOptionalString(value, fallback = '') {
+    if (value === null || value === undefined) return fallback;
+    const normalized = String(value).trim();
+    return normalized || fallback;
+}
+
 async function parseApiResponsePayload(response) {
+    if (!response) return null;
+    if (typeof response.text !== 'function') {
+        if (typeof response.json === 'function') {
+            try {
+                return await response.json();
+            } catch {
+                return null;
+            }
+        }
+        return null;
+    }
+
     const rawText = await response.text();
     if (!rawText) return null;
 
-    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    const contentType = (response?.headers?.get?.('content-type') || '').toLowerCase();
     const looksLikeJson = contentType.includes('application/json');
     if (looksLikeJson) {
         try {
@@ -211,6 +249,8 @@ function extractApiErrorMessage(payload, response) {
     return `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
 }
 
+// Domain: api (HTTP client + web endpoints)
+
 const api = {
     async request(endpoint, options = {}) {
         const baseHeaders = {
@@ -227,12 +267,51 @@ const api = {
                 ...authHeaders,
             };
 
-            const response = await fetch(API_BASE + endpoint, {
-                ...options,
-                headers,
-                credentials: 'include'
-            });
-            const payload = await parseApiResponsePayload(response);
+            const abortController = new AbortController();
+            let timeoutId = null;
+            let response;
+            try {
+                const fetchPromise = fetch(API_BASE + endpoint, {
+                    ...options,
+                    headers,
+                    credentials: 'include',
+                    signal: abortController.signal,
+                });
+                const timeoutPromise = new Promise((_, reject) => {
+                    timeoutId = setTimeout(() => {
+                        try {
+                            abortController.abort();
+                        } catch (_err) {
+                            // Best effort abort.
+                        }
+                        reject(new Error(`Timeout de ${Math.floor(API_REQUEST_TIMEOUT_MS / 1000)}s en ${endpoint}.`));
+                    }, API_REQUEST_TIMEOUT_MS);
+                });
+                response = await Promise.race([fetchPromise, timeoutPromise]);
+            } catch (error) {
+                if (error?.name === 'AbortError') {
+                    throw new Error(
+                        `Timeout de ${Math.floor(API_REQUEST_TIMEOUT_MS / 1000)}s en ${endpoint}.`,
+                    );
+                }
+                throw error;
+            } finally {
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                }
+            }
+            const payload = await Promise.race([
+                parseApiResponsePayload(response),
+                new Promise((_, reject) => {
+                    setTimeout(() => {
+                        reject(
+                            new Error(
+                                `Timeout de parseo (${Math.floor(API_RESPONSE_PARSE_TIMEOUT_MS / 1000)}s) en ${endpoint}.`,
+                            ),
+                        );
+                    }, API_RESPONSE_PARSE_TIMEOUT_MS);
+                }),
+            ]);
             return { response, payload };
         };
 
@@ -250,12 +329,23 @@ const api = {
         }
         
         if (response.status === 401) {
-            currentUser = null;
+            const message = extractApiErrorMessage(payload, response) || 'No autorizado';
+            const isAuthEndpoint = endpoint.startsWith('/web/auth/');
+
+            if (isAuthEndpoint) {
+                currentUser = null;
+                webAccessToken = '';
+                closeSSE();
+                resetProtectedViews();
+                showLogin();
+                throw new Error(message);
+            }
+
             webAccessToken = '';
             closeSSE();
-            resetProtectedViews();
-            showLogin();
-            throw new Error(extractApiErrorMessage(payload, response) || 'No autorizado');
+            showLogin({ preserveViews: true });
+            showNotification(`Sesion requerida en ${endpoint}: ${message}`, 'error');
+            throw new Error(`Sesion requerida en ${endpoint}: ${message}`);
         }
 
         if (!response.ok) {
@@ -270,7 +360,11 @@ const api = {
     },
     
     getInstallations(params = {}) {
-        const query = new URLSearchParams(params).toString();
+        const queryParams = new URLSearchParams(params);
+        if (!queryParams.has('compact')) {
+            queryParams.set('compact', '1');
+        }
+        const query = queryParams.toString();
         return this.request('/web/installations?' + query);
     },
     
@@ -302,6 +396,13 @@ const api = {
 
     updateIncidentStatus(incidentId, payload) {
         return this.request('/web/incidents/' + incidentId + '/status', {
+            method: 'PATCH',
+            body: JSON.stringify(payload || {})
+        });
+    },
+
+    updateIncidentEvidence(incidentId, payload) {
+        return this.request('/web/incidents/' + incidentId + '/evidence', {
             method: 'PATCH',
             body: JSON.stringify(payload || {})
         });
@@ -344,28 +445,38 @@ const api = {
         formData.append('version', String(metadata.version || '').trim());
         formData.append('description', String(metadata.description || '').trim());
 
-        const authHeaders = webAccessToken
-            ? { Authorization: 'Bearer ' + webAccessToken }
-            : {};
+        const sendUpload = async (useBearer = true) => {
+            const authHeaders = useBearer && webAccessToken
+                ? { Authorization: 'Bearer ' + webAccessToken }
+                : {};
+            const response = await fetch(API_BASE + '/web/drivers', {
+                method: 'POST',
+                headers: {
+                    ...authHeaders
+                },
+                body: formData,
+                credentials: 'include'
+            });
+            const payload = await parseApiResponsePayload(response);
+            return { response, payload };
+        };
 
-        const response = await fetch(API_BASE + '/web/drivers', {
-            method: 'POST',
-            headers: {
-                ...authHeaders
-            },
-            body: formData,
-            credentials: 'include'
-        });
-
-        const payload = await parseApiResponsePayload(response);
+        let { response, payload } = await sendUpload(true);
+        if (response.status === 401 && webAccessToken) {
+            const retryResult = await sendUpload(false);
+            response = retryResult.response;
+            payload = retryResult.payload;
+            if (response.ok) {
+                webAccessToken = '';
+            }
+        }
 
         if (response.status === 401) {
-            currentUser = null;
+            const message = extractApiErrorMessage(payload, response) || 'No autorizado';
             webAccessToken = '';
             closeSSE();
-            resetProtectedViews();
-            showLogin();
-            throw new Error(extractApiErrorMessage(payload, response) || 'No autorizado');
+            showLogin({ preserveViews: true });
+            throw new Error(message);
         }
         if (!response.ok) {
             throw new Error(extractApiErrorMessage(payload, response));
@@ -382,40 +493,47 @@ const api = {
     },
 
     async uploadIncidentPhoto(incidentId, file) {
-        const authHeaders = webAccessToken
-            ? { Authorization: 'Bearer ' + webAccessToken }
-            : {};
-        const response = await fetch(API_BASE + '/web/incidents/' + incidentId + '/photos', {
-            method: 'POST',
-            headers: {
-                ...authHeaders,
-                'Content-Type': file.type || 'image/jpeg',
-                'X-File-Name': file.name || ('incident_' + incidentId + '.jpg')
-            },
-            body: file,
-            credentials: 'include'
-        });
+        const sendUpload = async (useBearer = true) => {
+            const authHeaders = useBearer && webAccessToken
+                ? { Authorization: 'Bearer ' + webAccessToken }
+                : {};
+            const response = await fetch(API_BASE + '/web/incidents/' + incidentId + '/photos', {
+                method: 'POST',
+                headers: {
+                    ...authHeaders,
+                    'Content-Type': file.type || 'image/jpeg',
+                    'X-File-Name': file.name || ('incident_' + incidentId + '.jpg')
+                },
+                body: file,
+                credentials: 'include'
+            });
+            const payload = await parseApiResponsePayload(response);
+            return { response, payload };
+        };
 
-        if (response.status === 401) {
-            currentUser = null;
-            webAccessToken = '';
-            closeSSE();
-            showLogin();
-            throw new Error('No autorizado');
+        let { response, payload } = await sendUpload(true);
+        if (response.status === 401 && webAccessToken) {
+            const retryResult = await sendUpload(false);
+            response = retryResult.response;
+            payload = retryResult.payload;
+            if (response.ok) {
+                webAccessToken = '';
+            }
         }
 
-        if (!response.ok) {
-            let message = 'Error subiendo foto.';
-            try {
-                const payload = await response.json();
-                message = payload?.error?.message || payload?.message || message;
-            } catch (_err) {
-                // Ignorar parseo de body en errores no JSON.
-            }
+        if (response.status === 401) {
+            const message = extractApiErrorMessage(payload, response) || 'No autorizado';
+            webAccessToken = '';
+            closeSSE();
+            showLogin({ preserveViews: true });
             throw new Error(message);
         }
 
-        return response.json();
+        if (!response.ok) {
+            throw new Error(extractApiErrorMessage(payload, response) || 'Error subiendo foto.');
+        }
+
+        return (payload && typeof payload === 'object') ? payload : {};
     },
     
     getTrendData() {
@@ -438,20 +556,137 @@ const api = {
     }
 };
 
-function showLogin() {
-    resetProtectedViews();
+// Domain: auth (session gating + login modal behavior)
+
+function isLoginModalActive() {
+    return Boolean(document.getElementById('loginModal')?.classList.contains('active'));
+}
+
+function getLoginModalFocusableElements() {
+    const modal = document.getElementById('loginModal');
+    if (!modal) return [];
+    return Array.from(modal.querySelectorAll(LOGIN_MODAL_FOCUSABLE_SELECTOR))
+        .filter((el) => {
+            if (!el) return false;
+            if (el.disabled) return false;
+            if (el.getAttribute('aria-hidden') === 'true') return false;
+            return true;
+        });
+}
+
+function focusLoginModalEntryField() {
+    const usernameInput = document.getElementById('loginUsername');
+    if (usernameInput && typeof usernameInput.focus === 'function') {
+        usernameInput.focus();
+        return;
+    }
+    const focusables = getLoginModalFocusableElements();
+    if (focusables[0] && typeof focusables[0].focus === 'function') {
+        focusables[0].focus();
+    }
+}
+
+function handleLoginModalKeydown(event) {
+    if (!isLoginModalActive()) return false;
+    if (!event) return false;
+
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        hideLogin();
+        return true;
+    }
+
+    if (event.key !== 'Tab') return false;
+
+    const focusables = getLoginModalFocusableElements();
+    if (!focusables.length) {
+        event.preventDefault();
+        return true;
+    }
+
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+
+    if (!focusables.includes(active)) {
+        event.preventDefault();
+        first.focus();
+        return true;
+    }
+
+    if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+        return true;
+    }
+
+    if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+        return true;
+    }
+
+    return false;
+}
+
+function showLogin(options = {}) {
+    const preserveViews = options && options.preserveViews === true;
+    if (!preserveViews) {
+        resetProtectedViews();
+    }
     syncRoleBasedNavigationAccess();
-    document.getElementById('loginModal').classList.add('active');
-    document.body.style.overflow = 'hidden';
+    const loginModal = document.getElementById('loginModal');
+    if (!loginModal) return;
+    if (!isLoginModalActive()) {
+        loginModalLastFocusedElement = document.activeElement;
+    }
+    loginModal.classList.add('active');
+    document.body.classList.add('modal-open');
+    focusLoginModalEntryField();
 }
 
 function hideLogin() {
-    document.getElementById('loginModal').classList.remove('active');
-    document.body.style.overflow = '';
-    document.getElementById('loginError').textContent = '';
+    const loginModal = document.getElementById('loginModal');
+    if (loginModal) {
+        loginModal.classList.remove('active');
+    }
+    document.body.classList.remove('modal-open');
+    const loginError = document.getElementById('loginError');
+    if (loginError) {
+        loginError.textContent = '';
+    }
+    if (
+        loginModalLastFocusedElement &&
+        loginModalLastFocusedElement !== document.body &&
+        typeof loginModalLastFocusedElement.focus === 'function'
+    ) {
+        loginModalLastFocusedElement.focus();
+    }
+    loginModalLastFocusedElement = null;
+}
+
+function normalizeInstallationsPayload(payload) {
+    if (Array.isArray(payload)) {
+        return payload;
+    }
+    if (payload && typeof payload === 'object') {
+        if (Array.isArray(payload.items)) {
+            return payload.items;
+        }
+        if (Array.isArray(payload.installations)) {
+            return payload.installations;
+        }
+        if (Array.isArray(payload.data)) {
+            return payload.data;
+        }
+    }
+    return [];
 }
 
 function resetProtectedViews() {
+    if (hasActiveSession()) {
+        return;
+    }
     revokeIncidentPhotoThumbBlobUrls();
     closePhotoModal();
     const ids = [
@@ -491,6 +726,17 @@ function canCurrentUserAccessAudit() {
     return role === 'admin' || role === 'super_admin';
 }
 
+function isExpectedSessionBootstrapError(error) {
+    const message = String(error?.message || '').toLowerCase();
+    if (!message) return false;
+    return (
+        message.includes('unauthorized') ||
+        message.includes('no autorizado') ||
+        message.includes('sesion') ||
+        message.includes('token')
+    );
+}
+
 function syncRoleBasedNavigationAccess() {
     const auditLink = document.querySelector('.nav-links a[data-section="audit"]');
     if (!auditLink) return;
@@ -516,6 +762,8 @@ function normalizeSeverity(input) {
     const value = String(input || '').trim().toLowerCase();
     return valid.includes(value) ? value : 'medium';
 }
+
+// Domain: sections (dashboard UI, forms, tables, QR flows, event listeners)
 
 async function createManualRecordFromWeb() {
     const clientName = prompt('Cliente (opcional):', currentUser?.username || '') ?? '';
@@ -708,7 +956,7 @@ async function selectAndUploadIncidentPhoto(incidentId, installationId) {
     const picker = document.createElement('input');
     picker.type = 'file';
     picker.accept = 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp';
-    picker.style.display = 'none';
+    picker.hidden = true;
     document.body.appendChild(picker);
 
     picker.addEventListener('change', async () => {
@@ -737,14 +985,12 @@ function updateStats(stats) {
 
 function animateNumber(elementId, value) {
     const element = document.getElementById(elementId);
-    element.style.opacity = '0';
-    element.style.transform = 'translateY(10px)';
-    
+    if (!element) return;
+    element.classList.remove('stat-value-pop');
+    void element.offsetWidth;
     setTimeout(() => {
         element.textContent = value;
-        element.style.transition = 'all 0.3s ease';
-        element.style.opacity = '1';
-        element.style.transform = 'translateY(0)';
+        element.classList.add('stat-value-pop');
     }, 100);
 }
 
@@ -978,7 +1224,9 @@ async function loadDashboard() {
         renderBrandChart(stats);
         await renderTrendChart();
         
-        const installations = await api.getInstallations({ limit: 5 });
+        const installations = normalizeInstallationsPayload(
+            await api.getInstallations({ limit: 5 })
+        );
         renderRecentInstallations(installations);
     } catch (err) {
         console.error('Error cargando dashboard:', err);
@@ -1000,7 +1248,7 @@ function renderRecentInstallations(installations) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'Estado', 'Atención', 'Fecha'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'Atencion', 'Nota', 'Fecha'].forEach((label) => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -1009,15 +1257,12 @@ function renderRecentInstallations(installations) {
 
     const tbody = document.createElement('tbody');
 
-    installations.forEach(inst => {
-        const statusClass = inst.status || 'unknown';
-        const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
-
+    installations.forEach((inst) => {
         const row = document.createElement('tr');
 
         const idCell = document.createElement('td');
         const strong = document.createElement('strong');
-        strong.textContent = `#${inst.id ?? 'N/A'}`;
+        strong.textContent = '#'+(inst.id ?? 'N/A');
         idCell.appendChild(strong);
 
         const clientCell = document.createElement('td');
@@ -1026,23 +1271,20 @@ function renderRecentInstallations(installations) {
         const brandCell = document.createElement('td');
         brandCell.textContent = inst.driver_brand || 'N/A';
 
-        const statusCell = document.createElement('td');
-        const statusBadge = document.createElement('span');
-        statusBadge.className = `badge ${statusClass}`;
-        statusBadge.textContent = `${statusIcon} ${inst.status || 'unknown'}`;
-        statusCell.appendChild(statusBadge);
-
         const attentionCell = document.createElement('td');
         const attentionBadge = document.createElement('span');
         const attentionMeta = buildRecordAttentionBadge(inst);
-        attentionBadge.className = `badge ${attentionMeta.stateClass}`;
+        attentionBadge.className = 'badge ' + attentionMeta.stateClass;
         attentionBadge.textContent = attentionMeta.text;
         attentionCell.appendChild(attentionBadge);
+
+        const noteCell = document.createElement('td');
+        noteCell.textContent = buildInstallationPrimaryNote(inst, 56);
 
         const dateCell = document.createElement('td');
         dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
 
-        row.append(idCell, clientCell, brandCell, statusCell, attentionCell, dateCell);
+        row.append(idCell, clientCell, brandCell, attentionCell, noteCell, dateCell);
         tbody.appendChild(row);
     });
 
@@ -1076,8 +1318,7 @@ function updateFilterChips() {
     
     chipsContainer.replaceChildren();
     let hasFilters = Object.keys(filters).length > 0;
-    
-    clearBtn.style.display = hasFilters ? 'inline-flex' : 'none';
+    clearBtn.classList.toggle('is-hidden', !hasFilters);
     
     const appendChip = (label, value, filterType) => {
         const chip = document.createElement('span');
@@ -1229,6 +1470,17 @@ function buildRecordAttentionBadge(record) {
     };
 }
 
+function buildInstallationPrimaryNote(record, maxLength = 48) {
+    const rawIncidentNote = normalizeOptionalString(
+        record?.latest_incident_note || record?.incident_note || '',
+        ''
+    ).trim();
+    const rawRecordNote = normalizeOptionalString(record?.notes || '', '').trim();
+    const selected = rawIncidentNote || rawRecordNote;
+    if (!selected) return '-';
+    return selected.length > maxLength ? `${selected.slice(0, maxLength)}...` : selected;
+}
+
 // Export Functions
 function sanitizeSpreadsheetCell(value) {
     const normalized = String(value ?? '')
@@ -1263,7 +1515,7 @@ function triggerBlobDownload(blob, filename) {
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
     link.setAttribute('download', filename);
-    link.style.visibility = 'hidden';
+    link.hidden = true;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1310,175 +1562,113 @@ function closePhotoModal() {
 }
 function exportToCSV(data, filename = 'registros.csv') {
     if (!data || !data.length) {
-        showNotification('❌ No hay datos para exportar', 'error');
+        showNotification('No hay datos para exportar', 'error');
         return;
     }
-    
-    // CSV Headers
-    const headers = ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo', 'Notas', 'Fecha'];
-    
-    // Convert data to CSV rows
-    const rows = data.map(inst => [
-        inst.id,
-        inst.client_name || 'N/A',
-        inst.driver_brand || 'N/A',
-        inst.driver_version || 'N/A',
-        inst.status || 'unknown',
-        formatDuration(inst.installation_time_seconds || 0),
-        inst.notes || '',
-        inst.timestamp
-    ]);
-    
-    // Combine headers and rows
+
+    const headers = ['ID', 'Cliente', 'Marca', 'Atencion', 'Tiempo', 'Nota', 'Fecha'];
+
+    const rows = data.map((inst) => {
+        const attentionMeta = buildRecordAttentionBadge(inst);
+        return [
+            inst.id,
+            inst.client_name || 'N/A',
+            inst.driver_brand || 'N/A',
+            attentionMeta.text,
+            formatDuration(inst.installation_time_seconds || 0),
+            buildInstallationPrimaryNote(inst, 120),
+            inst.timestamp,
+        ];
+    });
+
     const csvContent = [
         headers.map(toCsvCell).join(','),
-        ...rows.map(row => row.map(toCsvCell).join(','))
+        ...rows.map((row) => row.map(toCsvCell).join(','))
     ].join('\n');
-    
-    // Create and download file
+
     const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
     triggerBlobDownload(blob, filename);
-    
-    showNotification(`✅ Exportado: ${filename}`, 'success');
+
+    showNotification('Exportado: ' + filename, 'success');
 }
 
 function exportToExcel(data, filename = 'registros.xls') {
     if (!data || !data.length) {
-        showNotification('❌ No hay datos para exportar', 'error');
+        showNotification('No hay datos para exportar', 'error');
         return;
     }
-    
-    // Create HTML table for Excel
+
     let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
     html += '<head><meta charset="UTF-8"><style>th { background-color: #06b6d4; color: white; font-weight: bold; }</style></head>';
     html += '<body><table border="1">';
-    
-    // Headers
+
     html += '<tr>';
-    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo', 'Notas', 'Fecha'].forEach(header => {
-        html += `<th>${escapeHtml(header)}</th>`;
+    ['ID', 'Cliente', 'Marca', 'Atencion', 'Tiempo', 'Nota', 'Fecha'].forEach((header) => {
+        html += '<th>' + escapeHtml(header) + '</th>';
     });
     html += '</tr>';
-    
-    // Data rows
-    data.forEach(inst => {
+
+    data.forEach((inst) => {
         html += '<tr>';
-        html += `<td>${toExcelCell(inst.id)}</td>`;
-        html += `<td>${toExcelCell(inst.client_name || 'N/A')}</td>`;
-        html += `<td>${toExcelCell(inst.driver_brand || 'N/A')}</td>`;
-        html += `<td>${toExcelCell(inst.driver_version || 'N/A')}</td>`;
-        html += `<td>${toExcelCell(inst.status || 'unknown')}</td>`;
-        html += `<td>${toExcelCell(formatDuration(inst.installation_time_seconds || 0))}</td>`;
-        html += `<td>${toExcelCell((inst.notes || '').substring(0, 100))}</td>`;
-        html += `<td>${toExcelCell(inst.timestamp)}</td>`;
+        html += '<td>' + toExcelCell(inst.id) + '</td>';
+        html += '<td>' + toExcelCell(inst.client_name || 'N/A') + '</td>';
+        html += '<td>' + toExcelCell(inst.driver_brand || 'N/A') + '</td>';
+        html += '<td>' + toExcelCell(buildRecordAttentionBadge(inst).text) + '</td>';
+        html += '<td>' + toExcelCell(formatDuration(inst.installation_time_seconds || 0)) + '</td>';
+        html += '<td>' + toExcelCell(buildInstallationPrimaryNote(inst, 120)) + '</td>';
+        html += '<td>' + toExcelCell(inst.timestamp) + '</td>';
         html += '</tr>';
     });
-    
+
     html += '</table></body></html>';
-    
-    // Create and download file
+
     const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
     triggerBlobDownload(blob, filename);
-    
-    showNotification(`✅ Exportado: ${filename}`, 'success');
+
+    showNotification('Exportado: ' + filename, 'success');
 }
 
 function setupExportButtons() {
     const exportBtn = document.getElementById('exportBtn');
-    if (exportBtn) {
-        // Replace single export button with dropdown
-        const filterActions = document.querySelector('.filter-actions');
-        
-        // Create export dropdown
-        const exportDropdown = document.createElement('div');
-        exportDropdown.className = 'export-dropdown';
-        exportDropdown.style.cssText = 'position: relative; display: inline-block;';
-        
-        exportDropdown.innerHTML = `
-            <button id="exportBtn" class="btn-secondary">📥 Exportar ▼</button>
-            <div class="export-menu" style="
-                display: none;
-                position: absolute;
-                right: 0;
-                top: 100%;
-                margin-top: 0.5rem;
-                background: var(--bg-secondary);
-                border: 1px solid var(--border);
-                border-radius: var(--radius-sm);
-                box-shadow: var(--shadow-lg);
-                z-index: 100;
-                min-width: 160px;
-            ">
-                <button class="export-option" data-format="csv" style="
-                    display: flex;
-                    align-items: center;
-                    gap: 0.5rem;
-                    width: 100%;
-                    padding: 0.75rem 1rem;
-                    background: none;
-                    border: none;
-                    color: var(--text-primary);
-                    cursor: pointer;
-                    font-size: 0.875rem;
-                    text-align: left;
-                ">📄 Exportar CSV</button>
-                <button class="export-option" data-format="excel" style="
-                    display: flex;
-                    align-items: center;
-                    gap: 0.5rem;
-                    width: 100%;
-                    padding: 0.75rem 1rem;
-                    background: none;
-                    border: none;
-                    color: var(--text-primary);
-                    cursor: pointer;
-                    font-size: 0.875rem;
-                    text-align: left;
-                    border-top: 1px solid var(--border);
-                ">📊 Exportar Excel</button>
-            </div>
-        `;
-        
-        // Replace old button
-        exportBtn.replaceWith(exportDropdown);
-        
-        // Toggle menu
-        const btn = exportDropdown.querySelector('#exportBtn');
-        const menu = exportDropdown.querySelector('.export-menu');
-        
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-        });
-        
-        // Close on outside click
-        document.addEventListener('click', () => {
-            menu.style.display = 'none';
-        });
-        
-        // Export options
-        exportDropdown.querySelectorAll('.export-option').forEach(option => {
-            option.addEventListener('click', () => {
-                const format = option.dataset.format;
-                if (format === 'csv') {
-                    exportToCSV(currentInstallationsData);
-                } else if (format === 'excel') {
-                    exportToExcel(currentInstallationsData);
-                }
-                menu.style.display = 'none';
-            });
-            
-            // Hover effect
-            option.addEventListener('mouseenter', () => {
-                option.style.background = 'var(--bg-hover)';
-            });
-            option.addEventListener('mouseleave', () => {
-                option.style.background = 'none';
-            });
-        });
-    }
-}
+    if (!exportBtn) return;
 
+    const exportDropdown = document.createElement('div');
+    exportDropdown.className = 'export-dropdown';
+    exportDropdown.innerHTML = `
+        <button id="exportBtn" class="btn-secondary">Exportar v</button>
+        <div class="export-menu">
+            <button class="export-option" data-format="csv">Exportar CSV</button>
+            <button class="export-option" data-format="excel">Exportar Excel</button>
+        </div>
+    `;
+
+    exportBtn.replaceWith(exportDropdown);
+
+    const btn = exportDropdown.querySelector('#exportBtn');
+    const menu = exportDropdown.querySelector('.export-menu');
+    if (!btn || !menu) return;
+
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        menu.classList.toggle('is-open');
+    });
+
+    document.addEventListener('click', () => {
+        menu.classList.remove('is-open');
+    });
+
+    exportDropdown.querySelectorAll('.export-option').forEach((option) => {
+        option.addEventListener('click', () => {
+            const format = option.dataset.format;
+            if (format === 'csv') {
+                exportToCSV(currentInstallationsData);
+            } else if (format === 'excel') {
+                exportToExcel(currentInstallationsData);
+            }
+            menu.classList.remove('is-open');
+        });
+    });
+}
 
 function debouncedSearch() {
     const searchInput = document.getElementById('searchInput');
@@ -1620,8 +1810,21 @@ function setupAdvancedFilters() {
 
 async function loadInstallations() {
     if (!requireActiveSession()) return;
+    const now = Date.now();
+    if (now - lastInstallationsLoadStartedAt < 700) {
+        return;
+    }
+    if (installationsLoadInFlight) {
+        return;
+    }
     const container = document.getElementById('installationsTable');
     const resultsCount = document.getElementById('resultsCount');
+    if (!container) {
+        console.error('[loadInstallations] #installationsTable no existe en DOM.');
+        return;
+    }
+    lastInstallationsLoadStartedAt = now;
+    installationsLoadInFlight = true;
     container.innerHTML = '<p class="loading">Cargando...</p>';
     
     if (resultsCount) {
@@ -1640,8 +1843,10 @@ async function loadInstallations() {
             limit: 50
         };
         
-        const installations = await api.getInstallations(params);
-        currentInstallationsData = installations || [];
+        const installations = normalizeInstallationsPayload(
+            await api.getInstallations(params)
+        );
+        currentInstallationsData = installations;
         renderInstallationsTable(installations);
         
         // Update results count
@@ -1653,10 +1858,14 @@ async function loadInstallations() {
         // Update filter chips (in case they were cleared externally)
         updateFilterChips();
     } catch (err) {
-        container.innerHTML = '<p class="error">❌ Error cargando registros</p>';
+        const message = normalizeOptionalString(err?.message || err, 'Error cargando registros');
+        console.error('Error cargando registros:', err);
+        container.innerHTML = `<p class="error">Error cargando registros: ${escapeHtml(message)}</p>`;
         if (resultsCount) {
-            resultsCount.textContent = 'Error al cargar';
+            resultsCount.textContent = `Error: ${message}`;
         }
+    } finally {
+        installationsLoadInFlight = false;
     }
 }
 
@@ -1676,7 +1885,7 @@ function renderInstallationsTable(installations) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Atención', 'Tiempo', 'Notas', 'Fecha', 'QR'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'Atencion', 'Tiempo', 'Fecha', 'Nota', 'QR'].forEach((label) => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -1685,16 +1894,13 @@ function renderInstallationsTable(installations) {
 
     const tbody = document.createElement('tbody');
 
-    installations.forEach(inst => {
-        const statusClass = inst.status || 'unknown';
-        const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
-
+    installations.forEach((inst) => {
         const row = document.createElement('tr');
         row.dataset.id = String(inst.id ?? '');
 
         const idCell = document.createElement('td');
         const strong = document.createElement('strong');
-        strong.textContent = `#${inst.id ?? 'N/A'}`;
+        strong.textContent = '#'+(inst.id ?? 'N/A');
         idCell.appendChild(strong);
 
         const clientCell = document.createElement('td');
@@ -1703,19 +1909,10 @@ function renderInstallationsTable(installations) {
         const brandCell = document.createElement('td');
         brandCell.textContent = inst.driver_brand || 'N/A';
 
-        const versionCell = document.createElement('td');
-        versionCell.textContent = inst.driver_version || 'N/A';
-
-        const statusCell = document.createElement('td');
-        const statusBadge = document.createElement('span');
-        statusBadge.className = `badge ${statusClass}`;
-        statusBadge.textContent = `${statusIcon} ${inst.status || 'unknown'}`;
-        statusCell.appendChild(statusBadge);
-
         const attentionCell = document.createElement('td');
         const attentionBadge = document.createElement('span');
         const attentionMeta = buildRecordAttentionBadge(inst);
-        attentionBadge.className = `badge ${attentionMeta.stateClass}`;
+        attentionBadge.className = 'badge ' + attentionMeta.stateClass;
         attentionBadge.textContent = attentionMeta.text;
         attentionCell.appendChild(attentionBadge);
 
@@ -1723,7 +1920,7 @@ function renderInstallationsTable(installations) {
         timeCell.textContent = formatDuration(inst.installation_time_seconds ?? 0);
 
         const notesCell = document.createElement('td');
-        notesCell.textContent = inst.notes ? `${inst.notes.substring(0, 30)}...` : '-';
+        notesCell.textContent = buildInstallationPrimaryNote(inst, 64);
 
         const dateCell = document.createElement('td');
         dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
@@ -1740,14 +1937,14 @@ function renderInstallationsTable(installations) {
         });
         qrCell.appendChild(qrButton);
 
-        row.append(idCell, clientCell, brandCell, versionCell, statusCell, attentionCell, timeCell, notesCell, dateCell, qrCell);
+        row.append(idCell, clientCell, brandCell, attentionCell, timeCell, dateCell, notesCell, qrCell);
         tbody.appendChild(row);
     });
 
     table.append(thead, tbody);
     container.appendChild(table);
-    
-    container.querySelectorAll('tr[data-id]').forEach(row => {
+
+    container.querySelectorAll('tr[data-id]').forEach((row) => {
         row.addEventListener('click', () => {
             const id = row.dataset.id;
             showIncidentsForInstallation(id);
@@ -1876,6 +2073,58 @@ async function updateIncidentStatusFromWeb(incident, targetStatus, options = {})
         }
     } catch (err) {
         showNotification(`No se pudo actualizar estado: ${err.message || err}`, 'error');
+    }
+}
+
+async function updateIncidentEvidenceFromWeb(incident, options = {}) {
+    if (!requireActiveSession()) return;
+    const incidentId = Number.parseInt(String(incident?.id), 10);
+    if (!Number.isInteger(incidentId) || incidentId <= 0) {
+        showNotification('Incidencia invalida para actualizar evidencia.', 'error');
+        return;
+    }
+
+    const currentChecklist = normalizeIncidentChecklistItems(incident?.checklist_items);
+    const checklistInput = prompt(
+        'Checklist (separado por coma, vacio para limpiar):',
+        currentChecklist.join(', '),
+    );
+    if (checklistInput === null) return;
+
+    const evidenceNoteInput = prompt(
+        'Nota operativa (opcional):',
+        normalizeOptionalString(incident?.evidence_note, ''),
+    );
+    if (evidenceNoteInput === null) return;
+
+    const checklistItems = String(checklistInput || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0)
+        .slice(0, 30);
+    const evidenceNote = String(evidenceNoteInput || '').trim();
+
+    try {
+        await api.updateIncidentEvidence(incidentId, {
+            checklist_items: checklistItems,
+            evidence_note: evidenceNote || null,
+        });
+
+        showNotification('Evidencia de incidencia actualizada.', 'success');
+
+        if (Number.isInteger(options.installationId) && options.installationId > 0) {
+            await showIncidentsForInstallation(options.installationId);
+            return;
+        }
+        if (Number.isInteger(options.assetId) && options.assetId > 0) {
+            await loadAssetDetail(options.assetId, { keepSelection: true });
+            return;
+        }
+        if (currentSelectedInstallationId) {
+            await showIncidentsForInstallation(currentSelectedInstallationId);
+        }
+    } catch (err) {
+        showNotification('No se pudo actualizar evidencia: ' + (err.message || err), 'error');
     }
 }
 
@@ -2035,9 +2284,8 @@ function renderDriversTable(drivers) {
 
         const deleteBtn = document.createElement('button');
         deleteBtn.type = 'button';
-        deleteBtn.className = 'btn-secondary table-action-btn';
+        deleteBtn.className = 'btn-secondary table-action-btn table-action-spaced';
         deleteBtn.textContent = 'Eliminar';
-        deleteBtn.style.marginLeft = '0.35rem';
         deleteBtn.addEventListener('click', async (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -2185,9 +2433,8 @@ function renderAssetsTable(assets) {
 
         const incidentBtn = document.createElement('button');
         incidentBtn.type = 'button';
-        incidentBtn.className = 'btn-secondary table-action-btn';
+        incidentBtn.className = 'btn-secondary table-action-btn table-action-spaced';
         incidentBtn.textContent = 'Incidencia';
-        incidentBtn.style.marginLeft = '0.35rem';
         incidentBtn.addEventListener('click', (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -2479,8 +2726,7 @@ async function renderAssetDetail(data) {
         header.append(left, created);
 
         const note = document.createElement('p');
-        note.style.color = 'var(--text-secondary)';
-        note.style.lineHeight = '1.6';
+        note.className = 'incident-note';
         note.textContent = incident.note || '';
 
         const statusMeta = document.createElement('small');
@@ -2517,13 +2763,13 @@ async function renderAssetDetail(data) {
         const statusActions = document.createElement('div');
         statusActions.className = 'incident-actions';
         const incidentStatus = normalizeIncidentStatus(incident.incident_status);
+        const canUpdateIncident = canCurrentUserEditAssets();
 
         const makeStatusBtn = (label, statusValue) => {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'btn-secondary';
             button.textContent = label;
-            const canUpdateIncident = canCurrentUserEditAssets();
             button.disabled = !canUpdateIncident || incidentStatus === statusValue;
             if (!canUpdateIncident) {
                 button.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
@@ -2541,12 +2787,27 @@ async function renderAssetDetail(data) {
             makeStatusBtn('En curso', 'in_progress'),
             makeStatusBtn('Resolver', 'resolved'),
         );
+        const evidenceBtn = document.createElement('button');
+        evidenceBtn.type = 'button';
+        evidenceBtn.className = 'btn-secondary';
+        evidenceBtn.textContent = 'Evidencia';
+        evidenceBtn.disabled = !canUpdateIncident;
+        if (!canUpdateIncident) {
+            evidenceBtn.title = 'Solo admin/super_admin puede actualizar evidencia';
+        }
+        evidenceBtn.addEventListener('click', () => {
+            void updateIncidentEvidenceFromWeb(incident, {
+                assetId: Number.parseInt(String(asset.id), 10),
+                installationId: Number.parseInt(String(incident.installation_id), 10),
+            });
+        });
+        statusActions.appendChild(evidenceBtn);
         card.appendChild(statusActions);
 
         const uploadBtn = document.createElement('button');
         uploadBtn.className = 'btn-secondary';
+        uploadBtn.classList.add('with-top-gap');
         uploadBtn.textContent = 'Subir foto';
-        uploadBtn.style.marginTop = '0.5rem';
         uploadBtn.addEventListener('click', () => {
             void selectAndUploadIncidentPhoto(incident.id, incident.installation_id);
         });
@@ -2577,18 +2838,26 @@ async function renderAssetDetail(data) {
 async function loadPhotoWithAuth(photoId, options = {}) {
     const forModal = options.forModal === true;
     try {
-        const authHeaders = webAccessToken
-            ? { Authorization: 'Bearer ' + webAccessToken }
-            : {};
-        const response = await fetch(API_BASE + '/web/photos/' + photoId, {
-            headers: authHeaders,
-            credentials: 'include'
-        });
+        const sendRequest = async (useBearer = true) => {
+            const authHeaders = useBearer && webAccessToken
+                ? { Authorization: 'Bearer ' + webAccessToken }
+                : {};
+            return fetch(API_BASE + '/web/photos/' + photoId, {
+                headers: authHeaders,
+                credentials: 'include'
+            });
+        };
+        let response = await sendRequest(true);
+        if (response.status === 401 && webAccessToken) {
+            response = await sendRequest(false);
+            if (response.ok) {
+                webAccessToken = '';
+            }
+        }
         if (response.status === 401) {
-            currentUser = null;
             webAccessToken = '';
             closeSSE();
-            showLogin();
+            showLogin({ preserveViews: true });
             throw new Error('No autorizado');
         }
         if (!response.ok) throw new Error('Failed to load photo (HTTP ' + response.status + ')');
@@ -2643,8 +2912,7 @@ async function renderIncidents(incidents, installationId) {
     container.replaceChildren();
 
     const header = document.createElement('div');
-    header.className = 'incidents-header';
-    header.style.marginBottom = '1.5rem';
+    header.className = 'incidents-header incidents-header-block';
 
     const heading = document.createElement('h3');
     heading.textContent = `⚠️ Incidencias de Registro #${installationId}`;
@@ -2664,8 +2932,7 @@ async function renderIncidents(incidents, installationId) {
     });
 
     const actions = document.createElement('div');
-    actions.style.display = 'flex';
-    actions.style.gap = '0.5rem';
+    actions.className = 'incidents-header-actions';
     actions.append(createIncidentBtn, backButton);
 
     header.append(heading, actions);
@@ -2705,8 +2972,7 @@ async function renderIncidents(incidents, installationId) {
         incidentHeader.append(leftMeta, createdAt);
 
         const note = document.createElement('p');
-        note.style.color = 'var(--text-secondary)';
-        note.style.lineHeight = '1.6';
+        note.className = 'incident-note';
         note.textContent = inc.note || '';
 
         const statusMeta = document.createElement('small');
@@ -2737,13 +3003,13 @@ async function renderIncidents(incidents, installationId) {
         const statusActions = document.createElement('div');
         statusActions.className = 'incident-actions';
         const incidentStatus = normalizeIncidentStatus(inc.incident_status);
+        const canUpdateIncident = canCurrentUserEditAssets();
 
         const makeStatusBtn = (label, statusValue) => {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'btn-secondary';
             button.textContent = label;
-            const canUpdateIncident = canCurrentUserEditAssets();
             button.disabled = !canUpdateIncident || incidentStatus === statusValue;
             if (!canUpdateIncident) {
                 button.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
@@ -2760,12 +3026,26 @@ async function renderIncidents(incidents, installationId) {
             makeStatusBtn('En curso', 'in_progress'),
             makeStatusBtn('Resolver', 'resolved'),
         );
+        const evidenceBtn = document.createElement('button');
+        evidenceBtn.type = 'button';
+        evidenceBtn.className = 'btn-secondary';
+        evidenceBtn.textContent = 'Evidencia';
+        evidenceBtn.disabled = !canUpdateIncident;
+        if (!canUpdateIncident) {
+            evidenceBtn.title = 'Solo admin/super_admin puede actualizar evidencia';
+        }
+        evidenceBtn.addEventListener('click', () => {
+            void updateIncidentEvidenceFromWeb(inc, {
+                installationId: Number.parseInt(String(installationId), 10),
+            });
+        });
+        statusActions.appendChild(evidenceBtn);
         incidentCard.appendChild(statusActions);
 
         const uploadPhotoBtn = document.createElement('button');
         uploadPhotoBtn.className = 'btn-secondary';
+        uploadPhotoBtn.classList.add('with-top-gap');
         uploadPhotoBtn.textContent = '📤 Subir foto';
-        uploadPhotoBtn.style.marginTop = '0.5rem';
         uploadPhotoBtn.addEventListener('click', () => {
             void selectAndUploadIncidentPhoto(inc.id, installationId);
         });
@@ -2933,10 +3213,14 @@ function setQrPasswordModalBusy(isBusy) {
 function openQrPasswordModal() {
     const modal = document.getElementById('qrPasswordModal');
     const input = document.getElementById('qrPasswordInput');
+    const usernameInput = document.getElementById('qrPasswordUsername');
     if (!modal || !input) return;
     setQrPasswordModalBusy(false);
     setQrPasswordModalError('');
     input.value = '';
+    if (usernameInput) {
+        usernameInput.value = normalizeOptionalString(currentUser?.username, '');
+    }
     modal.classList.add('active');
     setTimeout(() => {
         input.focus();
@@ -3328,8 +3612,7 @@ async function copyQrPayloadToClipboard() {
             const area = document.createElement('textarea');
             area.value = currentQrPayload;
             area.setAttribute('readonly', 'readonly');
-            area.style.position = 'fixed';
-            area.style.left = '-9999px';
+            area.className = 'clipboard-helper';
             document.body.appendChild(area);
             area.select();
             document.execCommand('copy');
@@ -3516,12 +3799,7 @@ async function printQrLabel() {
     try {
         const printFrame = document.createElement('iframe');
         printFrame.setAttribute('aria-hidden', 'true');
-        printFrame.style.position = 'fixed';
-        printFrame.style.right = '0';
-        printFrame.style.bottom = '0';
-        printFrame.style.width = '0';
-        printFrame.style.height = '0';
-        printFrame.style.border = '0';
+        printFrame.className = 'print-frame-host';
         printFrame.srcdoc = printHtml;
 
         const cleanup = () => {
@@ -3629,10 +3907,7 @@ function renderAuditLogs(logs) {
 
         const actionCell = document.createElement('td');
         const actionCode = document.createElement('code');
-        actionCode.style.background = 'var(--bg-card)';
-        actionCode.style.padding = '0.25rem 0.5rem';
-        actionCode.style.borderRadius = '4px';
-        actionCode.style.fontSize = '0.75rem';
+        actionCode.className = 'audit-action-code';
         actionCode.textContent = log.action || '-';
         actionCell.appendChild(actionCode);
 
@@ -3648,8 +3923,7 @@ function renderAuditLogs(logs) {
         statusCell.appendChild(badge);
 
         const detailsCell = document.createElement('td');
-        detailsCell.style.color = 'var(--text-secondary)';
-        detailsCell.style.fontSize = '0.875rem';
+        detailsCell.className = 'audit-details-cell';
         detailsCell.textContent = details;
 
         row.append(dateCell, actionCell, userCell, statusCell, detailsCell);
@@ -3661,10 +3935,13 @@ function renderAuditLogs(logs) {
 }
 
 // Event Listeners
-document.getElementById('loginForm').addEventListener('submit', async (e) => {
+document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const username = document.getElementById('loginUsername').value;
-    const password = document.getElementById('loginPassword').value;
+    const usernameInput = document.getElementById('loginUsername');
+    const passwordInput = document.getElementById('loginPassword');
+    if (!usernameInput || !passwordInput) return;
+    const username = usernameInput.value;
+    const password = passwordInput.value;
     
     try {
         const result = await api.login(username, password);
@@ -3682,12 +3959,15 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         // Show success notification
         showNotification('✅ Bienvenido, ' + result.user.username + '!', 'success');
     } catch (err) {
-        document.getElementById('loginError').textContent = '❌ Credenciales inválidas';
-        document.getElementById('loginPassword').value = '';
+        const loginError = document.getElementById('loginError');
+        if (loginError) {
+            loginError.textContent = '❌ Credenciales inválidas';
+        }
+        passwordInput.value = '';
     }
 });
 
-document.getElementById('logoutBtn').addEventListener('click', async () => {
+const performLogout = async () => {
     try {
         await api.logout();
     } catch (err) {
@@ -3699,17 +3979,24 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     resetProtectedViews();
     showLogin();
     showNotification('👋 Sesión cerrada', 'info');
+};
+
+document.getElementById('logoutBtn')?.addEventListener('click', async () => {
+    await performLogout();
 });
 
-document.getElementById('refreshBtn').addEventListener('click', () => {
+document.getElementById('logoutBtnMobile')?.addEventListener('click', async () => {
+    await performLogout();
+});
+
+document.getElementById('refreshBtn')?.addEventListener('click', () => {
     if (!requireActiveSession()) return;
     const btn = document.getElementById('refreshBtn');
-    btn.style.transform = 'rotate(360deg)';
-    btn.style.transition = 'transform 0.5s ease';
+    if (!btn) return;
+    btn.classList.add('is-spinning');
     
     setTimeout(() => {
-        btn.style.transform = '';
-        btn.style.transition = '';
+        btn.classList.remove('is-spinning');
     }, 500);
     
     loadDashboard();
@@ -3750,7 +4037,7 @@ document.querySelectorAll('.nav-links a').forEach(link => {
     });
 });
 
-document.getElementById('applyFilters').addEventListener('click', () => {
+document.getElementById('applyFilters')?.addEventListener('click', () => {
     if (!requireActiveSession()) return;
     updateFilterChips();
     loadInstallations();
@@ -3802,20 +4089,20 @@ document.getElementById('assetsSearchInput')?.addEventListener('keydown', (event
 });
 
 
-document.getElementById('refreshAudit').addEventListener('click', () => {
+document.getElementById('refreshAudit')?.addEventListener('click', () => {
     if (!requireActiveSession()) return;
     loadAuditLogs();
 });
 
-document.getElementById('auditActionFilter').addEventListener('change', () => {
+document.getElementById('auditActionFilter')?.addEventListener('change', () => {
     if (!requireActiveSession()) return;
     loadAuditLogs();
 });
 
-document.querySelector('#photoModal .close').addEventListener('click', closePhotoModal);
+document.querySelector('#photoModal .close')?.addEventListener('click', closePhotoModal);
 
 // Close modal on outside click
-document.getElementById('photoModal').addEventListener('click', (e) => {
+document.getElementById('photoModal')?.addEventListener('click', (e) => {
     if (e.target === e.currentTarget) {
         closePhotoModal();
     }
@@ -3829,11 +4116,11 @@ document.querySelectorAll('input[name="qrType"]').forEach((radio) => {
     });
 });
 
-document.getElementById('qrGenerateBtn').addEventListener('click', () => {
+document.getElementById('qrGenerateBtn')?.addEventListener('click', () => {
     generateQrPreview();
 });
 
-document.getElementById('qrSaveAssetBtn').addEventListener('click', () => {
+document.getElementById('qrSaveAssetBtn')?.addEventListener('click', () => {
     const selectedType = document.querySelector('input[name="qrType"]:checked')?.value || 'asset';
     if (selectedType !== 'asset') {
         setQrError('Guardar equipo solo aplica para tipo Equipo.');
@@ -3857,22 +4144,22 @@ document.getElementById('qrEnableEditBtn')?.addEventListener('click', () => {
     openQrPasswordModal();
 });
 
-document.getElementById('qrValueInput').addEventListener('keydown', (event) => {
+document.getElementById('qrValueInput')?.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
         event.preventDefault();
         generateQrPreview();
     }
 });
 
-document.getElementById('qrCopyBtn').addEventListener('click', () => {
+document.getElementById('qrCopyBtn')?.addEventListener('click', () => {
     void copyQrPayloadToClipboard();
 });
 
-document.getElementById('qrDownloadBtn').addEventListener('click', () => {
+document.getElementById('qrDownloadBtn')?.addEventListener('click', () => {
     void downloadQrImage();
 });
 
-document.getElementById('qrPrintBtn').addEventListener('click', () => {
+document.getElementById('qrPrintBtn')?.addEventListener('click', () => {
     void printQrLabel();
 });
 
@@ -3883,11 +4170,11 @@ document.getElementById('qrLabelPresetSelect')?.addEventListener('change', () =>
     }
 });
 
-document.querySelector('#qrModal .close').addEventListener('click', () => {
+document.querySelector('#qrModal .close')?.addEventListener('click', () => {
     closeQrModal();
 });
 
-document.getElementById('qrModal').addEventListener('click', (e) => {
+document.getElementById('qrModal')?.addEventListener('click', (e) => {
     if (e.target === e.currentTarget) {
         closeQrModal();
     }
@@ -3901,12 +4188,7 @@ document.getElementById('qrPasswordCancelBtn')?.addEventListener('click', () => 
     closeQrPasswordModal();
 });
 
-document.getElementById('qrPasswordConfirmBtn')?.addEventListener('click', () => {
-    void confirmQrEditUnlockFromModal();
-});
-
-document.getElementById('qrPasswordInput')?.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
+document.getElementById('qrPasswordForm')?.addEventListener('submit', (event) => {
     event.preventDefault();
     void confirmQrEditUnlockFromModal();
 });
@@ -3919,56 +4201,39 @@ document.getElementById('qrPasswordModal')?.addEventListener('click', (event) =>
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
+    if (handleLoginModalKeydown(e)) {
+        return;
+    }
+
     if (e.key === 'Escape') {
         closePhotoModal();
         closeQrPasswordModal();
         closeQrModal();
     }
-    if (e.ctrlKey && e.key === 'r') {
+    const normalizedKey = String(e.key || '').toLowerCase();
+    if (e.altKey && !e.ctrlKey && !e.metaKey && normalizedKey === 'r') {
         e.preventDefault();
-        loadDashboard();
+        void loadDashboard();
     }
 });
 
 // Notification system
+
+// Domain: realtime (notifications + SSE lifecycle)
+
 function showNotification(message, type = 'info') {
     const notification = document.createElement('div');
-    notification.style.cssText = `
-        position: fixed;
-        top: 1rem;
-        right: 1rem;
-        padding: 1rem 1.5rem;
-        background: ${type === 'success' ? 'rgba(16, 185, 129, 0.9)' : type === 'error' ? 'rgba(239, 68, 68, 0.9)' : 'rgba(6, 182, 212, 0.9)'};
-        color: white;
-        border-radius: 12px;
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
-        z-index: 9999;
-        font-weight: 500;
-        animation: slideIn 0.3s ease;
-    `;
+    const normalizedType = ['success', 'error', 'warning', 'info'].includes(type) ? type : 'info';
+    notification.className = `toast-notification toast-${normalizedType}`;
     notification.textContent = message;
     
     document.body.appendChild(notification);
     
     setTimeout(() => {
-        notification.style.animation = 'slideOut 0.3s ease';
+        notification.classList.add('is-leaving');
         setTimeout(() => notification.remove(), 300);
     }, 3000);
 }
-
-// Add animation styles
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideIn {
-        from { transform: translateX(100%); opacity: 0; }
-        to { transform: translateX(0); opacity: 1; }
-    }
-    @keyframes slideOut {
-        from { transform: translateX(0); opacity: 1; }
-        to { transform: translateX(100%); opacity: 0; }
-    }
-`;
-document.head.appendChild(style);
 
 // WebSocket/SSE Functions
 function getActiveSectionName() {
@@ -4223,6 +4488,9 @@ function handleRealtimeStatsUpdate(stats) {
 }
 
 function isMobileDashboardViewport() {
+    if (typeof window.matchMedia !== 'function') {
+        return false;
+    }
     return window.matchMedia('(max-width: 768px)').matches;
 }
 
@@ -4231,17 +4499,9 @@ function applyConnectionStatusVisualState(indicator) {
     const hiddenByScroll = indicator.dataset.hiddenByScroll === '1';
     const dimmed = indicator.dataset.dimmed === '1';
     const canReconnect = indicator.dataset.canReconnect === '1';
-
-    if (hiddenByScroll) {
-        indicator.style.opacity = '0';
-        indicator.style.transform = 'translateY(-12px) scale(0.96)';
-        indicator.style.pointerEvents = 'none';
-        return;
-    }
-
-    indicator.style.opacity = dimmed ? '0.6' : '1';
-    indicator.style.transform = dimmed ? 'scale(0.9)' : 'scale(1)';
-    indicator.style.pointerEvents = canReconnect ? 'auto' : 'none';
+    indicator.classList.toggle('is-hidden-scroll', hiddenByScroll);
+    indicator.classList.toggle('is-dimmed', !hiddenByScroll && dimmed);
+    indicator.classList.toggle('is-clickable', !hiddenByScroll && canReconnect);
 }
 
 function ensureConnectionStatusMobileBindings() {
@@ -4323,29 +4583,8 @@ function updateConnectionStatus(status) {
 
     const indicator = existingIndicator || document.createElement('div');
     indicator.id = 'connectionStatus';
-    indicator.style.cssText = `
-        position: fixed;
-        ${isMobileViewport ? 'top: calc(env(safe-area-inset-top, 0px) + 0.625rem);' : 'bottom: 1rem;'}
-        right: 0.625rem;
-        ${isMobileViewport ? 'bottom: auto;' : ''}
-        padding: ${isMobileViewport ? '0.375rem 0.625rem' : '0.5rem 1rem'};
-        background: ${config.color};
-        color: white;
-        border-radius: 9999px;
-        font-size: ${isMobileViewport ? '0.6875rem' : '0.75rem'};
-        font-weight: 600;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        z-index: ${isMobileViewport ? '950' : '9998'};
-        max-width: ${isMobileViewport ? '55vw' : 'none'};
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
-        transition: opacity 0.25s ease, transform 0.25s ease, background-color 0.25s ease;
-        cursor: ${canManualReconnect ? 'pointer' : 'default'};
-    `;
+    indicator.className = `connection-status status-${status}${isMobileViewport ? ' is-mobile' : ''}`;
+    indicator.dataset.status = status;
     indicator.innerHTML = showStatusIcon
         ? `<span aria-hidden="true">${config.icon}</span><span>${displayText}</span>`
         : `<span>${displayText}</span>`;
@@ -4426,6 +4665,8 @@ function closeSSE() {
     }
 }
 
+// Domain: init-theme-modules (init, theme, module exports, bootstrapping)
+
 // Initialize
 async function init() {
     try {
@@ -4442,13 +4683,20 @@ async function init() {
             showLogin();
         } else {
             const me = await api.getMe();
+            if (!me || typeof me !== 'object' || !normalizeOptionalString(me.username, '')) {
+                throw new Error('No active web session');
+            }
             applyAuthenticatedUser(me);
             hideLogin();
             loadDashboard();
             syncSSEForCurrentContext(true);
         }
     } catch (err) {
-        console.error('Error validating session:', err);
+        if (isExpectedSessionBootstrapError(err)) {
+            console.info('No active web session. Showing login.');
+        } else {
+            console.error('Error validating session:', err);
+        }
         currentUser = null;
         closeSSE();
         resetProtectedViews();
@@ -4561,4 +4809,86 @@ function setupThemeToggle() {
     }
 }
 
-init();
+registerDashboardModule('core', {
+    normalizeOptionalString,
+    parseApiResponsePayload,
+    extractApiErrorMessage,
+    escapeHtml,
+    showNotification,
+});
+
+registerDashboardModule('api', {
+    request: api.request.bind(api),
+    getStatistics: api.getStatistics.bind(api),
+    getTrendData: api.getTrendData.bind(api),
+    getInstallations: api.getInstallations.bind(api),
+    getIncidents: api.getIncidents.bind(api),
+    getAssets: api.getAssets.bind(api),
+    getDrivers: api.getDrivers.bind(api),
+    getAuditLogs: api.getAuditLogs.bind(api),
+    getMe: api.getMe.bind(api),
+    login: api.login.bind(api),
+    logout: api.logout.bind(api),
+});
+
+registerDashboardModule('auth', {
+    showLogin,
+    hideLogin,
+    hasActiveSession,
+    requireActiveSession,
+    applyAuthenticatedUser,
+    canCurrentUserAccessAudit,
+});
+
+registerDashboardModule('sections', {
+    loadDashboard,
+    loadInstallations,
+    loadAssets,
+    loadDrivers,
+    loadAuditLogs,
+    renderInstallationsTable,
+    renderAssetsTable,
+    renderDriversTable,
+    renderIncidents,
+    renderAuditLogs,
+});
+
+registerDashboardModule('realtime', {
+    initSSE,
+    closeSSE,
+    updateConnectionStatus,
+    syncSSEForCurrentContext,
+});
+
+registerDashboardModule('theme', {
+    getCurrentTheme,
+    setTheme,
+    toggleTheme,
+    setupThemeToggle,
+    updateChartTheme,
+});
+
+registerDashboardModule('qr', {
+    showQrModal,
+    closeQrModal,
+    generateQrPreview,
+    saveAssetFromQrModal,
+    copyQrPayloadToClipboard,
+    downloadQrImage,
+    printQrLabel,
+});
+
+exposeDashboardModules();
+
+const isJsDomRuntime = typeof navigator !== 'undefined'
+    && /jsdom/i.test(String(navigator.userAgent || ''));
+const shouldAutoInit = window.__DM_DISABLE_AUTO_INIT__ !== true && !isJsDomRuntime;
+
+if (shouldAutoInit) {
+    if (!window.__DM_DASHBOARD_INIT_DONE__) {
+        window.__DM_DASHBOARD_INIT_DONE__ = true;
+        init();
+    } else {
+        console.warn('[init] dashboard.js ya estaba inicializado; se evita doble registro de listeners.');
+    }
+}

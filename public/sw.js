@@ -1,20 +1,21 @@
 // Service Worker for SiteOps Dashboard PWA
-const CACHE_NAME = 'driver-manager-e2cf707a60';
+const CACHE_NAME = 'driver-manager-ee4c813c3a';
 const STATIC_ASSETS = [
   '/web/dashboard',
-  '/dashboard.css?v=5938020295',
+  '/dashboard.css?v=11c4bf962c',
   '/dashboard-qr.js?v=d8de215faf',
-  '/dashboard.js?v=4a32eafb62',
-  '/dashboard-pwa.js?v=f2230f4810',
+  '/dashboard.js?v=24b097562e',
+  '/dashboard-pwa.js?v=a1a89ac051',
   '/manifest.json?v=9130a5f920'
 ];
 
 const STATIC_ASSET_PATHS = new Set([
   '/web/dashboard',
   '/dashboard.css',
+  '/dashboard-qr.js',
   '/dashboard.js',
   '/dashboard-pwa.js',
-  '/manifest.json',
+  '/manifest.json'
 ]);
 
 function getAssetPath(input) {
@@ -44,7 +45,7 @@ async function shouldCacheResponse(requestOrUrl, response) {
   }
 
   try {
-    const body = await response.clone().arrayBuffer();
+    const body = await response.arrayBuffer();
     if (!body || body.byteLength <= 0) {
       console.warn('[SW] Skip caching empty asset body:', path);
       return false;
@@ -69,7 +70,8 @@ self.addEventListener('install', (event) => {
           try {
             const request = new Request(asset, { cache: 'no-store' });
             const networkResponse = await fetch(request);
-            if (!(await shouldCacheResponse(request, networkResponse))) {
+            const validationResponse = networkResponse.clone();
+            if (!(await shouldCacheResponse(request, validationResponse))) {
               continue;
             }
             await cache.put(request, networkResponse.clone());
@@ -129,8 +131,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   
-  // Skip external requests (Chart.js CDN)
-  if (!url.origin.includes(self.location.origin)) {
+  // Skip external requests.
+  if (url.origin !== self.location.origin) {
     return;
   }
 
@@ -139,9 +141,11 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then(async (networkResponse) => {
-          if (await shouldCacheResponse(request, networkResponse)) {
+          const responseToCache = networkResponse.clone();
+          const validationResponse = responseToCache.clone();
+          if (await shouldCacheResponse(request, validationResponse)) {
             caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, networkResponse.clone());
+              cache.put(request, responseToCache);
             });
           }
           return networkResponse;
@@ -163,10 +167,12 @@ self.addEventListener('fetch', (event) => {
           // Fetch new version in background (stale-while-revalidate)
           fetch(request)
             .then(async (networkResponse) => {
-              if (await shouldCacheResponse(request, networkResponse)) {
+              const responseToCache = networkResponse.clone();
+              const validationResponse = responseToCache.clone();
+              if (await shouldCacheResponse(request, validationResponse)) {
                 caches.open(CACHE_NAME)
                   .then((cache) => {
-                    cache.put(request, networkResponse.clone());
+                    cache.put(request, responseToCache);
                   });
               }
             })
@@ -180,7 +186,8 @@ self.addEventListener('fetch', (event) => {
         // No cache, fetch from network
         return fetch(request)
           .then(async (networkResponse) => {
-            if (!(await shouldCacheResponse(request, networkResponse))) {
+            const validationResponse = networkResponse.clone();
+            if (!(await shouldCacheResponse(request, validationResponse))) {
               return networkResponse;
             }
             
@@ -276,7 +283,9 @@ if ('periodicSync' in self.registration) {
   self.registration.periodicSync.register('update-stats', {
     minInterval: 24 * 60 * 60 * 1000 // 24 hours
   }).catch((err) => {
-    console.log('[SW] Periodic sync not granted:', err);
+    if (err?.name !== 'NotAllowedError') {
+      console.log('[SW] Periodic sync registration failed:', err);
+    }
   });
 }
 

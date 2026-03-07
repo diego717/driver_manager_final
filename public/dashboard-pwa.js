@@ -1,7 +1,7 @@
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker
-      .register("/sw.js?v=9c5504553b")
+      .register("/sw.js?v=9e8dae8bab")
       .then((registration) => {
         console.log("[PWA] Service Worker registered:", registration.scope);
 
@@ -31,6 +31,12 @@ if ("serviceWorker" in navigator) {
 
 let deferredPrompt;
 window.addEventListener("beforeinstallprompt", (event) => {
+  const useCustomInstallFlow = window.__DM_USE_CUSTOM_INSTALL_PROMPT__ === true;
+  if (!useCustomInstallFlow) {
+    deferredPrompt = null;
+    return;
+  }
+
   event.preventDefault();
   deferredPrompt = event;
   console.log("[PWA] Install prompt available");

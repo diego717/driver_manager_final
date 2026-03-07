@@ -6,8 +6,9 @@
     <meta name="theme-color" content="#0f756d">
     <meta name="description" content="Dashboard de gestión de registros de drivers">
     <title>SiteOps Dashboard</title>
-    <link rel="stylesheet" href="/dashboard.css?v=5938020295">
+    <link rel="stylesheet" href="/dashboard.css?v=11c4bf962c">
     <link rel="manifest" href="/manifest.json?v=9130a5f920">
+    <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -41,7 +42,7 @@
                         <span id="userRole" class="role-badge">admin</span>
                     </div>
                 </div>
-                <button id="logoutBtn" class="btn-secondary"><span class="material-symbols-outlined" style="font-size: 1rem;">logout</span> Cerrar sesión</button>
+                <button id="logoutBtn" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">logout</span> Cerrar sesión</button>
             </div>
         </nav>
         
@@ -49,6 +50,9 @@
             <header class="header">
                 <h2 id="pageTitle">Dashboard</h2>
                 <div class="header-actions">
+                    <button id="logoutBtnMobile" class="btn-secondary mobile-only" type="button" aria-label="Cerrar sesión">
+                        <span class="material-symbols-outlined icon-inline-sm">logout</span>
+                    </button>
                     <button id="themeToggle" class="theme-toggle" type="button" title="Cambiar tema" aria-label="Cambiar tema" aria-pressed="false">
                         <span class="icon-sun" aria-hidden="true"><span class="material-symbols-outlined">light_mode</span></span>
                         <span class="icon-moon" aria-hidden="true"><span class="material-symbols-outlined">dark_mode</span></span>
@@ -121,7 +125,7 @@
                     <!-- Real-time search -->
                     <div class="search-wrapper">
                         <input type="text" id="searchInput" class="search-input" placeholder="Búsqueda en tiempo real..." autocomplete="off">
-                        <span class="search-icon"><span class="material-symbols-outlined" style="font-size: 1.125rem;">search</span></span>
+                        <span class="search-icon"><span class="material-symbols-outlined icon-inline-md">search</span></span>
                     </div>
                     
                     <!-- Filter row -->
@@ -146,9 +150,9 @@
                     
                     <!-- Action buttons -->
                     <div class="filter-actions">
-                        <button id="clearFilters" class="btn-secondary is-hidden"><span class="material-symbols-outlined" style="font-size: 1rem;">delete</span> Limpiar Filtros</button>
-                        <button id="applyFilters" class="btn-primary"><span class="material-symbols-outlined" style="font-size: 1rem;">filter_alt</span> Aplicar</button>
-                        <button id="exportBtn" class="btn-secondary"><span class="material-symbols-outlined" style="font-size: 1rem;">download</span> Exportar</button>
+                        <button id="clearFilters" class="btn-secondary is-hidden"><span class="material-symbols-outlined icon-inline-sm">delete</span> Limpiar Filtros</button>
+                        <button id="applyFilters" class="btn-primary"><span class="material-symbols-outlined icon-inline-sm">filter_alt</span> Aplicar</button>
+                        <button id="exportBtn" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">download</span> Exportar</button>
                     </div>
                 </div>
                 
@@ -172,13 +176,13 @@
                 <div class="filters">
                     <div class="search-wrapper">
                         <input type="text" id="assetsSearchInput" class="search-input" placeholder="Buscar equipo por codigo, marca, modelo, serie o cliente..." autocomplete="off">
-                        <span class="search-icon"><span class="material-symbols-outlined" style="font-size: 1.125rem;">search</span></span>
+                        <span class="search-icon"><span class="material-symbols-outlined icon-inline-md">search</span></span>
                     </div>
 
                     <div class="filter-actions">
-                        <button id="assetsSearchBtn" class="btn-primary"><span class="material-symbols-outlined" style="font-size: 1rem;">search</span> Buscar</button>
-                        <button id="assetsRefreshBtn" class="btn-secondary"><span class="material-symbols-outlined" style="font-size: 1rem;">refresh</span> Actualizar</button>
-                        <button id="assetsCreateQrBtn" class="btn-secondary"><span class="material-symbols-outlined" style="font-size: 1rem;">qr_code_2</span> Nuevo equipo + QR</button>
+                        <button id="assetsSearchBtn" class="btn-primary"><span class="material-symbols-outlined icon-inline-sm">search</span> Buscar</button>
+                        <button id="assetsRefreshBtn" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">refresh</span> Actualizar</button>
+                        <button id="assetsCreateQrBtn" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">qr_code_2</span> Nuevo equipo + QR</button>
                     </div>
                 </div>
 
@@ -206,15 +210,15 @@
                         <input type="text" id="driverDescriptionInput" placeholder="Descripcion (opcional)">
                     </div>
                     <div class="filter-actions">
-                        <input type="file" id="driverFileInput" style="display: none;">
+                        <input type="file" id="driverFileInput">
                         <button id="driverPickFileBtn" class="btn-secondary">
-                            <span class="material-symbols-outlined" style="font-size: 1rem;">attach_file</span> Seleccionar archivo
+                            <span class="material-symbols-outlined icon-inline-sm">attach_file</span> Seleccionar archivo
                         </button>
                         <button id="driverUploadBtn" class="btn-primary">
-                            <span class="material-symbols-outlined" style="font-size: 1rem;">cloud_upload</span> Subir driver
+                            <span class="material-symbols-outlined icon-inline-sm">cloud_upload</span> Subir driver
                         </button>
                         <button id="driversRefreshBtn" class="btn-secondary">
-                            <span class="material-symbols-outlined" style="font-size: 1rem;">refresh</span> Actualizar
+                            <span class="material-symbols-outlined icon-inline-sm">refresh</span> Actualizar
                         </button>
                     </div>
                 </div>
@@ -243,7 +247,7 @@
                         <option value="create_incident">⚠️ Crear incidencia</option>
                         <option value="create_installation">💻 Crear registro</option>
                     </select>
-                    <button id="refreshAudit" class="btn-secondary"><span class="material-symbols-outlined" style="font-size: 1rem;">refresh</span> Actualizar</button>
+                    <button id="refreshAudit" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">refresh</span> Actualizar</button>
                 </div>
                 <div id="auditLogs" class="table-container">
                     <p class="loading">Cargando logs...</p>
@@ -255,17 +259,17 @@
     <div id="loginModal" class="modal">
         <div class="modal-content">
             <div class="login-header">
-                <h2><span class="material-symbols-outlined" style="font-size: 1.5rem; vertical-align: middle;">lock</span> SiteOps</h2>
+                <h2><span class="material-symbols-outlined icon-inline-lg-middle">lock</span> SiteOps</h2>
                 <p>Iniciar Sesión</p>
             </div>
             <form id="loginForm">
                 <div class="input-group">
                     <label for="loginUsername">Usuario</label>
-                    <input type="text" id="loginUsername" placeholder="nombre_usuario" required>
+                    <input type="text" id="loginUsername" placeholder="nombre_usuario" autocomplete="username" required>
                 </div>
                 <div class="input-group">
                     <label for="loginPassword">Contrasena</label>
-                    <input type="password" id="loginPassword" placeholder="********" required>
+                    <input type="password" id="loginPassword" autocomplete="current-password" placeholder="********" required>
                 </div>
                 <button type="submit" class="btn-primary btn-full">Ingresar</button>
             </form>
@@ -368,21 +372,30 @@
             <button type="button" class="close" aria-label="Cerrar confirmacion de contrasena">&times;</button>
             <h3>Confirmar edicion</h3>
             <p class="qr-modal-subtitle">Ingresa tu contrasena para habilitar edicion de este equipo.</p>
-            <div class="input-group">
-                <label for="qrPasswordInput">Contrasena</label>
-                <input type="password" id="qrPasswordInput" autocomplete="current-password" placeholder="********">
-            </div>
-            <p id="qrPasswordError" class="error"></p>
-            <div class="qr-actions">
-                <button type="button" id="qrPasswordConfirmBtn" class="btn-primary">Confirmar</button>
-                <button type="button" id="qrPasswordCancelBtn" class="btn-secondary">Cancelar</button>
-            </div>
+            <form id="qrPasswordForm">
+                <input
+                    type="text"
+                    id="qrPasswordUsername"
+                    autocomplete="username"
+                    tabindex="-1"
+                    aria-hidden="true"
+                    class="hidden-credential-field"
+                >
+                <div class="input-group">
+                    <label for="qrPasswordInput">Contrasena</label>
+                    <input type="password" id="qrPasswordInput" autocomplete="current-password" placeholder="********">
+                </div>
+                <p id="qrPasswordError" class="error"></p>
+                <div class="qr-actions">
+                    <button type="submit" id="qrPasswordConfirmBtn" class="btn-primary">Confirmar</button>
+                    <button type="button" id="qrPasswordCancelBtn" class="btn-secondary">Cancelar</button>
+                </div>
+            </form>
         </div>
     </div>
     
     <script src="/dashboard-qr.js?v=d8de215faf" defer></script>
-    <script src="/dashboard.js?v=4a32eafb62" defer></script>
-    <script src="/dashboard-pwa.js?v=f2230f4810" defer></script>
+    <script src="/dashboard.js?v=24b097562e" defer></script>
+    <script src="/dashboard-pwa.js?v=a1a89ac051" defer></script>
 </body>
 </html>
-

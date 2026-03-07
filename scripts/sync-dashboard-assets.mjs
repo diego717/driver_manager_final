@@ -49,15 +49,23 @@ function rewriteServiceWorker(content, versions) {
     `/dashboard-pwa.js?v=${versions.pwa}`,
     `/manifest.json?v=${versions.manifest}`,
   ];
+  const staticAssetPaths = Array.from(
+    new Set(staticAssets.map((asset) => new URL(asset, "https://local.dashboard").pathname)),
+  );
 
   const withCacheName = content.replace(
     /const CACHE_NAME = ['"][^'"]+['"];/,
     `const CACHE_NAME = '${cacheName}';`,
   );
 
-  return withCacheName.replace(
+  const withStaticAssets = withCacheName.replace(
     /const STATIC_ASSETS = \[[\s\S]*?\];/,
     `const STATIC_ASSETS = [\n${staticAssets.map((asset) => `  '${asset}'`).join(",\n")}\n];`,
+  );
+
+  return withStaticAssets.replace(
+    /const STATIC_ASSET_PATHS = new Set\(\[[\s\S]*?\]\);/,
+    `const STATIC_ASSET_PATHS = new Set([\n${staticAssetPaths.map((asset) => `  '${asset}'`).join(",\n")}\n]);`,
   );
 }
 

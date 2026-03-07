@@ -6,7 +6,8 @@
   "description": "Cloudflare Worker API for Driver Manager with D1 database",
   "main": "worker.js",
   "scripts": {
-    "dashboard:sync-assets": "node scripts/sync-dashboard-assets.mjs",
+    "dashboard:build": "node scripts/build-dashboard-js.mjs",
+    "dashboard:sync-assets": "npm run dashboard:build && node scripts/sync-dashboard-assets.mjs",
     "dev": "npm run dashboard:sync-assets && wrangler dev",
     "dev:remote": "npm run dashboard:sync-assets && wrangler dev --remote",
     "deploy": "npm run dashboard:sync-assets && wrangler deploy",
