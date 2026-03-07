@@ -28,11 +28,11 @@ function hashOf(content) {
 
 function rewriteDashboardHtml(content, versions) {
   return content
-    .replace('href="/dashboard.css"', `href="/dashboard.css?v=${versions.css}"`)
-    .replace('href="/manifest.json"', `href="/manifest.json?v=${versions.manifest}"`)
-    .replace('src="/dashboard-qr.js"', `src="/dashboard-qr.js?v=${versions.qr}"`)
-    .replace('src="/dashboard.js"', `src="/dashboard.js?v=${versions.js}"`)
-    .replace('src="/dashboard-pwa.js"', `src="/dashboard-pwa.js?v=${versions.pwa}"`);
+    .replace(/href="\/dashboard\.css(?:\?v=[^"]+)?"/g, `href="/dashboard.css?v=${versions.css}"`)
+    .replace(/href="\/manifest\.json(?:\?v=[^"]+)?"/g, `href="/manifest.json?v=${versions.manifest}"`)
+    .replace(/src="\/dashboard-qr\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-qr.js?v=${versions.qr}"`)
+    .replace(/src="\/dashboard\.js(?:\?v=[^"]+)?"/g, `src="/dashboard.js?v=${versions.js}"`)
+    .replace(/src="\/dashboard-pwa\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-pwa.js?v=${versions.pwa}"`);
 }
 
 function rewriteDashboardPwa(content, versions) {
