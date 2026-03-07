@@ -169,6 +169,11 @@ class ConfigManager:
 
         return candidates
 
+    @staticmethod
+    def _env_flag_enabled(env_name):
+        value = str(os.getenv(env_name, "")).strip().lower()
+        return value in {"1", "true", "yes", "on"}
+
     def _is_master_password_env_enabled(self):
         return self._env_flag_enabled(ALLOW_MASTER_PASSWORD_ENV)
 

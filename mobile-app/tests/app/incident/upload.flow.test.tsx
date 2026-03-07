@@ -85,6 +85,7 @@ vi.mock("@/src/api/photos", () => ({
   uploadIncidentPhoto: vi.fn(),
 }));
 vi.mock("@/src/api/client", () => ({
+  signedJsonRequest: vi.fn(async () => ({})),
   extractApiError: (error: unknown) =>
     error instanceof Error ? error.message : String(error),
 }));
