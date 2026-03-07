@@ -29,6 +29,13 @@ from core.exceptions import (
 logger = get_logger()
 MASTER_PASSWORD_ENV = "DRIVER_MANAGER_MASTER_PASSWORD"
 LEGACY_MASTER_PASSWORD_ENV = "DRIVER_MANAGER_LEGACY_MASTER_PASSWORD"
+ALLOW_MASTER_PASSWORD_ENV = "DRIVER_MANAGER_ALLOW_MASTER_PASSWORD_ENV"
+ALLOW_UNTRUSTED_BOOTSTRAP_API_ENV = "DRIVER_MANAGER_ALLOW_UNTRUSTED_BOOTSTRAP_API"
+ALLOW_HTTP_BOOTSTRAP_LOCALHOST_ENV = "DRIVER_MANAGER_ALLOW_HTTP_BOOTSTRAP_LOCALHOST"
+TRUSTED_BOOTSTRAP_API_ORIGINS_ENV = "DRIVER_MANAGER_TRUSTED_BOOTSTRAP_API_ORIGINS"
+DEFAULT_TRUSTED_BOOTSTRAP_API_ORIGINS = {
+    "https://driver-manager-db.diegosasen.workers.dev",
+}
 
 
 class SecureString:
@@ -93,7 +100,7 @@ class ConfigManager:
         self._config_loaded = False
         self._applying_portable = False
 
-        env_master_password = os.getenv(MASTER_PASSWORD_ENV)
+        env_master_password = self._get_master_password_from_env(MASTER_PASSWORD_ENV, consume=True)
         if env_master_password:
             self._set_master_password(env_master_password)
 
@@ -152,8 +159,8 @@ class ConfigManager:
         """Construir lista de contraseñas candidatas sin duplicados."""
         candidates = []
         master_password = self._get_master_password()
-        env_password = os.getenv(MASTER_PASSWORD_ENV)
-        legacy_env_password = os.getenv(LEGACY_MASTER_PASSWORD_ENV)
+        env_password = self._get_master_password_from_env(MASTER_PASSWORD_ENV)
+        legacy_env_password = self._get_master_password_from_env(LEGACY_MASTER_PASSWORD_ENV)
         vault_password = self._get_vault_password()
 
         for candidate in [master_password, env_password, legacy_env_password, vault_password]:
@@ -161,6 +168,22 @@ class ConfigManager:
                 candidates.append(candidate)
 
         return candidates
+
+    def _is_master_password_env_enabled(self):
+        return self._env_flag_enabled(ALLOW_MASTER_PASSWORD_ENV)
+
+    def _get_master_password_from_env(self, env_name, consume=False):
+        if not self._is_master_password_env_enabled():
+            return None
+        value = os.getenv(env_name)
+        if not value:
+            return None
+        if consume:
+            try:
+                os.environ.pop(env_name, None)
+            except Exception:
+                pass
+        return value
 
     def _get_vault_password(self):
         """Obtener contraseña guardada localmente (si existe)."""
@@ -202,8 +225,8 @@ class ConfigManager:
         Si se abrió con clave legacy y existe una clave nueva, recifrar config.enc
         automáticamente con la clave nueva.
         """
-        legacy_password = os.getenv(LEGACY_MASTER_PASSWORD_ENV)
-        target_password = os.getenv(MASTER_PASSWORD_ENV)
+        legacy_password = self._get_master_password_from_env(LEGACY_MASTER_PASSWORD_ENV)
+        target_password = self._get_master_password_from_env(MASTER_PASSWORD_ENV)
 
         if not (legacy_password and target_password):
             return
@@ -308,7 +331,7 @@ class ConfigManager:
         
         # DETERMINAR CONTRASEÑA DE CIFRADO
         if not self._get_master_password():
-            env_password = os.getenv(MASTER_PASSWORD_ENV)
+            env_password = self._get_master_password_from_env(MASTER_PASSWORD_ENV, consume=True)
             if env_password:
                 self._set_master_password(env_password)
 
