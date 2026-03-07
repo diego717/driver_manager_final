@@ -35,10 +35,14 @@ class EventHandlers:
 
             size_mb = driver.get('size_mb')
             if size_mb in (None, '', 'N/A'):
-                cloud = getattr(self.main, 'cloud_manager', None)
-                if cloud:
+                backend = (
+                    self.main.resolve_driver_backend()
+                    if hasattr(self.main, "resolve_driver_backend")
+                    else getattr(self.main, 'cloud_manager', None)
+                )
+                if backend and hasattr(backend, "get_driver_size_mb"):
                     # Consulta una sola vez por key y luego usa cache en memoria.
-                    resolved_size = cloud.get_driver_size_mb(driver)
+                    resolved_size = backend.get_driver_size_mb(driver)
                     if resolved_size is not None:
                         size_mb = resolved_size
 

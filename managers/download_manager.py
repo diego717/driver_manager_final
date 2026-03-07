@@ -15,18 +15,18 @@ class DownloadThread(QThread):
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
     
-    def __init__(self, cloud_manager, driver_key, local_path):
+    def __init__(self, driver_backend, driver_key, local_path):
         super().__init__()
-        self.cloud_manager = cloud_manager
+        self.driver_backend = driver_backend
         self.driver_key = driver_key
         self.local_path = local_path
     
     def run(self):
         logger.operation_start("download_driver_thread", key=self.driver_key)
         try:
-            if self.cloud_manager is None:
-                raise ValueError("Cloud manager no configurado")
-            self.cloud_manager.download_driver(
+            if self.driver_backend is None:
+                raise ValueError("Backend de drivers no configurado")
+            self.driver_backend.download_driver(
                 self.driver_key, 
                 self.local_path,
                 progress_callback=lambda p: self.progress.emit(p)
@@ -54,9 +54,9 @@ class UploadThread(QThread):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str, dict)
     
-    def __init__(self, cloud_manager, local_file, brand, version, description):
+    def __init__(self, driver_backend, local_file, brand, version, description):
         super().__init__()
-        self.cloud_manager = cloud_manager
+        self.driver_backend = driver_backend
         self.local_file = local_file
         self.brand = brand
         self.version = version
@@ -71,9 +71,9 @@ class UploadThread(QThread):
             'description': self.description
         }
         try:
-            if self.cloud_manager is None:
-                raise ValueError("Cloud manager no configurado")
-            self.cloud_manager.upload_driver(
+            if self.driver_backend is None:
+                raise ValueError("Backend de drivers no configurado")
+            self.driver_backend.upload_driver(
                 self.local_file,
                 self.brand,
                 self.version,
@@ -97,8 +97,13 @@ class DownloadManager:
     
     def start_download(self, driver, local_path, install=False):
         """Iniciar descarga en thread separado"""
-        if self.parent.cloud_manager is None:
-            error_msg = "Cloud manager no configurado"
+        backend = (
+            self.parent.resolve_driver_backend()
+            if hasattr(self.parent, "resolve_driver_backend")
+            else getattr(self.parent, "cloud_manager", None)
+        )
+        if backend is None:
+            error_msg = "Backend de drivers no configurado"
             logger.error(error_msg, driver_key=driver.get('key') if isinstance(driver, dict) else None)
             self.parent.progress_bar.setVisible(False)
             self.parent.statusBar().showMessage("❌ Error de descarga")
@@ -112,7 +117,7 @@ class DownloadManager:
         self.parent.statusBar().showMessage("Descargando...")
         
         self.download_thread = DownloadThread(
-            self.parent.cloud_manager,
+            backend,
             driver['key'],
             local_path
         )
@@ -127,8 +132,13 @@ class DownloadManager:
     
     def start_upload(self, local_file, brand, version, description):
         """Iniciar subida en thread separado"""
-        if self.parent.cloud_manager is None:
-            error_msg = "Cloud manager no configurado"
+        backend = (
+            self.parent.resolve_driver_backend()
+            if hasattr(self.parent, "resolve_driver_backend")
+            else getattr(self.parent, "cloud_manager", None)
+        )
+        if backend is None:
+            error_msg = "Backend de drivers no configurado"
             logger.error(error_msg, file=local_file, brand=brand, version=version)
             self.parent.progress_bar.setVisible(False)
             self.parent.statusBar().showMessage("❌ Error en subida")
@@ -149,7 +159,7 @@ class DownloadManager:
         self.parent.statusBar().showMessage("Subiendo driver...")
         
         self.upload_thread = UploadThread(
-            self.parent.cloud_manager,
+            backend,
             local_file,
             brand,
             version,

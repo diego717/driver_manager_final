@@ -262,8 +262,19 @@ class UserManagerV2:
     logger = get_logger()
     USERS_CACHE_TTL_SECONDS = 2.0
     LEGACY_LOG_APPEND_RETRIES = 3
+    AUTH_MODE_LEGACY = "legacy"
+    AUTH_MODE_WEB = "web"
+    AUTH_MODE_AUTO = "auto"
+    ALLOWED_AUTH_MODES = {AUTH_MODE_LEGACY, AUTH_MODE_WEB, AUTH_MODE_AUTO}
     
-    def __init__(self, cloud_manager=None, security_manager=None, local_mode=False, audit_api_client=None):
+    def __init__(
+        self,
+        cloud_manager=None,
+        security_manager=None,
+        local_mode=False,
+        audit_api_client=None,
+        auth_mode=None,
+    ):
         """
         Args:
             cloud_manager: Gestor de nube (opcional)
@@ -275,8 +286,11 @@ class UserManagerV2:
         self.local_mode = local_mode or (cloud_manager is None)
         self.audit_api_client = audit_api_client
         self.current_user = None
+        self.current_web_token = None
+        self.current_web_token_type = "Bearer"
         self._users_cache_data = None
         self._users_cache_loaded_at = 0.0
+        self.auth_mode = self._resolve_auth_mode(auth_mode)
         
         # SECURITY IMPROVEMENT (SEC-005): Account lockout manager
         self.lockout_manager = AccountLockoutManager()
@@ -302,6 +316,148 @@ class UserManagerV2:
     def set_audit_api_client(self, audit_api_client):
         """Asignar cliente API para auditoría remota (D1)."""
         self.audit_api_client = audit_api_client
+
+    def _resolve_auth_mode(self, auth_mode):
+        """Resolver modo de autenticación desktop: legacy | web | auto."""
+        raw_mode = auth_mode if auth_mode is not None else os.getenv("DRIVER_MANAGER_DESKTOP_AUTH_MODE", "")
+        normalized = str(raw_mode or "").strip().lower()
+
+        if not normalized:
+            return self.AUTH_MODE_LEGACY
+        if normalized in self.ALLOWED_AUTH_MODES:
+            return normalized
+
+        self.logger.warning(
+            "Modo de autenticación desktop inválido; se usa legacy.",
+            requested_mode=normalized,
+        )
+        return self.AUTH_MODE_LEGACY
+
+    def _resolve_web_api_url(self):
+        """Resolver base URL para autenticación web."""
+        candidates = []
+
+        if self.audit_api_client and hasattr(self.audit_api_client, "_get_api_url"):
+            try:
+                candidates.append(self.audit_api_client._get_api_url())
+            except Exception:
+                pass
+
+        candidates.append(os.getenv("DRIVER_MANAGER_HISTORY_API_URL", ""))
+
+        if self.audit_api_client and hasattr(self.audit_api_client, "config_manager"):
+            try:
+                config_manager = self.audit_api_client.config_manager
+                if config_manager and hasattr(config_manager, "load_config_data"):
+                    config = config_manager.load_config_data() or {}
+                    candidates.append(config.get("api_url", ""))
+                    candidates.append(config.get("history_api_url", ""))
+            except Exception:
+                pass
+
+        for candidate in candidates:
+            value = str(candidate or "").strip()
+            if value:
+                return value.rstrip("/")
+
+        return ""
+
+    def _should_try_web_auth(self):
+        """Determinar si este login debe intentar autenticación web."""
+        if self.auth_mode == self.AUTH_MODE_WEB:
+            return True
+        if self.auth_mode == self.AUTH_MODE_AUTO:
+            return bool(self._resolve_web_api_url())
+        return False
+
+    def _permissions_for_role(self, role):
+        normalized_role = str(role or "viewer").strip().lower()
+        if normalized_role == "super_admin":
+            return ["all"]
+        if normalized_role == "admin":
+            return ["read", "write"]
+        return ["read"]
+
+    def _build_web_current_user(self, username, user_payload):
+        """Normalizar usuario retornado por /web/auth/login."""
+        payload = user_payload if isinstance(user_payload, dict) else {}
+        resolved_username = str(payload.get("username") or username or "").strip()
+        role = str(payload.get("role") or "viewer").strip().lower() or "viewer"
+        if role not in ("super_admin", "admin", "viewer"):
+            role = "viewer"
+
+        return {
+            "id": payload.get("id"),
+            "username": resolved_username,
+            "role": role,
+            "tenant_id": payload.get("tenant_id"),
+            "active": bool(payload.get("is_active", True)),
+            "created_at": payload.get("created_at"),
+            "updated_at": payload.get("updated_at"),
+            "last_login": payload.get("last_login_at"),
+            "permissions": self._permissions_for_role(role),
+            "source": "web",
+        }
+
+    def _authenticate_web(self, username, password):
+        """Autenticar contra /web/auth/login."""
+        base_url = self._resolve_web_api_url()
+        if not base_url:
+            raise ConfigurationError(
+                "No hay URL de API para login web. "
+                "Define DRIVER_MANAGER_HISTORY_API_URL o api_url/history_api_url en config.enc."
+            )
+
+        try:
+            response = requests.post(
+                f"{base_url}/web/auth/login",
+                json={
+                    "username": username,
+                    "password": password,
+                },
+                timeout=20,
+            )
+        except requests.RequestException as error:
+            raise ConfigurationError(f"No se pudo conectar al login web: {error}") from error
+
+        if not response.ok:
+            detail = self._extract_http_error_message(response)
+            if response.status_code in (401, 403):
+                raise AuthenticationError(
+                    "Usuario o contraseña incorrectos.",
+                    details={"username": username},
+                )
+            if response.status_code == 429:
+                raise AuthenticationError("Demasiados intentos. Intenta nuevamente más tarde.")
+            raise ConfigurationError(f"Falló login web. {detail}")
+
+        payload = response.json() if response.content else {}
+        if not isinstance(payload, dict):
+            payload = {}
+
+        access_token = str(payload.get("access_token") or "").strip()
+        if not access_token:
+            raise ConfigurationError("Login web exitoso pero sin access_token.")
+
+        user = self._build_web_current_user(username, payload.get("user"))
+        self.current_user = user
+        self.current_web_token = access_token
+        self.current_web_token_type = "Bearer"
+
+        self.logger.security_event(
+            "login_success",
+            user.get("username"),
+            True,
+            {"role": user.get("role"), "source": "web"},
+        )
+        self._log_access(
+            "login_success",
+            user.get("username"),
+            True,
+            {"role": user.get("role"), "source": "web"},
+        )
+        self.logger.operation_end("authenticate", success=True, mode="web")
+        return True, "Login exitoso."
 
     def _can_use_audit_api(self):
         return (
@@ -1027,6 +1183,32 @@ class UserManagerV2:
             (success: bool, message: str)
         """
         self.logger.operation_start("authenticate", username=username)
+
+        if self._should_try_web_auth():
+            try:
+                return self._authenticate_web(username, password)
+            except AuthenticationError:
+                self.logger.security_event(
+                    "login_failed",
+                    username,
+                    False,
+                    {"reason": "Invalid web credentials", "source": "web"},
+                )
+                self._log_access(
+                    "login_failed",
+                    username,
+                    False,
+                    {"reason": "Invalid web credentials", "source": "web"},
+                )
+                raise
+            except (ConfigurationError, CloudStorageError) as web_error:
+                if self.auth_mode == self.AUTH_MODE_AUTO:
+                    self.logger.warning(
+                        f"Web auth no disponible ({web_error}). Se usa fallback legacy.",
+                        username=username,
+                    )
+                else:
+                    raise
         
         # Verificar si la cuenta esta bloqueada
         if self.lockout_manager.is_locked_out(username):
@@ -1511,6 +1693,9 @@ class UserManagerV2:
             raise AuthenticationError("No autenticado.")
         
         users_data = self._load_users()
+        if not users_data or not isinstance(users_data.get("users"), dict):
+            self.logger.operation_end("get_users", success=True, count=0)
+            return []
         users_list = []
         
         for username, user in users_data["users"].items():
@@ -1651,6 +1836,7 @@ class UserManagerV2:
         if self.current_user:
             self._log_access("logout", self.current_user.get("username"), True)
             self.current_user = None
+        self.current_web_token = None
     
     def has_permission(self, permission):
         """Verificar permiso"""
@@ -1668,9 +1854,13 @@ class UserManagerV2:
     # Metodos de compatibilidad legacy
     def has_users(self):
         """Verificar si existen usuarios"""
+        if self._should_try_web_auth():
+            return True
         users_data = self._load_users()
         return users_data and len(users_data.get('users', {})) > 0
     
     def needs_initialization(self):
         """Verificar si el sistema necesita inicialización"""
+        if self._should_try_web_auth():
+            return False
         return not self.has_users()

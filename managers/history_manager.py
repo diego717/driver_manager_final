@@ -47,6 +47,7 @@ class InstallationHistory:
         self.api_url = None
         self.api_token = None
         self.api_secret = None
+        self.web_token_provider = None
         self.allow_unsigned_requests = str(
             os.getenv("DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS", "")
         ).strip().lower() in {"1", "true", "yes", "on"}
@@ -54,6 +55,28 @@ class InstallationHistory:
         
         # Inicializar configuración de API
         self._initialize_api_config()
+
+    def set_web_token_provider(self, token_provider):
+        """Registrar proveedor de token web (Bearer) para endpoints /web/*."""
+        self.web_token_provider = token_provider
+
+    def _current_desktop_auth_mode(self):
+        return str(os.getenv("DRIVER_MANAGER_DESKTOP_AUTH_MODE", "")).strip().lower()
+
+    def _get_web_access_token(self):
+        provider = self.web_token_provider
+        if not callable(provider):
+            return ""
+        try:
+            return str(provider() or "").strip()
+        except Exception:
+            return ""
+
+    def _should_use_web_bearer_mode(self):
+        mode = self._current_desktop_auth_mode()
+        if mode not in {"web", "auto"}:
+            return False
+        return bool(self._get_web_access_token())
 
     def _default_statistics(self):
         """Estructura estándar de estadísticas para mantener compatibilidad."""
@@ -516,9 +539,22 @@ class InstallationHistory:
                 "Por favor, configura las credenciales de Cloudflare."
             )
         
-        url = f"{worker_url}/{endpoint}"
-        
-        path = f"/{endpoint.lstrip('/')}"
+        endpoint_clean = str(endpoint or "").lstrip("/")
+        web_mode_active = self._current_desktop_auth_mode() in {"web", "auto"}
+        web_access_token = self._get_web_access_token()
+        use_web_bearer_mode = self._should_use_web_bearer_mode()
+
+        if web_mode_active and self._current_desktop_auth_mode() == "web" and not web_access_token:
+            raise ConnectionError(
+                "❌ No hay sesión web activa para consumir la API.\n\n"
+                "Inicia sesión nuevamente para operar en modo web."
+            )
+
+        if use_web_bearer_mode and endpoint_clean and not endpoint_clean.startswith("web/"):
+            endpoint_clean = f"web/{endpoint_clean}"
+
+        url = f"{worker_url}/{endpoint_clean}"
+        path = f"/{endpoint_clean}"
 
         # Si llega JSON, serializarlo manualmente para asegurar hash/firma idénticos al payload enviado.
         body_bytes = b""
@@ -538,27 +574,36 @@ class InstallationHistory:
 
         body_hash = self._sha256_hex(body_bytes)
 
-        # Generar headers con autenticación
-        headers = self._get_headers(method, path, body_hash)
-        if extra_headers:
-            headers.update(extra_headers)
-        if not self.allow_unsigned_requests:
-            missing_auth_headers = [
-                header_name
-                for header_name in (
-                    "X-API-Token",
-                    "X-Request-Timestamp",
-                    "X-Request-Signature",
-                    "X-Request-Nonce",
-                )
-                if not headers.get(header_name)
-            ]
-            if missing_auth_headers:
-                raise ConnectionError(
-                    "❌ Autenticación API no configurada para desktop.\n\n"
-                    "Configura DRIVER_MANAGER_API_TOKEN y DRIVER_MANAGER_API_SECRET (o config.enc).\n"
-                    "Para debug local únicamente, habilita DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS=true."
-                )
+        # Generar headers según modo de autenticación activo.
+        if use_web_bearer_mode:
+            headers = {
+                "Authorization": f"Bearer {web_access_token}",
+            }
+            if "json" in kwargs or kwargs.get("data") is not None:
+                headers["Content-Type"] = "application/json"
+            if extra_headers:
+                headers.update(extra_headers)
+        else:
+            headers = self._get_headers(method, path, body_hash)
+            if extra_headers:
+                headers.update(extra_headers)
+            if not self.allow_unsigned_requests:
+                missing_auth_headers = [
+                    header_name
+                    for header_name in (
+                        "X-API-Token",
+                        "X-Request-Timestamp",
+                        "X-Request-Signature",
+                        "X-Request-Nonce",
+                    )
+                    if not headers.get(header_name)
+                ]
+                if missing_auth_headers:
+                    raise ConnectionError(
+                        "❌ Autenticación API no configurada para desktop.\n\n"
+                        "Configura DRIVER_MANAGER_API_TOKEN y DRIVER_MANAGER_API_SECRET (o config.enc).\n"
+                        "Para debug local únicamente, habilita DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS=true."
+                    )
         
         try:
             response = requests.request(

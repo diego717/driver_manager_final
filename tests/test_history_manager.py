@@ -99,6 +99,38 @@ class TestInstallationHistory(unittest.TestCase):
         expected = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         self.assertEqual(sent_data, expected)
 
+    @patch("managers.history_manager.requests.request")
+    @patch.dict(os.environ, {"DRIVER_MANAGER_DESKTOP_AUTH_MODE": "web"}, clear=False)
+    def test_make_request_web_mode_uses_bearer_and_web_prefix(self, mock_request):
+        mock_config = MagicMock()
+        mock_config.load_config_data.return_value = {"api_url": "https://api.example.com/"}
+        history = InstallationHistory(mock_config)
+        history.set_web_token_provider(lambda: "token-web-123")
+
+        mock_response = MagicMock()
+        mock_response.content = b'{"ok": true}'
+        mock_response.json.return_value = {"ok": True}
+        mock_response.raise_for_status.return_value = None
+        mock_request.return_value = mock_response
+
+        result = history._make_request("get", "installations")
+
+        self.assertEqual(result, {"ok": True})
+        args, kwargs = mock_request.call_args
+        self.assertEqual(args[1], "https://api.example.com/web/installations")
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer token-web-123")
+        self.assertNotIn("X-API-Token", kwargs["headers"])
+
+    @patch.dict(os.environ, {"DRIVER_MANAGER_DESKTOP_AUTH_MODE": "web"}, clear=False)
+    def test_make_request_web_mode_requires_active_session_token(self):
+        mock_config = MagicMock()
+        mock_config.load_config_data.return_value = {"api_url": "https://api.example.com/"}
+        history = InstallationHistory(mock_config)
+        history.set_web_token_provider(lambda: "")
+
+        with self.assertRaises(ConnectionError):
+            history._make_request("get", "installations")
+
     @patch.object(InstallationHistory, "_save_local")
     @patch.object(InstallationHistory, "_make_request")
     def test_add_installation_builds_payload_and_syncs(

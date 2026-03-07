@@ -64,6 +64,78 @@ class TestUserManagerV2(unittest.TestCase):
         self.assertFalse(success)
         self.assertIn("Usuario o contrase", message)
 
+    @patch("managers.user_manager_v2.requests.post")
+    def test_authenticate_web_mode_success(self, mock_post):
+        audit_api = MagicMock()
+        audit_api._get_api_url.return_value = "https://example.workers.dev"
+        manager = UserManagerV2(
+            local_mode=True,
+            audit_api_client=audit_api,
+            auth_mode="web",
+        )
+        manager.config_dir = self.test_dir
+        manager.logs_file = self.test_dir / "access_logs_web.json"
+
+        response = MagicMock()
+        response.ok = True
+        response.content = b'{"ok":true}'
+        response.json.return_value = {
+            "access_token": "token-abc",
+            "user": {
+                "id": "u1",
+                "username": "superadmin",
+                "role": "super_admin",
+                "tenant_id": "tenant-a",
+                "is_active": True,
+            },
+        }
+        mock_post.return_value = response
+
+        success, message = manager.authenticate("superadmin", self.superadmin_password)
+        self.assertTrue(success)
+        self.assertIn("exitoso", message.lower())
+        self.assertEqual(manager.current_user["username"], "superadmin")
+        self.assertEqual(manager.current_user["role"], "super_admin")
+        self.assertEqual(manager.current_user["source"], "web")
+        self.assertEqual(manager.current_web_token, "token-abc")
+
+    @patch("managers.user_manager_v2.requests.post")
+    def test_authenticate_web_mode_invalid_credentials(self, mock_post):
+        audit_api = MagicMock()
+        audit_api._get_api_url.return_value = "https://example.workers.dev"
+        manager = UserManagerV2(
+            local_mode=True,
+            audit_api_client=audit_api,
+            auth_mode="web",
+        )
+        manager.config_dir = self.test_dir
+        manager.logs_file = self.test_dir / "access_logs_web_invalid.json"
+
+        response = MagicMock()
+        response.ok = False
+        response.status_code = 401
+        response.text = "unauthorized"
+        response.json.return_value = {"error": {"message": "Credenciales invalidas"}}
+        mock_post.return_value = response
+
+        success, message = manager.authenticate("superadmin", "wrongpassword")
+        self.assertFalse(success)
+        self.assertIn("incorrect", message.lower())
+
+    def test_web_mode_skips_local_initialization_flow(self):
+        audit_api = MagicMock()
+        audit_api._get_api_url.return_value = "https://example.workers.dev"
+        manager = UserManagerV2(
+            local_mode=True,
+            audit_api_client=audit_api,
+            auth_mode="web",
+        )
+        manager.config_dir = self.test_dir
+        manager.users_file = self.test_dir / "missing_users.json"
+
+        self.assertTrue(manager.has_users())
+        self.assertFalse(manager.needs_initialization())
+
     def test_authenticate_locks_account_after_repeated_failures(self):
         self.user_manager.initialize_system("superadmin", self.superadmin_password)
         max_attempts = self.user_manager.lockout_manager.MAX_FAILED_ATTEMPTS

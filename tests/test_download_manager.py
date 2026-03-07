@@ -27,6 +27,7 @@ class TestDownloadManager(unittest.TestCase):
     def _build_parent(self, cloud_manager):
         parent = MagicMock()
         parent.cloud_manager = cloud_manager
+        parent.resolve_driver_backend = MagicMock(return_value=cloud_manager)
         parent.progress_bar = MagicMock()
         parent.statusBar.return_value = MagicMock()
         parent.on_download_error = MagicMock()
@@ -96,7 +97,7 @@ class TestDownloadManager(unittest.TestCase):
         self.assertIsNone(manager.download_thread)
         parent.progress_bar.setVisible.assert_called_with(False)
         parent.on_download_error.assert_called_once()
-        self.assertEqual(parent.on_download_error.call_args.args[0], "Cloud manager no configurado")
+        self.assertEqual(parent.on_download_error.call_args.args[0], "Backend de drivers no configurado")
 
     def test_start_upload_handles_missing_cloud_manager(self):
         parent = self._build_parent(cloud_manager=None)
@@ -109,7 +110,7 @@ class TestDownloadManager(unittest.TestCase):
         parent.progress_bar.setVisible.assert_called_with(False)
         parent.on_upload_error.assert_called_once()
         call_args = parent.on_upload_error.call_args.args
-        self.assertEqual(call_args[0], "Cloud manager no configurado")
+        self.assertEqual(call_args[0], "Backend de drivers no configurado")
         self.assertEqual(call_args[1]["file_path"], "C:/tmp/z.exe")
 
     def test_cancel_download_terminates_running_thread(self):

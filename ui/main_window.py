@@ -3,6 +3,7 @@ import sys
 import json
 import gc
 import re
+import os
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -21,6 +22,7 @@ from reports.report_generator import ReportGenerator
 # Importar módulos refactorizados
 from core.security_manager import SecurityManager
 from managers.download_manager import DownloadManager
+from managers.web_driver_manager import WebDriverManager
 from handlers.event_handlers import EventHandlers
 from handlers.report_handlers import ReportHandlers
 from managers.user_manager_v2 import UserManagerV2
@@ -164,10 +166,13 @@ class MainWindow(QMainWindow):
         """Verificar y ejecutar configuración inicial de usuarios si es necesario"""
         # Usar modo local inicialmente (antes de tener cloud_manager)
         audit_client = self.history_manager or InstallationHistory(self.config_manager)
-        temp_user_manager = UserManagerV2(cloud_manager=self.cloud_manager, 
-                                   security_manager=self.security_manager,
-                                   local_mode=False,
-                                   audit_api_client=audit_client)  # Usar modo nube
+        temp_user_manager = UserManagerV2(
+            cloud_manager=self.cloud_manager,
+            security_manager=self.security_manager,
+            local_mode=False,
+            audit_api_client=audit_client,
+            auth_mode=self._resolve_desktop_auth_mode(),
+        )  # Usar modo nube
         
         # Verificar si necesita inicialización
         if temp_user_manager.needs_initialization():
@@ -203,11 +208,105 @@ class MainWindow(QMainWindow):
                 sys.exit(0)
             logger.info("Wizard de configuración inicial cancelado por el usuario.")
 
+    def _resolve_desktop_auth_mode(self):
+        """
+        Resolver modo de autenticación desktop.
+        Prioridad: env > config.enc > legacy.
+        """
+        allowed_modes = {"legacy", "web", "auto"}
+        env_mode = str(os.getenv("DRIVER_MANAGER_DESKTOP_AUTH_MODE", "")).strip().lower()
+        if env_mode in allowed_modes:
+            return env_mode
+        if env_mode:
+            logger.warning(f"DRIVER_MANAGER_DESKTOP_AUTH_MODE inválido: {env_mode}. Se usa fallback.")
+
+        try:
+            config = self.load_config_data() or {}
+        except Exception:
+            config = {}
+
+        config_mode = str(config.get("desktop_auth_mode", "")).strip().lower()
+        if config_mode in allowed_modes:
+            return config_mode
+        if config_mode:
+            logger.warning(f"desktop_auth_mode inválido en config.enc: {config_mode}. Se usa legacy.")
+
+        return "legacy"
+
+    def _resolve_driver_api_base_url(self):
+        """Resolver URL base de API para operaciones de drivers web."""
+        if self.history_manager and hasattr(self.history_manager, "_get_api_url"):
+            try:
+                value = str(self.history_manager._get_api_url() or "").strip()
+                if value:
+                    return value.rstrip("/")
+            except Exception:
+                pass
+
+        try:
+            config = self.load_config_data() or {}
+        except Exception:
+            config = {}
+
+        for key in ("api_url", "history_api_url"):
+            value = str(config.get(key) or "").strip()
+            if value:
+                return value.rstrip("/")
+        return ""
+
+    def _resolve_current_web_token(self):
+        """Obtener token web actual (Bearer) de sesión desktop."""
+        if not self.user_manager:
+            return ""
+        token = getattr(self.user_manager, "current_web_token", None)
+        return str(token or "").strip()
+
+    def _sync_history_web_token_provider(self):
+        """Conectar InstallationHistory con token web de sesión."""
+        provider = self._resolve_current_web_token
+        if getattr(self, "history", None) and hasattr(self.history, "set_web_token_provider"):
+            self.history.set_web_token_provider(provider)
+        if getattr(self, "history_manager", None) and hasattr(self.history_manager, "set_web_token_provider"):
+            self.history_manager.set_web_token_provider(provider)
+
+    def _get_or_create_web_driver_manager(self):
+        """Crear/reusar cliente de drivers web para este runtime."""
+        if self.web_driver_manager is None:
+            self.web_driver_manager = WebDriverManager(
+                api_url_provider=self._resolve_driver_api_base_url,
+                token_provider=self._resolve_current_web_token,
+            )
+        return self.web_driver_manager
+
+    def resolve_driver_backend(self):
+        """
+        Resolver backend de drivers activo.
+        - legacy: usa R2 directo (cloud_manager)
+        - web: usa /web/drivers con Bearer
+        - auto: prefiere web si hay token; fallback legacy
+        """
+        auth_mode = self._resolve_desktop_auth_mode()
+        if self.user_manager:
+            auth_mode = str(getattr(self.user_manager, "auth_mode", auth_mode)).strip().lower() or auth_mode
+
+        has_web_session = bool(self._resolve_current_web_token())
+
+        if auth_mode == "web":
+            return self._get_or_create_web_driver_manager() if has_web_session else None
+        if auth_mode == "auto":
+            if has_web_session:
+                return self._get_or_create_web_driver_manager()
+            if self.cloud_manager:
+                return self.cloud_manager
+            return None
+        return self.cloud_manager
+
     def _init_managers(self):
         """Inicializar todos los managers"""
         
         self.cloud_manager = None
         self.history_manager = None
+        self.web_driver_manager = None
         # Reusar la misma instancia de seguridad del ConfigManager para compartir
         # clave maestra/fernet ya inicializados al cargar config.enc.
         self.security_manager = self.config_manager.security
@@ -215,6 +314,7 @@ class MainWindow(QMainWindow):
         self.user_manager = None  # Se inicializará después de cloud_manager
         self.installer = DriverInstaller()
         self.history = InstallationHistory(self.config_manager)
+        self._sync_history_web_token_provider()
         self.report_gen = ReportGenerator(self.history)
         self.is_authenticated = False
         self.is_admin = False
@@ -528,6 +628,7 @@ class MainWindow(QMainWindow):
             # 2. Inicializar cliente D1 para auditoría antes de crear UserManager
             # para evitar fallback legacy de logs en modo producción.
             self.history_manager = InstallationHistory(self.config_manager)
+            self._sync_history_web_token_provider()
             
             # 3. Inicializar el UserManagerV2
             # Intentar modo nube primero, fallback a local
@@ -535,7 +636,8 @@ class MainWindow(QMainWindow):
                 self.cloud_manager, 
                 self.security_manager,
                 local_mode=False,
-                audit_api_client=self.history_manager
+                audit_api_client=self.history_manager,
+                auth_mode=self._resolve_desktop_auth_mode(),
             )
             
             try:
@@ -571,16 +673,24 @@ class MainWindow(QMainWindow):
 
     def refresh_drivers_list(self):
         """Actualizar lista de drivers"""
-        if not self.cloud_manager:
+        backend = self.resolve_driver_backend()
+        if not backend:
+            self.all_drivers = []
+            self.drivers_tab.drivers_list.clear()
+            if hasattr(self, "admin_tab"):
+                self.admin_tab.admin_drivers_list.clear()
+            if self._resolve_desktop_auth_mode() in ("web", "auto"):
+                if not self.user_manager or not self.user_manager.current_user:
+                    self.statusBar().showMessage("ℹ️ Inicia sesión para cargar drivers.", 4000)
             return
         
         try:
-            drivers = self.cloud_manager.list_drivers()
+            drivers = backend.list_drivers()
             self.all_drivers = drivers
 
             # Actualizar dinámicamente el filtro de marcas
             current_brand = self.drivers_tab.brand_filter.currentText()
-            brands = sorted(list(set(d['brand'] for d in drivers if 'brand' in d)))
+            brands = sorted(list(set(d.get('brand') for d in drivers if isinstance(d, dict) and d.get('brand'))))
 
             self.drivers_tab.brand_filter.blockSignals(True)
             self.drivers_tab.brand_filter.clear()
@@ -612,8 +722,12 @@ class MainWindow(QMainWindow):
             return
         
         for driver in self.all_drivers:
-            if brand_filter == "Todas" or driver['brand'] == brand_filter:
-                item = QListWidgetItem(f"{driver['brand']} - v{driver['version']}")
+            if not isinstance(driver, dict):
+                continue
+            brand = driver.get('brand', 'N/A')
+            version = driver.get('version', 'N/A')
+            if brand_filter == "Todas" or brand == brand_filter:
+                item = QListWidgetItem(f"{brand} - v{version}")
                 item.setData(Qt.ItemDataRole.UserRole, driver)
                 self.drivers_tab.drivers_list.addItem(item)
     
@@ -1856,7 +1970,10 @@ class MainWindow(QMainWindow):
         
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                self.cloud_manager.delete_driver(driver['key'])
+                backend = self.resolve_driver_backend()
+                if not backend:
+                    raise RuntimeError("No hay backend de drivers disponible. Inicia sesión nuevamente.")
+                backend.delete_driver(driver['key'])
                 QMessageBox.information(self, "Éxito", "Driver eliminado correctamente")
                 
                 # Log de auditoría
@@ -1955,18 +2072,22 @@ class MainWindow(QMainWindow):
         
         # Inicializar user_manager si no existe
         desired_local_mode = self.cloud_manager is None
+        desired_auth_mode = self._resolve_desktop_auth_mode()
         if (
             not self.user_manager
             or bool(getattr(self.user_manager, "local_mode", False)) != desired_local_mode
+            or str(getattr(self.user_manager, "auth_mode", "legacy")).lower() != desired_auth_mode
         ):
             try:
                 if not self.history_manager:
                     self.history_manager = InstallationHistory(self.config_manager)
+                    self._sync_history_web_token_provider()
                 self.user_manager = UserManagerV2(
                     self.cloud_manager,
                     self.security_manager,
                     local_mode=desired_local_mode,
-                    audit_api_client=self.history_manager
+                    audit_api_client=self.history_manager,
+                    auth_mode=desired_auth_mode,
                 )
             except Exception as e:
                 logger.error(f"Error inicializando user_manager: {e}", exc_info=True)
@@ -1977,15 +2098,23 @@ class MainWindow(QMainWindow):
               not getattr(self.user_manager, "audit_api_client", None)):
             if not self.history_manager:
                 self.history_manager = InstallationHistory(self.config_manager)
+                self._sync_history_web_token_provider()
             self.user_manager.set_audit_api_client(self.history_manager)
 
         if self.cloud_manager is None:
-            QMessageBox.information(
-                self,
-                "Modo Seguro sin Nube",
-                "No hay conexión Cloudflare R2 activa.\n\n"
-                "Debes autenticarte como super_admin para configurar credenciales R2."
-            )
+            auth_mode = getattr(self.user_manager, "auth_mode", "legacy")
+            if auth_mode in ("web", "auto"):
+                self.statusBar().showMessage(
+                    "ℹ️ Sin conexión directa a R2: login en modo web habilitado.",
+                    6000,
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "Modo Seguro sin Nube",
+                    "No hay conexión Cloudflare R2 activa.\n\n"
+                    "Debes autenticarte como super_admin para configurar credenciales R2."
+                )
 
         try:
             if self.user_manager.needs_initialization():
@@ -2138,6 +2267,10 @@ class MainWindow(QMainWindow):
                         widget.setVisible(False)
                 
                 logger.info("Viewer: solo lectura, sin acceso a panel admin")
+
+            self._sync_history_web_token_provider()
+            # Refrescar lista usando backend activo (web/legacy) tras login.
+            self.refresh_drivers_list()
             
             # Cargar lista de drivers para admin/super_admin
             if hasattr(self, 'all_drivers') and user_role in ["admin", "super_admin"]:
@@ -2155,8 +2288,10 @@ class MainWindow(QMainWindow):
     def on_admin_logout(self):
         """Manejar cierre de sesión y actualizar UI"""
         self.event_handlers.admin_logout()
+        self._sync_history_web_token_provider()
         self.drivers_tab.toggle_upload_section(False)
         self._apply_navigation_access_control()
+        self.refresh_drivers_list()
     
     def show_user_management(self):
         """Mostrar diálogo de gestión de usuarios"""
@@ -2317,8 +2452,3 @@ class MainWindow(QMainWindow):
         if self.theme_manager.set_theme(theme_name):
             self.apply_theme()
             self.statusBar().showMessage(f"✨ Tema cambiado a: {theme_text}")
-
-
-
-
-

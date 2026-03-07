@@ -129,6 +129,26 @@ En la raiz del proyecto (o junto al `.exe`) crea `portable_config.json` con, com
 }
 ```
 
+### Auth mode desktop (feature flag)
+
+El cliente desktop soporta un feature flag para autenticación:
+
+- `DRIVER_MANAGER_DESKTOP_AUTH_MODE=legacy` (default): login contra `users.json` (flujo actual).
+- `DRIVER_MANAGER_DESKTOP_AUTH_MODE=web`: login por `username/password` contra `/web/auth/login`.
+- `DRIVER_MANAGER_DESKTOP_AUTH_MODE=auto`: intenta web si hay `api_url`, y si falla cae a legacy.
+
+Con `web` (o `auto` con sesión web activa), el desktop usa Bearer `/web/*` para:
+- gestión de drivers (`/web/drivers`)
+- historial/estadísticas (`/web/installations`, `/web/statistics`)
+- incidencias/fotos (`/web/installations/:id/incidents`, `/web/incidents/:id/photos`)
+
+Ejemplo (PowerShell):
+
+```powershell
+$env:DRIVER_MANAGER_DESKTOP_AUTH_MODE="web"
+python main.py
+```
+
 Notas:
 
 - `history_api_url` tambien es aceptado como fallback para `api_url`.
