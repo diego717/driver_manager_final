@@ -5,7 +5,9 @@ import sys
 import os
 import shutil
 import json
+import requests
 from pathlib import Path
+from urllib.parse import urlparse
 from PyQt6.QtWidgets import QMessageBox, QGroupBox, QPushButton, QLineEdit, QLabel
 
 # --- IMPORTACIONES ACTUALIZADAS PARA LA NUEVA ESTRUCTURA ---
@@ -23,12 +25,19 @@ from core.exceptions import (
     returns_result_tuple,
     ConfigurationError,
     SecurityError,
+    AuthenticationError,
     validate_not_empty
 )
 
 logger = get_logger()
 MASTER_PASSWORD_ENV = "DRIVER_MANAGER_MASTER_PASSWORD"
 LEGACY_MASTER_PASSWORD_ENV = "DRIVER_MANAGER_LEGACY_MASTER_PASSWORD"
+ALLOW_UNTRUSTED_BOOTSTRAP_API_ENV = "DRIVER_MANAGER_ALLOW_UNTRUSTED_BOOTSTRAP_API"
+ALLOW_HTTP_BOOTSTRAP_LOCALHOST_ENV = "DRIVER_MANAGER_ALLOW_HTTP_BOOTSTRAP_LOCALHOST"
+TRUSTED_BOOTSTRAP_API_ORIGINS_ENV = "DRIVER_MANAGER_TRUSTED_BOOTSTRAP_API_ORIGINS"
+DEFAULT_TRUSTED_BOOTSTRAP_API_ORIGINS = {
+    "https://driver-manager-db.diegosasen.workers.dev",
+}
 
 
 class SecureString:
@@ -233,6 +242,211 @@ class ConfigManager:
         if password:
             self._set_master_password(password)
         return password, remember_choice
+
+    @staticmethod
+    def _env_flag_enabled(env_name):
+        value = str(os.getenv(env_name, "")).strip().lower()
+        return value in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _normalize_origin_url(raw_url):
+        candidate = str(raw_url or "").strip()
+        if not candidate:
+            return ""
+        parsed = urlparse(candidate)
+        if not parsed.scheme or not parsed.netloc:
+            raise ConfigurationError(
+                "URL de API inválida: se requiere formato completo (https://host).",
+            )
+        if parsed.scheme not in {"https", "http"}:
+            raise ConfigurationError(
+                "URL de API inválida: solo se permite https:// (http:// solo localhost en debug).",
+            )
+        if parsed.username or parsed.password:
+            raise ConfigurationError(
+                "URL de API inválida: no se permiten credenciales embebidas en el endpoint.",
+            )
+        hostname = str(parsed.hostname or "").strip().lower()
+        if not hostname:
+            raise ConfigurationError("URL de API inválida: host vacío.")
+        port = parsed.port
+        host_for_origin = hostname
+        if ":" in host_for_origin and not host_for_origin.startswith("["):
+            host_for_origin = f"[{host_for_origin}]"
+        port_suffix = f":{port}" if port else ""
+        return f"{parsed.scheme}://{host_for_origin}{port_suffix}"
+
+    def _get_trusted_bootstrap_origins(self):
+        trusted = set(DEFAULT_TRUSTED_BOOTSTRAP_API_ORIGINS)
+        raw_extra = str(os.getenv(TRUSTED_BOOTSTRAP_API_ORIGINS_ENV, "")).strip()
+        if raw_extra:
+            for item in raw_extra.split(","):
+                normalized = item.strip()
+                if normalized:
+                    trusted.add(normalized)
+
+        normalized_trusted = set()
+        for origin in trusted:
+            try:
+                normalized_trusted.add(self._normalize_origin_url(origin))
+            except ConfigurationError:
+                logger.warning(f"Origen confiable inválido ignorado: {origin}")
+        return normalized_trusted
+
+    def _validate_bootstrap_api_base_url(self, raw_url):
+        base_url = self._normalize_origin_url(validate_not_empty(raw_url, "api_url"))
+        parsed = urlparse(base_url)
+        is_localhost = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        allow_local_http = self._env_flag_enabled(ALLOW_HTTP_BOOTSTRAP_LOCALHOST_ENV)
+
+        if parsed.scheme != "https":
+            if not (allow_local_http and is_localhost):
+                raise ConfigurationError(
+                    "API URL insegura: se requiere https://. Para debug local, habilita "
+                    f"{ALLOW_HTTP_BOOTSTRAP_LOCALHOST_ENV}=true y usa localhost/127.0.0.1/::1.",
+                )
+
+        allow_untrusted = self._env_flag_enabled(ALLOW_UNTRUSTED_BOOTSTRAP_API_ENV)
+        trusted_origins = self._get_trusted_bootstrap_origins()
+        if not allow_untrusted and base_url not in trusted_origins and not is_localhost:
+            raise ConfigurationError(
+                "API URL no confiable para bootstrap. Agrega el origen a "
+                f"{TRUSTED_BOOTSTRAP_API_ORIGINS_ENV} o habilita temporalmente "
+                f"{ALLOW_UNTRUSTED_BOOTSTRAP_API_ENV}=true.",
+            )
+
+        return base_url
+
+    @staticmethod
+    def _extract_http_error_message(response, fallback_message):
+        """Extraer mensaje de error desde respuesta HTTP JSON."""
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                error = payload.get("error")
+                if isinstance(error, dict):
+                    message = str(error.get("message") or "").strip()
+                    if message:
+                        return message
+                message = str(payload.get("message") or "").strip()
+                if message:
+                    return message
+        except Exception:
+            pass
+        return fallback_message
+
+    @returns_result_tuple("bootstrap_config_from_web_login")
+    def bootstrap_config_from_web_login(self, api_url, username, password):
+        """
+        Obtener configuración desktop mediante login web y guardarla en config.enc.
+        Evita depender de portable_config.json para primer arranque.
+        """
+        logger.operation_start(
+            "bootstrap_config_from_web_login",
+            api_url=str(api_url or "").strip(),
+            username=str(username or "").strip(),
+        )
+
+        base_url = self._validate_bootstrap_api_base_url(api_url)
+        username = str(validate_not_empty(username, "username")).strip()
+        password = str(validate_not_empty(password, "password"))
+
+        login_url = f"{base_url}/web/auth/login"
+        desktop_config_url = f"{base_url}/web/auth/desktop-config"
+
+        try:
+            login_response = requests.post(
+                login_url,
+                json={"username": username, "password": password},
+                timeout=20,
+            )
+        except requests.RequestException as e:
+            raise ConfigurationError(
+                "No se pudo conectar al endpoint de login web.",
+                original_error=e,
+            )
+
+        if not login_response.ok:
+            detail = self._extract_http_error_message(
+                login_response,
+                f"HTTP {login_response.status_code} en login web.",
+            )
+            raise AuthenticationError(f"Login web fallido. {detail}")
+
+        try:
+            login_payload = login_response.json()
+        except ValueError as e:
+            raise ConfigurationError(
+                "Respuesta invalida del login web (no JSON).",
+                original_error=e,
+            )
+
+        access_token = str(login_payload.get("access_token") or "").strip()
+        if not access_token:
+            raise ConfigurationError("Login web exitoso pero sin access_token.")
+
+        try:
+            config_response = requests.get(
+                desktop_config_url,
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=20,
+            )
+        except requests.RequestException as e:
+            raise ConfigurationError(
+                "No se pudo conectar al endpoint de configuracion desktop.",
+                original_error=e,
+            )
+
+        if not config_response.ok:
+            detail = self._extract_http_error_message(
+                config_response,
+                f"HTTP {config_response.status_code} al solicitar configuracion desktop.",
+            )
+            if config_response.status_code in (401, 403):
+                raise AuthenticationError(detail)
+            raise ConfigurationError(detail)
+
+        try:
+            payload = config_response.json()
+        except ValueError as e:
+            raise ConfigurationError(
+                "Respuesta invalida del endpoint de configuracion desktop (no JSON).",
+                original_error=e,
+            )
+
+        remote_config = payload.get("config") if isinstance(payload, dict) else None
+        if not isinstance(remote_config, dict):
+            raise ConfigurationError("Respuesta de configuracion desktop sin campo 'config' valido.")
+
+        config = {
+            "account_id": str(remote_config.get("account_id") or "").strip(),
+            "access_key_id": str(remote_config.get("access_key_id") or "").strip(),
+            "secret_access_key": str(remote_config.get("secret_access_key") or "").strip(),
+            "bucket_name": str(remote_config.get("bucket_name") or "").strip(),
+            "api_url": self._validate_bootstrap_api_base_url(remote_config.get("api_url") or base_url),
+            "history_api_url": str(
+                remote_config.get("history_api_url")
+                or remote_config.get("api_url")
+                or base_url
+            ),
+            "api_token": str(remote_config.get("api_token") or "").strip(),
+            "api_secret": str(remote_config.get("api_secret") or "").strip(),
+        }
+        config["history_api_url"] = self._validate_bootstrap_api_base_url(config["history_api_url"])
+
+        required_fields = ["account_id", "access_key_id", "secret_access_key", "bucket_name"]
+        missing_fields = [field for field in required_fields if not config.get(field)]
+        if missing_fields:
+            raise ConfigurationError(
+                "Configuracion desktop incompleta recibida desde endpoint.",
+                details={"missing_fields": ",".join(missing_fields)},
+            )
+
+        if not self.save_config_data(config):
+            raise SecurityError("No se pudo guardar la configuracion obtenida desde endpoint.")
+
+        logger.operation_end("bootstrap_config_from_web_login", success=True)
+        return True, "Configuracion obtenida y guardada correctamente."
 
     @handle_errors("load_config_data", reraise=False, default_return=None)
     def load_config_data(self):
