@@ -45,8 +45,15 @@
         
         <main class="main-content">
             <header class="header">
-                <h2 id="pageTitle">Dashboard</h2>
+                <div class="page-heading">
+                    <h2 id="pageTitle">Dashboard</h2>
+                    <p id="pageSubtitle" class="page-subtitle">Estado general de la operacion</p>
+                </div>
                 <div class="header-actions">
+                    <div id="opsPulse" class="ops-pulse" role="status" aria-live="polite">
+                        <span class="ops-pulse-dot" aria-hidden="true"></span>
+                        <span id="opsPulseText">Listo para operar</span>
+                    </div>
                     <button id="themeToggle" class="theme-toggle" type="button" title="Cambiar tema" aria-label="Cambiar tema" aria-pressed="false">
                         <span class="icon-sun" aria-hidden="true"><span class="material-symbols-outlined">light_mode</span></span>
                         <span class="icon-moon" aria-hidden="true"><span class="material-symbols-outlined">dark_mode</span></span>

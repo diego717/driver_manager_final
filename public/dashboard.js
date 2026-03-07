@@ -154,6 +154,7 @@ let loginModalLastFocusedElement = null;
 const QR_EDIT_UNLOCK_TTL_MS = 10 * 60 * 1000;
 const KPI_NUMBER_ANIMATION_MS = 620;
 const SECTION_TRANSITION_OUT_MS = 150;
+const TOAST_DURATION_MS = 3100;
 const SECTION_TITLES = {
     dashboard: 'Dashboard',
     installations: 'Registros',
@@ -161,6 +162,20 @@ const SECTION_TITLES = {
     drivers: 'Drivers',
     incidents: 'Incidencias',
     audit: 'Auditoría',
+};
+const SECTION_SUBTITLES = {
+    dashboard: 'Panorama general en tiempo real',
+    installations: 'Seguimiento fino de registros operativos',
+    assets: 'Inventario vivo con trazabilidad',
+    drivers: 'Versionado centralizado de controladores',
+    incidents: 'Atencion de eventos con prioridad visible',
+    audit: 'Trazas criticas y cumplimiento',
+};
+const TOAST_TYPE_ICONS = {
+    success: '✓',
+    error: '!',
+    warning: '!',
+    info: 'i',
 };
 const ACTIVE_KPI_ANIMATIONS = new WeakMap();
 let sectionTransitionVersion = 0;
@@ -3717,10 +3732,55 @@ function renderAuditLogs(logs) {
     container.appendChild(table);
 }
 
+function getCurrentShiftLabel(now = new Date()) {
+    const hour = now.getHours();
+    if (hour >= 6 && hour < 12) return 'Turno manana';
+    if (hour >= 12 && hour < 18) return 'Turno tarde';
+    return 'Turno noche';
+}
+
+function updatePageSubtitleForSection(section) {
+    const subtitleEl = document.getElementById('pageSubtitle');
+    if (!subtitleEl) return;
+    const normalizedSection = SECTION_SUBTITLES[section] ? section : 'dashboard';
+    const subtitle = SECTION_SUBTITLES[normalizedSection];
+    subtitleEl.textContent = `${subtitle} · ${getCurrentShiftLabel()}`;
+}
+
+function buildOpsPulseText(status, section) {
+    const sectionLabel = (SECTION_TITLES[section] || SECTION_TITLES.dashboard).toLowerCase();
+    const normalizedStatus = ['connected', 'disconnected', 'reconnecting', 'paused', 'failed'].includes(status)
+        ? status
+        : 'paused';
+
+    if (normalizedStatus === 'connected') return `${sectionLabel} en vivo`;
+    if (normalizedStatus === 'reconnecting') return `Reconectando ${sectionLabel}`;
+    if (normalizedStatus === 'disconnected') return 'Conexion interrumpida';
+    if (normalizedStatus === 'failed') return 'Sin enlace en tiempo real';
+    return 'Sincronizacion en pausa';
+}
+
+function syncHeaderDelight(section, explicitStatus = null) {
+    const normalizedSection = SECTION_TITLES[section] ? section : 'dashboard';
+    document.body.dataset.activeSection = normalizedSection;
+    updatePageSubtitleForSection(normalizedSection);
+
+    const pulse = document.getElementById('opsPulse');
+    const pulseText = document.getElementById('opsPulseText');
+    if (!pulse || !pulseText) return;
+
+    const fallbackStatus = connectionStatusLastRendered?.status || 'paused';
+    const status = explicitStatus ?? fallbackStatus;
+    pulse.dataset.state = status;
+    pulseText.textContent = buildOpsPulseText(status, normalizedSection);
+}
+
 function updatePageTitleForSection(section) {
     const pageTitle = document.getElementById('pageTitle');
     if (!pageTitle) return;
-    pageTitle.textContent = SECTION_TITLES[section] || SECTION_TITLES.dashboard;
+    const normalizedSection = SECTION_TITLES[section] ? section : 'dashboard';
+    pageTitle.textContent = SECTION_TITLES[normalizedSection];
+    syncHeaderDelight(normalizedSection);
 }
 
 function runSectionLoaders(section) {
@@ -4031,17 +4091,47 @@ document.addEventListener('keydown', (e) => {
 
 // Notification system
 function showNotification(message, type = 'info') {
-    const notification = document.createElement('div');
     const normalizedType = ['success', 'error', 'warning', 'info'].includes(type) ? type : 'info';
-    notification.className = `toast-notification toast-${normalizedType}`;
-    notification.textContent = message;
+    const stackId = 'toastStack';
+    let stack = document.getElementById(stackId);
+    if (!stack) {
+        stack = document.createElement('div');
+        stack.id = stackId;
+        stack.className = 'toast-stack';
+        document.body.appendChild(stack);
+    }
 
-    document.body.appendChild(notification);
+    const notification = document.createElement('div');
+    notification.className = `toast-notification toast-${normalizedType}`;
+
+    const body = document.createElement('div');
+    body.className = 'toast-body';
+
+    const icon = document.createElement('span');
+    icon.className = 'toast-icon';
+    icon.textContent = TOAST_TYPE_ICONS[normalizedType] || TOAST_TYPE_ICONS.info;
+
+    const messageNode = document.createElement('div');
+    messageNode.className = 'toast-message';
+    messageNode.textContent = String(message || '');
+
+    body.append(icon, messageNode);
+
+    const progress = document.createElement('div');
+    progress.className = 'toast-progress';
+
+    notification.append(body, progress);
+    stack.appendChild(notification);
+
+    if (stack.childElementCount > 4) {
+        const oldest = stack.firstElementChild;
+        oldest?.remove();
+    }
 
     setTimeout(() => {
         notification.classList.add('is-leaving');
         setTimeout(() => notification.remove(), 320);
-    }, 3000);
+    }, TOAST_DURATION_MS);
 }
 
 // WebSocket/SSE Functions
@@ -4421,6 +4511,8 @@ function updateConnectionStatus(status) {
         document.body.appendChild(indicator);
     }
 
+    syncHeaderDelight(getActiveSectionName() || 'dashboard', normalizedStatus);
+
     if (connectionStatusScrollHideTimer) {
         clearTimeout(connectionStatusScrollHideTimer);
         connectionStatusScrollHideTimer = null;
@@ -4511,6 +4603,7 @@ async function init() {
     
     // Setup theme toggle
     setupThemeToggle();
+    syncHeaderDelight(getActiveSectionName() || 'dashboard', 'paused');
     
     // Handle page visibility changes to suspend/reconnect SSE.
     document.addEventListener('visibilitychange', () => {

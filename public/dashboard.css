@@ -26,6 +26,8 @@
     --sidebar-active-bg: color-mix(in oklab, var(--accent-primary) 12%, transparent);
     --sidebar-active-text: oklch(0.45 0.14 190);
     --modal-overlay: rgba(15, 20, 30, 0.5);
+    --section-glow-primary: color-mix(in oklab, var(--accent-primary) 22%, transparent);
+    --section-glow-secondary: color-mix(in oklab, var(--accent-secondary) 16%, transparent);
 }
 
 /* Dark theme */
@@ -51,6 +53,8 @@
     --sidebar-active-bg: color-mix(in oklab, var(--accent-primary) 20%, transparent);
     --sidebar-active-text: oklch(0.84 0.1 186);
     --modal-overlay: rgba(4, 8, 16, 0.74);
+    --section-glow-primary: color-mix(in oklab, var(--accent-primary) 34%, transparent);
+    --section-glow-secondary: color-mix(in oklab, var(--accent-secondary) 24%, transparent);
 }
 
 * {
@@ -64,15 +68,48 @@ body {
     background:
         radial-gradient(circle at 8% -10%, color-mix(in oklab, var(--accent-primary) 18%, transparent), transparent 38%),
         radial-gradient(circle at 96% 4%, color-mix(in oklab, var(--accent-secondary) 16%, transparent), transparent 44%),
+        radial-gradient(circle at 52% 114%, var(--section-glow-primary), transparent 56%),
+        radial-gradient(circle at -18% 58%, var(--section-glow-secondary), transparent 46%),
         var(--bg-primary);
     color: var(--text-primary);
     line-height: 1.55;
     letter-spacing: 0.01em;
     min-height: 100vh;
+    transition: background 0.45s ease;
 }
 
 body.modal-open {
     overflow: hidden;
+}
+
+body[data-active-section="dashboard"] {
+    --section-glow-primary: color-mix(in oklab, var(--accent-primary) 24%, transparent);
+    --section-glow-secondary: color-mix(in oklab, var(--accent-secondary) 16%, transparent);
+}
+
+body[data-active-section="installations"] {
+    --section-glow-primary: color-mix(in oklab, var(--info) 22%, transparent);
+    --section-glow-secondary: color-mix(in oklab, var(--accent-primary) 18%, transparent);
+}
+
+body[data-active-section="assets"] {
+    --section-glow-primary: color-mix(in oklab, var(--warning) 24%, transparent);
+    --section-glow-secondary: color-mix(in oklab, var(--accent-secondary) 20%, transparent);
+}
+
+body[data-active-section="drivers"] {
+    --section-glow-primary: color-mix(in oklab, var(--accent-secondary) 24%, transparent);
+    --section-glow-secondary: color-mix(in oklab, var(--success) 16%, transparent);
+}
+
+body[data-active-section="incidents"] {
+    --section-glow-primary: color-mix(in oklab, var(--error) 22%, transparent);
+    --section-glow-secondary: color-mix(in oklab, var(--warning) 16%, transparent);
+}
+
+body[data-active-section="audit"] {
+    --section-glow-primary: color-mix(in oklab, var(--text-secondary) 26%, transparent);
+    --section-glow-secondary: color-mix(in oklab, var(--info) 16%, transparent);
 }
 
 h1,
@@ -263,10 +300,70 @@ h4,
     color: var(--text-primary);
 }
 
+.page-heading {
+    min-width: 0;
+}
+
+.page-subtitle {
+    margin-top: 0.1rem;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    letter-spacing: 0.02em;
+}
+
 .header-actions {
     display: flex;
     gap: 0.5rem;
     align-items: center;
+}
+
+.ops-pulse {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    border: 1px solid color-mix(in oklab, var(--border) 76%, var(--accent-primary) 24%);
+    background: color-mix(in oklab, var(--bg-secondary) 86%, var(--accent-primary) 14%);
+    color: var(--text-primary);
+    border-radius: 999px;
+    padding: 0.32rem 0.72rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.ops-pulse-dot {
+    width: 0.54rem;
+    height: 0.54rem;
+    border-radius: 999px;
+    color: var(--success);
+    background: currentColor;
+    box-shadow: 0 0 0 0 color-mix(in oklab, currentColor 52%, transparent);
+    animation: opsPulseBeat 2s ease-out infinite;
+}
+
+.ops-pulse[data-state="reconnecting"] .ops-pulse-dot {
+    color: var(--warning);
+}
+
+.ops-pulse[data-state="disconnected"] .ops-pulse-dot,
+.ops-pulse[data-state="failed"] .ops-pulse-dot {
+    color: var(--error);
+}
+
+.ops-pulse[data-state="paused"] .ops-pulse-dot {
+    color: var(--text-secondary);
+}
+
+@keyframes opsPulseBeat {
+    0% {
+        box-shadow: 0 0 0 0 color-mix(in oklab, currentColor 40%, transparent);
+    }
+    70% {
+        box-shadow: 0 0 0 8px transparent;
+    }
+    100% {
+        box-shadow: 0 0 0 0 transparent;
+    }
 }
 
 /* ===== STATS GRID ===== */
@@ -1368,33 +1465,135 @@ tr[data-id] {
     font-size: 0.875rem;
 }
 
-.toast-notification {
+.toast-stack {
     position: fixed;
-    top: 1rem;
-    right: 1rem;
-    padding: 1rem 1.5rem;
-    border-radius: 12px;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+    top: 0.95rem;
+    right: 0.95rem;
     z-index: 9999;
-    color: #ffffff;
-    font-weight: 500;
-    animation: toast-slide-in 0.3s ease forwards;
+    display: grid;
+    gap: 0.55rem;
+    width: min(24rem, calc(100vw - 1.4rem));
 }
 
-.toast-notification.toast-success { background: rgba(16, 185, 129, 0.9); }
-.toast-notification.toast-error { background: rgba(239, 68, 68, 0.9); }
-.toast-notification.toast-warning { background: rgba(245, 158, 11, 0.94); }
-.toast-notification.toast-info { background: rgba(6, 182, 212, 0.9); }
-.toast-notification.is-leaving { animation: toast-slide-out 0.3s ease forwards; }
+.toast-notification {
+    border-radius: 12px;
+    box-shadow: 0 12px 24px rgba(15, 23, 42, 0.2);
+    border: 1px solid transparent;
+    overflow: hidden;
+    animation: toast-slide-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.toast-body {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.6rem;
+    align-items: start;
+    padding: 0.72rem 0.82rem 0.6rem;
+}
+
+.toast-icon {
+    width: 1.36rem;
+    height: 1.36rem;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.84rem;
+    font-weight: 700;
+    margin-top: 0.03rem;
+    flex-shrink: 0;
+}
+
+.toast-message {
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+
+.toast-progress {
+    height: 2px;
+    width: 100%;
+    transform-origin: left;
+    animation: toast-progress 3.1s linear forwards;
+}
+
+.toast-notification.toast-success {
+    background: color-mix(in oklab, var(--bg-secondary) 90%, var(--success) 10%);
+    border-color: color-mix(in oklab, var(--success) 30%, var(--border) 70%);
+}
+.toast-notification.toast-success .toast-icon {
+    background: color-mix(in oklab, var(--success) 18%, transparent);
+    color: var(--success);
+}
+.toast-notification.toast-success .toast-progress {
+    background: color-mix(in oklab, var(--success) 75%, transparent);
+}
+
+.toast-notification.toast-error {
+    background: color-mix(in oklab, var(--bg-secondary) 90%, var(--error) 10%);
+    border-color: color-mix(in oklab, var(--error) 30%, var(--border) 70%);
+}
+.toast-notification.toast-error .toast-icon {
+    background: color-mix(in oklab, var(--error) 18%, transparent);
+    color: var(--error);
+}
+.toast-notification.toast-error .toast-progress {
+    background: color-mix(in oklab, var(--error) 75%, transparent);
+}
+
+.toast-notification.toast-warning {
+    background: color-mix(in oklab, var(--bg-secondary) 88%, var(--warning) 12%);
+    border-color: color-mix(in oklab, var(--warning) 32%, var(--border) 68%);
+}
+.toast-notification.toast-warning .toast-icon {
+    background: color-mix(in oklab, var(--warning) 22%, transparent);
+    color: var(--warning);
+}
+.toast-notification.toast-warning .toast-progress {
+    background: color-mix(in oklab, var(--warning) 78%, transparent);
+}
+
+.toast-notification.toast-info {
+    background: color-mix(in oklab, var(--bg-secondary) 90%, var(--info) 10%);
+    border-color: color-mix(in oklab, var(--info) 30%, var(--border) 70%);
+}
+.toast-notification.toast-info .toast-icon {
+    background: color-mix(in oklab, var(--info) 18%, transparent);
+    color: var(--info);
+}
+.toast-notification.toast-info .toast-progress {
+    background: color-mix(in oklab, var(--info) 75%, transparent);
+}
+
+.toast-notification.is-leaving {
+    animation: toast-slide-out 0.26s ease forwards;
+}
 
 @keyframes toast-slide-in {
-    from { transform: translateX(100%); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
+    from {
+        transform: translateX(18px) scale(0.98);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0) scale(1);
+        opacity: 1;
+    }
 }
 
 @keyframes toast-slide-out {
-    from { transform: translateX(0); opacity: 1; }
-    to { transform: translateX(100%); opacity: 0; }
+    from {
+        transform: translateX(0) scale(1);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(18px) scale(0.98);
+        opacity: 0;
+    }
+}
+
+@keyframes toast-progress {
+    from { transform: scaleX(1); }
+    to { transform: scaleX(0); }
 }
 
 .connection-status-indicator {
@@ -1676,10 +1875,14 @@ tr[data-id] {
     }
 
     #pageTitle {
-        max-width: 65vw;
+        max-width: 46vw;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+    }
+
+    .page-subtitle {
+        display: none;
     }
     
     .stats-grid {
@@ -1720,6 +1923,16 @@ tr[data-id] {
 
     .header-actions {
         gap: 0.35rem;
+    }
+
+    .ops-pulse {
+        padding: 0.32rem;
+        min-width: 2rem;
+        justify-content: center;
+    }
+
+    #opsPulseText {
+        display: none;
     }
 
     .theme-toggle,
@@ -1769,6 +1982,12 @@ tr[data-id] {
     table {
         min-width: 620px;
     }
+
+    .toast-stack {
+        width: calc(100vw - 1rem);
+        right: 0.5rem;
+        top: 0.6rem;
+    }
 }
 
 /* ===== SCROLLBAR ===== */
@@ -1790,6 +2009,25 @@ tr[data-id] {
     background: var(--text-secondary);
 }
 
+@media (prefers-reduced-motion: reduce) {
+    .ops-pulse-dot,
+    .section,
+    .toast-notification,
+    .toast-progress {
+        animation: none !important;
+    }
+
+    .toast-notification,
+    .stat-card,
+    .chart-card,
+    .nav-links a,
+    .btn-primary,
+    .btn-secondary,
+    .btn-icon,
+    .theme-toggle {
+        transition: none !important;
+    }
+}
 
 .is-hidden {
     display: none !important;
