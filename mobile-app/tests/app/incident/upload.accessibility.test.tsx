@@ -21,10 +21,47 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 
 function createReactNativeMock() {
   const ReactModule = require("react") as typeof React;
+  const AnimatedView = ({ children, ...props }: any) =>
+    ReactModule.createElement("Animated.View", props, children);
+  class AnimatedValueMock {
+    private currentValue: number;
+    constructor(initialValue: number) {
+      this.currentValue = initialValue;
+    }
+    setValue(nextValue: number) {
+      this.currentValue = nextValue;
+    }
+    interpolate() {
+      return `${this.currentValue * 100}%`;
+    }
+  }
   return {
+    AccessibilityInfo: {
+      isReduceMotionEnabled: vi.fn(async () => false),
+      addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+    },
     ActivityIndicator: ({ children, ...props }: any) =>
       ReactModule.createElement("ActivityIndicator", props, children),
     Alert: { alert: vi.fn() },
+    Animated: {
+      Value: AnimatedValueMock,
+      timing: (value: AnimatedValueMock, config: { toValue: number }) => ({
+        start: (callback?: (result: { finished: boolean }) => void) => {
+          value.setValue(config.toValue);
+          callback?.({ finished: true });
+        },
+      }),
+      parallel: (animations: Array<{ start?: (callback?: (result: { finished: boolean }) => void) => void }>) => ({
+        start: (callback?: (result: { finished: boolean }) => void) => {
+          animations.forEach((animation) => animation?.start?.());
+          callback?.({ finished: true });
+        },
+      }),
+      View: AnimatedView,
+    },
+    Easing: {
+      bezier: vi.fn(() => (value: number) => value),
+    },
     Image: ({ children, ...props }: any) => ReactModule.createElement("Image", props, children),
     ScrollView: ({ children, ...props }: any) =>
       ReactModule.createElement("ScrollView", props, children),

@@ -152,6 +152,18 @@ let qrModalEditUnlockUntil = 0;
 let qrPasswordModalBusy = false;
 let loginModalLastFocusedElement = null;
 const QR_EDIT_UNLOCK_TTL_MS = 10 * 60 * 1000;
+const KPI_NUMBER_ANIMATION_MS = 620;
+const SECTION_TRANSITION_OUT_MS = 150;
+const SECTION_TITLES = {
+    dashboard: 'Dashboard',
+    installations: 'Registros',
+    assets: 'Equipos',
+    drivers: 'Drivers',
+    incidents: 'Incidencias',
+    audit: 'Auditoría',
+};
+const ACTIVE_KPI_ANIMATIONS = new WeakMap();
+let sectionTransitionVersion = 0;
 
 
 // Chart.js default configuration
@@ -802,13 +814,130 @@ function updateStats(stats) {
     animateNumber('uniqueClients', stats.unique_clients || 0);
 }
 
+function prefersReducedMotion() {
+    return (
+        typeof window !== 'undefined' &&
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches === true
+    );
+}
+
+function countFractionDigits(value) {
+    const normalized = String(value);
+    const fraction = normalized.split('.')[1];
+    if (!fraction) return 0;
+    return Math.min(2, fraction.length);
+}
+
+function parseMetricDescriptor(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return {
+            isNumeric: true,
+            prefix: '',
+            suffix: '',
+            target: value,
+            decimals: countFractionDigits(value),
+            fallbackText: String(value),
+        };
+    }
+
+    const textValue = String(value ?? '').trim();
+    if (!textValue) {
+        return { isNumeric: false, fallbackText: '' };
+    }
+
+    const metricMatch = textValue.match(/^([^\d-]*)(-?\d+(?:[.,]\d+)?)(.*)$/u);
+    if (!metricMatch) {
+        return { isNumeric: false, fallbackText: textValue };
+    }
+
+    const numericToken = metricMatch[2];
+    const target = Number.parseFloat(numericToken.replace(',', '.'));
+    if (!Number.isFinite(target)) {
+        return { isNumeric: false, fallbackText: textValue };
+    }
+
+    const decimalToken = numericToken.split(/[.,]/)[1] || '';
+    return {
+        isNumeric: true,
+        prefix: metricMatch[1],
+        suffix: metricMatch[3],
+        target,
+        decimals: Math.min(2, decimalToken.length),
+        fallbackText: textValue,
+    };
+}
+
+function formatMetricNumber(value, decimals) {
+    return value.toLocaleString('es-ES', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+    });
+}
+
+function setMetricDisplay(element, descriptor, numericValue) {
+    const formattedNumber = formatMetricNumber(numericValue, descriptor.decimals);
+    element.textContent = `${descriptor.prefix}${formattedNumber}${descriptor.suffix}`;
+}
+
+function cancelMetricAnimation(element) {
+    const activeAnimation = ACTIVE_KPI_ANIMATIONS.get(element);
+    if (typeof activeAnimation === 'number') {
+        cancelAnimationFrame(activeAnimation);
+    }
+    ACTIVE_KPI_ANIMATIONS.delete(element);
+}
+
 function animateNumber(elementId, value) {
     const element = document.getElementById(elementId);
     if (!element) return;
+
+    const descriptor = parseMetricDescriptor(value);
     element.classList.remove('number-animate');
-    element.textContent = value;
     void element.offsetWidth;
     element.classList.add('number-animate');
+
+    if (!descriptor.isNumeric) {
+        cancelMetricAnimation(element);
+        element.textContent = descriptor.fallbackText;
+        delete element.dataset.metricNumericValue;
+        return;
+    }
+
+    const target = descriptor.target;
+    const previousValue = Number.parseFloat(element.dataset.metricNumericValue || '');
+    const startValue = Number.isFinite(previousValue) ? previousValue : 0;
+
+    cancelMetricAnimation(element);
+
+    if (prefersReducedMotion() || Math.abs(target - startValue) < 0.01) {
+        setMetricDisplay(element, descriptor, target);
+        element.dataset.metricNumericValue = String(target);
+        return;
+    }
+
+    const animationStart = performance.now();
+    const tick = (now) => {
+        const elapsed = now - animationStart;
+        const progress = Math.min(1, elapsed / KPI_NUMBER_ANIMATION_MS);
+        const easedProgress = 1 - Math.pow(1 - progress, 4);
+        const currentValue = startValue + (target - startValue) * easedProgress;
+
+        setMetricDisplay(element, descriptor, currentValue);
+
+        if (progress < 1) {
+            const rafId = requestAnimationFrame(tick);
+            ACTIVE_KPI_ANIMATIONS.set(element, rafId);
+            return;
+        }
+
+        setMetricDisplay(element, descriptor, target);
+        element.dataset.metricNumericValue = String(target);
+        ACTIVE_KPI_ANIMATIONS.delete(element);
+    };
+
+    const initialRafId = requestAnimationFrame(tick);
+    ACTIVE_KPI_ANIMATIONS.set(element, initialRafId);
 }
 
 // Chart rendering functions
@@ -3588,6 +3717,60 @@ function renderAuditLogs(logs) {
     container.appendChild(table);
 }
 
+function updatePageTitleForSection(section) {
+    const pageTitle = document.getElementById('pageTitle');
+    if (!pageTitle) return;
+    pageTitle.textContent = SECTION_TITLES[section] || SECTION_TITLES.dashboard;
+}
+
+function runSectionLoaders(section) {
+    if (section === 'installations') loadInstallations();
+    if (section === 'assets') loadAssets();
+    if (section === 'drivers') loadDrivers();
+    if (section === 'audit') loadAuditLogs();
+}
+
+async function activateSection(section) {
+    const nextSection = document.getElementById(section + 'Section');
+    if (!nextSection) return;
+
+    const currentSection = document.querySelector('.section.active');
+    const transitionId = ++sectionTransitionVersion;
+
+    if (!currentSection || currentSection === nextSection || prefersReducedMotion()) {
+        document.querySelectorAll('.section').forEach((sectionNode) => {
+            sectionNode.classList.remove('active', 'is-transitioning-out');
+        });
+        nextSection.classList.add('active');
+        updatePageTitleForSection(section);
+        runSectionLoaders(section);
+        syncSSEForCurrentContext();
+        return;
+    }
+
+    currentSection.classList.add('is-transitioning-out');
+    currentSection.classList.remove('active');
+
+    await new Promise((resolve) => {
+        setTimeout(resolve, SECTION_TRANSITION_OUT_MS);
+    });
+
+    if (transitionId !== sectionTransitionVersion) {
+        return;
+    }
+
+    currentSection.classList.remove('is-transitioning-out');
+    document.querySelectorAll('.section').forEach((sectionNode) => {
+        if (sectionNode !== nextSection) {
+            sectionNode.classList.remove('active', 'is-transitioning-out');
+        }
+    });
+    nextSection.classList.add('active');
+    updatePageTitleForSection(section);
+    runSectionLoaders(section);
+    syncSSEForCurrentContext();
+}
+
 // Event Listeners
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -3646,6 +3829,7 @@ document.querySelectorAll('.nav-links a').forEach(link => {
         e.preventDefault();
         if (!requireActiveSession()) return;
         const section = link.dataset.section;
+        if (!section) return;
         if (section === 'audit' && !canCurrentUserAccessAudit()) {
             showNotification('No tienes permisos para acceder a Auditoria.', 'error');
             return;
@@ -3654,24 +3838,7 @@ document.querySelectorAll('.nav-links a').forEach(link => {
         document.querySelectorAll('.nav-links a').forEach(l => l.classList.remove('active'));
         link.classList.add('active');
         
-        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-        document.getElementById(section + 'Section').classList.add('active');
-        
-        const titles = {
-            dashboard: 'Dashboard',
-            installations: 'Registros',
-            assets: 'Equipos',
-            drivers: 'Drivers',
-            incidents: 'Incidencias',
-            audit: 'Auditoría'
-        };
-        document.getElementById('pageTitle').textContent = titles[section] || 'Dashboard';
-        
-        if (section === 'installations') loadInstallations();
-        if (section === 'assets') loadAssets();
-        if (section === 'drivers') loadDrivers();
-        if (section === 'audit') loadAuditLogs();
-        syncSSEForCurrentContext();
+        void activateSection(section);
     });
 });
 
@@ -4439,3 +4606,4 @@ function setupThemeToggle() {
 }
 
 init();
+

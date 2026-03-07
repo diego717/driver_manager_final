@@ -21,10 +21,47 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 
 function createReactNativeMock() {
   const ReactModule = require("react") as typeof React;
+  const AnimatedView = ({ children, ...props }: any) =>
+    ReactModule.createElement("Animated.View", props, children);
+  class AnimatedValueMock {
+    private currentValue: number;
+    constructor(initialValue: number) {
+      this.currentValue = initialValue;
+    }
+    setValue(nextValue: number) {
+      this.currentValue = nextValue;
+    }
+    interpolate() {
+      return `${this.currentValue * 100}%`;
+    }
+  }
   return {
+    AccessibilityInfo: {
+      isReduceMotionEnabled: vi.fn(async () => false),
+      addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+    },
     ActivityIndicator: ({ children, ...props }: any) =>
       ReactModule.createElement("ActivityIndicator", props, children),
     Alert: { alert: vi.fn() },
+    Animated: {
+      Value: AnimatedValueMock,
+      timing: (value: AnimatedValueMock, config: { toValue: number }) => ({
+        start: (callback?: (result: { finished: boolean }) => void) => {
+          value.setValue(config.toValue);
+          callback?.({ finished: true });
+        },
+      }),
+      parallel: (animations: Array<{ start?: (callback?: (result: { finished: boolean }) => void) => void }>) => ({
+        start: (callback?: (result: { finished: boolean }) => void) => {
+          animations.forEach((animation) => animation?.start?.());
+          callback?.({ finished: true });
+        },
+      }),
+      View: AnimatedView,
+    },
+    Easing: {
+      bezier: vi.fn(() => (value: number) => value),
+    },
     Image: ({ children, ...props }: any) => ReactModule.createElement("Image", props, children),
     ScrollView: ({ children, ...props }: any) =>
       ReactModule.createElement("ScrollView", props, children),
@@ -84,6 +121,9 @@ vi.mock("expo-file-system/legacy", () => ({
 vi.mock("@/src/api/photos", () => ({
   uploadIncidentPhoto: vi.fn(),
 }));
+vi.mock("@/src/api/incidents", () => ({
+  updateIncidentEvidence: vi.fn(async () => ({})),
+}));
 vi.mock("@/src/api/client", () => ({
   extractApiError: (error: unknown) =>
     error instanceof Error ? error.message : String(error),
@@ -100,6 +140,7 @@ vi.mock("@/src/theme/theme-preference", () => ({
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
 import { uploadIncidentPhoto } from "@/src/api/photos";
+import { updateIncidentEvidence } from "@/src/api/incidents";
 import UploadIncidentPhotoScreen from "@/app/incident/upload";
 
 describe("UploadIncidentPhotoScreen upload flow", () => {
@@ -127,6 +168,7 @@ describe("UploadIncidentPhotoScreen upload flow", () => {
 
     vi.mocked(ImageManipulator.manipulateAsync).mockResolvedValue({ uri: "file:///processed.jpg" } as any);
     vi.mocked(uploadIncidentPhoto).mockResolvedValue({ photo: { id: 77 } } as any);
+    vi.mocked(updateIncidentEvidence).mockResolvedValue({} as any);
 
     const view = render(<UploadIncidentPhotoScreen />);
     fireEvent.press(view.getByText("Siguiente").parent);
@@ -148,6 +190,7 @@ describe("UploadIncidentPhotoScreen upload flow", () => {
 
     await waitFor(() => {
       expect(routerMocks.replace).toHaveBeenCalled();
+      expect(updateIncidentEvidence).toHaveBeenCalledTimes(1);
       expect(uploadIncidentPhoto).toHaveBeenCalledTimes(1);
       expect(view.getByText("Evidencias guardadas")).toBeTruthy();
     });

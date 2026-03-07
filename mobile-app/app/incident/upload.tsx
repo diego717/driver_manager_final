@@ -4,8 +4,11 @@ import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as FileSystem from "expo-file-system/legacy";
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   Image,
   ScrollView,
   StyleSheet,
@@ -49,6 +52,8 @@ const COMPRESS_QUALITIES = [0.85, 0.75, 0.65, 0.55, 0.45];
 const MIN_TOUCH_TARGET_SIZE = 44;
 
 const STEP_TITLES = ["Checklist", "Nota", "Fotos", "Confirmacion"] as const;
+const WIZARD_STEP_ANIMATION_MS = 260;
+const WIZARD_PROGRESS_ANIMATION_MS = 220;
 
 const CHECKLIST_ITEMS = [
   "Equipo identificado (QR/serie)",
@@ -133,6 +138,12 @@ export default function UploadIncidentPhotoScreen() {
   const [processingImage, setProcessingImage] = useState(false);
   const [processingMessage, setProcessingMessage] = useState("");
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
+  const [reduceMotionEnabled, setReduceMotionEnabled] = useState(false);
+  const stepContentOpacity = useRef(new Animated.Value(1)).current;
+  const stepContentTranslateX = useRef(new Animated.Value(0)).current;
+  const progressAnim = useRef(new Animated.Value((step + 1) / STEP_TITLES.length)).current;
+  const previousStepRef = useRef<WizardStep>(step);
+  const animationsInitializedRef = useRef(false);
 
   const checklistCount = useMemo(
     () => Object.values(selectedChecklist).filter(Boolean).length,
@@ -160,6 +171,73 @@ export default function UploadIncidentPhotoScreen() {
       void deleteFileIfExists(current.uri);
     };
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => {
+        if (!isMounted) return;
+        setReduceMotionEnabled(Boolean(enabled));
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setReduceMotionEnabled(false);
+      });
+
+    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", (enabled) => {
+      setReduceMotionEnabled(Boolean(enabled));
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    const nextProgress = (step + 1) / STEP_TITLES.length;
+    if (!animationsInitializedRef.current) {
+      animationsInitializedRef.current = true;
+      progressAnim.setValue(nextProgress);
+      previousStepRef.current = step;
+      return;
+    }
+
+    if (reduceMotionEnabled) {
+      stepContentOpacity.setValue(1);
+      stepContentTranslateX.setValue(0);
+      progressAnim.setValue(nextProgress);
+      previousStepRef.current = step;
+      return;
+    }
+
+    const direction = step >= previousStepRef.current ? 1 : -1;
+    stepContentOpacity.setValue(0);
+    stepContentTranslateX.setValue(16 * direction);
+
+    Animated.parallel([
+      Animated.timing(stepContentOpacity, {
+        toValue: 1,
+        duration: WIZARD_STEP_ANIMATION_MS,
+        easing: Easing.bezier(0.22, 1, 0.36, 1),
+        useNativeDriver: true,
+      }),
+      Animated.timing(stepContentTranslateX, {
+        toValue: 0,
+        duration: WIZARD_STEP_ANIMATION_MS,
+        easing: Easing.bezier(0.22, 1, 0.36, 1),
+        useNativeDriver: true,
+      }),
+      Animated.timing(progressAnim, {
+        toValue: nextProgress,
+        duration: WIZARD_PROGRESS_ANIMATION_MS,
+        easing: Easing.bezier(0.22, 1, 0.36, 1),
+        useNativeDriver: false,
+      }),
+    ]).start();
+
+    previousStepRef.current = step;
+  }, [progressAnim, reduceMotionEnabled, step, stepContentOpacity, stepContentTranslateX]);
 
   const processAssetForUpload = async (
     asset: ImagePicker.ImagePickerAsset,
@@ -490,6 +568,11 @@ export default function UploadIncidentPhotoScreen() {
             borderColor: palette.infoBorder,
             color: palette.infoText,
           };
+  const progressPercent = Math.round(((step + 1) / STEP_TITLES.length) * 100);
+  const progressWidth = progressAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0%", "100%"],
+  });
 
   return (
     <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
@@ -499,6 +582,26 @@ export default function UploadIncidentPhotoScreen() {
       <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
         Paso {step + 1} de 4: {STEP_TITLES[step]}
       </Text>
+      <View
+        style={styles.progressWrap}
+        accessibilityRole="progressbar"
+        accessibilityLabel={`Progreso del asistente: ${progressPercent}%`}
+      >
+        <View
+          style={[
+            styles.progressTrack,
+            { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
+          ]}
+        >
+          <Animated.View
+            style={[
+              styles.progressFill,
+              { width: progressWidth, backgroundColor: palette.primaryButtonBg },
+            ]}
+          />
+        </View>
+        <Text style={[styles.progressLabel, { color: palette.hint }]}>{progressPercent}%</Text>
+      </View>
 
       <Text style={[styles.label, { color: palette.label }]}>Incidencia objetivo</Text>
       <TextInput
@@ -522,7 +625,13 @@ export default function UploadIncidentPhotoScreen() {
         <Text style={[styles.subtitle, { color: palette.textSecondary }]}>Installation ID: {installationId}</Text>
       ) : null}
 
-      {step === 0 ? (
+      <Animated.View
+        style={[
+          styles.stepPanel,
+          { opacity: stepContentOpacity, transform: [{ translateX: stepContentTranslateX }] },
+        ]}
+      >
+        {step === 0 ? (
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Checklist aplicado</Text>
           <Text style={[styles.hintText, { color: palette.hint }]}>Marca las verificaciones realizadas.</Text>
@@ -685,6 +794,7 @@ export default function UploadIncidentPhotoScreen() {
           </TouchableOpacity>
         </View>
       ) : null}
+      </Animated.View>
 
       {feedback ? (
         <View
@@ -739,6 +849,27 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 13,
     fontFamily: fontFamilies.regular,
+  },
+  progressWrap: {
+    gap: 6,
+  },
+  progressTrack: {
+    height: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 999,
+  },
+  progressLabel: {
+    alignSelf: "flex-end",
+    fontSize: 12,
+    fontFamily: fontFamilies.medium,
+  },
+  stepPanel: {
+    gap: 12,
   },
   section: {
     gap: 8,
