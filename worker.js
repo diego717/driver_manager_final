@@ -56,7 +56,12 @@ const DRIVER_BRAND_MAX_LENGTH = 120;
 const DRIVER_VERSION_MAX_LENGTH = 120;
 const DRIVER_DESCRIPTION_MAX_LENGTH = 500;
 const DRIVER_MANIFEST_KEY = "manifest.json";
+const DRIVER_MANIFEST_CACHE_TTL_MS = 15 * 1000;
 const MAX_DRIVER_UPLOAD_BYTES = 300 * 1024 * 1024;
+let driverManifestCache = {
+  value: null,
+  expiresAt: 0,
+};
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -1440,18 +1445,49 @@ function normalizeDriverManifest(rawManifest) {
   };
 }
 
-async function readDriverManifest(bucket) {
+function cloneDriverManifest(manifest) {
+  return normalizeDriverManifest(
+    manifest ? JSON.parse(JSON.stringify(manifest)) : createDefaultDriverManifest(),
+  );
+}
+
+async function readDriverManifest(bucket, { useCache = true } = {}) {
+  const nowMs = Date.now();
+  if (
+    useCache &&
+    driverManifestCache.value &&
+    Number.isFinite(driverManifestCache.expiresAt) &&
+    driverManifestCache.expiresAt > nowMs
+  ) {
+    return cloneDriverManifest(driverManifestCache.value);
+  }
+
   const object = await bucket.get(DRIVER_MANIFEST_KEY);
   if (!object || !object.body) {
-    return createDefaultDriverManifest();
+    const defaultManifest = createDefaultDriverManifest();
+    driverManifestCache = {
+      value: cloneDriverManifest(defaultManifest),
+      expiresAt: nowMs + DRIVER_MANIFEST_CACHE_TTL_MS,
+    };
+    return cloneDriverManifest(defaultManifest);
   }
 
   try {
     const rawText = await object.text();
     const parsed = rawText ? JSON.parse(rawText) : {};
-    return normalizeDriverManifest(parsed);
+    const normalized = normalizeDriverManifest(parsed);
+    driverManifestCache = {
+      value: cloneDriverManifest(normalized),
+      expiresAt: Date.now() + DRIVER_MANIFEST_CACHE_TTL_MS,
+    };
+    return cloneDriverManifest(normalized);
   } catch {
-    return createDefaultDriverManifest();
+    const defaultManifest = createDefaultDriverManifest();
+    driverManifestCache = {
+      value: cloneDriverManifest(defaultManifest),
+      expiresAt: Date.now() + DRIVER_MANIFEST_CACHE_TTL_MS,
+    };
+    return cloneDriverManifest(defaultManifest);
   }
 }
 
@@ -1461,7 +1497,11 @@ async function writeDriverManifest(bucket, manifest) {
   await bucket.put(DRIVER_MANIFEST_KEY, JSON.stringify(normalized, null, 2), {
     httpMetadata: { contentType: "application/json" },
   });
-  return normalized;
+  driverManifestCache = {
+    value: cloneDriverManifest(normalized),
+    expiresAt: Date.now() + DRIVER_MANIFEST_CACHE_TTL_MS,
+  };
+  return cloneDriverManifest(normalized);
 }
 
 function applyInstallationFilters(installations, searchParams) {
