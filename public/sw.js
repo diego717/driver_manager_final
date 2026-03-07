@@ -1,5 +1,5 @@
 // Service Worker for SiteOps Dashboard PWA
-const CACHE_NAME = 'driver-manager-d7fd0f3a4e';
+const CACHE_NAME = 'driver-manager-e2cf707a60';
 const STATIC_ASSETS = [
   '/web/dashboard',
   '/dashboard.css?v=5938020295',
@@ -20,6 +20,10 @@ const STATIC_ASSET_PATHS = new Set([
 function getAssetPath(input) {
   const rawUrl = typeof input === 'string' ? input : input?.url;
   return new URL(rawUrl, self.location.origin).pathname;
+}
+
+function isDashboardShellPath(pathname) {
+  return pathname === '/web/dashboard' || pathname === '/dashboard';
 }
 
 async function shouldCacheResponse(requestOrUrl, response) {
@@ -127,6 +131,27 @@ self.addEventListener('fetch', (event) => {
   
   // Skip external requests (Chart.js CDN)
   if (!url.origin.includes(self.location.origin)) {
+    return;
+  }
+
+  // Dashboard shell should prefer network to avoid stale UI after deploys.
+  if (request.mode === 'navigate' || isDashboardShellPath(url.pathname)) {
+    event.respondWith(
+      fetch(request)
+        .then(async (networkResponse) => {
+          if (await shouldCacheResponse(request, networkResponse)) {
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(request, networkResponse.clone());
+            });
+          }
+          return networkResponse;
+        })
+        .catch(async () => {
+          const cached = await caches.match(request);
+          if (cached) return cached;
+          return caches.match('/web/dashboard');
+        })
+    );
     return;
   }
   
