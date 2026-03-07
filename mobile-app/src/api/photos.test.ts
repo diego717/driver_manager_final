@@ -17,10 +17,6 @@ vi.mock("./client", () => clientMock);
 import { uploadIncidentPhoto } from "./photos";
 import { fetchIncidentPhotoDataUri } from "./photos";
 
-function toBase64(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64");
-}
-
 describe("photos api", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -38,7 +34,7 @@ describe("photos api", () => {
   it("rejects too-small image payload before upload", async () => {
     const payload = new Uint8Array(512);
     payload.set([0xff, 0xd8, 0xff], 0);
-    fileSystemMock.readAsStringAsync.mockResolvedValue(toBase64(payload));
+    fileSystemMock.getInfoAsync.mockResolvedValue({ exists: true, size: payload.byteLength });
 
     await expect(
       uploadIncidentPhoto({
@@ -53,13 +49,23 @@ describe("photos api", () => {
   it("uploads validated payload with signed headers", async () => {
     const payload = new Uint8Array(1500);
     payload.set([0xff, 0xd8, 0xff], 0);
-    fileSystemMock.readAsStringAsync.mockResolvedValue(toBase64(payload));
+    fileSystemMock.getInfoAsync.mockResolvedValue({ exists: true, size: payload.byteLength });
 
     const fetchMock = vi.mocked(globalThis.fetch);
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ success: true, photo: { id: 21 } }),
-    } as Response);
+    fetchMock.mockImplementation(async (url) => {
+      if (url === "file://photo.jpg") {
+        return {
+          ok: true,
+          status: 200,
+          arrayBuffer: async () => payload.buffer,
+          headers: new Headers(),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({ success: true, photo: { id: 21 } }),
+      } as Response;
+    });
 
     const response = await uploadIncidentPhoto({
       incidentId: 11,
@@ -69,8 +75,8 @@ describe("photos api", () => {
     });
 
     expect(response.photo.id).toBe(21);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, requestInit] = fetchMock.mock.calls[0];
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [url, requestInit] = fetchMock.mock.calls[1];
     expect(url).toBe("https://worker.example/web/incidents/11/photos");
     expect(requestInit?.method).toBe("POST");
     expect((requestInit?.headers as Record<string, string>)["Content-Type"]).toBe("image/jpeg");

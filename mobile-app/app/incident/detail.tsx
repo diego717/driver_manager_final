@@ -17,7 +17,7 @@ import {
 import { extractApiError } from "@/src/api/client";
 import { listIncidentsByInstallation, updateIncidentStatus } from "@/src/api/incidents";
 import {
-  fetchIncidentPhotoDataUri,
+  resolveIncidentPhotoPreviewTarget,
   type IncidentPhotoPreviewTarget,
 } from "@/src/api/photos";
 import { useAppPalette } from "@/src/theme/palette";
@@ -174,10 +174,7 @@ export default function IncidentDetailScreen() {
       const resolvedEntries = await loadWithConcurrency(
         incident.photos.map((photo) => async () => {
           try {
-            const previewTarget = {
-              uri: await fetchIncidentPhotoDataUri(photo.id),
-              headers: {},
-            };
+            const previewTarget = await resolveIncidentPhotoPreviewTarget(photo.id);
             return [photo.id, previewTarget] as const;
           } catch {
             return [photo.id, null] as const;

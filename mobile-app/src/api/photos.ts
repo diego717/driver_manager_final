@@ -47,6 +47,23 @@ function base64FromArrayBuffer(buffer: ArrayBuffer): string {
   return CryptoJS.enc.Base64.stringify(wordArray);
 }
 
+async function readFileBytes(fileUri: string): Promise<Uint8Array> {
+  try {
+    const response = await fetch(fileUri);
+    if (!response.ok) {
+      throw new Error(`No se pudo leer el archivo local (HTTP ${response.status}).`);
+    }
+    const buffer = await response.arrayBuffer();
+    return new Uint8Array(buffer);
+  } catch {
+    // Fallback para runtimes donde fetch(file://...) no está soportado.
+    const base64 = await FileSystem.readAsStringAsync(fileUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    return bytesFromBase64(base64);
+  }
+}
+
 export async function resolveIncidentPhotoPreviewTarget(
   photoId: number,
 ): Promise<IncidentPhotoPreviewTarget> {
@@ -103,10 +120,22 @@ export async function uploadIncidentPhoto({
   const finalContentType = contentType ?? contentTypeFromFileName(finalFileName);
   const path = `/incidents/${incidentId}/photos`;
 
-  const base64 = await FileSystem.readAsStringAsync(fileUri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-  const bytes = bytesFromBase64(base64);
+  const fileInfo = await FileSystem.getInfoAsync(fileUri, { size: true });
+  const knownSizeBytes =
+    fileInfo && typeof fileInfo === "object" && "size" in fileInfo
+      ? Number((fileInfo as { size?: number }).size ?? NaN)
+      : Number.NaN;
+  if (Number.isFinite(knownSizeBytes)) {
+    if (knownSizeBytes < MIN_UPLOAD_PHOTO_BYTES) {
+      throw new Error("Imagen demasiado pequena o corrupta.");
+    }
+    if (knownSizeBytes > MAX_UPLOAD_PHOTO_BYTES) {
+      const sizeMb = (knownSizeBytes / (1024 * 1024)).toFixed(1);
+      throw new Error(`Imagen demasiado grande (${sizeMb}MB). Maximo: 5MB.`);
+    }
+  }
+
+  const bytes = await readFileBytes(fileUri);
   if (bytes.byteLength < MIN_UPLOAD_PHOTO_BYTES) {
     throw new Error("Imagen demasiado pequena o corrupta.");
   }
