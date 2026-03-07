@@ -59,6 +59,30 @@ class _ThumbnailWorker(QRunnable):
             self.signals.failed.emit(self.photo_id, str(e))
 
 
+class _BackgroundTaskSignals(QObject):
+    """Señales para tareas de fondo genéricas."""
+
+    finished = pyqtSignal(str, object)
+    failed = pyqtSignal(str, str)
+
+
+class _BackgroundTask(QRunnable):
+    """Ejecuta tareas de I/O de red en segundo plano."""
+
+    def __init__(self, task_id, callback):
+        super().__init__()
+        self.task_id = task_id
+        self.callback = callback
+        self.signals = _BackgroundTaskSignals()
+
+    def run(self):
+        try:
+            result = self.callback()
+            self.signals.finished.emit(self.task_id, result)
+        except Exception as exc:
+            self.signals.failed.emit(self.task_id, str(exc))
+
+
 
 # Configuración portable
 PORTABLE_CONFIG = None
@@ -151,15 +175,15 @@ class MainWindow(QMainWindow):
                             logger.warning("👉 Por seguridad, borra 'portable_config.json' manualmente.")
                 else:
                     logger.warning("⚠️ JSON portable encontrado pero incompleto.")
-                    self.config_manager.init_cloud_connection()
+                    self.init_cloud_connection()
                     
             except Exception as e:
                 logger.critical(f"❌ Error crítico procesando configuración portable: {e}")
-                self.config_manager.init_cloud_connection()
+                self.init_cloud_connection()
         else:
             # Si no existe el JSON, intentamos cargar la caja fuerte (.enc) que ya debería estar en el USB
             logger.info("ℹ️ Iniciando sin archivo portable. Buscando almacenamiento cifrado...")
-            self.config_manager.init_cloud_connection()
+            self.init_cloud_connection()
     def _check_user_initialization(self):
         """Verificar y ejecutar configuración inicial de usuarios si es necesario"""
         # Usar modo local inicialmente (antes de tener cloud_manager)
@@ -224,6 +248,7 @@ class MainWindow(QMainWindow):
         self._thumbnail_inflight = set()
         self._thumbnail_item_map = {}
         self._thumbnail_pool = QThreadPool.globalInstance()
+        self._background_tasks = {}
         
         # Cache local
         if PORTABLE_MODE and PORTABLE_CONFIG:
@@ -507,6 +532,34 @@ class MainWindow(QMainWindow):
             return
         self.tabs.setCurrentIndex(self.admin_tab_index)
         self.statusBar().showMessage("Debes iniciar sesión para acceder a este menú.", 4000)
+
+    def _run_background_task(self, task_id, callback, on_success=None, on_error=None):
+        """Ejecutar callback en threadpool para evitar bloqueos de UI."""
+        if task_id in self._background_tasks:
+            return False
+
+        worker = _BackgroundTask(task_id, callback)
+        self._background_tasks[task_id] = worker
+
+        def _cleanup(done_task_id):
+            self._background_tasks.pop(done_task_id, None)
+
+        def _handle_success(done_task_id, payload):
+            _cleanup(done_task_id)
+            if callable(on_success):
+                on_success(payload)
+
+        def _handle_error(done_task_id, error_message):
+            _cleanup(done_task_id)
+            if callable(on_error):
+                on_error(error_message)
+                return
+            logger.error(f"Tarea en segundo plano '{done_task_id}' fallo: {error_message}")
+
+        worker.signals.finished.connect(_handle_success)
+        worker.signals.failed.connect(_handle_error)
+        self._thumbnail_pool.start(worker)
+        return True
     
     def load_config_data(self):
         """Cargar configuración desde archivo"""
@@ -517,43 +570,66 @@ class MainWindow(QMainWindow):
         config = self.load_config_data()
         
         if config:
-            # 1. Conexión a R2 (Drivers y Usuarios)
-            self.cloud_manager = CloudflareR2Manager(
-                account_id=config.get('account_id'),
-                access_key_id=config.get('access_key_id'),
-                secret_access_key=config.get('secret_access_key'),
-                bucket_name=config.get('bucket_name')
-            )
+            if "init_cloud_connection" in self._background_tasks:
+                self.statusBar().showMessage("⏳ Conectando a Cloudflare...")
+                return
 
-            # 2. Inicializar cliente D1 para auditoría antes de crear UserManager
-            # para evitar fallback legacy de logs en modo producción.
-            self.history_manager = InstallationHistory(self.config_manager)
-            
-            # 3. Inicializar el UserManagerV2
-            # Intentar modo nube primero, fallback a local
-            self.user_manager = UserManagerV2(
-                self.cloud_manager, 
-                self.security_manager,
-                local_mode=False,
-                audit_api_client=self.history_manager
-            )
-            
-            try:
-                # Verificar si hay usuarios (load_users no existe en V2, usamos has_users o similar)
-                # Nota: UserManagerV2 carga bajo demanda, aquí forzamos verificación
-                if self.user_manager.has_users():
-                    logger.info("✅ Usuarios detectados en la nube.")
-                else:
-                    raise Exception("No hay usuarios")
-                logger.info("✅ Usuarios cargados desde la nube.")
-            except Exception as e:
-                logger.warning(
-                    f"⚠️ No se pudo validar usuarios en la nube: {e}. "
-                    "Se requiere configuración inicial por asistente."
+            self.statusBar().showMessage("⏳ Conectando a Cloudflare (R2 + D1 History)...")
+
+            def _connect_cloud_context():
+                cloud_manager = CloudflareR2Manager(
+                    account_id=config.get('account_id'),
+                    access_key_id=config.get('access_key_id'),
+                    secret_access_key=config.get('secret_access_key'),
+                    bucket_name=config.get('bucket_name')
                 )
-                if self.user_manager.needs_initialization():
+                history_manager = InstallationHistory(self.config_manager)
+                user_manager = UserManagerV2(
+                    cloud_manager,
+                    self.security_manager,
+                    local_mode=False,
+                    audit_api_client=history_manager
+                )
+
+                has_users = False
+                users_error = ""
+                try:
+                    has_users = bool(user_manager.has_users())
+                except Exception as exc:
+                    users_error = str(exc)
+
+                return {
+                    "cloud_manager": cloud_manager,
+                    "history_manager": history_manager,
+                    "user_manager": user_manager,
+                    "has_users": has_users,
+                    "users_error": users_error,
+                }
+
+            def _on_connected(payload):
+                self.cloud_manager = payload.get("cloud_manager")
+                self.history_manager = payload.get("history_manager")
+                self.user_manager = payload.get("user_manager")
+
+                has_users = bool(payload.get("has_users"))
+                if has_users:
+                    logger.info("✅ Usuarios detectados en la nube.")
+                    logger.info("✅ Usuarios cargados desde la nube.")
+                else:
+                    users_error = payload.get("users_error", "")
+                    if users_error:
+                        logger.warning(
+                            f"⚠️ No se pudo validar usuarios en la nube: {users_error}. "
+                            "Se requiere configuración inicial por asistente."
+                        )
                     self._show_setup_wizard(self.user_manager, exit_on_cancel=False)
-                    if self.user_manager.needs_initialization():
+                    try:
+                        still_pending = self.user_manager.needs_initialization()
+                    except Exception as exc:
+                        logger.warning(f"No se pudo verificar inicializacion de usuarios: {exc}")
+                        still_pending = True
+
+                    if still_pending:
                         logger.warning(
                             "Inicialización de usuarios pendiente. "
                             "No se continuará hasta completar el asistente."
@@ -563,9 +639,25 @@ class MainWindow(QMainWindow):
                         )
                         return
                     logger.info("✅ Sistema de usuarios inicializado mediante asistente.")
-            
-            self.refresh_drivers_list()
-            self.statusBar().showMessage("✅ Conectado a Cloudflare (R2 + D1 History)")
+
+                self.refresh_drivers_list()
+                self.statusBar().showMessage("✅ Conectado a Cloudflare (R2 + D1 History)")
+
+            def _on_connection_error(error_message):
+                logger.error(f"Error inicializando contexto cloud: {error_message}")
+                self.statusBar().showMessage("❌ Error conectando a Cloudflare")
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    f"No se pudo conectar con Cloudflare:\n{error_message}",
+                )
+
+            self._run_background_task(
+                "init_cloud_connection",
+                _connect_cloud_context,
+                on_success=_on_connected,
+                on_error=_on_connection_error,
+            )
         else:
             self.statusBar().showMessage("❌ No se pudo cargar la configuración")
 
@@ -573,35 +665,53 @@ class MainWindow(QMainWindow):
         """Actualizar lista de drivers"""
         if not self.cloud_manager:
             return
-        
-        try:
-            drivers = self.cloud_manager.list_drivers()
-            self.all_drivers = drivers
 
-            # Actualizar dinámicamente el filtro de marcas
-            current_brand = self.drivers_tab.brand_filter.currentText()
-            brands = sorted(list(set(d['brand'] for d in drivers if 'brand' in d)))
+        if "refresh_drivers_list" in self._background_tasks:
+            return
 
-            self.drivers_tab.brand_filter.blockSignals(True)
-            self.drivers_tab.brand_filter.clear()
-            self.drivers_tab.brand_filter.addItem("Todas")
-            self.drivers_tab.brand_filter.addItems(brands)
+        self.statusBar().showMessage("⏳ Actualizando lista de drivers...")
 
-            # Intentar restaurar la selección previa
-            index = self.drivers_tab.brand_filter.findText(current_brand)
-            if index >= 0:
-                self.drivers_tab.brand_filter.setCurrentIndex(index)
-            else:
-                self.drivers_tab.brand_filter.setCurrentIndex(0)
-            self.drivers_tab.brand_filter.blockSignals(False)
+        def _fetch_drivers():
+            return self.cloud_manager.list_drivers()
 
-            self.filter_drivers()
-            self.statusBar().showMessage(f"✅ {len(drivers)} drivers encontrados")
-            
-            if self.is_admin:
-                self.event_handlers.update_admin_drivers_list(drivers)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error al cargar drivers:\n{str(e)}")
+        def _on_drivers_loaded(drivers):
+            self._apply_drivers_list(drivers or [])
+
+        def _on_drivers_error(error_message):
+            QMessageBox.critical(self, "Error", f"Error al cargar drivers:\n{error_message}")
+            self.statusBar().showMessage("❌ Error cargando drivers")
+
+        self._run_background_task(
+            "refresh_drivers_list",
+            _fetch_drivers,
+            on_success=_on_drivers_loaded,
+            on_error=_on_drivers_error,
+        )
+
+    def _apply_drivers_list(self, drivers):
+        """Actualizar widgets con los drivers cargados."""
+        self.all_drivers = drivers
+
+        current_brand = self.drivers_tab.brand_filter.currentText()
+        brands = sorted(list(set(d['brand'] for d in drivers if 'brand' in d)))
+
+        self.drivers_tab.brand_filter.blockSignals(True)
+        self.drivers_tab.brand_filter.clear()
+        self.drivers_tab.brand_filter.addItem("Todas")
+        self.drivers_tab.brand_filter.addItems(brands)
+
+        index = self.drivers_tab.brand_filter.findText(current_brand)
+        if index >= 0:
+            self.drivers_tab.brand_filter.setCurrentIndex(index)
+        else:
+            self.drivers_tab.brand_filter.setCurrentIndex(0)
+        self.drivers_tab.brand_filter.blockSignals(False)
+
+        self.filter_drivers()
+        self.statusBar().showMessage(f"✅ {len(drivers)} drivers encontrados")
+
+        if self.is_admin:
+            self.event_handlers.update_admin_drivers_list(drivers)
     
     def filter_drivers(self):
         """Filtrar drivers por marca"""
@@ -639,42 +749,68 @@ class MainWindow(QMainWindow):
 
     def refresh_history_view(self):
         """Actualizar vista actual del historial"""
-        try:
-            installations = self.history.get_installations(limit=10)
-            self.history_tab.history_list.clear()
-            self.history_tab.edit_button.setEnabled(False)
-            if hasattr(self.history_tab, "view_incidents_button"):
-                self.history_tab.view_incidents_button.setEnabled(False)
-            
-            for inst in installations:
+        if "refresh_history_view" in self._background_tasks:
+            return
+
+        self.statusBar().showMessage("⏳ Actualizando historial...")
+
+        def _fetch_history():
+            return self.history.get_installations(limit=10)
+
+        def _on_history_loaded(installations):
+            self._apply_history_installations(installations or [])
+
+        def _on_history_error(error_message):
+            logger.error(f"Error cargando historial: {error_message}")
+            self.statusBar().showMessage("❌ Error cargando historial")
+
+        self._run_background_task(
+            "refresh_history_view",
+            _fetch_history,
+            on_success=_on_history_loaded,
+            on_error=_on_history_error,
+        )
+
+    def _apply_history_installations(self, installations):
+        """Renderizar lista de historial sin bloquear el hilo principal."""
+        self.history_tab.history_list.clear()
+        self.history_tab.edit_button.setEnabled(False)
+        if hasattr(self.history_tab, "view_incidents_button"):
+            self.history_tab.view_incidents_button.setEnabled(False)
+
+        for inst in installations:
+            try:
                 timestamp = datetime.fromisoformat(inst['timestamp'])
                 date_str = timestamp.strftime('%d/%m/%Y %H:%M')
-                status = (inst.get('status') or '').lower()
-                if status == 'success':
-                    status_icon = "✓"
-                elif status == 'failed':
-                    status_icon = "✗"
-                else:
-                    status_icon = "•"
-                
-                brand = inst.get('driver_brand') or "N/A"
-                version = inst.get('driver_version') or "N/A"
-                attention_label = self._record_attention_label(inst.get("attention_state"))
-                attention_icon = self._record_attention_icon(inst.get("attention_state"))
-                active_incidents = self._coerce_seconds(inst.get("incident_active_count"), allow_negative=False)
-                text = f"{status_icon} {date_str} - {brand} v{version}"
-                if inst['client_name']:
-                    text += f" ({inst['client_name']})"
-                if active_incidents > 0:
-                    text += f" | {attention_icon} {attention_label} ({active_incidents})"
-                else:
-                    text += f" | {attention_icon} {attention_label}"
-                
-                item = QListWidgetItem(text)
-                item.setData(Qt.ItemDataRole.UserRole, inst['id']) # Guardamos el ID
-                self.history_tab.history_list.addItem(item)
-        except Exception as e:
-            logger.error(f"Error cargando historial: {e}", exc_info=True)
+            except Exception:
+                date_str = str(inst.get('timestamp') or '-')
+
+            status = (inst.get('status') or '').lower()
+            if status == 'success':
+                status_icon = "✓"
+            elif status == 'failed':
+                status_icon = "✗"
+            else:
+                status_icon = "•"
+
+            brand = inst.get('driver_brand') or "N/A"
+            version = inst.get('driver_version') or "N/A"
+            attention_label = self._record_attention_label(inst.get("attention_state"))
+            attention_icon = self._record_attention_icon(inst.get("attention_state"))
+            active_incidents = self._coerce_seconds(inst.get("incident_active_count"), allow_negative=False)
+            text = f"{status_icon} {date_str} - {brand} v{version}"
+            if inst['client_name']:
+                text += f" ({inst['client_name']})"
+            if active_incidents > 0:
+                text += f" | {attention_icon} {attention_label} ({active_incidents})"
+            else:
+                text += f" | {attention_icon} {attention_label}"
+
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, inst['id']) # Guardamos el ID
+            self.history_tab.history_list.addItem(item)
+
+        self.statusBar().showMessage(f"✅ Historial actualizado ({len(installations)} registros)")
     
     def refresh_current_history_view(self):
         """Actualizar la vista actual del historial incluyendo estadísticas."""
@@ -2317,8 +2453,3 @@ class MainWindow(QMainWindow):
         if self.theme_manager.set_theme(theme_name):
             self.apply_theme()
             self.statusBar().showMessage(f"✨ Tema cambiado a: {theme_text}")
-
-
-
-
-
