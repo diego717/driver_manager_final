@@ -12,6 +12,8 @@ import { resolveWebSession } from "./webSession";
 const envBaseURL = normalizeApiBaseUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? "");
 const allowHttpApiBaseUrlInDebug =
   process.env.EXPO_PUBLIC_ALLOW_HTTP_API_BASE_URL === "true";
+const allowUntrustedApiBaseInDebug =
+  process.env.EXPO_PUBLIC_ALLOW_UNTRUSTED_API_BASE_URL_IN_DEBUG === "true";
 
 if (!envBaseURL) {
   // Keep an explicit warning for dev builds; requests will fail if baseURL stays empty.
@@ -23,6 +25,27 @@ export const apiClient = axios.create({
   baseURL: envBaseURL,
   timeout: 20000,
 });
+
+function parseAllowedApiOrigins(rawValue: string): Set<string> {
+  const allowed = new Set<string>();
+  const raw = String(rawValue || "").trim();
+  if (!raw) return allowed;
+  for (const part of raw.split(",")) {
+    const normalized = normalizeApiBaseUrl(part);
+    if (normalized) {
+      allowed.add(normalized);
+    }
+  }
+  return allowed;
+}
+
+const allowedApiOrigins = (() => {
+  const allowed = parseAllowedApiOrigins(process.env.EXPO_PUBLIC_ALLOWED_API_ORIGINS ?? "");
+  if (envBaseURL) {
+    allowed.add(envBaseURL);
+  }
+  return allowed;
+})();
 
 export function normalizeApiBaseUrl(value: string): string {
   const trimmed = value.trim();
@@ -81,6 +104,34 @@ export function assertSecureApiBaseUrl(
   return value;
 }
 
+export function assertTrustedApiBaseUrl(
+  value: string,
+  options?: {
+    isDevRuntime?: boolean;
+    allowUntrustedInDebug?: boolean;
+    allowedOrigins?: Set<string>;
+  },
+): string {
+  if (!value) return "";
+  const parsed = new URL(value);
+  const origin = parsed.origin;
+  const allowedOrigins = options?.allowedOrigins ?? allowedApiOrigins;
+  const isDevRuntime = options?.isDevRuntime ?? (typeof __DEV__ !== "undefined" && __DEV__);
+  const allowUntrustedInDebug =
+    options?.allowUntrustedInDebug ?? allowUntrustedApiBaseInDebug;
+
+  if (allowedOrigins.has(origin)) {
+    return value;
+  }
+  if (isDevRuntime && allowUntrustedInDebug) {
+    return value;
+  }
+
+  throw new Error(
+    "API Base URL no confiable. Agrega el origen a EXPO_PUBLIC_ALLOWED_API_ORIGINS o usa el endpoint oficial.",
+  );
+}
+
 function normalizePath(path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) {
     return new URL(path).pathname;
@@ -105,9 +156,12 @@ async function resolveValidWebAccessToken(): Promise<string | null> {
 async function resolveApiBaseUrl(): Promise<string> {
   const storedBaseUrl = await getStoredApiBaseUrl();
   if (storedBaseUrl) {
-    return assertSecureApiBaseUrl(normalizeApiBaseUrl(storedBaseUrl));
+    const normalized = normalizeApiBaseUrl(storedBaseUrl);
+    const secure = assertSecureApiBaseUrl(normalized);
+    return assertTrustedApiBaseUrl(secure);
   }
-  return assertSecureApiBaseUrl(envBaseURL);
+  const secureEnv = assertSecureApiBaseUrl(envBaseURL);
+  return assertTrustedApiBaseUrl(secureEnv);
 }
 
 export async function resolveRequestAuth({

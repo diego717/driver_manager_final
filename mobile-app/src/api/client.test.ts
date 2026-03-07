@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
   process.env.EXPO_PUBLIC_API_BASE_URL = "https://worker.example";
+  process.env.EXPO_PUBLIC_ALLOWED_API_ORIGINS =
+    "https://worker.example,https://stored-worker.example";
 });
 
 const secureStoreMocks = vi.hoisted(() => ({
@@ -17,6 +19,7 @@ import { hmacSha256Hex } from "./auth";
 import {
   apiClient,
   assertSecureApiBaseUrl,
+  assertTrustedApiBaseUrl,
   extractApiError,
   normalizeApiBaseUrl,
   signedJsonRequest,
@@ -89,6 +92,19 @@ describe("api client", () => {
     expect(call.baseURL).toBe("https://stored-worker.example");
   });
 
+  it("rejects stored API base URL when origin is not in allowlist", async () => {
+    secureStoreMocks.getStoredApiBaseUrl.mockResolvedValueOnce("https://evil.example");
+    secureStoreMocks.getStoredWebAccessToken.mockResolvedValueOnce("web-access-token");
+    secureStoreMocks.getStoredWebAccessExpiresAt.mockResolvedValueOnce("2030-01-01T00:00:00.000Z");
+
+    await expect(
+      signedJsonRequest<{ ok: boolean }>({
+        method: "GET",
+        path: "/installations",
+      }),
+    ).rejects.toThrow(/no confiable/i);
+  });
+
   it("extracts message from axios-like API error payload", () => {
     const err = {
       isAxiosError: true,
@@ -150,5 +166,9 @@ describe("api client", () => {
         allowHttpInDebug: false,
       }),
     ).toThrow(/se requiere https en release/i);
+  });
+
+  it("rejects non-allowlisted https origins", () => {
+    expect(() => assertTrustedApiBaseUrl("https://unknown.example")).toThrow(/no confiable/i);
   });
 });
