@@ -107,7 +107,10 @@ const SSE_RECONNECT_MAX_DELAY = 30000;
 const SSE_MIN_CONNECT_GAP_MS = 1200;
 const CONNECTION_STATUS_DEDUP_MS = 700;
 const SSE_ACTIVE_SECTIONS = new Set(['dashboard', 'installations', 'assets', 'drivers', 'incidents']);
-const FORCE_LOGIN_ON_OPEN = true;
+const FORCE_LOGIN_ON_OPEN = false;
+const INCIDENT_PHOTO_CONCURRENCY = 4;
+const incidentPhotoThumbBlobUrls = new Set();
+let currentPhotoModalBlobUrl = '';
 const QR_MAX_ASSET_CODE_LENGTH = 128;
 const QR_MAX_BRAND_LENGTH = 120;
 const QR_MAX_MODEL_LENGTH = 160;
@@ -449,6 +452,8 @@ function hideLogin() {
 }
 
 function resetProtectedViews() {
+    revokeIncidentPhotoThumbBlobUrls();
+    closePhotoModal();
     const ids = [
         'recentInstallations',
         'installationsTable',
@@ -1252,6 +1257,57 @@ function escapeHtml(value) {
 function toExcelCell(value) {
     return escapeHtml(sanitizeSpreadsheetCell(value)).replace(/\n/g, '<br>');
 }
+
+function triggerBlobDownload(blob, filename) {
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => {
+        try {
+            URL.revokeObjectURL(url);
+        } catch (_err) {
+            // Best effort cleanup.
+        }
+    }, 0);
+}
+
+function revokeIncidentPhotoThumbBlobUrls() {
+    for (const url of incidentPhotoThumbBlobUrls) {
+        try {
+            URL.revokeObjectURL(url);
+        } catch (_err) {
+            // Best effort cleanup.
+        }
+    }
+    incidentPhotoThumbBlobUrls.clear();
+}
+
+function revokePhotoModalBlobUrl() {
+    if (!currentPhotoModalBlobUrl) return;
+    try {
+        URL.revokeObjectURL(currentPhotoModalBlobUrl);
+    } catch (_err) {
+        // Best effort cleanup.
+    }
+    currentPhotoModalBlobUrl = '';
+}
+
+function closePhotoModal() {
+    const modal = document.getElementById('photoModal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+    const img = document.getElementById('photoViewer');
+    if (img) {
+        img.removeAttribute('src');
+    }
+    revokePhotoModalBlobUrl();
+}
 function exportToCSV(data, filename = 'registros.csv') {
     if (!data || !data.length) {
         showNotification('❌ No hay datos para exportar', 'error');
@@ -1281,15 +1337,7 @@ function exportToCSV(data, filename = 'registros.csv') {
     
     // Create and download file
     const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
-    link.setAttribute('href', url);
-    link.setAttribute('download', filename);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    triggerBlobDownload(blob, filename);
     
     showNotification(`✅ Exportado: ${filename}`, 'success');
 }
@@ -1330,15 +1378,7 @@ function exportToExcel(data, filename = 'registros.xls') {
     
     // Create and download file
     const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
-    link.setAttribute('href', url);
-    link.setAttribute('download', filename);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    triggerBlobDownload(blob, filename);
     
     showNotification(`✅ Exportado: ${filename}`, 'success');
 }
@@ -2289,6 +2329,7 @@ async function loadAssetDetail(assetId, options = {}) {
 async function renderAssetDetail(data) {
     const container = document.getElementById('assetDetail');
     if (!container) return;
+    revokeIncidentPhotoThumbBlobUrls();
     container.replaceChildren();
 
     const asset = data?.asset;
@@ -2514,14 +2555,14 @@ async function renderAssetDetail(data) {
         if (incident.photos && incident.photos.length) {
             const photosGrid = document.createElement('div');
             photosGrid.className = 'photos-grid';
-            for (const photo of incident.photos) {
-                const photoUrl = await loadPhotoWithAuth(photo.id);
-                if (photoUrl) {
+            const photoTargets = await loadIncidentPhotoUrls(incident.photos);
+            for (const photoTarget of photoTargets) {
+                if (photoTarget.url) {
                     const image = document.createElement('img');
-                    image.src = photoUrl;
+                    image.src = photoTarget.url;
                     image.className = 'photo-thumb';
                     image.alt = 'Foto de incidencia';
-                    image.addEventListener('click', () => viewPhoto(photo.id));
+                    image.addEventListener('click', () => viewPhoto(photoTarget.id));
                     photosGrid.appendChild(image);
                 }
             }
@@ -2533,7 +2574,8 @@ async function renderAssetDetail(data) {
     container.appendChild(incidentsWrap);
 }
 
-async function loadPhotoWithAuth(photoId) {
+async function loadPhotoWithAuth(photoId, options = {}) {
+    const forModal = options.forModal === true;
     try {
         const authHeaders = webAccessToken
             ? { Authorization: 'Bearer ' + webAccessToken }
@@ -2551,15 +2593,53 @@ async function loadPhotoWithAuth(photoId) {
         }
         if (!response.ok) throw new Error('Failed to load photo (HTTP ' + response.status + ')');
         const blob = await response.blob();
-        return URL.createObjectURL(blob);
+        const blobUrl = URL.createObjectURL(blob);
+        if (!forModal) {
+            incidentPhotoThumbBlobUrls.add(blobUrl);
+        }
+        return blobUrl;
     } catch (err) {
         console.error('Error loading photo:', err);
         return '';
     }
 }
 
+async function loadIncidentPhotoUrls(photos, concurrency = INCIDENT_PHOTO_CONCURRENCY) {
+    const list = Array.isArray(photos) ? photos : [];
+    const results = [];
+    const chunkSize = Math.max(1, Number.parseInt(String(concurrency), 10) || 1);
+
+    for (let i = 0; i < list.length; i += chunkSize) {
+        const slice = list.slice(i, i + chunkSize);
+        const chunk = await Promise.all(
+            slice.map(async (photo) => {
+                const photoId = Number.parseInt(String(photo?.id), 10);
+                if (!Number.isInteger(photoId) || photoId <= 0) {
+                    return null;
+                }
+                const photoUrl = await loadPhotoWithAuth(photoId);
+                if (!photoUrl) {
+                    return null;
+                }
+                return {
+                    id: photoId,
+                    url: photoUrl,
+                };
+            }),
+        );
+        for (const item of chunk) {
+            if (item) {
+                results.push(item);
+            }
+        }
+    }
+
+    return results;
+}
+
 async function renderIncidents(incidents, installationId) {
     const container = document.getElementById('incidentsList');
+    revokeIncidentPhotoThumbBlobUrls();
     container.replaceChildren();
 
     const header = document.createElement('div');
@@ -2694,15 +2774,15 @@ async function renderIncidents(incidents, installationId) {
         if (inc.photos && inc.photos.length) {
             const photosGrid = document.createElement('div');
             photosGrid.className = 'photos-grid';
-            for (const photo of inc.photos) {
-                const photoUrl = await loadPhotoWithAuth(photo.id);
-                if (photoUrl) {
+            const photoTargets = await loadIncidentPhotoUrls(inc.photos);
+            for (const photoTarget of photoTargets) {
+                if (photoTarget.url) {
                     const image = document.createElement('img');
-                    image.src = photoUrl;
+                    image.src = photoTarget.url;
                     image.className = 'photo-thumb';
-                    image.dataset.photoId = String(photo.id);
+                    image.dataset.photoId = String(photoTarget.id);
                     image.alt = 'Foto de incidencia';
-                    image.addEventListener('click', () => viewPhoto(photo.id));
+                    image.addEventListener('click', () => viewPhoto(photoTarget.id));
                     photosGrid.appendChild(image);
                 }
             }
@@ -2716,8 +2796,10 @@ async function renderIncidents(incidents, installationId) {
 async function viewPhoto(photoId) {
     const modal = document.getElementById('photoModal');
     const img = document.getElementById('photoViewer');
-    const photoUrl = await loadPhotoWithAuth(photoId);
+    revokePhotoModalBlobUrl();
+    const photoUrl = await loadPhotoWithAuth(photoId, { forModal: true });
     if (photoUrl) {
+        currentPhotoModalBlobUrl = photoUrl;
         img.src = photoUrl;
         modal.classList.add('active');
     }
@@ -3730,14 +3812,12 @@ document.getElementById('auditActionFilter').addEventListener('change', () => {
     loadAuditLogs();
 });
 
-document.querySelector('#photoModal .close').addEventListener('click', () => {
-    document.getElementById('photoModal').classList.remove('active');
-});
+document.querySelector('#photoModal .close').addEventListener('click', closePhotoModal);
 
 // Close modal on outside click
 document.getElementById('photoModal').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) {
-        document.getElementById('photoModal').classList.remove('active');
+        closePhotoModal();
     }
 });
 
@@ -3840,7 +3920,7 @@ document.getElementById('qrPasswordModal')?.addEventListener('click', (event) =>
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-        document.getElementById('photoModal').classList.remove('active');
+        closePhotoModal();
         closeQrPasswordModal();
         closeQrModal();
     }
@@ -4395,8 +4475,12 @@ async function init() {
         updateConnectionStatus('paused');
     });
     
-    // Close SSE on page unload
-    window.addEventListener('beforeunload', closeSSE);
+    // Close SSE and cleanup blob URLs on page unload.
+    window.addEventListener('beforeunload', () => {
+        closeSSE();
+        revokeIncidentPhotoThumbBlobUrls();
+        closePhotoModal();
+    });
 }
 
 
