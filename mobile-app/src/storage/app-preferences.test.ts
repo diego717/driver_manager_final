@@ -34,7 +34,7 @@ describe("app-preferences", () => {
     await expect(getBiometricEnabled()).resolves.toBe(false);
   });
 
-  it("uses sessionStorage fallback on web", async () => {
+  it("uses in-memory web fallback without touching sessionStorage", async () => {
     const storage = new Map<string, string>();
     const sessionStorageMock = {
       getItem: vi.fn((key: string) => storage.get(key) ?? null),
@@ -49,8 +49,8 @@ describe("app-preferences", () => {
 
     await setBiometricEnabled(true);
     await expect(getBiometricEnabled()).resolves.toBe(true);
-    expect(sessionStorageMock.setItem).toHaveBeenCalled();
-    expect(sessionStorageMock.getItem).toHaveBeenCalled();
+    expect(sessionStorageMock.setItem).not.toHaveBeenCalled();
+    expect(sessionStorageMock.getItem).not.toHaveBeenCalled();
     expect(secureStoreMocks.setItemAsync).not.toHaveBeenCalled();
     expect(secureStoreMocks.getItemAsync).not.toHaveBeenCalled();
   });
