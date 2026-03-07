@@ -1,7 +1,8 @@
-// API base URL:
+﻿// API base URL:
 // - By default uses same-origin (recommended and safest).
-// - Optional override via window.__DM_API_BASE__ or localStorage.dm_api_base_url.
-// - Cross-origin overrides are blocked unless explicitly enabled for debug.
+// - Optional override via window.__DM_API_BASE__ (explicit, non-persistent).
+// - Query/localStorage overrides are intentionally disabled for security.
+// - Cross-origin overrides are blocked unless explicitly enabled for controlled debug.
 const API_BASE = (() => {
     const normalizeBase = (value) => {
         if (!value || typeof value !== 'string') return '';
@@ -15,17 +16,29 @@ const API_BASE = (() => {
         return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
     };
 
-    const allowRemoteOverride = (() => {
-        try {
-            const params = new URLSearchParams(window.location.search || '');
-            const flag = String(params.get('dm_allow_remote_api') || '').toLowerCase();
-            if (flag === '1' || flag === 'true' || flag === 'yes') {
-                return true;
+    const isVercelPreviewHost = (() => {
+        const host = String(window.location.hostname || '').toLowerCase();
+        return host.endsWith('.vercel.app') || host.endsWith('.vercel-dns.com');
+    })();
+
+    const trustedRemoteOrigins = (() => {
+        const allowed = new Set([
+            'https://driver-manager-db.diegosasen.workers.dev',
+        ]);
+        const fromWindow = window.__DM_TRUSTED_REMOTE_API_ORIGINS__;
+        if (Array.isArray(fromWindow)) {
+            for (const candidate of fromWindow) {
+                const normalized = normalizeBase(candidate);
+                if (normalized) allowed.add(normalized);
             }
-        } catch {
-            // Ignore malformed query string and keep secure default.
         }
-        return window.__DM_ALLOW_REMOTE_API_BASE__ === true;
+        return allowed;
+    })();
+
+    const allowRemoteOverride = (() => {
+        // Allow explicit cross-origin debug only from local development hosts.
+        if (window.__DM_ALLOW_REMOTE_API_BASE__ !== true) return false;
+        return isLoopbackHost(window.location.hostname);
     })();
 
     const normalizeAndValidateApiBase = (rawValue, sourceLabel) => {
@@ -49,10 +62,11 @@ const API_BASE = (() => {
 
         const overrideOrigin = parsed.origin;
         const isSameOrigin = overrideOrigin === window.location.origin;
-        if (!isSameOrigin && !allowRemoteOverride) {
+        const isTrustedRemote = trustedRemoteOrigins.has(overrideOrigin);
+        if (!isSameOrigin && !isTrustedRemote && !allowRemoteOverride) {
             console.warn(
                 `[security] Ignoring cross-origin API override from ${sourceLabel}. ` +
-                'Use ?dm_allow_remote_api=1 only in controlled debug sessions.',
+                'Cross-origin override is disabled unless trusted or explicitly enabled for local debug.',
             );
             return '';
         }
@@ -63,18 +77,14 @@ const API_BASE = (() => {
     const globalOverride = normalizeAndValidateApiBase(window.__DM_API_BASE__, 'window.__DM_API_BASE__');
     if (globalOverride) return globalOverride;
 
-    try {
-        const storedRawValue = window.localStorage.getItem('dm_api_base_url');
-        const storedOverride = normalizeAndValidateApiBase(storedRawValue, 'localStorage.dm_api_base_url');
-        if (storedOverride) {
-            return storedOverride;
+    if (isVercelPreviewHost) {
+        const vercelPreviewFallback = normalizeAndValidateApiBase(
+            'https://driver-manager-db.diegosasen.workers.dev',
+            'vercel.preview.fallback',
+        );
+        if (vercelPreviewFallback) {
+            return vercelPreviewFallback;
         }
-        if (storedRawValue) {
-            // Prevent persisting poisoned/invalid values.
-            window.localStorage.removeItem('dm_api_base_url');
-        }
-    } catch {
-        // localStorage unavailable (privacy mode/policies). Use same-origin.
     }
 
     return '';
@@ -90,6 +100,27 @@ let currentAssetsData = [];
 let currentSelectedAssetId = null;
 let currentDriversData = [];
 let selectedDriverFile = null;
+let reportPreviewData = [];
+let reportPreviewMeta = null;
+let reportPreviewBusy = false;
+
+const REPORT_MONTH_NAMES = [
+    'Enero',
+    'Febrero',
+    'Marzo',
+    'Abril',
+    'Mayo',
+    'Junio',
+    'Julio',
+    'Agosto',
+    'Septiembre',
+    'Octubre',
+    'Noviembre',
+    'Diciembre',
+];
+const REPORT_FETCH_PAGE_LIMIT = 500;
+const REPORT_FETCH_MAX_PAGES = 60;
+const REPORT_PREVIEW_ROWS = 120;
 
 // WebSocket/SSE State
 let eventSource = null;
@@ -210,9 +241,13 @@ function extractApiErrorMessage(payload, response) {
 
 const api = {
     async request(endpoint, options = {}) {
+        const withResponseMeta = options.withResponseMeta === true;
+        const requestOptions = { ...options };
+        delete requestOptions.withResponseMeta;
+
         const baseHeaders = {
             'Content-Type': 'application/json',
-            ...(options.headers || {})
+            ...(requestOptions.headers || {})
         };
 
         const sendRequest = async (useBearer = true) => {
@@ -225,7 +260,7 @@ const api = {
             };
 
             const response = await fetch(API_BASE + endpoint, {
-                ...options,
+                ...requestOptions,
                 headers,
                 credentials: 'include'
             });
@@ -260,15 +295,22 @@ const api = {
         }
 
         if (payload === null) {
-            return {};
+            return withResponseMeta ? { data: {}, response } : {};
         }
 
-        return payload;
+        return withResponseMeta
+            ? { data: payload, response }
+            : payload;
     },
     
     getInstallations(params = {}) {
         const query = new URLSearchParams(params).toString();
         return this.request('/web/installations?' + query);
+    },
+
+    getInstallationsPage(params = {}) {
+        const query = new URLSearchParams(params).toString();
+        return this.request('/web/installations?' + query, { withResponseMeta: true });
     },
     
     getStatistics() {
@@ -299,6 +341,13 @@ const api = {
 
     updateIncidentStatus(incidentId, payload) {
         return this.request('/web/incidents/' + incidentId + '/status', {
+            method: 'PATCH',
+            body: JSON.stringify(payload || {})
+        });
+    },
+
+    updateIncidentEvidence(incidentId, payload) {
+        return this.request('/web/incidents/' + incidentId + '/evidence', {
             method: 'PATCH',
             body: JSON.stringify(payload || {})
         });
@@ -462,12 +511,14 @@ function resetProtectedViews() {
     ids.forEach((id) => {
         const el = document.getElementById(id);
         if (!el) return;
-        el.innerHTML = '<p class="loading">Inicia sesion para ver informacion.</p>';
+        el.innerHTML = '<p class="loading">Inicia sesión para ver información.</p>';
     });
     currentInstallationsData = [];
     currentSelectedInstallationId = null;
     currentAssetsData = [];
     currentSelectedAssetId = null;
+    reportPreviewData = [];
+    reportPreviewMeta = null;
     syncRoleBasedNavigationAccess();
 }
 
@@ -486,6 +537,29 @@ function canCurrentUserAccessAudit() {
     return role === 'admin' || role === 'super_admin';
 }
 
+function canCurrentUserManageDrivers() {
+    const role = String(currentUser?.role || '').toLowerCase();
+    return role === 'super_admin';
+}
+
+function syncDriversSectionAccess() {
+    const canManage = canCurrentUserManageDrivers();
+    const editableElements = [
+        'driverBrandInput',
+        'driverVersionInput',
+        'driverDescriptionInput',
+        'driverFileInput',
+        'driverPickFileBtn',
+        'driverUploadBtn',
+    ];
+    editableElements.forEach((id) => {
+        const element = document.getElementById(id);
+        if (!element) return;
+        element.disabled = !canManage;
+    });
+    updateDriverSelectedFileLabel();
+}
+
 function syncRoleBasedNavigationAccess() {
     const auditLink = document.querySelector('.nav-links a[data-section="audit"]');
     if (!auditLink) return;
@@ -494,6 +568,7 @@ function syncRoleBasedNavigationAccess() {
     if (parent) {
         parent.classList.toggle('is-hidden', !shouldShowAudit);
     }
+    syncDriversSectionAccess();
 }
 
 function applyAuthenticatedUser(user) {
@@ -610,10 +685,10 @@ async function createIncidentFromWeb(installationId) {
 }
 
 async function associateAssetFromWeb() {
-    const externalCodeRaw = prompt('Código externo del equipo (QR/serie):', '') ?? '';
+    const externalCodeRaw = prompt('Codigo externo del equipo (QR/serie):', '') ?? '';
     const externalCode = String(externalCodeRaw || '').trim();
     if (!externalCode) {
-        showNotification('Debes ingresar un código de equipo válido.', 'error');
+        showNotification('Debes ingresar un codigo de equipo valido.', 'error');
         return;
     }
 
@@ -624,11 +699,11 @@ async function associateAssetFromWeb() {
     if (installationInput === null) return;
     const installationId = Number.parseInt(String(installationInput).trim(), 10);
     if (!Number.isInteger(installationId) || installationId <= 0) {
-        showNotification('installation_id inválido para asociación.', 'error');
+        showNotification('installation_id invalido para asociacion.', 'error');
         return;
     }
 
-    const notes = prompt('Nota opcional de asociación:', '') ?? '';
+    const notes = prompt('Nota opcional de asociacion:', '') ?? '';
 
     try {
         const resolved = await api.resolveAsset({
@@ -995,7 +1070,7 @@ function renderRecentInstallations(installations) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'Estado', 'Atención', 'Fecha'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'Atención', 'Nota', 'Fecha'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -1005,9 +1080,6 @@ function renderRecentInstallations(installations) {
     const tbody = document.createElement('tbody');
 
     installations.forEach(inst => {
-        const statusClass = inst.status || 'unknown';
-        const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
-
         const row = document.createElement('tr');
 
         const idCell = document.createElement('td');
@@ -1021,12 +1093,6 @@ function renderRecentInstallations(installations) {
         const brandCell = document.createElement('td');
         brandCell.textContent = inst.driver_brand || 'N/A';
 
-        const statusCell = document.createElement('td');
-        const statusBadge = document.createElement('span');
-        statusBadge.className = `badge ${statusClass}`;
-        statusBadge.textContent = `${statusIcon} ${inst.status || 'unknown'}`;
-        statusCell.appendChild(statusBadge);
-
         const attentionCell = document.createElement('td');
         const attentionBadge = document.createElement('span');
         const attentionMeta = buildRecordAttentionBadge(inst);
@@ -1034,10 +1100,13 @@ function renderRecentInstallations(installations) {
         attentionBadge.textContent = attentionMeta.text;
         attentionCell.appendChild(attentionBadge);
 
+        const noteCell = document.createElement('td');
+        noteCell.textContent = formatInstallationHighlightNote(inst, 56);
+
         const dateCell = document.createElement('td');
         dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
 
-        row.append(idCell, clientCell, brandCell, statusCell, attentionCell, dateCell);
+        row.append(idCell, clientCell, brandCell, attentionCell, noteCell, dateCell);
         tbody.appendChild(row);
     });
 
@@ -1089,31 +1158,31 @@ function updateFilterChips() {
         const removeSpan = document.createElement('span');
         removeSpan.className = 'chip-remove';
         removeSpan.dataset.filter = filterType;
-        removeSpan.textContent = '×';
+        removeSpan.textContent = 'x';
 
         chip.append(labelSpan, valueSpan, removeSpan);
         chipsContainer.appendChild(chip);
     };
 
     if (filters.search) {
-        appendChip('🔍', `"${filters.search}"`, 'search');
+        appendChip('Buscar:', `"${filters.search}"`, 'search');
     }
 
     if (filters.brand) {
-        appendChip('🏷️ Marca:', filters.brand, 'brand');
+        appendChip('Marca:', filters.brand, 'brand');
     }
 
     if (filters.status) {
-        const statusLabel = filters.status === 'success' ? '✅ Éxito' : 
-                           filters.status === 'failed' ? '❌ Fallido' : '❓ Desconocido';
-        appendChip('📊 Estado:', statusLabel, 'status');
+        const statusLabel = filters.status === 'success' ? 'Exito' : 
+                           filters.status === 'failed' ? 'Fallido' : 'Desconocido';
+        appendChip('Estado:', statusLabel, 'status');
     }
 
     if (filters.startDate || filters.endDate) {
         const dateLabel = filters.startDate && filters.endDate ? 
             `${filters.startDate} - ${filters.endDate}` :
             filters.startDate ? `Desde: ${filters.startDate}` : `Hasta: ${filters.endDate}`;
-        appendChip('📅', dateLabel, 'date');
+        appendChip('Fecha:', dateLabel, 'date');
     }
     
     // Add click handlers to remove buttons
@@ -1201,11 +1270,11 @@ function recordAttentionStateLabel(value) {
 
 function recordAttentionStateIcon(value) {
     const normalized = normalizeRecordAttentionState(value);
-    if (normalized === 'critical') return '🚨';
-    if (normalized === 'in_progress') return '🟠';
-    if (normalized === 'open') return '🟡';
-    if (normalized === 'resolved') return '✅';
-    return '🟢';
+    if (normalized === 'critical') return '!';
+    if (normalized === 'in_progress') return '>';
+    if (normalized === 'open') return 'o';
+    if (normalized === 'resolved') return 'ok';
+    return '-';
 }
 
 function buildRecordAttentionBadge(record) {
@@ -1222,6 +1291,33 @@ function buildRecordAttentionBadge(record) {
         stateClass: `attention-${state}`,
         text: `${recordAttentionStateIcon(state)} ${recordAttentionStateLabel(state)}${countLabel}`,
     };
+}
+
+function getInstallationHighlightNote(record) {
+    const incidentNote = String(record?.latest_incident_note || '').trim();
+    if (incidentNote) {
+        return { source: 'incident', text: incidentNote };
+    }
+    const recordNote = String(record?.notes || '').trim();
+    if (recordNote) {
+        return { source: 'record', text: recordNote };
+    }
+    return { source: 'none', text: '' };
+}
+
+function formatInstallationHighlightNote(record, maxLength = 72) {
+    const highlight = getInstallationHighlightNote(record);
+    if (!highlight.text) return '-';
+
+    const compact = highlight.text.replace(/\s+/g, ' ').trim();
+    const clipped = compact.length > maxLength
+        ? `${compact.substring(0, Math.max(0, maxLength - 3))}...`
+        : compact;
+
+    if (highlight.source === 'incident') {
+        return `INC: ${clipped}`;
+    }
+    return clipped;
 }
 
 // Export Functions
@@ -1252,194 +1348,532 @@ function escapeHtml(value) {
 function toExcelCell(value) {
     return escapeHtml(sanitizeSpreadsheetCell(value)).replace(/\n/g, '<br>');
 }
+function normalizeReportType(rawType) {
+    const normalized = String(rawType || '').trim().toLowerCase();
+    if (normalized === 'monthly' || normalized === 'yearly') return normalized;
+    return 'daily';
+}
+
+function pad2(value) {
+    return String(value).padStart(2, '0');
+}
+
+function toLocalDateKey(dateValue) {
+    const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+function parsePositiveIntSafe(value, fallback) {
+    const parsed = Number.parseInt(String(value || '').trim(), 10);
+    if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
+    return parsed;
+}
+
+function buildReportRangeConfig(type, monthValue, yearValue) {
+    const now = new Date();
+    const normalizedType = normalizeReportType(type);
+    const defaultYear = now.getFullYear();
+    const selectedYear = parsePositiveIntSafe(yearValue, defaultYear);
+    const selectedMonth = Math.min(12, Math.max(1, parsePositiveIntSafe(monthValue, now.getMonth() + 1)));
+
+    if (normalizedType === 'daily') {
+        const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const end = new Date(start);
+        end.setDate(end.getDate() + 1);
+        const dayLabel = now.toLocaleDateString('es-ES');
+        return {
+            type: 'daily',
+            startDate: toLocalDateKey(start),
+            endDate: toLocalDateKey(end),
+            label: `Hoy (${dayLabel})`,
+            filenameBase: `reporte_hoy_${toLocalDateKey(start)}`,
+        };
+    }
+
+    if (normalizedType === 'monthly') {
+        const start = new Date(selectedYear, selectedMonth - 1, 1);
+        const end = new Date(selectedYear, selectedMonth, 1);
+        const monthName = REPORT_MONTH_NAMES[selectedMonth - 1] || `Mes ${selectedMonth}`;
+        return {
+            type: 'monthly',
+            month: selectedMonth,
+            year: selectedYear,
+            startDate: toLocalDateKey(start),
+            endDate: toLocalDateKey(end),
+            label: `${monthName} ${selectedYear}`,
+            filenameBase: `reporte_mensual_${selectedYear}-${pad2(selectedMonth)}`,
+        };
+    }
+
+    return {
+        type: 'yearly',
+        year: selectedYear,
+        startDate: `${selectedYear}-01-01`,
+        endDate: `${selectedYear + 1}-01-01`,
+        label: `Ano ${selectedYear}`,
+        filenameBase: `reporte_anual_${selectedYear}`,
+    };
+}
+
+function buildRecordExportRows(records) {
+    return (records || []).map((inst) => {
+        const attention = buildRecordAttentionBadge(inst);
+        return [
+            inst.id ?? 'N/A',
+            inst.client_name || 'N/A',
+            inst.driver_brand || 'N/A',
+            attention.text,
+            formatDuration(inst.installation_time_seconds || 0),
+            formatInstallationHighlightNote(inst, 180),
+            inst.timestamp ? new Date(inst.timestamp).toLocaleString('es-ES') : 'N/A',
+        ];
+    });
+}
+
 function exportToCSV(data, filename = 'registros.csv') {
     if (!data || !data.length) {
-        showNotification('❌ No hay datos para exportar', 'error');
+        showNotification('No hay datos para exportar', 'error');
         return;
     }
-    
-    // CSV Headers
-    const headers = ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo', 'Notas', 'Fecha'];
-    
-    // Convert data to CSV rows
-    const rows = data.map(inst => [
-        inst.id,
-        inst.client_name || 'N/A',
-        inst.driver_brand || 'N/A',
-        inst.driver_version || 'N/A',
-        inst.status || 'unknown',
-        formatDuration(inst.installation_time_seconds || 0),
-        inst.notes || '',
-        inst.timestamp
-    ]);
-    
-    // Combine headers and rows
+
+    const headers = ['ID', 'Cliente', 'Marca', 'Atención', 'Tiempo', 'Nota', 'Fecha'];
+    const rows = buildRecordExportRows(data);
+
     const csvContent = [
         headers.map(toCsvCell).join(','),
-        ...rows.map(row => row.map(toCsvCell).join(','))
+        ...rows.map((row) => row.map(toCsvCell).join(',')),
     ].join('\n');
-    
-    // Create and download file
+
     const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
-    
+
     link.setAttribute('href', url);
     link.setAttribute('download', filename);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
-    showNotification(`✅ Exportado: ${filename}`, 'success');
+
+    showNotification(`Exportado: ${filename}`, 'success');
 }
 
 function exportToExcel(data, filename = 'registros.xls') {
     if (!data || !data.length) {
-        showNotification('❌ No hay datos para exportar', 'error');
+        showNotification('No hay datos para exportar', 'error');
         return;
     }
-    
-    // Create HTML table for Excel
+
+    const headers = ['ID', 'Cliente', 'Marca', 'Atención', 'Tiempo', 'Nota', 'Fecha'];
+    const rows = buildRecordExportRows(data);
+
     let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
     html += '<head><meta charset="UTF-8"><style>th { background-color: #06b6d4; color: white; font-weight: bold; }</style></head>';
-    html += '<body><table border="1">';
-    
-    // Headers
-    html += '<tr>';
-    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo', 'Notas', 'Fecha'].forEach(header => {
+    html += '<body><table border="1"><tr>';
+    headers.forEach((header) => {
         html += `<th>${escapeHtml(header)}</th>`;
     });
     html += '</tr>';
-    
-    // Data rows
-    data.forEach(inst => {
+
+    rows.forEach((row) => {
         html += '<tr>';
-        html += `<td>${toExcelCell(inst.id)}</td>`;
-        html += `<td>${toExcelCell(inst.client_name || 'N/A')}</td>`;
-        html += `<td>${toExcelCell(inst.driver_brand || 'N/A')}</td>`;
-        html += `<td>${toExcelCell(inst.driver_version || 'N/A')}</td>`;
-        html += `<td>${toExcelCell(inst.status || 'unknown')}</td>`;
-        html += `<td>${toExcelCell(formatDuration(inst.installation_time_seconds || 0))}</td>`;
-        html += `<td>${toExcelCell((inst.notes || '').substring(0, 100))}</td>`;
-        html += `<td>${toExcelCell(inst.timestamp)}</td>`;
+        row.forEach((value) => {
+            html += `<td>${toExcelCell(value)}</td>`;
+        });
         html += '</tr>';
     });
-    
     html += '</table></body></html>';
-    
-    // Create and download file
+
     const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
-    
+
     link.setAttribute('href', url);
     link.setAttribute('download', filename);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
-    showNotification(`✅ Exportado: ${filename}`, 'success');
+
+    showNotification(`Exportado: ${filename}`, 'success');
+}
+
+function setReportStatus(message, isError = false) {
+    const statusNode = document.getElementById('reportStatusText');
+    if (!statusNode) return;
+    statusNode.textContent = message;
+    statusNode.style.color = isError ? 'var(--error)' : 'var(--text-secondary)';
+}
+
+function setReportExportButtonsEnabled(enabled) {
+    const exportCsvBtn = document.getElementById('reportExportCsvBtn');
+    const exportExcelBtn = document.getElementById('reportExportExcelBtn');
+    if (exportCsvBtn) exportCsvBtn.disabled = !enabled;
+    if (exportExcelBtn) exportExcelBtn.disabled = !enabled;
+}
+
+function setReportModalBusy(isBusy) {
+    reportPreviewBusy = Boolean(isBusy);
+    const previewBtn = document.getElementById('reportPreviewBtn');
+    const typeSelect = document.getElementById('reportTypeSelect');
+    const monthSelect = document.getElementById('reportMonthSelect');
+    const yearSelect = document.getElementById('reportYearSelect');
+    if (previewBtn) {
+        previewBtn.disabled = reportPreviewBusy;
+        previewBtn.textContent = reportPreviewBusy ? 'Generando...' : 'Generar vista previa';
+    }
+    if (typeSelect) typeSelect.disabled = reportPreviewBusy;
+    if (monthSelect) monthSelect.disabled = reportPreviewBusy;
+    if (yearSelect) yearSelect.disabled = reportPreviewBusy;
+}
+
+function clearReportPreviewTable(message = 'Aun no hay vista previa generada.', isError = false) {
+    const container = document.getElementById('reportPreviewTable');
+    if (!container) return;
+    container.replaceChildren();
+    const p = document.createElement('p');
+    p.className = isError ? 'error' : 'loading';
+    p.textContent = message;
+    container.appendChild(p);
+}
+
+function computeReportSummary(records) {
+    const rows = Array.isArray(records) ? records : [];
+    const total = rows.length;
+    let success = 0;
+    let failed = 0;
+    let timedCount = 0;
+    let timedSeconds = 0;
+    const clients = new Set();
+
+    rows.forEach((record) => {
+        const status = String(record?.status || '').trim().toLowerCase();
+        if (status === 'success') success += 1;
+        if (status === 'failed') failed += 1;
+
+        const seconds = Number(record?.installation_time_seconds);
+        if (Number.isFinite(seconds) && seconds > 0) {
+            timedSeconds += seconds;
+            timedCount += 1;
+        }
+
+        const clientName = String(record?.client_name || '').trim();
+        if (clientName) clients.add(clientName.toLowerCase());
+    });
+
+    const successRate = total > 0 ? Math.round((success / total) * 1000) / 10 : 0;
+    const avgSeconds = timedCount > 0 ? Math.round(timedSeconds / timedCount) : 0;
+    return {
+        total,
+        success,
+        failed,
+        open: Math.max(0, total - success - failed),
+        successRate,
+        avgSeconds,
+        uniqueClients: clients.size,
+    };
+}
+
+function renderReportPreviewSummary(summary, meta) {
+    const container = document.getElementById('reportPreviewSummary');
+    if (!container) return;
+    container.replaceChildren();
+
+    const cards = [
+        { label: 'Periodo', value: meta?.label || 'N/A' },
+        { label: 'Registros', value: String(summary.total) },
+        { label: 'Exitosas', value: String(summary.success) },
+        { label: 'Fallidas', value: String(summary.failed) },
+        { label: 'Tasa de éxito', value: `${summary.successRate}%` },
+        { label: 'Tiempo promedio', value: formatDuration(summary.avgSeconds) },
+        { label: 'Clientes únicos', value: String(summary.uniqueClients) },
+    ];
+
+    cards.forEach((item) => {
+        const card = document.createElement('div');
+        card.className = 'report-summary-card';
+        const label = document.createElement('small');
+        label.textContent = item.label;
+        const value = document.createElement('strong');
+        value.textContent = item.value;
+        card.append(label, value);
+        container.appendChild(card);
+    });
+}
+
+function renderReportPreviewTable(records) {
+    const container = document.getElementById('reportPreviewTable');
+    if (!container) return;
+    container.replaceChildren();
+
+    if (!records.length) {
+        clearReportPreviewTable('No hay registros para este periodo.');
+        return;
+    }
+
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    ['ID', 'Cliente', 'Marca', 'Atención', 'Tiempo', 'Nota', 'Fecha'].forEach((label) => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+
+    const tbody = document.createElement('tbody');
+    const visibleRows = records.slice(0, REPORT_PREVIEW_ROWS);
+    visibleRows.forEach((record) => {
+        const row = document.createElement('tr');
+
+        const idCell = document.createElement('td');
+        idCell.textContent = `#${record.id ?? 'N/A'}`;
+
+        const clientCell = document.createElement('td');
+        clientCell.textContent = record.client_name || 'N/A';
+
+        const brandCell = document.createElement('td');
+        brandCell.textContent = record.driver_brand || 'N/A';
+
+        const attentionCell = document.createElement('td');
+        attentionCell.textContent = buildRecordAttentionBadge(record).text;
+
+        const timeCell = document.createElement('td');
+        timeCell.textContent = formatDuration(record.installation_time_seconds || 0);
+
+        const noteCell = document.createElement('td');
+        noteCell.textContent = formatInstallationHighlightNote(record, 72);
+
+        const dateCell = document.createElement('td');
+        dateCell.textContent = record.timestamp ? new Date(record.timestamp).toLocaleString('es-ES') : 'N/A';
+
+        row.append(idCell, clientCell, brandCell, attentionCell, timeCell, noteCell, dateCell);
+        tbody.appendChild(row);
+    });
+
+    table.append(thead, tbody);
+    container.appendChild(table);
+
+    if (records.length > REPORT_PREVIEW_ROWS) {
+        const caption = document.createElement('p');
+        caption.className = 'report-preview-caption';
+        caption.textContent = `Vista previa: ${REPORT_PREVIEW_ROWS} de ${records.length} registros. La exportacion incluye todos.`;
+        container.appendChild(caption);
+    }
+}
+
+function ensureReportSelectorsPopulated() {
+    const monthSelect = document.getElementById('reportMonthSelect');
+    const yearSelect = document.getElementById('reportYearSelect');
+    const typeSelect = document.getElementById('reportTypeSelect');
+    if (!monthSelect || !yearSelect || !typeSelect) return;
+
+    if (!monthSelect.dataset.ready) {
+        monthSelect.replaceChildren();
+        REPORT_MONTH_NAMES.forEach((month, index) => {
+            const option = document.createElement('option');
+            option.value = String(index + 1);
+            option.textContent = month;
+            monthSelect.appendChild(option);
+        });
+        monthSelect.dataset.ready = '1';
+    }
+
+    if (!yearSelect.dataset.ready) {
+        yearSelect.replaceChildren();
+        const nowYear = new Date().getFullYear();
+        for (let year = nowYear - 4; year <= nowYear + 1; year++) {
+            const option = document.createElement('option');
+            option.value = String(year);
+            option.textContent = String(year);
+            yearSelect.appendChild(option);
+        }
+        yearSelect.dataset.ready = '1';
+    }
+
+    const now = new Date();
+    if (!monthSelect.value) monthSelect.value = String(now.getMonth() + 1);
+    if (!yearSelect.value) yearSelect.value = String(now.getFullYear());
+    if (!typeSelect.value) typeSelect.value = 'daily';
+}
+
+function getReportRangeFromModalSelection() {
+    const typeSelect = document.getElementById('reportTypeSelect');
+    const monthSelect = document.getElementById('reportMonthSelect');
+    const yearSelect = document.getElementById('reportYearSelect');
+
+    return buildReportRangeConfig(
+        typeSelect?.value || 'daily',
+        monthSelect?.value,
+        yearSelect?.value,
+    );
+}
+
+function toggleReportMonthGroup() {
+    const monthGroup = document.getElementById('reportMonthGroup');
+    const typeSelect = document.getElementById('reportTypeSelect');
+    if (!monthGroup || !typeSelect) return;
+    const type = normalizeReportType(typeSelect.value);
+    monthGroup.classList.toggle('is-hidden', type !== 'monthly');
+}
+
+async function fetchInstallationsForReportRange(rangeConfig) {
+    const allRecords = [];
+    let nextCursor = '';
+
+    for (let page = 0; page < REPORT_FETCH_MAX_PAGES; page++) {
+        const params = {
+            start_date: rangeConfig.startDate,
+            end_date: rangeConfig.endDate,
+            limit: REPORT_FETCH_PAGE_LIMIT,
+        };
+        if (nextCursor) params.cursor = nextCursor;
+
+        const pageResponse = await api.getInstallationsPage(params);
+        const pageData = Array.isArray(pageResponse?.data) ? pageResponse.data : [];
+        if (pageData.length) {
+            allRecords.push(...pageData);
+        }
+
+        nextCursor = pageResponse?.response?.headers?.get('X-Next-Cursor') || '';
+        if (!nextCursor) {
+            return allRecords;
+        }
+    }
+
+    showNotification(
+        `Se alcanzó el límite de ${REPORT_FETCH_MAX_PAGES} páginas. El reporte puede estar incompleto.`,
+        'info',
+    );
+    return allRecords;
+}
+
+async function generateReportPreviewFromModal() {
+    if (reportPreviewBusy) return;
+    const rangeConfig = getReportRangeFromModalSelection();
+    setReportModalBusy(true);
+    setReportExportButtonsEnabled(false);
+    setReportStatus(`Generando vista previa para ${rangeConfig.label}...`);
+    clearReportPreviewTable('Cargando vista previa...');
+
+    try {
+        const records = await fetchInstallationsForReportRange(rangeConfig);
+        reportPreviewData = records;
+        reportPreviewMeta = rangeConfig;
+
+        const summary = computeReportSummary(records);
+        renderReportPreviewSummary(summary, rangeConfig);
+        renderReportPreviewTable(records);
+        setReportExportButtonsEnabled(records.length > 0);
+        setReportStatus(
+            records.length > 0
+                ? `Vista previa lista: ${records.length} registro(s) en ${rangeConfig.label}.`
+                : `Sin registros para ${rangeConfig.label}.`,
+        );
+    } catch (error) {
+        reportPreviewData = [];
+        setReportExportButtonsEnabled(false);
+        renderReportPreviewSummary(computeReportSummary([]), rangeConfig);
+        clearReportPreviewTable('No se pudo generar la vista previa.', true);
+        setReportStatus(`Error generando vista previa: ${error?.message || error}`, true);
+    } finally {
+        setReportModalBusy(false);
+    }
+}
+
+function exportCurrentReportPreview(format) {
+    if (!reportPreviewData.length || !reportPreviewMeta) {
+        showNotification('Genera una vista previa antes de exportar.', 'error');
+        return;
+    }
+
+    const selectedRange = getReportRangeFromModalSelection();
+    if (
+        selectedRange.startDate !== reportPreviewMeta.startDate ||
+        selectedRange.endDate !== reportPreviewMeta.endDate
+    ) {
+        showNotification('Actualiza la vista previa antes de exportar este periodo.', 'error');
+        return;
+    }
+
+    const extension = format === 'excel' ? 'xls' : 'csv';
+    const fileName = `${reportPreviewMeta.filenameBase}.${extension}`;
+    if (format === 'excel') {
+        exportToExcel(reportPreviewData, fileName);
+    } else {
+        exportToCSV(reportPreviewData, fileName);
+    }
+}
+
+function openReportModal() {
+    if (!requireActiveSession()) return;
+    const modal = document.getElementById('reportModal');
+    if (!modal) return;
+    ensureReportSelectorsPopulated();
+    toggleReportMonthGroup();
+    modal.classList.add('active');
+    if (!reportPreviewData.length) {
+        void generateReportPreviewFromModal();
+    }
+}
+
+function closeReportModal() {
+    const modal = document.getElementById('reportModal');
+    if (!modal) return;
+    modal.classList.remove('active');
+}
+
+function setupReportModal() {
+    const modal = document.getElementById('reportModal');
+    if (!modal || modal.dataset.ready === '1') return;
+    modal.dataset.ready = '1';
+
+    ensureReportSelectorsPopulated();
+    toggleReportMonthGroup();
+    clearReportPreviewTable('Selecciona un periodo y genera la vista previa.');
+    renderReportPreviewSummary(computeReportSummary([]), { label: 'Sin vista previa' });
+    setReportExportButtonsEnabled(false);
+
+    modal.querySelector('.close')?.addEventListener('click', () => {
+        closeReportModal();
+    });
+
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) {
+            closeReportModal();
+        }
+    });
+
+    const handlePeriodChange = () => {
+        toggleReportMonthGroup();
+        setReportExportButtonsEnabled(false);
+        setReportStatus('Periodo actualizado. Genera una nueva vista previa.');
+    };
+
+    document.getElementById('reportTypeSelect')?.addEventListener('change', handlePeriodChange);
+    document.getElementById('reportMonthSelect')?.addEventListener('change', handlePeriodChange);
+    document.getElementById('reportYearSelect')?.addEventListener('change', handlePeriodChange);
+
+    document.getElementById('reportPreviewBtn')?.addEventListener('click', () => {
+        void generateReportPreviewFromModal();
+    });
+    document.getElementById('reportExportCsvBtn')?.addEventListener('click', () => {
+        exportCurrentReportPreview('csv');
+    });
+    document.getElementById('reportExportExcelBtn')?.addEventListener('click', () => {
+        exportCurrentReportPreview('excel');
+    });
 }
 
 function setupExportButtons() {
     const exportBtn = document.getElementById('exportBtn');
-    if (exportBtn) {
-        // Replace single export button with dropdown
-        const filterActions = document.querySelector('.filter-actions');
-        
-        // Create export dropdown
-        const exportDropdown = document.createElement('div');
-        exportDropdown.className = 'export-dropdown';
-        exportDropdown.style.cssText = 'position: relative; display: inline-block;';
-        
-        exportDropdown.innerHTML = `
-            <button id="exportBtn" class="btn-secondary">📥 Exportar ▼</button>
-            <div class="export-menu" style="
-                display: none;
-                position: absolute;
-                right: 0;
-                top: 100%;
-                margin-top: 0.5rem;
-                background: var(--bg-secondary);
-                border: 1px solid var(--border);
-                border-radius: var(--radius-sm);
-                box-shadow: var(--shadow-lg);
-                z-index: 100;
-                min-width: 160px;
-            ">
-                <button class="export-option" data-format="csv" style="
-                    display: flex;
-                    align-items: center;
-                    gap: 0.5rem;
-                    width: 100%;
-                    padding: 0.75rem 1rem;
-                    background: none;
-                    border: none;
-                    color: var(--text-primary);
-                    cursor: pointer;
-                    font-size: 0.875rem;
-                    text-align: left;
-                ">📄 Exportar CSV</button>
-                <button class="export-option" data-format="excel" style="
-                    display: flex;
-                    align-items: center;
-                    gap: 0.5rem;
-                    width: 100%;
-                    padding: 0.75rem 1rem;
-                    background: none;
-                    border: none;
-                    color: var(--text-primary);
-                    cursor: pointer;
-                    font-size: 0.875rem;
-                    text-align: left;
-                    border-top: 1px solid var(--border);
-                ">📊 Exportar Excel</button>
-            </div>
-        `;
-        
-        // Replace old button
-        exportBtn.replaceWith(exportDropdown);
-        
-        // Toggle menu
-        const btn = exportDropdown.querySelector('#exportBtn');
-        const menu = exportDropdown.querySelector('.export-menu');
-        
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-        });
-        
-        // Close on outside click
-        document.addEventListener('click', () => {
-            menu.style.display = 'none';
-        });
-        
-        // Export options
-        exportDropdown.querySelectorAll('.export-option').forEach(option => {
-            option.addEventListener('click', () => {
-                const format = option.dataset.format;
-                if (format === 'csv') {
-                    exportToCSV(currentInstallationsData);
-                } else if (format === 'excel') {
-                    exportToExcel(currentInstallationsData);
-                }
-                menu.style.display = 'none';
-            });
-            
-            // Hover effect
-            option.addEventListener('mouseenter', () => {
-                option.style.background = 'var(--bg-hover)';
-            });
-            option.addEventListener('mouseleave', () => {
-                option.style.background = 'none';
-            });
-        });
-    }
+    if (!exportBtn || exportBtn.dataset.ready === '1') return;
+    exportBtn.dataset.ready = '1';
+    setupReportModal();
+    exportBtn.addEventListener('click', () => {
+        openReportModal();
+    });
 }
-
-
 function debouncedSearch() {
     const searchInput = document.getElementById('searchInput');
     if (searchInput) {
@@ -1525,7 +1959,7 @@ function setupAdvancedFilters() {
         const createRecordBtn = document.createElement('button');
         createRecordBtn.id = 'createManualRecordBtn';
         createRecordBtn.className = 'btn-secondary';
-        createRecordBtn.textContent = '📝 Nuevo registro manual';
+        createRecordBtn.textContent = 'Nuevo registro manual';
         createRecordBtn.addEventListener('click', () => {
             void createManualRecordFromWeb();
         });
@@ -1613,7 +2047,7 @@ async function loadInstallations() {
         // Update filter chips (in case they were cleared externally)
         updateFilterChips();
     } catch (err) {
-        container.innerHTML = '<p class="error">❌ Error cargando registros</p>';
+        container.innerHTML = '<p class="error">? Error cargando registros</p>';
         if (resultsCount) {
             resultsCount.textContent = 'Error al cargar';
         }
@@ -1636,7 +2070,7 @@ function renderInstallationsTable(installations) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Atención', 'Tiempo', 'Notas', 'Fecha', 'QR'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'Atención', 'Tiempo', 'Nota', 'Fecha', 'QR'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -1646,9 +2080,6 @@ function renderInstallationsTable(installations) {
     const tbody = document.createElement('tbody');
 
     installations.forEach(inst => {
-        const statusClass = inst.status || 'unknown';
-        const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
-
         const row = document.createElement('tr');
         row.dataset.id = String(inst.id ?? '');
 
@@ -1663,15 +2094,6 @@ function renderInstallationsTable(installations) {
         const brandCell = document.createElement('td');
         brandCell.textContent = inst.driver_brand || 'N/A';
 
-        const versionCell = document.createElement('td');
-        versionCell.textContent = inst.driver_version || 'N/A';
-
-        const statusCell = document.createElement('td');
-        const statusBadge = document.createElement('span');
-        statusBadge.className = `badge ${statusClass}`;
-        statusBadge.textContent = `${statusIcon} ${inst.status || 'unknown'}`;
-        statusCell.appendChild(statusBadge);
-
         const attentionCell = document.createElement('td');
         const attentionBadge = document.createElement('span');
         const attentionMeta = buildRecordAttentionBadge(inst);
@@ -1683,7 +2105,7 @@ function renderInstallationsTable(installations) {
         timeCell.textContent = formatDuration(inst.installation_time_seconds ?? 0);
 
         const notesCell = document.createElement('td');
-        notesCell.textContent = inst.notes ? `${inst.notes.substring(0, 30)}...` : '-';
+        notesCell.textContent = formatInstallationHighlightNote(inst, 72);
 
         const dateCell = document.createElement('td');
         dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
@@ -1700,7 +2122,7 @@ function renderInstallationsTable(installations) {
         });
         qrCell.appendChild(qrButton);
 
-        row.append(idCell, clientCell, brandCell, versionCell, statusCell, attentionCell, timeCell, notesCell, dateCell, qrCell);
+        row.append(idCell, clientCell, brandCell, attentionCell, timeCell, notesCell, dateCell, qrCell);
         tbody.appendChild(row);
     });
 
@@ -1726,7 +2148,7 @@ async function showIncidentsForInstallation(installationId) {
         const data = await api.getIncidents(installationId);
         renderIncidents(data.incidents || [], installationId);
     } catch (err) {
-        container.innerHTML = '<p class="error">❌ Error cargando incidencias</p>';
+        container.innerHTML = '<p class="error">Error cargando incidencias</p>';
     }
 }
 
@@ -1737,10 +2159,10 @@ function normalizeAssetStatusLabel(status) {
 }
 
 function getSeverityIcon(severity) {
-    if (severity === 'critical') return '🔴';
-    if (severity === 'high') return '🟠';
-    if (severity === 'medium') return '🟡';
-    return '🔵';
+    if (severity === 'critical') return 'CRIT';
+    if (severity === 'high') return 'ALTA';
+    if (severity === 'medium') return 'MEDIA';
+    return 'BAJA';
 }
 
 function normalizeIncidentStatus(value) {
@@ -1759,18 +2181,18 @@ function incidentStatusLabel(value) {
 
 function incidentStatusIcon(value) {
     const normalized = normalizeIncidentStatus(value);
-    if (normalized === 'resolved') return '✅';
-    if (normalized === 'in_progress') return '🟠';
-    return '🟢';
+    if (normalized === 'resolved') return 'OK';
+    if (normalized === 'in_progress') return 'PROG';
+    return 'AB';
 }
 
 function buildIncidentStatusText(incident) {
     const status = normalizeIncidentStatus(incident?.incident_status);
     let text = `${incidentStatusIcon(status)} ${incidentStatusLabel(status)}`;
     if (status === 'resolved' && incident?.resolved_at) {
-        text += ` · ${new Date(incident.resolved_at).toLocaleString('es-ES')}`;
+        text += ` | ${new Date(incident.resolved_at).toLocaleString('es-ES')}`;
     } else if (incident?.status_updated_at) {
-        text += ` · ${new Date(incident.status_updated_at).toLocaleString('es-ES')}`;
+        text += ` | ${new Date(incident.status_updated_at).toLocaleString('es-ES')}`;
     }
     return text;
 }
@@ -1794,6 +2216,22 @@ function normalizeIncidentChecklistItems(value) {
         }
     }
     return [];
+}
+
+function parseIncidentChecklistInput(rawValue) {
+    const parts = String(rawValue || '')
+        .split(/[\n,;]+/g)
+        .map((item) => String(item || '').trim())
+        .filter((item) => item.length > 0);
+    const deduped = [];
+    const seen = new Set();
+    for (const item of parts) {
+        if (seen.has(item)) continue;
+        seen.add(item);
+        deduped.push(item);
+        if (deduped.length >= 30) break;
+    }
+    return deduped;
 }
 
 async function updateIncidentStatusFromWeb(incident, targetStatus, options = {}) {
@@ -1839,6 +2277,68 @@ async function updateIncidentStatusFromWeb(incident, targetStatus, options = {})
     }
 }
 
+async function updateIncidentEvidenceFromWeb(incident, options = {}) {
+    if (!requireActiveSession()) return;
+    if (!canCurrentUserEditAssets()) {
+        showNotification('Solo admin/super_admin puede editar evidencia de incidencias.', 'error');
+        return;
+    }
+
+    const incidentId = Number.parseInt(String(incident?.id), 10);
+    if (!Number.isInteger(incidentId) || incidentId <= 0) {
+        showNotification('Incidencia inválida para actualizar evidencia.', 'error');
+        return;
+    }
+
+    const currentChecklist = normalizeIncidentChecklistItems(incident?.checklist_items);
+    const checklistRaw = prompt(
+        'Checklist (separado por coma o salto de linea; vacio para limpiar):',
+        currentChecklist.join(', '),
+    );
+    if (checklistRaw === null) return;
+
+    const evidenceRaw = prompt(
+        'Nota operativa (opcional; vacio para limpiar):',
+        String(incident?.evidence_note || ''),
+    );
+    if (evidenceRaw === null) return;
+
+    const checklistItems = parseIncidentChecklistInput(checklistRaw);
+    if (checklistItems.some((item) => item.length > 180)) {
+        showNotification('Cada item de checklist debe tener hasta 180 caracteres.', 'error');
+        return;
+    }
+
+    const evidenceNote = String(evidenceRaw || '').trim();
+    if (evidenceNote.length > 2000) {
+        showNotification('La nota operativa supera el límite de 2000 caracteres.', 'error');
+        return;
+    }
+
+    try {
+        await api.updateIncidentEvidence(incidentId, {
+            checklist_items: checklistItems,
+            evidence_note: evidenceNote,
+            reporter_username: currentUser?.username || 'web_user',
+        });
+        showNotification(`Evidencia de incidencia #${incidentId} actualizada.`, 'success');
+
+        if (Number.isInteger(options.installationId) && options.installationId > 0) {
+            await showIncidentsForInstallation(options.installationId);
+            return;
+        }
+        if (Number.isInteger(options.assetId) && options.assetId > 0) {
+            await loadAssetDetail(options.assetId, { keepSelection: true });
+            return;
+        }
+        if (currentSelectedInstallationId) {
+            await showIncidentsForInstallation(currentSelectedInstallationId);
+        }
+    } catch (err) {
+        showNotification(`No se pudo actualizar evidencia: ${err.message || err}`, 'error');
+    }
+}
+
 async function loadAssets() {
     if (!requireActiveSession()) return;
     const tableContainer = document.getElementById('assetsTable');
@@ -1875,7 +2375,7 @@ async function loadAssets() {
             }
         }
     } catch (err) {
-        tableContainer.innerHTML = '<p class="error">❌ Error cargando equipos</p>';
+        tableContainer.innerHTML = '<p class="error">? Error cargando equipos</p>';
         if (resultsCount) {
             resultsCount.textContent = 'Error al cargar';
         }
@@ -1900,6 +2400,10 @@ function formatDriverSize(bytes, sizeMb) {
 function updateDriverSelectedFileLabel() {
     const label = document.getElementById('driversSelectedFileLabel');
     if (!label) return;
+    if (!canCurrentUserManageDrivers()) {
+        label.textContent = 'Solo super_admin puede subir o eliminar drivers.';
+        return;
+    }
     if (!selectedDriverFile) {
         label.textContent = 'Sin archivo seleccionado';
         return;
@@ -1994,26 +2498,28 @@ function renderDriversTable(drivers) {
         });
 
         const deleteBtn = document.createElement('button');
-        deleteBtn.type = 'button';
-        deleteBtn.className = 'btn-secondary table-action-btn';
-        deleteBtn.textContent = 'Eliminar';
-        deleteBtn.style.marginLeft = '0.35rem';
-        deleteBtn.addEventListener('click', async (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const key = String(driver.key || '').trim();
-            if (!key) return;
-            if (!confirm(`Eliminar driver ${driver.brand || ''} ${driver.version || ''}?`)) return;
-            try {
-                await api.deleteDriver(key);
-                showNotification('Driver eliminado', 'success');
-                await loadDrivers();
-            } catch (err) {
-                showNotification(`No se pudo eliminar driver: ${err.message || err}`, 'error');
-            }
-        });
-
-        actionsCell.append(downloadBtn, deleteBtn);
+        actionsCell.append(downloadBtn);
+        if (canCurrentUserManageDrivers()) {
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'btn-secondary table-action-btn';
+            deleteBtn.textContent = 'Eliminar';
+            deleteBtn.style.marginLeft = '0.35rem';
+            deleteBtn.addEventListener('click', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const key = String(driver.key || '').trim();
+                if (!key) return;
+                if (!confirm(`Eliminar driver ${driver.brand || ''} ${driver.version || ''}?`)) return;
+                try {
+                    await api.deleteDriver(key);
+                    showNotification('Driver eliminado', 'success');
+                    await loadDrivers();
+                } catch (err) {
+                    showNotification(`No se pudo eliminar driver: ${err.message || err}`, 'error');
+                }
+            });
+            actionsCell.append(deleteBtn);
+        }
 
         row.append(brandCell, versionCell, fileCell, sizeCell, uploadedCell, actionsCell);
         tbody.appendChild(row);
@@ -2025,6 +2531,10 @@ function renderDriversTable(drivers) {
 
 async function uploadDriverFromWeb() {
     if (!requireActiveSession()) return;
+    if (!canCurrentUserManageDrivers()) {
+        showNotification('Solo super_admin puede subir drivers.', 'error');
+        return;
+    }
     const brandInput = document.getElementById('driverBrandInput');
     const versionInput = document.getElementById('driverVersionInput');
     const descriptionInput = document.getElementById('driverDescriptionInput');
@@ -2281,7 +2791,7 @@ async function loadAssetDetail(assetId, options = {}) {
         await renderAssetDetail(data);
     } catch (err) {
         if (detailContainer) {
-            detailContainer.innerHTML = `<p class="error">❌ ${escapeHtml(err.message || String(err))}</p>`;
+            detailContainer.innerHTML = `<p class="error">? ${escapeHtml(err.message || String(err))}</p>`;
         }
     }
 }
@@ -2430,11 +2940,11 @@ async function renderAssetDetail(data) {
         badge.className = `badge ${incident.severity || 'low'}`;
         badge.textContent = `${getSeverityIcon(incident.severity)} ${incident.severity || 'low'}`;
         const meta = document.createElement('small');
-        meta.textContent = `inst #${incident.installation_id} · ${incident.reporter_username || 'desconocido'}`;
+        meta.textContent = `inst #${incident.installation_id} | ${incident.reporter_username || 'desconocido'}`;
         left.append(badge, document.createTextNode(' '), meta);
 
         const created = document.createElement('small');
-        created.textContent = `🕐 ${new Date(incident.created_at).toLocaleString('es-ES')}`;
+        created.textContent = `Fecha: ${new Date(incident.created_at).toLocaleString('es-ES')}`;
         header.append(left, created);
 
         const note = document.createElement('p');
@@ -2452,7 +2962,7 @@ async function renderAssetDetail(data) {
         const checklistMeta = document.createElement('small');
         checklistMeta.className = 'asset-muted incident-meta-line';
         checklistMeta.textContent = checklistItems.length
-            ? `Checklist: ${checklistItems.join(' · ')}`
+            ? `Checklist: ${checklistItems.join(' | ')}`
             : 'Checklist: -';
         const evidenceMeta = document.createElement('small');
         evidenceMeta.className = 'asset-muted incident-meta-line';
@@ -2468,7 +2978,7 @@ async function renderAssetDetail(data) {
         const sub = document.createElement('small');
         sub.className = 'asset-muted';
         sub.textContent =
-            `Cliente: ${incident.installation_client_name || '-'} · ` +
+            `Cliente: ${incident.installation_client_name || '-'} | ` +
             `${incident.installation_brand || '-'} ${incident.installation_version || ''}`.trim();
 
         card.append(header, note, statusMeta, timeMeta, checklistMeta, evidenceMeta, resolutionMeta, sub);
@@ -2501,6 +3011,23 @@ async function renderAssetDetail(data) {
             makeStatusBtn('Resolver', 'resolved'),
         );
         card.appendChild(statusActions);
+
+        const evidenceBtn = document.createElement('button');
+        evidenceBtn.className = 'btn-secondary';
+        evidenceBtn.textContent = 'Checklist/Nota';
+        evidenceBtn.style.marginTop = '0.5rem';
+        const canEditEvidence = canCurrentUserEditAssets();
+        evidenceBtn.disabled = !canEditEvidence;
+        if (!canEditEvidence) {
+            evidenceBtn.title = 'Solo admin/super_admin puede editar evidencia';
+        }
+        evidenceBtn.addEventListener('click', () => {
+            void updateIncidentEvidenceFromWeb(incident, {
+                assetId: Number.parseInt(String(asset.id), 10),
+                installationId: Number.parseInt(String(incident.installation_id), 10),
+            });
+        });
+        card.appendChild(evidenceBtn);
 
         const uploadBtn = document.createElement('button');
         uploadBtn.className = 'btn-secondary';
@@ -2567,18 +3094,18 @@ async function renderIncidents(incidents, installationId) {
     header.style.marginBottom = '1.5rem';
 
     const heading = document.createElement('h3');
-    heading.textContent = `⚠️ Incidencias de Registro #${installationId}`;
+    heading.textContent = `Incidencias de Registro #${installationId}`;
 
     const backButton = document.createElement('button');
     backButton.className = 'btn-secondary';
-    backButton.textContent = '← Volver';
+    backButton.textContent = '< Volver';
     backButton.addEventListener('click', () => {
         document.querySelector('[data-section="installations"]')?.click();
     });
 
     const createIncidentBtn = document.createElement('button');
     createIncidentBtn.className = 'btn-primary';
-    createIncidentBtn.textContent = '⚠️ Crear incidencia';
+    createIncidentBtn.textContent = 'Crear incidencia';
     createIncidentBtn.addEventListener('click', () => {
         void createIncidentFromWeb(installationId);
     });
@@ -2600,7 +3127,7 @@ async function renderIncidents(incidents, installationId) {
     }
 
     for (const inc of incidents) {
-        const severityIcon = inc.severity === 'critical' ? '🔴' : inc.severity === 'high' ? '🟠' : inc.severity === 'medium' ? '🟡' : '🔵';
+        const severityIcon = inc.severity === 'critical' ? 'CRIT' : inc.severity === 'high' ? 'ALTA' : inc.severity === 'medium' ? 'MEDIA' : 'BAJA';
 
         const incidentCard = document.createElement('div');
         incidentCard.className = 'incident-card';
@@ -2620,7 +3147,7 @@ async function renderIncidents(incidents, installationId) {
         leftMeta.append(severityBadge, document.createTextNode(' '), reporter);
 
         const createdAt = document.createElement('small');
-        createdAt.textContent = `🕐 ${new Date(inc.created_at).toLocaleString('es-ES')}`;
+        createdAt.textContent = `Fecha: ${new Date(inc.created_at).toLocaleString('es-ES')}`;
 
         incidentHeader.append(leftMeta, createdAt);
 
@@ -2639,7 +3166,7 @@ async function renderIncidents(incidents, installationId) {
         const checklistMeta = document.createElement('small');
         checklistMeta.className = 'asset-muted incident-meta-line';
         checklistMeta.textContent = checklistItems.length
-            ? `Checklist: ${checklistItems.join(' · ')}`
+            ? `Checklist: ${checklistItems.join(' | ')}`
             : 'Checklist: -';
         const evidenceMeta = document.createElement('small');
         evidenceMeta.className = 'asset-muted incident-meta-line';
@@ -2682,9 +3209,25 @@ async function renderIncidents(incidents, installationId) {
         );
         incidentCard.appendChild(statusActions);
 
+        const evidenceBtn = document.createElement('button');
+        evidenceBtn.className = 'btn-secondary';
+        evidenceBtn.textContent = 'Checklist/Nota';
+        evidenceBtn.style.marginTop = '0.5rem';
+        const canEditEvidence = canCurrentUserEditAssets();
+        evidenceBtn.disabled = !canEditEvidence;
+        if (!canEditEvidence) {
+            evidenceBtn.title = 'Solo admin/super_admin puede editar evidencia';
+        }
+        evidenceBtn.addEventListener('click', () => {
+            void updateIncidentEvidenceFromWeb(inc, {
+                installationId: Number.parseInt(String(installationId), 10),
+            });
+        });
+        incidentCard.appendChild(evidenceBtn);
+
         const uploadPhotoBtn = document.createElement('button');
         uploadPhotoBtn.className = 'btn-secondary';
-        uploadPhotoBtn.textContent = '📤 Subir foto';
+        uploadPhotoBtn.textContent = 'Subir foto';
         uploadPhotoBtn.style.marginTop = '0.5rem';
         uploadPhotoBtn.addEventListener('click', () => {
             void selectAndUploadIncidentPhoto(inc.id, installationId);
@@ -2897,7 +3440,7 @@ function readAssetFormData() {
     const clientInput = document.getElementById('qrAssetClientInput');
     const notesInput = document.getElementById('qrAssetNotesInput');
     if (!codeInput || !brandInput || !modelInput || !serialInput || !clientInput || !notesInput) {
-        throw new Error('Formulario QR incompleto. Recarga la pagina.');
+        throw new Error('Formulario QR incompleto. Recarga la página.');
     }
 
     const brand = normalizeAssetFormText(brandInput.value, QR_MAX_BRAND_LENGTH);
@@ -3006,7 +3549,7 @@ function buildQrPayload(qrType, rawValue, assetData = null) {
 function buildQrImageUrl(payload) {
     const qrGenerator = window.DMQR;
     if (!qrGenerator || typeof qrGenerator.createPngDataUrl !== 'function') {
-        throw new Error('Generador QR no disponible. Recarga la pagina e intenta de nuevo.');
+        throw new Error('Generador QR no disponible. Recarga la página e intenta de nuevo.');
     }
 
     return qrGenerator.createPngDataUrl(payload, {
@@ -3480,7 +4023,7 @@ async function loadAuditLogs() {
         const logs = await api.getAuditLogs();
         renderAuditLogs(logs);
     } catch (err) {
-        container.innerHTML = '<p class="error">❌ Error cargando logs</p>';
+        container.innerHTML = '<p class="error">Error cargando logs</p>';
     }
 }
 
@@ -3513,7 +4056,7 @@ function renderAuditLogs(logs) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['🕐 Fecha', '📝 Acción', '👤 Usuario', '✅ Estado', '💻 Detalles'].forEach(label => {
+    ['Fecha', 'Accion', 'Usuario', 'Estado', 'Detalles'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -3523,7 +4066,7 @@ function renderAuditLogs(logs) {
     const tbody = document.createElement('tbody');
 
     filteredLogs.forEach(log => {
-        const successIcon = log.success ? '✅' : '❌';
+        const successIcon = log.success ? 'OK' : 'ERR';
         const successClass = log.success ? 'success' : 'failed';
         
         let details = '-';
@@ -3598,9 +4141,12 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         syncSSEForCurrentContext(true);
         
         // Show success notification
-        showNotification('✅ Bienvenido, ' + result.user.username + '!', 'success');
+        showNotification('Bienvenido, ' + result.user.username + '!', 'success');
     } catch (err) {
-        document.getElementById('loginError').textContent = '❌ Credenciales inválidas';
+        const detail = String(err?.message || '').trim();
+        document.getElementById('loginError').textContent = detail
+            ? `Error: ${detail}`
+            : 'No se pudo iniciar sesión.';
         document.getElementById('loginPassword').value = '';
     }
 });
@@ -3616,7 +4162,7 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     closeSSE();
     resetProtectedViews();
     showLogin();
-    showNotification('👋 Sesión cerrada', 'info');
+    showNotification('Sesión cerrada', 'info');
 });
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
@@ -3631,7 +4177,7 @@ document.getElementById('refreshBtn').addEventListener('click', () => {
     }, 500);
     
     loadDashboard();
-    showNotification('🔄 Dashboard actualizado', 'info');
+    showNotification('Dashboard actualizado', 'info');
 });
 
 document.querySelectorAll('.nav-links a').forEach(link => {
@@ -3640,7 +4186,7 @@ document.querySelectorAll('.nav-links a').forEach(link => {
         if (!requireActiveSession()) return;
         const section = link.dataset.section;
         if (section === 'audit' && !canCurrentUserAccessAudit()) {
-            showNotification('No tienes permisos para acceder a Auditoria.', 'error');
+            showNotification('No tienes permisos para acceder a Auditoría.', 'error');
             return;
         }
         
@@ -3696,10 +4242,19 @@ document.getElementById('driversRefreshBtn')?.addEventListener('click', () => {
 
 document.getElementById('driverPickFileBtn')?.addEventListener('click', () => {
     if (!requireActiveSession()) return;
+    if (!canCurrentUserManageDrivers()) {
+        showNotification('Solo super_admin puede subir drivers.', 'error');
+        return;
+    }
     document.getElementById('driverFileInput')?.click();
 });
 
 document.getElementById('driverFileInput')?.addEventListener('change', (event) => {
+    if (!canCurrentUserManageDrivers()) {
+        selectedDriverFile = null;
+        updateDriverSelectedFileLabel();
+        return;
+    }
     const input = event.target;
     const nextFile = input?.files?.[0] || null;
     selectedDriverFile = nextFile;
@@ -3707,6 +4262,10 @@ document.getElementById('driverFileInput')?.addEventListener('change', (event) =
 });
 
 document.getElementById('driverUploadBtn')?.addEventListener('click', () => {
+    if (!canCurrentUserManageDrivers()) {
+        showNotification('Solo super_admin puede subir drivers.', 'error');
+        return;
+    }
     void uploadDriverFromWeb();
 });
 updateDriverSelectedFileLabel();
@@ -3843,6 +4402,7 @@ document.addEventListener('keydown', (e) => {
         document.getElementById('photoModal').classList.remove('active');
         closeQrPasswordModal();
         closeQrModal();
+        closeReportModal();
     }
     if (e.ctrlKey && e.key === 'r') {
         e.preventDefault();
@@ -3912,7 +4472,7 @@ function scheduleSSEReconnect(preferredDelayMs = null) {
     if (sseReconnectAttempts >= MAX_SSE_RECONNECT_ATTEMPTS) {
         console.error('[SSE] Max reconnection attempts reached');
         updateConnectionStatus('failed');
-        showNotification('⚠️ Conexión en tiempo real perdida. Recarga la página para reconectar.', 'error');
+        showNotification('[ERR] Conexión en tiempo real perdida. Recarga la página para reconectar.', 'error');
         return;
     }
 
@@ -4016,7 +4576,7 @@ function handleSSEMessage(data) {
     switch (data.type) {
         case 'connected':
             console.log('[SSE]', data.message);
-            showNotification('🔌 Conectado en tiempo real', 'success');
+            showNotification('[OK] Conectado en tiempo real', 'success');
             break;
 
         case 'installation_created':
@@ -4075,7 +4635,7 @@ function handleRealtimeInstallation(installation) {
     }
     
     // Show notification
-    const statusIcon = installation.status === 'success' ? '✅' : installation.status === 'failed' ? '❌' : '💻';
+    const statusIcon = installation.status === 'success' ? '[OK]' : installation.status === 'failed' ? '[ERR]' : '[INFO]';
     showNotification(`${statusIcon} Nuevo registro: ${installation.client_name || 'Sin cliente'}`, 'info');
     
     // Refresh dashboard stats if on dashboard
@@ -4107,18 +4667,18 @@ function handleRealtimeInstallationDeleted(installation) {
             renderInstallationsTable(currentInstallationsData);
         }
     }
-    showNotification(`🗑️ Registro #${installation.id} eliminado`, 'info');
+    showNotification(`[DEL] Registro #${installation.id} eliminado`, 'info');
 }
 
 function handleRealtimeIncident(incident) {
-    const severityIcon = incident.severity === 'critical' ? '🔴' : incident.severity === 'high' ? '🟠' : '⚠️';
+    const severityIcon = incident.severity === 'critical' ? '[CRIT]' : incident.severity === 'high' ? '[ALTA]' : '[INC]';
     showNotification(`${severityIcon} Nueva incidencia en registro #${incident.installation_id}`, 'warning');
 }
 
 function handleRealtimeIncidentStatusUpdate(incident) {
     if (!incident || !incident.id) return;
     showNotification(
-        `ℹ️ Incidencia #${incident.id} ahora está "${incidentStatusLabel(incident.incident_status)}".`,
+        `[UPD] Incidencia #${incident.id} ahora esta "${incidentStatusLabel(incident.incident_status)}".`,
         'info',
     );
 
@@ -4219,11 +4779,11 @@ function updateConnectionStatus(status) {
     connectionStatusLastRendered = { status, at: now };
 
     const statusConfig = {
-        connected: { icon: '🟢', text: 'En vivo', color: 'rgba(16, 185, 129, 0.9)' },
-        disconnected: { icon: '🔴', text: 'Desconectado', color: 'rgba(239, 68, 68, 0.9)' },
-        reconnecting: { icon: '🟡', text: 'Reconectando...', color: 'rgba(245, 158, 11, 0.9)' },
-        paused: { icon: '⏸️', text: 'En pausa', color: 'rgba(100, 116, 139, 0.9)' },
-        failed: { icon: '⚫', text: 'Error de conexión', color: 'rgba(148, 163, 184, 0.9)' }
+        connected: { icon: '[LIVE]', text: 'En vivo', color: 'rgba(16, 185, 129, 0.9)' },
+        disconnected: { icon: '[OFF]', text: 'Desconectado', color: 'rgba(239, 68, 68, 0.9)' },
+        reconnecting: { icon: '[...]', text: 'Reconectando...', color: 'rgba(245, 158, 11, 0.9)' },
+        paused: { icon: '[PAUSA]', text: 'En pausa', color: 'rgba(100, 116, 139, 0.9)' },
+        failed: { icon: '[ERR]', text: 'Error de conexión', color: 'rgba(148, 163, 184, 0.9)' }
     };
 
     const config = statusConfig[status] || statusConfig.disconnected;
@@ -4234,7 +4794,7 @@ function updateConnectionStatus(status) {
         disconnected: 'Sin red',
         reconnecting: 'Reconectando',
         paused: 'En pausa',
-        failed: 'Sin conexion'
+        failed: 'Sin conexión'
     };
     const displayText = isMobileViewport
         ? (compactMobileText[status] || config.text)
@@ -4279,7 +4839,7 @@ function updateConnectionStatus(status) {
 
     if (canManualReconnect) {
         indicator.onclick = () => {
-            showNotification('🔄 Intentando reconectar...', 'info');
+            showNotification('[RETRY] Intentando reconectar...', 'info');
             sseReconnectAttempts = 0;
             syncSSEForCurrentContext(true);
         };
@@ -4353,7 +4913,7 @@ async function init() {
             try {
                 await api.logout();
             } catch (_err) {
-                // Ignorar si no habia sesion activa.
+                // Ignorar si no había sesión activa.
             }
             currentUser = null;
             webAccessToken = '';
@@ -4439,7 +4999,7 @@ function toggleTheme() {
     
     // Show notification
     const themeLabel = newTheme === 'light' ? 'claro' : 'oscuro';
-    showNotification(`🎨 Tema ${themeLabel} activado`, 'info');
+    showNotification(`[THEME] Tema ${themeLabel} activado`, 'info');
 }
 
 function updateChartTheme(theme) {
@@ -4478,3 +5038,7 @@ function setupThemeToggle() {
 }
 
 init();
+
+
+
+
