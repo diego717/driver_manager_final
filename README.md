@@ -202,6 +202,16 @@ wrangler secret put API_SECRET
 
 > Recomendado para produccion mobile: **no embebas `API_SECRET` en apps distribuidas**. Usa solo `/web/*` + Bearer de sesion corta.
 
+Por seguridad, CORS para `localhost/127.0.0.1` ahora queda deshabilitado por defecto.
+Si necesitas habilitarlo en desarrollo local, define explicitamente:
+
+```powershell
+wrangler secret put ALLOW_LOCALHOST_CORS
+```
+
+Valor sugerido solo en local: `true`.  
+Compatibilidad legacy: `ALLOW_LOCALHOST_ORIGINS=true` tambien habilita localhost.
+
 Para habilitar acceso web por sesion de usuario:
 
 ```powershell
@@ -349,7 +359,9 @@ Endpoints web (sin HMAC en cliente):
 
 Notas API:
 
-- Firma HMAC: `METHOD|PATH|TIMESTAMP|SHA256(body)` (solo para clientes legacy/no-publicos).
+- Firma HMAC: `METHOD|PATH|TIMESTAMP|SHA256(body)|NONCE` (solo para clientes legacy/no-publicos).
+- Headers HMAC requeridos: `X-API-Token`, `X-Request-Timestamp`, `X-Request-Nonce`, `X-Request-Signature`.
+- En upload binario (`POST /incidents/:incidentId/photos`) tambien se requiere `X-Body-SHA256`.
 - Ventana anti-replay: 300 segundos.
 - Requests mobile con header `X-Client-Platform: mobile` no pueden usar HMAC en rutas legacy.
 - Web token: `Authorization: Bearer <token>` emitido por `/web/auth/login` (TTL 8 horas), renovable con nuevo login/refresh y revocable server-side por version de sesion.
@@ -363,6 +375,10 @@ Notas API:
 - Fotos permitidas: `image/jpeg`, `image/png`, `image/webp`.
 - Validacion de imagen: `Content-Type` + magic bytes (JPEG/PNG/WEBP).
 - Limite por foto: 5 MB (post-compresion recomendada en cliente movil).
+
+Migracion desktop (seguridad):
+- El cliente desktop ahora falla en cerrado si faltan credenciales firmadas (`DRIVER_MANAGER_API_TOKEN`/`DRIVER_MANAGER_API_SECRET` o `config.enc`).
+- Solo para debug local puedes permitir requests sin firma con `DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS=true` (no usar en produccion).
 
 Ejemplo rapido de flujo web:
 

@@ -17,6 +17,16 @@
 
 Opcional legacy (solo clientes no-publicos): `api_token` + `api_secret` para HMAC.
 
+Variables de firma legacy autogeneradas por la coleccion:
+- `request_timestamp`
+- `request_nonce`
+- `request_signature`
+- `request_body_sha256`
+
+Nota para uploads binarios (`Upload Incident Photo`):
+- `X-Body-SHA256` es requerido por el Worker.
+- Si necesitas forzar un hash explicito para el archivo, define `request_body_sha256` manualmente antes de ejecutar el request.
+
 ## Run Order
 1. `Create Incident`
 2. `Upload Incident Photo`
@@ -28,3 +38,4 @@ Opcional legacy (solo clientes no-publicos): `api_token` + `api_secret` para HMA
 - Recomendado: usar `Authorization: Bearer <access_token>` contra rutas `/web/*`.
 - El flujo mobile productivo no debe distribuir `api_secret` embebido en la app.
 - HMAC (`api_token`/`api_secret`) queda solo para integraciones legacy/no-publicas.
+- Canonical de firma legacy: `METHOD|PATH|TIMESTAMP|SHA256(body)|NONCE`.

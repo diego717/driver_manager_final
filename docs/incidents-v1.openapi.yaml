@@ -21,6 +21,10 @@ paths:
           required: true
           schema: { type: integer }
         - in: header
+          name: X-Request-Nonce
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+        - in: header
           name: X-Request-Signature
           required: true
           schema: { type: string }
@@ -38,6 +42,10 @@ paths:
           name: X-Request-Timestamp
           required: true
           schema: { type: integer }
+        - in: header
+          name: X-Request-Nonce
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
         - in: header
           name: X-Request-Signature
           required: true
@@ -72,9 +80,18 @@ paths:
           required: true
           schema: { type: integer }
         - in: header
+          name: X-Request-Nonce
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+        - in: header
           name: X-Request-Signature
           required: true
           schema: { type: string }
+        - in: header
+          name: X-Body-SHA256
+          required: true
+          schema: { type: string, pattern: "^[A-Fa-f0-9]{64}$" }
+          description: Hash SHA-256 hexadecimal del body binario (requerido para uploads).
         - in: header
           name: X-File-Name
           required: true

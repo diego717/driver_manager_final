@@ -13,6 +13,7 @@ import hmac
 import hashlib
 import time
 import json
+import secrets
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,9 @@ class InstallationHistory:
         self.api_url = None
         self.api_token = None
         self.api_secret = None
+        self.allow_unsigned_requests = str(
+            os.getenv("DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS", "")
+        ).strip().lower() in {"1", "true", "yes", "on"}
         self.timeout = 10
         
         # Inicializar configuración de API
@@ -320,10 +324,16 @@ class InstallationHistory:
                         "y define DRIVER_MANAGER_API_SECRET o guarda api_secret en config.enc."
                     )
             else:
-                logger.warning(
-                    "API authentication not configured. "
-                    "Requests will be sent without authentication."
-                )
+                if self.allow_unsigned_requests:
+                    logger.warning(
+                        "API authentication not configured. "
+                        "Unsigned requests enabled by DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS."
+                    )
+                else:
+                    logger.error(
+                        "API authentication not configured. "
+                        "Requests will be blocked until API token/secret are configured."
+                    )
                 
         except Exception as e:
             logger.error(f"Failed to initialize API config: {e}", exc_info=True)
@@ -375,7 +385,7 @@ class InstallationHistory:
             "Campo 'URL de API de Historial'"
         )
     
-    def _generate_request_signature(self, method, path, timestamp, body_hash):
+    def _generate_request_signature(self, method, path, timestamp, body_hash, nonce):
         """
         Generar firma HMAC para la solicitud.
         
@@ -394,8 +404,8 @@ class InstallationHistory:
             return None
         
         # Canonical string (alineado con worker.js):
-        # METHOD|/path|timestamp|sha256(body_bytes)
-        message = f"{method.upper()}|{path}|{timestamp}|{body_hash}"
+        # METHOD|/path|timestamp|sha256(body_bytes)|nonce
+        message = f"{method.upper()}|{path}|{timestamp}|{body_hash}|{nonce}"
         
         # Generar HMAC-SHA256
         signature = hmac.new(
@@ -405,6 +415,10 @@ class InstallationHistory:
         ).hexdigest()
         
         return signature
+
+    def _generate_request_nonce(self):
+        """Generar nonce unico por request para prevenir replay."""
+        return secrets.token_urlsafe(18)
     
     def _get_headers(self, method='GET', path='/', body_hash=''):
         """
@@ -431,12 +445,14 @@ class InstallationHistory:
         # Si hay autenticación configurada, agregar headers
         if self.api_token and self.api_secret:
             timestamp = int(time.time())
-            signature = self._generate_request_signature(method, path, timestamp, body_hash)
+            nonce = self._generate_request_nonce()
+            signature = self._generate_request_signature(method, path, timestamp, body_hash, nonce)
             
             headers.update({
                 'X-API-Token': self.api_token,
                 'X-Request-Timestamp': str(timestamp),
-                'X-Request-Signature': signature
+                'X-Request-Signature': signature,
+                'X-Request-Nonce': nonce,
             })
         
         return headers
@@ -526,6 +542,23 @@ class InstallationHistory:
         headers = self._get_headers(method, path, body_hash)
         if extra_headers:
             headers.update(extra_headers)
+        if not self.allow_unsigned_requests:
+            missing_auth_headers = [
+                header_name
+                for header_name in (
+                    "X-API-Token",
+                    "X-Request-Timestamp",
+                    "X-Request-Signature",
+                    "X-Request-Nonce",
+                )
+                if not headers.get(header_name)
+            ]
+            if missing_auth_headers:
+                raise ConnectionError(
+                    "❌ Autenticación API no configurada para desktop.\n\n"
+                    "Configura DRIVER_MANAGER_API_TOKEN y DRIVER_MANAGER_API_SECRET (o config.enc).\n"
+                    "Para debug local únicamente, habilita DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS=true."
+                )
         
         try:
             response = requests.request(

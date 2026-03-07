@@ -31,14 +31,14 @@ test("GET /web/dashboard returns versioned static dashboard and strict CSP", asy
   assert.equal(inlineScripts.length, 0, "Dashboard should not embed inline scripts");
 
   const scripts = extractExternalScripts(html);
-  assert.ok(scripts.includes("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"));
+  assert.ok(scripts.some((src) => /^\/chart\.umd\.js\?v=[a-f0-9]{10}$/.test(src)));
   assert.ok(scripts.some((src) => /^\/dashboard\.js\?v=[a-f0-9]{10}$/.test(src)));
   assert.ok(scripts.some((src) => /^\/dashboard-pwa\.js\?v=[a-f0-9]{10}$/.test(src)));
   assert.match(html, /href="\/dashboard\.css\?v=[a-f0-9]{10}"/);
   assert.match(html, /href="\/manifest\.json\?v=[a-f0-9]{10}"/);
 
   const csp = response.headers.get("Content-Security-Policy") || "";
-  assert.match(csp, /script-src 'self' https:\/\/cdn\.jsdelivr\.net/);
+  assert.match(csp, /script-src 'self'/);
   assert.match(csp, /style-src 'self'/);
   assert.match(csp, /object-src 'none'/);
   assert.match(csp, /frame-ancestors 'none'/);

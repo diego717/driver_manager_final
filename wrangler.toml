@@ -15,6 +15,10 @@ database_id = "12874e42-670a-49ef-ae13-5d12229b21a3"
 binding = "INCIDENTS_BUCKET"
 bucket_name = "driver-manager-incidents"
 
+[[r2_buckets]]
+binding = "DRIVERS_BUCKET"
+bucket_name = "driver-storage"
+
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
 id = "396a1fbc4053489091dcebc2325a5e16"

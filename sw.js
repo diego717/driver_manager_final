@@ -3,6 +3,8 @@ const CACHE_NAME = 'driver-manager-v1';
 const STATIC_ASSETS = [
   '/web/dashboard',
   '/dashboard.css',
+  '/chart.umd.js',
+  '/dashboard-qr.js',
   '/dashboard.js',
   '/dashboard-pwa.js',
   '/manifest.json'
@@ -11,6 +13,8 @@ const STATIC_ASSETS = [
 const STATIC_ASSET_PATHS = new Set([
   '/web/dashboard',
   '/dashboard.css',
+  '/chart.umd.js',
+  '/dashboard-qr.js',
   '/dashboard.js',
   '/dashboard-pwa.js',
   '/manifest.json',
@@ -26,7 +30,7 @@ async function shouldCacheResponse(requestOrUrl, response) {
 
   const path = getAssetPath(requestOrUrl);
   if (!STATIC_ASSET_PATHS.has(path)) {
-    return true;
+    return false;
   }
 
   const contentLength = response.headers.get('content-length');
@@ -110,6 +114,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
+  const requestPath = url.pathname;
   
   // Skip non-GET requests
   if (request.method !== 'GET') {
@@ -124,8 +129,13 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   
-  // Skip external requests (Chart.js CDN)
-  if (!url.origin.includes(self.location.origin)) {
+  // Skip external requests
+  if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  // Secure default: cache only explicit static dashboard shell assets.
+  if (!STATIC_ASSET_PATHS.has(requestPath)) {
     return;
   }
   

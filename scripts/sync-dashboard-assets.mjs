@@ -8,6 +8,7 @@ const publicDir = path.join(rootDir, "public");
 const sources = {
   html: path.join(rootDir, "dashboard.html"),
   css: path.join(rootDir, "dashboard.css"),
+  chart: path.join(rootDir, "node_modules", "chart.js", "dist", "chart.umd.js"),
   qr: path.join(rootDir, "dashboard-qr.js"),
   js: path.join(rootDir, "dashboard.js"),
   pwa: path.join(rootDir, "dashboard-pwa.js"),
@@ -28,15 +29,16 @@ function hashOf(content) {
 
 function rewriteDashboardHtml(content, versions) {
   return content
-    .replace('href="/dashboard.css"', `href="/dashboard.css?v=${versions.css}"`)
-    .replace('href="/manifest.json"', `href="/manifest.json?v=${versions.manifest}"`)
-    .replace('src="/dashboard-qr.js"', `src="/dashboard-qr.js?v=${versions.qr}"`)
-    .replace('src="/dashboard.js"', `src="/dashboard.js?v=${versions.js}"`)
-    .replace('src="/dashboard-pwa.js"', `src="/dashboard-pwa.js?v=${versions.pwa}"`);
+    .replace(/href="\/dashboard\.css(?:\?v=[^"]+)?"/g, `href="/dashboard.css?v=${versions.css}"`)
+    .replace(/href="\/manifest\.json(?:\?v=[^"]+)?"/g, `href="/manifest.json?v=${versions.manifest}"`)
+    .replace(/src="\/chart\.umd\.js(?:\?v=[^"]+)?"/g, `src="/chart.umd.js?v=${versions.chart}"`)
+    .replace(/src="\/dashboard-qr\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-qr.js?v=${versions.qr}"`)
+    .replace(/src="\/dashboard\.js(?:\?v=[^"]+)?"/g, `src="/dashboard.js?v=${versions.js}"`)
+    .replace(/src="\/dashboard-pwa\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-pwa.js?v=${versions.pwa}"`);
 }
 
 function rewriteDashboardPwa(content, versions) {
-  return content.replace(/\/sw\.js/g, `/sw.js?v=${versions.sw}`);
+  return content.replace(/\/sw\.js(?:\?v=[^'"]+)?/g, `/sw.js?v=${versions.sw}`);
 }
 
 function rewriteServiceWorker(content, versions) {
@@ -44,20 +46,29 @@ function rewriteServiceWorker(content, versions) {
   const staticAssets = [
     "/web/dashboard",
     `/dashboard.css?v=${versions.css}`,
+    `/chart.umd.js?v=${versions.chart}`,
     `/dashboard-qr.js?v=${versions.qr}`,
     `/dashboard.js?v=${versions.js}`,
     `/dashboard-pwa.js?v=${versions.pwa}`,
     `/manifest.json?v=${versions.manifest}`,
   ];
+  const staticAssetPaths = Array.from(
+    new Set(staticAssets.map((asset) => new URL(asset, "https://dashboard.local").pathname)),
+  );
 
   const withCacheName = content.replace(
     /const CACHE_NAME = ['"][^'"]+['"];/,
     `const CACHE_NAME = '${cacheName}';`,
   );
 
-  return withCacheName.replace(
+  const withStaticAssets = withCacheName.replace(
     /const STATIC_ASSETS = \[[\s\S]*?\];/,
     `const STATIC_ASSETS = [\n${staticAssets.map((asset) => `  '${asset}'`).join(",\n")}\n];`,
+  );
+
+  return withStaticAssets.replace(
+    /const STATIC_ASSET_PATHS = new Set\(\[[\s\S]*?\]\);/,
+    `const STATIC_ASSET_PATHS = new Set([\n${staticAssetPaths.map((asset) => `  '${asset}'`).join(",\n")}\n]);`,
   );
 }
 
@@ -68,6 +79,7 @@ function writeFile(fileName, content) {
 function main() {
   const html = readFile(sources.html);
   const css = readFile(sources.css);
+  const chart = readFile(sources.chart);
   const qr = readFile(sources.qr);
   const js = readFile(sources.js);
   const pwa = readFile(sources.pwa);
@@ -76,6 +88,7 @@ function main() {
 
   const versions = {
     css: hashOf(css),
+    chart: hashOf(chart),
     qr: hashOf(qr),
     js: hashOf(js),
     pwa: hashOf(pwa),
@@ -83,11 +96,12 @@ function main() {
     sw: hashOf(sw),
   };
   versions.build = hashOf(
-    [versions.css, versions.qr, versions.js, versions.pwa, versions.manifest, versions.sw].join(":"),
+    [versions.css, versions.chart, versions.qr, versions.js, versions.pwa, versions.manifest, versions.sw].join(":"),
   );
 
   fs.mkdirSync(publicDir, { recursive: true });
   writeFile("dashboard.css", css);
+  writeFile("chart.umd.js", chart);
   writeFile("dashboard-qr.js", qr);
   writeFile("dashboard.js", js);
   writeFile("manifest.json", manifest);

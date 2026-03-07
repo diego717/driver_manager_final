@@ -22,6 +22,7 @@
     "users:sync:r2-to-d1": "python sync_r2_users_to_web_d1.py"
   },
   "devDependencies": {
+    "chart.js": "^4.4.1",
     "jsdom": "^28.1.0",
     "qrcode-generator": "^1.4.4",
     "wrangler": "^4.0.0"

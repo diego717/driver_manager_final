@@ -12,7 +12,9 @@ class TestInstallationHistory(unittest.TestCase):
     def setUp(self):
         self.mock_config = MagicMock()
         self.mock_config.load_config_data.return_value = {
-            "api_url": "https://api.example.com/"
+            "api_url": "https://api.example.com/",
+            "api_token": "cfg-token-123",
+            "api_secret": "cfg-secret-abc",
         }
         self.history = InstallationHistory(self.mock_config)
 
@@ -61,6 +63,16 @@ class TestInstallationHistory(unittest.TestCase):
         self.assertEqual(kwargs["timeout"], 10)
         self.assertEqual(kwargs["headers"]["Content-Type"], "application/json")
         self.assertIn("X-Body-SHA256", kwargs["headers"])
+        self.assertIn("X-Request-Nonce", kwargs["headers"])
+
+    @patch.dict(os.environ, {"DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS": ""}, clear=False)
+    def test_make_request_fails_closed_without_api_auth(self):
+        mock_config = MagicMock()
+        mock_config.load_config_data.return_value = {"api_url": "https://api.example.com/"}
+        history = InstallationHistory(mock_config)
+
+        with self.assertRaises(ConnectionError):
+            history._make_request("get", "installations")
 
     @patch("managers.history_manager.requests.request")
     def test_make_request_raises_connection_error(self, mock_request):
@@ -210,8 +222,9 @@ class TestInstallationHistory(unittest.TestCase):
         self.assertEqual(stats["total_installations"], 0)
         self.assertIn("by_brand", stats)
 
+    @patch("managers.history_manager.secrets.token_urlsafe", return_value="nonce-fixed-123")
     @patch("managers.history_manager.time.time", return_value=1700000000)
-    def test_get_headers_uses_worker_canonical_signature(self, _mock_time):
+    def test_get_headers_uses_worker_canonical_signature(self, _mock_time, _mock_nonce):
         self.mock_config.load_config_data.return_value = {
             "api_url": "https://api.example.com/",
             "api_token": "token-123",
@@ -222,7 +235,7 @@ class TestInstallationHistory(unittest.TestCase):
         empty_hash = hashlib.sha256(b"").hexdigest()
         headers = history._get_headers("GET", "/installations", empty_hash)
 
-        expected_canonical = f"GET|/installations|1700000000|{empty_hash}"
+        expected_canonical = f"GET|/installations|1700000000|{empty_hash}|nonce-fixed-123"
         expected_signature = hmac.new(
             b"secret-abc",
             expected_canonical.encode(),
@@ -232,6 +245,7 @@ class TestInstallationHistory(unittest.TestCase):
         self.assertEqual(headers["X-API-Token"], "token-123")
         self.assertEqual(headers["X-Request-Timestamp"], "1700000000")
         self.assertEqual(headers["X-Request-Signature"], expected_signature)
+        self.assertEqual(headers["X-Request-Nonce"], "nonce-fixed-123")
         self.assertEqual(headers["X-Body-SHA256"], empty_hash)
 
     @patch.object(InstallationHistory, "get_installations")

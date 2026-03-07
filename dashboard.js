@@ -150,6 +150,7 @@ let qrModalReadOnly = false;
 let qrModalEditUnlocked = false;
 let qrModalEditUnlockUntil = 0;
 let qrPasswordModalBusy = false;
+let loginModalLastFocusedElement = null;
 const QR_EDIT_UNLOCK_TTL_MS = 10 * 60 * 1000;
 
 
@@ -167,7 +168,7 @@ function applyChartDefaults(theme = 'light') {
         Chart.defaults.color = '#5f6b7a';
         Chart.defaults.borderColor = '#dce1e8';
     }
-    Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+    Chart.defaults.font.family = "'Source Sans 3', 'Segoe UI', sans-serif";
 }
 
 applyChartDefaults('light');
@@ -436,16 +437,87 @@ const api = {
 };
 
 function showLogin() {
+    loginModalLastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     resetProtectedViews();
     syncRoleBasedNavigationAccess();
     document.getElementById('loginModal').classList.add('active');
-    document.body.style.overflow = 'hidden';
+    document.body.classList.add('modal-open');
+    focusLoginModalEntryField();
 }
 
 function hideLogin() {
     document.getElementById('loginModal').classList.remove('active');
-    document.body.style.overflow = '';
+    document.body.classList.remove('modal-open');
     document.getElementById('loginError').textContent = '';
+    if (loginModalLastFocusedElement && document.contains(loginModalLastFocusedElement)) {
+        loginModalLastFocusedElement.focus();
+    }
+    loginModalLastFocusedElement = null;
+}
+
+function isLoginModalActive() {
+    return document.getElementById('loginModal')?.classList.contains('active') === true;
+}
+
+function getLoginModalFocusableElements() {
+    const modal = document.getElementById('loginModal');
+    if (!modal) return [];
+    const selectors = [
+        'button:not([disabled])',
+        'input:not([type="hidden"]):not([disabled])',
+        'select:not([disabled])',
+        'textarea:not([disabled])',
+        '[href]',
+        '[tabindex]:not([tabindex="-1"])',
+    ];
+    return Array.from(modal.querySelectorAll(selectors.join(','))).filter((element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        return !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true';
+    });
+}
+
+function focusLoginModalEntryField() {
+    const usernameField = document.getElementById('loginUsername');
+    if (usernameField instanceof HTMLElement) {
+        usernameField.focus();
+        return;
+    }
+    const focusables = getLoginModalFocusableElements();
+    if (focusables.length > 0) {
+        focusables[0].focus();
+    }
+}
+
+function handleLoginModalKeydown(event) {
+    if (!isLoginModalActive()) return false;
+
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        hideLogin();
+        return true;
+    }
+
+    if (event.key !== 'Tab') return false;
+
+    const focusables = getLoginModalFocusableElements();
+    if (focusables.length === 0) return false;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+
+    if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+        return true;
+    }
+
+    if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+        return true;
+    }
+
+    return false;
 }
 
 function resetProtectedViews() {
@@ -701,9 +773,9 @@ async function selectAndUploadIncidentPhoto(incidentId, installationId) {
     }
 
     const picker = document.createElement('input');
+    picker.className = 'hidden-file-picker';
     picker.type = 'file';
     picker.accept = 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp';
-    picker.style.display = 'none';
     document.body.appendChild(picker);
 
     picker.addEventListener('change', async () => {
@@ -732,15 +804,11 @@ function updateStats(stats) {
 
 function animateNumber(elementId, value) {
     const element = document.getElementById(elementId);
-    element.style.opacity = '0';
-    element.style.transform = 'translateY(10px)';
-    
-    setTimeout(() => {
-        element.textContent = value;
-        element.style.transition = 'all 0.3s ease';
-        element.style.opacity = '1';
-        element.style.transform = 'translateY(0)';
-    }, 100);
+    if (!element) return;
+    element.classList.remove('number-animate');
+    element.textContent = value;
+    void element.offsetWidth;
+    element.classList.add('number-animate');
 }
 
 // Chart rendering functions
@@ -1072,7 +1140,7 @@ function updateFilterChips() {
     chipsContainer.replaceChildren();
     let hasFilters = Object.keys(filters).length > 0;
     
-    clearBtn.style.display = hasFilters ? 'inline-flex' : 'none';
+    clearBtn?.classList.toggle('is-hidden', !hasFilters);
     
     const appendChip = (label, value, filterType) => {
         const chip = document.createElement('span');
@@ -1252,191 +1320,158 @@ function escapeHtml(value) {
 function toExcelCell(value) {
     return escapeHtml(sanitizeSpreadsheetCell(value)).replace(/\n/g, '<br>');
 }
+
+function extractInstallationRecordNote(rawNotes) {
+    const text = String(rawNotes || '').trim();
+    if (!text) return '';
+    const marker = '\n[INCIDENT]';
+    const markerIndex = text.indexOf(marker);
+    return markerIndex >= 0 ? text.slice(0, markerIndex).trim() : text;
+}
+
+function formatInstallationRecordNotePreview(rawNotes, maxLength = 80) {
+    const note = extractInstallationRecordNote(rawNotes);
+    if (!note) return '-';
+    if (note.length <= maxLength) return note;
+    return `${note.slice(0, maxLength)}...`;
+}
+
 function exportToCSV(data, filename = 'registros.csv') {
     if (!data || !data.length) {
-        showNotification('❌ No hay datos para exportar', 'error');
+        showNotification('No hay datos para exportar', 'error');
         return;
     }
-    
-    // CSV Headers
-    const headers = ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo', 'Notas', 'Fecha'];
-    
-    // Convert data to CSV rows
+
+    const headers = ['ID', 'Cliente', 'Marca', 'Atencion', 'Tiempo', 'Notas', 'Fecha'];
+
     const rows = data.map(inst => [
         inst.id,
         inst.client_name || 'N/A',
         inst.driver_brand || 'N/A',
-        inst.driver_version || 'N/A',
-        inst.status || 'unknown',
+        buildRecordAttentionBadge(inst).text,
         formatDuration(inst.installation_time_seconds || 0),
-        inst.notes || '',
+        extractInstallationRecordNote(inst.notes),
         inst.timestamp
     ]);
-    
-    // Combine headers and rows
+
     const csvContent = [
         headers.map(toCsvCell).join(','),
         ...rows.map(row => row.map(toCsvCell).join(','))
     ].join('\n');
-    
-    // Create and download file
+
     const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
+    link.className = 'download-link-hidden';
     const url = URL.createObjectURL(blob);
-    
+
     link.setAttribute('href', url);
     link.setAttribute('download', filename);
-    link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
-    showNotification(`✅ Exportado: ${filename}`, 'success');
+
+    showNotification(`Exportado: ${filename}`, 'success');
 }
 
 function exportToExcel(data, filename = 'registros.xls') {
     if (!data || !data.length) {
-        showNotification('❌ No hay datos para exportar', 'error');
+        showNotification('No hay datos para exportar', 'error');
         return;
     }
-    
-    // Create HTML table for Excel
+
     let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
     html += '<head><meta charset="UTF-8"><style>th { background-color: #06b6d4; color: white; font-weight: bold; }</style></head>';
     html += '<body><table border="1">';
-    
-    // Headers
+
     html += '<tr>';
-    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Tiempo', 'Notas', 'Fecha'].forEach(header => {
+    ['ID', 'Cliente', 'Marca', 'Atencion', 'Tiempo', 'Notas', 'Fecha'].forEach(header => {
         html += `<th>${escapeHtml(header)}</th>`;
     });
     html += '</tr>';
-    
-    // Data rows
+
     data.forEach(inst => {
         html += '<tr>';
         html += `<td>${toExcelCell(inst.id)}</td>`;
         html += `<td>${toExcelCell(inst.client_name || 'N/A')}</td>`;
         html += `<td>${toExcelCell(inst.driver_brand || 'N/A')}</td>`;
-        html += `<td>${toExcelCell(inst.driver_version || 'N/A')}</td>`;
-        html += `<td>${toExcelCell(inst.status || 'unknown')}</td>`;
+        html += `<td>${toExcelCell(buildRecordAttentionBadge(inst).text)}</td>`;
         html += `<td>${toExcelCell(formatDuration(inst.installation_time_seconds || 0))}</td>`;
-        html += `<td>${toExcelCell((inst.notes || '').substring(0, 100))}</td>`;
+        html += `<td>${toExcelCell(extractInstallationRecordNote(inst.notes).substring(0, 120))}</td>`;
         html += `<td>${toExcelCell(inst.timestamp)}</td>`;
         html += '</tr>';
     });
-    
+
     html += '</table></body></html>';
-    
-    // Create and download file
+
     const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
     const link = document.createElement('a');
+    link.className = 'download-link-hidden';
     const url = URL.createObjectURL(blob);
-    
+
     link.setAttribute('href', url);
     link.setAttribute('download', filename);
-    link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
-    showNotification(`✅ Exportado: ${filename}`, 'success');
+
+    showNotification(`Exportado: ${filename}`, 'success');
 }
 
 function setupExportButtons() {
     const exportBtn = document.getElementById('exportBtn');
-    if (exportBtn) {
-        // Replace single export button with dropdown
-        const filterActions = document.querySelector('.filter-actions');
-        
-        // Create export dropdown
-        const exportDropdown = document.createElement('div');
-        exportDropdown.className = 'export-dropdown';
-        exportDropdown.style.cssText = 'position: relative; display: inline-block;';
-        
-        exportDropdown.innerHTML = `
-            <button id="exportBtn" class="btn-secondary">📥 Exportar ▼</button>
-            <div class="export-menu" style="
-                display: none;
-                position: absolute;
-                right: 0;
-                top: 100%;
-                margin-top: 0.5rem;
-                background: var(--bg-secondary);
-                border: 1px solid var(--border);
-                border-radius: var(--radius-sm);
-                box-shadow: var(--shadow-lg);
-                z-index: 100;
-                min-width: 160px;
-            ">
-                <button class="export-option" data-format="csv" style="
-                    display: flex;
-                    align-items: center;
-                    gap: 0.5rem;
-                    width: 100%;
-                    padding: 0.75rem 1rem;
-                    background: none;
-                    border: none;
-                    color: var(--text-primary);
-                    cursor: pointer;
-                    font-size: 0.875rem;
-                    text-align: left;
-                ">📄 Exportar CSV</button>
-                <button class="export-option" data-format="excel" style="
-                    display: flex;
-                    align-items: center;
-                    gap: 0.5rem;
-                    width: 100%;
-                    padding: 0.75rem 1rem;
-                    background: none;
-                    border: none;
-                    color: var(--text-primary);
-                    cursor: pointer;
-                    font-size: 0.875rem;
-                    text-align: left;
-                    border-top: 1px solid var(--border);
-                ">📊 Exportar Excel</button>
-            </div>
-        `;
-        
-        // Replace old button
-        exportBtn.replaceWith(exportDropdown);
-        
-        // Toggle menu
-        const btn = exportDropdown.querySelector('#exportBtn');
-        const menu = exportDropdown.querySelector('.export-menu');
-        
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    if (!exportBtn) return;
+    if (exportBtn.closest('.export-dropdown')) return;
+
+    const exportDropdown = document.createElement('div');
+    exportDropdown.className = 'export-dropdown';
+    exportDropdown.innerHTML = `
+        <button id="exportBtn" class="btn-secondary export-toggle" type="button" aria-expanded="false">
+            <span class="material-symbols-outlined icon-inline-sm">download</span> Exportar
+        </button>
+        <div class="export-menu" role="menu" aria-label="Opciones de exportacion">
+            <button class="export-option" type="button" data-format="csv" role="menuitem">Exportar CSV</button>
+            <button class="export-option" type="button" data-format="excel" role="menuitem">Exportar Excel</button>
+        </div>
+    `;
+
+    exportBtn.replaceWith(exportDropdown);
+
+    const btn = exportDropdown.querySelector('#exportBtn');
+    const menu = exportDropdown.querySelector('.export-menu');
+
+    const closeMenu = () => {
+        exportDropdown.classList.remove('is-open');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+    };
+
+    btn?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const nextOpen = !exportDropdown.classList.contains('is-open');
+        document.querySelectorAll('.export-dropdown.is-open').forEach((node) => {
+            node.classList.remove('is-open');
+            node.querySelector('.export-toggle')?.setAttribute('aria-expanded', 'false');
         });
-        
-        // Close on outside click
-        document.addEventListener('click', () => {
-            menu.style.display = 'none';
-        });
-        
-        // Export options
-        exportDropdown.querySelectorAll('.export-option').forEach(option => {
-            option.addEventListener('click', () => {
-                const format = option.dataset.format;
-                if (format === 'csv') {
-                    exportToCSV(currentInstallationsData);
-                } else if (format === 'excel') {
-                    exportToExcel(currentInstallationsData);
-                }
-                menu.style.display = 'none';
-            });
-            
-            // Hover effect
-            option.addEventListener('mouseenter', () => {
-                option.style.background = 'var(--bg-hover)';
-            });
-            option.addEventListener('mouseleave', () => {
-                option.style.background = 'none';
-            });
-        });
-    }
+        exportDropdown.classList.toggle('is-open', nextOpen);
+        btn.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+    });
+
+    document.addEventListener('click', (event) => {
+        if (exportDropdown.contains(event.target)) return;
+        closeMenu();
+    });
+
+    menu?.addEventListener('click', (event) => {
+        const option = event.target.closest('.export-option');
+        if (!option) return;
+
+        const format = option.dataset.format;
+        if (format === 'csv') {
+            exportToCSV(currentInstallationsData);
+        } else if (format === 'excel') {
+            exportToExcel(currentInstallationsData);
+        }
+        closeMenu();
+    });
 }
 
 
@@ -1636,7 +1671,7 @@ function renderInstallationsTable(installations) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'Versión', 'Estado', 'Atención', 'Tiempo', 'Notas', 'Fecha', 'QR'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'Atencion', 'Tiempo', 'Notas', 'Fecha', 'QR'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -1646,9 +1681,6 @@ function renderInstallationsTable(installations) {
     const tbody = document.createElement('tbody');
 
     installations.forEach(inst => {
-        const statusClass = inst.status || 'unknown';
-        const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
-
         const row = document.createElement('tr');
         row.dataset.id = String(inst.id ?? '');
 
@@ -1663,15 +1695,6 @@ function renderInstallationsTable(installations) {
         const brandCell = document.createElement('td');
         brandCell.textContent = inst.driver_brand || 'N/A';
 
-        const versionCell = document.createElement('td');
-        versionCell.textContent = inst.driver_version || 'N/A';
-
-        const statusCell = document.createElement('td');
-        const statusBadge = document.createElement('span');
-        statusBadge.className = `badge ${statusClass}`;
-        statusBadge.textContent = `${statusIcon} ${inst.status || 'unknown'}`;
-        statusCell.appendChild(statusBadge);
-
         const attentionCell = document.createElement('td');
         const attentionBadge = document.createElement('span');
         const attentionMeta = buildRecordAttentionBadge(inst);
@@ -1683,7 +1706,7 @@ function renderInstallationsTable(installations) {
         timeCell.textContent = formatDuration(inst.installation_time_seconds ?? 0);
 
         const notesCell = document.createElement('td');
-        notesCell.textContent = inst.notes ? `${inst.notes.substring(0, 30)}...` : '-';
+        notesCell.textContent = formatInstallationRecordNotePreview(inst.notes);
 
         const dateCell = document.createElement('td');
         dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
@@ -1700,13 +1723,13 @@ function renderInstallationsTable(installations) {
         });
         qrCell.appendChild(qrButton);
 
-        row.append(idCell, clientCell, brandCell, versionCell, statusCell, attentionCell, timeCell, notesCell, dateCell, qrCell);
+        row.append(idCell, clientCell, brandCell, attentionCell, timeCell, notesCell, dateCell, qrCell);
         tbody.appendChild(row);
     });
 
     table.append(thead, tbody);
     container.appendChild(table);
-    
+
     container.querySelectorAll('tr[data-id]').forEach(row => {
         row.addEventListener('click', () => {
             const id = row.dataset.id;
@@ -1997,7 +2020,7 @@ function renderDriversTable(drivers) {
         deleteBtn.type = 'button';
         deleteBtn.className = 'btn-secondary table-action-btn';
         deleteBtn.textContent = 'Eliminar';
-        deleteBtn.style.marginLeft = '0.35rem';
+        deleteBtn.classList.add('spaced-action-btn');
         deleteBtn.addEventListener('click', async (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -2147,7 +2170,7 @@ function renderAssetsTable(assets) {
         incidentBtn.type = 'button';
         incidentBtn.className = 'btn-secondary table-action-btn';
         incidentBtn.textContent = 'Incidencia';
-        incidentBtn.style.marginLeft = '0.35rem';
+        incidentBtn.classList.add('spaced-action-btn');
         incidentBtn.addEventListener('click', (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -2438,8 +2461,7 @@ async function renderAssetDetail(data) {
         header.append(left, created);
 
         const note = document.createElement('p');
-        note.style.color = 'var(--text-secondary)';
-        note.style.lineHeight = '1.6';
+        note.className = 'incident-note-text';
         note.textContent = incident.note || '';
 
         const statusMeta = document.createElement('small');
@@ -2505,7 +2527,7 @@ async function renderAssetDetail(data) {
         const uploadBtn = document.createElement('button');
         uploadBtn.className = 'btn-secondary';
         uploadBtn.textContent = 'Subir foto';
-        uploadBtn.style.marginTop = '0.5rem';
+        uploadBtn.classList.add('incident-upload-btn');
         uploadBtn.addEventListener('click', () => {
             void selectAndUploadIncidentPhoto(incident.id, incident.installation_id);
         });
@@ -2564,7 +2586,7 @@ async function renderIncidents(incidents, installationId) {
 
     const header = document.createElement('div');
     header.className = 'incidents-header';
-    header.style.marginBottom = '1.5rem';
+    header.classList.add('incidents-header');
 
     const heading = document.createElement('h3');
     heading.textContent = `⚠️ Incidencias de Registro #${installationId}`;
@@ -2584,8 +2606,7 @@ async function renderIncidents(incidents, installationId) {
     });
 
     const actions = document.createElement('div');
-    actions.style.display = 'flex';
-    actions.style.gap = '0.5rem';
+    actions.className = 'incidents-header-actions';
     actions.append(createIncidentBtn, backButton);
 
     header.append(heading, actions);
@@ -2625,8 +2646,7 @@ async function renderIncidents(incidents, installationId) {
         incidentHeader.append(leftMeta, createdAt);
 
         const note = document.createElement('p');
-        note.style.color = 'var(--text-secondary)';
-        note.style.lineHeight = '1.6';
+        note.className = 'incident-note-text';
         note.textContent = inc.note || '';
 
         const statusMeta = document.createElement('small');
@@ -2685,7 +2705,7 @@ async function renderIncidents(incidents, installationId) {
         const uploadPhotoBtn = document.createElement('button');
         uploadPhotoBtn.className = 'btn-secondary';
         uploadPhotoBtn.textContent = '📤 Subir foto';
-        uploadPhotoBtn.style.marginTop = '0.5rem';
+        uploadPhotoBtn.classList.add('incident-upload-btn');
         uploadPhotoBtn.addEventListener('click', () => {
             void selectAndUploadIncidentPhoto(inc.id, installationId);
         });
@@ -3246,8 +3266,7 @@ async function copyQrPayloadToClipboard() {
             const area = document.createElement('textarea');
             area.value = currentQrPayload;
             area.setAttribute('readonly', 'readonly');
-            area.style.position = 'fixed';
-            area.style.left = '-9999px';
+            area.className = 'offscreen-copy-area';
             document.body.appendChild(area);
             area.select();
             document.execCommand('copy');
@@ -3434,12 +3453,7 @@ async function printQrLabel() {
     try {
         const printFrame = document.createElement('iframe');
         printFrame.setAttribute('aria-hidden', 'true');
-        printFrame.style.position = 'fixed';
-        printFrame.style.right = '0';
-        printFrame.style.bottom = '0';
-        printFrame.style.width = '0';
-        printFrame.style.height = '0';
-        printFrame.style.border = '0';
+        printFrame.className = 'print-frame-hidden';
         printFrame.srcdoc = printHtml;
 
         const cleanup = () => {
@@ -3547,10 +3561,7 @@ function renderAuditLogs(logs) {
 
         const actionCell = document.createElement('td');
         const actionCode = document.createElement('code');
-        actionCode.style.background = 'var(--bg-card)';
-        actionCode.style.padding = '0.25rem 0.5rem';
-        actionCode.style.borderRadius = '4px';
-        actionCode.style.fontSize = '0.75rem';
+        actionCode.className = 'audit-action-code';
         actionCode.textContent = log.action || '-';
         actionCell.appendChild(actionCode);
 
@@ -3566,8 +3577,7 @@ function renderAuditLogs(logs) {
         statusCell.appendChild(badge);
 
         const detailsCell = document.createElement('td');
-        detailsCell.style.color = 'var(--text-secondary)';
-        detailsCell.style.fontSize = '0.875rem';
+        detailsCell.className = 'audit-details-cell';
         detailsCell.textContent = details;
 
         row.append(dateCell, actionCell, userCell, statusCell, detailsCell);
@@ -3622,13 +3632,10 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 document.getElementById('refreshBtn').addEventListener('click', () => {
     if (!requireActiveSession()) return;
     const btn = document.getElementById('refreshBtn');
-    btn.style.transform = 'rotate(360deg)';
-    btn.style.transition = 'transform 0.5s ease';
-    
+    btn.classList.add('btn-spin-once');
     setTimeout(() => {
-        btn.style.transform = '';
-        btn.style.transition = '';
-    }, 500);
+        btn.classList.remove('btn-spin-once');
+    }, 520);
     
     loadDashboard();
     showNotification('🔄 Dashboard actualizado', 'info');
@@ -3839,56 +3846,36 @@ document.getElementById('qrPasswordModal')?.addEventListener('click', (event) =>
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
+    if (handleLoginModalKeydown(e)) {
+        return;
+    }
+
     if (e.key === 'Escape') {
         document.getElementById('photoModal').classList.remove('active');
         closeQrPasswordModal();
         closeQrModal();
     }
-    if (e.ctrlKey && e.key === 'r') {
+    const normalizedKey = String(e.key || '').toLowerCase();
+    if (e.altKey && !e.ctrlKey && !e.metaKey && normalizedKey === 'r') {
         e.preventDefault();
-        loadDashboard();
+        void loadDashboard();
     }
 });
 
 // Notification system
 function showNotification(message, type = 'info') {
     const notification = document.createElement('div');
-    notification.style.cssText = `
-        position: fixed;
-        top: 1rem;
-        right: 1rem;
-        padding: 1rem 1.5rem;
-        background: ${type === 'success' ? 'rgba(16, 185, 129, 0.9)' : type === 'error' ? 'rgba(239, 68, 68, 0.9)' : 'rgba(6, 182, 212, 0.9)'};
-        color: white;
-        border-radius: 12px;
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
-        z-index: 9999;
-        font-weight: 500;
-        animation: slideIn 0.3s ease;
-    `;
+    const normalizedType = ['success', 'error', 'warning', 'info'].includes(type) ? type : 'info';
+    notification.className = `toast-notification toast-${normalizedType}`;
     notification.textContent = message;
-    
+
     document.body.appendChild(notification);
-    
+
     setTimeout(() => {
-        notification.style.animation = 'slideOut 0.3s ease';
-        setTimeout(() => notification.remove(), 300);
+        notification.classList.add('is-leaving');
+        setTimeout(() => notification.remove(), 320);
     }, 3000);
 }
-
-// Add animation styles
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideIn {
-        from { transform: translateX(100%); opacity: 0; }
-        to { transform: translateX(0); opacity: 1; }
-    }
-    @keyframes slideOut {
-        from { transform: translateX(0); opacity: 1; }
-        to { transform: translateX(100%); opacity: 0; }
-    }
-`;
-document.head.appendChild(style);
 
 // WebSocket/SSE Functions
 function getActiveSectionName() {
@@ -4152,16 +4139,9 @@ function applyConnectionStatusVisualState(indicator) {
     const dimmed = indicator.dataset.dimmed === '1';
     const canReconnect = indicator.dataset.canReconnect === '1';
 
-    if (hiddenByScroll) {
-        indicator.style.opacity = '0';
-        indicator.style.transform = 'translateY(-12px) scale(0.96)';
-        indicator.style.pointerEvents = 'none';
-        return;
-    }
-
-    indicator.style.opacity = dimmed ? '0.6' : '1';
-    indicator.style.transform = dimmed ? 'scale(0.9)' : 'scale(1)';
-    indicator.style.pointerEvents = canReconnect ? 'auto' : 'none';
+    indicator.classList.toggle('is-hidden-by-scroll', hiddenByScroll);
+    indicator.classList.toggle('is-dimmed', !hiddenByScroll && dimmed);
+    indicator.classList.toggle('is-reconnectable', !hiddenByScroll && canReconnect);
 }
 
 function ensureConnectionStatusMobileBindings() {
@@ -4219,16 +4199,17 @@ function updateConnectionStatus(status) {
     connectionStatusLastRendered = { status, at: now };
 
     const statusConfig = {
-        connected: { icon: '🟢', text: 'En vivo', color: 'rgba(16, 185, 129, 0.9)' },
-        disconnected: { icon: '🔴', text: 'Desconectado', color: 'rgba(239, 68, 68, 0.9)' },
-        reconnecting: { icon: '🟡', text: 'Reconectando...', color: 'rgba(245, 158, 11, 0.9)' },
-        paused: { icon: '⏸️', text: 'En pausa', color: 'rgba(100, 116, 139, 0.9)' },
-        failed: { icon: '⚫', text: 'Error de conexión', color: 'rgba(148, 163, 184, 0.9)' }
+        connected: { icon: '??', text: 'En vivo' },
+        disconnected: { icon: '??', text: 'Desconectado' },
+        reconnecting: { icon: '??', text: 'Reconectando...' },
+        paused: { icon: '??', text: 'En pausa' },
+        failed: { icon: '?', text: 'Error de conexion' }
     };
 
-    const config = statusConfig[status] || statusConfig.disconnected;
+    const normalizedStatus = statusConfig[status] ? status : 'disconnected';
+    const config = statusConfig[normalizedStatus];
     const isMobileViewport = isMobileDashboardViewport();
-    const canManualReconnect = status === 'disconnected' || status === 'failed' || status === 'paused';
+    const canManualReconnect = normalizedStatus === 'disconnected' || normalizedStatus === 'failed' || normalizedStatus === 'paused';
     const compactMobileText = {
         connected: 'En vivo',
         disconnected: 'Sin red',
@@ -4237,35 +4218,15 @@ function updateConnectionStatus(status) {
         failed: 'Sin conexion'
     };
     const displayText = isMobileViewport
-        ? (compactMobileText[status] || config.text)
+        ? (compactMobileText[normalizedStatus] || config.text)
         : config.text;
-    const showStatusIcon = !(isMobileViewport && status === 'reconnecting');
+    const showStatusIcon = !(isMobileViewport && normalizedStatus === 'reconnecting');
 
     const indicator = existingIndicator || document.createElement('div');
     indicator.id = 'connectionStatus';
-    indicator.style.cssText = `
-        position: fixed;
-        ${isMobileViewport ? 'top: calc(env(safe-area-inset-top, 0px) + 0.625rem);' : 'bottom: 1rem;'}
-        right: 0.625rem;
-        ${isMobileViewport ? 'bottom: auto;' : ''}
-        padding: ${isMobileViewport ? '0.375rem 0.625rem' : '0.5rem 1rem'};
-        background: ${config.color};
-        color: white;
-        border-radius: 9999px;
-        font-size: ${isMobileViewport ? '0.6875rem' : '0.75rem'};
-        font-weight: 600;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        z-index: ${isMobileViewport ? '950' : '9998'};
-        max-width: ${isMobileViewport ? '55vw' : 'none'};
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
-        transition: opacity 0.25s ease, transform 0.25s ease, background-color 0.25s ease;
-        cursor: ${canManualReconnect ? 'pointer' : 'default'};
-    `;
+    indicator.className = 'connection-status-indicator';
+    indicator.classList.toggle('is-mobile', isMobileViewport);
+    indicator.classList.add(`status-${normalizedStatus}`);
     indicator.innerHTML = showStatusIcon
         ? `<span aria-hidden="true">${config.icon}</span><span>${displayText}</span>`
         : `<span>${displayText}</span>`;
@@ -4279,7 +4240,7 @@ function updateConnectionStatus(status) {
 
     if (canManualReconnect) {
         indicator.onclick = () => {
-            showNotification('🔄 Intentando reconectar...', 'info');
+            showNotification('Intentando reconectar...', 'info');
             sseReconnectAttempts = 0;
             syncSSEForCurrentContext(true);
         };
@@ -4298,7 +4259,7 @@ function updateConnectionStatus(status) {
         connectionStatusScrollHideTimer = null;
     }
     if (isMobileViewport && !canManualReconnect) {
-        const hideDelayMs = status === 'connected' ? 2600 : 4200;
+        const hideDelayMs = normalizedStatus === 'connected' ? 2600 : 4200;
         connectionStatusScrollHideTimer = setTimeout(() => {
             const liveIndicator = document.getElementById('connectionStatus');
             if (!liveIndicator) return;
@@ -4308,7 +4269,7 @@ function updateConnectionStatus(status) {
         }, hideDelayMs);
     }
 
-    if (status === 'connected') {
+    if (normalizedStatus === 'connected') {
         const renderStamp = connectionStatusLastRendered.at;
         setTimeout(() => {
             const liveIndicator = document.getElementById('connectionStatus');

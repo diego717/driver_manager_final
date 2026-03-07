@@ -12,19 +12,28 @@
         "type": "text/javascript",
         "exec": [
           "const ts = Math.floor(Date.now() / 1000).toString();",
+          "const nonce = `${ts}:${CryptoJS.lib.WordArray.random(16).toString(CryptoJS.enc.Hex)}`;",
+          "const emptyBodyHash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';",
+          "const method = pm.request.method.toUpperCase();",
+          "const path = '/' + pm.request.url.path.join('/');",
+          "let bodyHash = emptyBodyHash;",
+          "if (pm.request.body && pm.request.body.mode === 'raw') {",
+          "  const rawBody = pm.request.body.raw || '';",
+          "  bodyHash = CryptoJS.SHA256(rawBody).toString(CryptoJS.enc.Hex);",
+          "} else if (pm.request.body && pm.request.body.mode === 'file') {",
+          "  const providedBodyHash = (pm.environment.get('request_body_sha256') || '').trim().toLowerCase();",
+          "  if (/^[a-f0-9]{64}$/.test(providedBodyHash)) {",
+          "    bodyHash = providedBodyHash;",
+          "  }",
+          "}",
           "pm.environment.set('request_timestamp', ts);",
+          "pm.environment.set('request_nonce', nonce);",
+          "pm.environment.set('request_body_sha256', bodyHash);",
           "const secret = pm.environment.get('api_secret');",
           "if (!secret) {",
           "  pm.environment.set('request_signature', 'dev-signature');",
           "} else {",
-          "  const method = pm.request.method.toUpperCase();",
-          "  const path = '/' + pm.request.url.path.join('/');",
-          "  let rawBody = '';",
-          "  if (pm.request.body && pm.request.body.mode === 'raw') {",
-          "    rawBody = pm.request.body.raw || '';",
-          "  }",
-          "  const bodyHash = CryptoJS.SHA256(rawBody).toString(CryptoJS.enc.Hex);",
-          "  const canonical = `${method}|${path}|${ts}|${bodyHash}`;",
+          "  const canonical = `${method}|${path}|${ts}|${bodyHash}|${nonce}`;",
           "  const signature = CryptoJS.HmacSHA256(canonical, secret).toString(CryptoJS.enc.Hex);",
           "  pm.environment.set('request_signature', signature);",
           "}"
@@ -52,6 +61,14 @@
               {
                 "key": "X-Request-Timestamp",
                 "value": "{{request_timestamp}}"
+              },
+              {
+                "key": "X-Request-Nonce",
+                "value": "{{request_nonce}}"
+              },
+              {
+                "key": "X-Body-SHA256",
+                "value": "{{request_body_sha256}}"
               },
               {
                 "key": "X-Request-Signature",
@@ -104,6 +121,14 @@
               {
                 "key": "X-Request-Timestamp",
                 "value": "{{request_timestamp}}"
+              },
+              {
+                "key": "X-Request-Nonce",
+                "value": "{{request_nonce}}"
+              },
+              {
+                "key": "X-Body-SHA256",
+                "value": "{{request_body_sha256}}"
               },
               {
                 "key": "X-Request-Signature",
@@ -162,6 +187,14 @@
               {
                 "key": "X-Request-Timestamp",
                 "value": "{{request_timestamp}}"
+              },
+              {
+                "key": "X-Request-Nonce",
+                "value": "{{request_nonce}}"
+              },
+              {
+                "key": "X-Body-SHA256",
+                "value": "{{request_body_sha256}}"
               },
               {
                 "key": "X-Request-Signature",
@@ -228,6 +261,14 @@
     {
       "key": "request_timestamp",
       "value": ""
+    },
+    {
+      "key": "request_nonce",
+      "value": ""
+    },
+    {
+      "key": "request_body_sha256",
+      "value": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "key": "request_signature",

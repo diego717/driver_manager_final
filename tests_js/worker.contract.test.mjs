@@ -8,6 +8,7 @@ import { createAssetsBinding } from "./helpers/assets.mock.mjs";
 
 const DEFAULT_API_TOKEN = "token-123";
 const DEFAULT_API_SECRET = "secret-abc";
+let nonceCounter = 0;
 
 async function workerFetch(request, env = {}) {
   const mergedEnv = {
@@ -32,18 +33,21 @@ async function workerFetch(request, env = {}) {
     const bodyBuffer = Buffer.from(await request.clone().arrayBuffer());
     const bodyHash = sha256Hex(bodyBuffer || Buffer.alloc(0));
     const timestamp = Math.floor(Date.now() / 1000).toString();
+    const nonce = `auto-${Date.now()}-${++nonceCounter}`;
     const signature = signRequest({
       method: request.method,
       path: url.pathname,
       timestamp,
       bodyBuffer,
       secret: mergedEnv.API_SECRET,
+      nonce,
     });
 
     const headers = new Headers(request.headers);
     headers.set("X-API-Token", mergedEnv.API_TOKEN);
     headers.set("X-Request-Timestamp", timestamp);
     headers.set("X-Request-Signature", signature);
+    headers.set("X-Request-Nonce", nonce);
     headers.set("X-Body-SHA256", bodyHash);
 
     signedRequest = new Request(request.url, {
@@ -64,9 +68,9 @@ function sha256Hex(buffer) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
-function signRequest({ method, path, timestamp, bodyBuffer, secret }) {
+function signRequest({ method, path, timestamp, bodyBuffer, secret, nonce = "nonce-test-000000000001" }) {
   const bodyHash = sha256Hex(bodyBuffer || Buffer.alloc(0));
-  const canonical = `${method.toUpperCase()}|${path}|${timestamp}|${bodyHash}`;
+  const canonical = `${method.toUpperCase()}|${path}|${timestamp}|${bodyHash}|${nonce}`;
   return crypto.createHmac("sha256", secret).update(canonical).digest("hex");
 }
 
@@ -1313,6 +1317,7 @@ test("OPTIONS returns CORS headers only for allowed origins", async () => {
   assert.match(response.headers.get("Access-Control-Allow-Methods"), /OPTIONS/);
   assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-API-Token/);
   assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-Request-Signature/);
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-Request-Nonce/);
   assert.match(response.headers.get("Access-Control-Allow-Headers"), /X-Body-SHA256/);
   assert.match(response.headers.get("Access-Control-Allow-Headers"), /Content-Type/);
 });
@@ -1343,14 +1348,27 @@ test("OPTIONS does not implicitly allow worker request origin", async () => {
   assert.equal(response.headers.get("Access-Control-Allow-Origin"), null);
 });
 
-test("OPTIONS allows localhost dev origins in preflight", async () => {
+test("OPTIONS rejects localhost origins in preflight by default", async () => {
   const request = new Request("https://worker.example/web/auth/login", {
     method: "OPTIONS",
     headers: {
       Origin: "http://localhost:19006",
     },
   });
-  const response = await workerFetch(request, { ALLOW_LOCALHOST_ORIGINS: "false" });
+  const response = await workerFetch(request, {});
+
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), null);
+});
+
+test("OPTIONS allows localhost origins in preflight when explicitly enabled", async () => {
+  const request = new Request("https://worker.example/web/auth/login", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "http://localhost:19006",
+    },
+  });
+  const response = await workerFetch(request, { ALLOW_LOCALHOST_CORS: "true" });
 
   assert.equal(response.status, 204);
   assert.equal(response.headers.get("Access-Control-Allow-Origin"), "http://localhost:19006");
@@ -1393,6 +1411,7 @@ test("Dashboard assets include hardened security headers", async () => {
   const routes = [
     "https://worker.example/web/dashboard",
     "https://worker.example/web/dashboard.css",
+    "https://worker.example/web/chart.umd.js",
     "https://worker.example/web/dashboard.js",
     "https://worker.example/web/dashboard-pwa.js",
     "https://worker.example/web/manifest.json",
@@ -1407,11 +1426,15 @@ test("Dashboard assets include hardened security headers", async () => {
     assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
 
     const csp = response.headers.get("Content-Security-Policy") || "";
-    assert.match(csp, /script-src 'self' https:\/\/cdn\.jsdelivr\.net/);
+    assert.match(csp, /script-src 'self'/);
     assert.match(csp, /style-src 'self'/);
     assert.match(csp, /frame-ancestors 'none'/);
 
-    if (url.endsWith("/web/dashboard.css") || url.endsWith("/web/dashboard.js")) {
+    if (
+      url.endsWith("/web/dashboard.css") ||
+      url.endsWith("/web/chart.umd.js") ||
+      url.endsWith("/web/dashboard.js")
+    ) {
       const bodyText = await response.text();
       assert.ok(bodyText.length > 0, `Expected non-empty content for ${url}`);
     }
@@ -2199,12 +2222,14 @@ test("POST /incidents/:id/photos requires X-Body-SHA256 for legacy HMAC auth", a
   const payload = new Uint8Array(1500);
   payload.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
   const timestamp = Math.floor(Date.now() / 1000).toString();
+  const nonce = "nonce-test-photos-required";
   const signature = signRequest({
     method: "POST",
     path: "/incidents/11/photos",
     timestamp,
     bodyBuffer: Buffer.from(payload),
     secret: DEFAULT_API_SECRET,
+    nonce,
   });
 
   const request = new Request("https://worker.example/incidents/11/photos", {
@@ -2215,6 +2240,7 @@ test("POST /incidents/:id/photos requires X-Body-SHA256 for legacy HMAC auth", a
       "X-API-Token": DEFAULT_API_TOKEN,
       "X-Request-Timestamp": timestamp,
       "X-Request-Signature": signature,
+      "X-Request-Nonce": nonce,
     },
     body: payload,
   });
@@ -2247,8 +2273,9 @@ test("POST /incidents/:id/photos rejects legacy request when signed body hash do
   const payload = new Uint8Array(1500);
   payload.set([0xff, 0xd8, 0xff], 0);
   const timestamp = Math.floor(Date.now() / 1000).toString();
+  const nonce = "nonce-test-photos-mismatch";
   const forgedBodyHash = "0".repeat(64);
-  const canonical = `POST|/incidents/11/photos|${timestamp}|${forgedBodyHash}`;
+  const canonical = `POST|/incidents/11/photos|${timestamp}|${forgedBodyHash}|${nonce}`;
   const signature = crypto
     .createHmac("sha256", DEFAULT_API_SECRET)
     .update(canonical)
@@ -2261,6 +2288,7 @@ test("POST /incidents/:id/photos rejects legacy request when signed body hash do
       "X-API-Token": DEFAULT_API_TOKEN,
       "X-Request-Timestamp": timestamp,
       "X-Request-Signature": signature,
+      "X-Request-Nonce": nonce,
       "X-Body-SHA256": forgedBodyHash,
     },
     body: payload,
@@ -2947,6 +2975,7 @@ test("returns 401 when auth token is invalid", async () => {
       "X-API-Token": "wrong-token",
       "X-Request-Timestamp": timestamp,
       "X-Request-Signature": signature,
+      "X-Request-Nonce": "nonce-test-invalid-token",
     },
   });
 
@@ -2979,6 +3008,7 @@ test("returns 401 when auth timestamp is outside allowed window", async () => {
       "X-API-Token": "token-123",
       "X-Request-Timestamp": timestamp,
       "X-Request-Signature": signature,
+      "X-Request-Nonce": "nonce-test-old-timestamp",
     },
   });
 
@@ -3003,6 +3033,7 @@ test("returns 401 when auth signature is invalid", async () => {
       "X-API-Token": "token-123",
       "X-Request-Timestamp": timestamp,
       "X-Request-Signature": "not-a-valid-signature",
+      "X-Request-Nonce": "nonce-test-invalid-signature",
     },
   });
 
@@ -3016,6 +3047,61 @@ test("returns 401 when auth signature is invalid", async () => {
   assert.equal(response.status, 401);
   assert.equal(body.success, false);
   assert.match(body.error.message, /firma/i);
+});
+
+test("returns 401 when signed HMAC request reuses the same nonce", async () => {
+  const db = createMockDB({
+    installations: [{ id: 1, driver_brand: "Zebra", status: "success" }],
+  });
+  const nonceStore = createMockKV();
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const nonce = "nonce-replay-test-000001";
+  const signature = signRequest({
+    method: "GET",
+    path: "/installations",
+    timestamp,
+    bodyBuffer: Buffer.alloc(0),
+    secret: "secret-abc",
+    nonce,
+  });
+  const headers = {
+    "X-API-Token": "token-123",
+    "X-Request-Timestamp": timestamp,
+    "X-Request-Signature": signature,
+    "X-Request-Nonce": nonce,
+  };
+
+  const firstResponse = await workerFetch(
+    new Request("https://worker.example/installations", {
+      method: "GET",
+      headers,
+    }),
+    {
+      DB: db,
+      API_TOKEN: "token-123",
+      API_SECRET: "secret-abc",
+      RATE_LIMIT_KV: nonceStore,
+    },
+  );
+  assert.equal(firstResponse.status, 200);
+
+  const replayResponse = await workerFetch(
+    new Request("https://worker.example/installations", {
+      method: "GET",
+      headers,
+    }),
+    {
+      DB: db,
+      API_TOKEN: "token-123",
+      API_SECRET: "secret-abc",
+      RATE_LIMIT_KV: nonceStore,
+    },
+  );
+  const replayBody = await replayResponse.json();
+
+  assert.equal(replayResponse.status, 401);
+  assert.equal(replayBody.success, false);
+  assert.match(replayBody.error.message, /nonce/i);
 });
 
 test("GET /health returns OK without DB/auth", async () => {
@@ -3102,6 +3188,82 @@ test("POST /web/auth/login issues access token for web routes", async () => {
       attention_state: "clear",
     },
   ]);
+});
+
+test("viewer role cannot mutate records on /web routes", async () => {
+  const db = createMockDB();
+  const env = {
+    DB: db,
+    API_TOKEN: "token-123",
+    API_SECRET: "secret-abc",
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_root",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+  const bootstrapBody = await bootstrapResponse.json();
+
+  const createViewerResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bootstrapBody.access_token}`,
+      },
+      body: JSON.stringify({
+        username: "viewer_1",
+        password: "StrongPass#2027",
+        role: "viewer",
+      }),
+    }),
+    env,
+  );
+  assert.equal(createViewerResponse.status, 201);
+
+  const loginViewerResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: "viewer_1",
+        password: "StrongPass#2027",
+      }),
+    }),
+    env,
+  );
+  assert.equal(loginViewerResponse.status, 200);
+  const loginViewerBody = await loginViewerResponse.json();
+
+  const createRecordResponse = await workerFetch(
+    new Request("https://worker.example/web/records", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${loginViewerBody.access_token}`,
+      },
+      body: JSON.stringify({
+        notes: "viewer should not create records",
+      }),
+    }),
+    env,
+  );
+  const createRecordBody = await createRecordResponse.json();
+
+  assert.equal(createRecordResponse.status, 403);
+  assert.equal(createRecordBody.success, false);
+  assert.match(createRecordBody.error.message, /permisos/i);
 });
 
 test("web JSON responses include no-store headers", async () => {
@@ -4364,6 +4526,7 @@ test("accepts signed requests when auth secrets are configured", async () => {
       "X-API-Token": "token-123",
       "X-Request-Timestamp": timestamp,
       "X-Request-Signature": signature,
+      "X-Request-Nonce": "nonce-test-000000000001",
     },
   });
 
@@ -4411,6 +4574,7 @@ test("rejects signed auth for mobile platform header", async () => {
       "X-API-Token": "token-123",
       "X-Request-Timestamp": timestamp,
       "X-Request-Signature": signature,
+      "X-Request-Nonce": "nonce-test-000000000001",
       "X-Client-Platform": "mobile",
     },
   });

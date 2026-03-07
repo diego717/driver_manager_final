@@ -4,7 +4,11 @@ const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const MIN_PHOTO_BYTES = 1024;
 const ALLOWED_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const AUTH_WINDOW_SECONDS = 300;
+const AUTH_NONCE_TTL_SECONDS = AUTH_WINDOW_SECONDS + 60;
+const AUTH_NONCE_MAX_LENGTH = 128;
+const AUTH_NONCE_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
 const MAX_AUTH_INMEM_BODY_HASH_BYTES = 256 * 1024;
+const MAX_AUTH_INMEM_NONCE_TRACKED = 5000;
 const EMPTY_BODY_SHA256_HEX = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const WEB_ACCESS_TTL_SECONDS = 8 * 60 * 60;
 const WEB_SESSION_COOKIE_NAME = "__Host-web_session";
@@ -15,6 +19,7 @@ const WEB_PASSWORD_VERIFY_RATE_LIMIT_MAX_ATTEMPTS = 8;
 const WEB_PASSWORD_VERIFY_RATE_LIMIT_LOCKOUT_SECONDS = 10 * 60;
 const MAX_WEB_AUTH_DEFAULT_BODY_BYTES = 64 * 1024;
 const MAX_WEB_AUTH_IMPORT_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_JSON_BODY_DEFAULT_BYTES = 64 * 1024;
 const WEB_PASSWORD_MIN_LENGTH = 12;
 const WEB_PASSWORD_SPECIAL_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?";
 const WEB_PASSWORD_PBKDF2_ITERATIONS = 100000;
@@ -37,6 +42,7 @@ const WEB_ALLOWED_HASH_TYPES = new Set([
 
 let fcmAccessTokenCache = null;
 let fcmAccessTokenRefreshState = null;
+const authNonceMemoryStore = new Map();
 const SSE_POLL_INTERVAL_MS = 10000;
 const SSE_KEEP_ALIVE_INTERVAL_MS = 30000;
 const SSE_MAX_CONNECTION_MS = 2 * 60 * 1000;
@@ -121,6 +127,24 @@ function isLocalhostOrigin(origin) {
   }
 }
 
+function parseBooleanEnvFlag(value, fallback = false) {
+  if (value === null || value === undefined || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  const normalized = normalizeOptionalString(value, "").toLowerCase();
+  if (!normalized) return fallback;
+  if (["1", "true", "yes", "on", "enabled"].includes(normalized)) return true;
+  if (["0", "false", "no", "off", "disabled"].includes(normalized)) return false;
+  return fallback;
+}
+
+function shouldAllowLocalhostCors(env) {
+  return (
+    parseBooleanEnvFlag(env?.ALLOW_LOCALHOST_CORS, false) ||
+    parseBooleanEnvFlag(env?.ALLOW_LOCALHOST_ORIGINS, false)
+  );
+}
+
 function getAllowedCorsOrigins(request, env) {
   void request;
   const allowed = new Set([...CONTROLLED_DASHBOARD_ORIGINS, ...CONTROLLED_MOBILE_ORIGINS]);
@@ -167,6 +191,7 @@ function buildCorsPolicy(isWebRoute, routeParts) {
     headers.add("X-API-Token");
     headers.add("X-Request-Timestamp");
     headers.add("X-Request-Signature");
+    headers.add("X-Request-Nonce");
     headers.add("X-Body-SHA256");
   }
 
@@ -195,6 +220,7 @@ function buildCorsPolicy(isWebRoute, routeParts) {
     [
       "dashboard",
       "dashboard.css",
+      "chart.umd.js",
       "dashboard-qr.js",
       "dashboard.js",
       "dashboard-pwa.js",
@@ -252,9 +278,7 @@ function corsHeaders(request, env, corsPolicy = { methods: ["OPTIONS"], headers:
   if (!origin) return {};
 
   const allowedOrigins = getAllowedCorsOrigins(request, env);
-  // Always allow localhost origins for dev tooling (Expo web / local dashboard).
-  // This avoids browser-side "Failed to fetch" caused by preflight 403 in local workflows.
-  const isAllowedLocalhostOrigin = isLocalhostOrigin(origin);
+  const isAllowedLocalhostOrigin = shouldAllowLocalhostCors(env) && isLocalhostOrigin(origin);
   if (!allowedOrigins.has(origin) && !isAllowedLocalhostOrigin) {
     return {};
   }
@@ -363,7 +387,7 @@ function dashboardAssetSecurityHeaders() {
       "img-src 'self' data: blob:",
       "font-src 'self' data: https://fonts.gstatic.com",
       "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
-      "script-src 'self' https://cdn.jsdelivr.net",
+      "script-src 'self'",
       "style-src 'self' https://fonts.googleapis.com",
       "manifest-src 'self'",
     ].join("; "),
@@ -371,24 +395,37 @@ function dashboardAssetSecurityHeaders() {
 }
 
 const DASHBOARD_ASSET_PATHS = {
-  dashboard: "/dashboard.html",
+  dashboard: "/dashboard",
   "dashboard.css": "/dashboard.css",
+  "chart.umd.js": "/chart.umd.js",
   "dashboard-qr.js": "/dashboard-qr.js",
   "dashboard.js": "/dashboard.js",
   "dashboard-pwa.js": "/dashboard-pwa.js",
   "manifest.json": "/manifest.json",
   "sw.js": "/sw.js",
+  "favicon.ico": "/icons/icon-192x192.png",
 };
 
 function resolveDashboardAssetPath(routeParts) {
-  if (!Array.isArray(routeParts) || routeParts.length !== 1) return null;
-  return DASHBOARD_ASSET_PATHS[routeParts[0]] || null;
+  if (!Array.isArray(routeParts) || routeParts.length === 0) return null;
+  if (routeParts.length === 1) {
+    return DASHBOARD_ASSET_PATHS[routeParts[0]] || null;
+  }
+  if (
+    routeParts.length === 2 &&
+    routeParts[0] === "icons" &&
+    (routeParts[1] === "icon-192x192.png" || routeParts[1] === "icon-512x512.png")
+  ) {
+    return `/icons/${routeParts[1]}`;
+  }
+  return null;
 }
 
 function dashboardAssetContentType(assetPath) {
-  if (assetPath === "/dashboard.html") return "text/html; charset=utf-8";
+  if (assetPath === "/dashboard" || assetPath === "/dashboard.html") return "text/html; charset=utf-8";
   if (assetPath === "/dashboard.css") return "text/css; charset=utf-8";
   if (
+    assetPath === "/chart.umd.js" ||
     assetPath === "/dashboard-qr.js" ||
     assetPath === "/dashboard.js" ||
     assetPath === "/dashboard-pwa.js" ||
@@ -397,11 +434,12 @@ function dashboardAssetContentType(assetPath) {
     return "application/javascript; charset=utf-8";
   }
   if (assetPath === "/manifest.json") return "application/manifest+json; charset=utf-8";
+  if (assetPath.startsWith("/icons/")) return "image/png";
   return null;
 }
 
 function dashboardAssetCacheControl(assetPath) {
-  if (assetPath === "/dashboard.html") return "public, max-age=0, must-revalidate";
+  if (assetPath === "/dashboard" || assetPath === "/dashboard.html") return "public, max-age=0, must-revalidate";
   if (assetPath === "/sw.js") return "no-cache";
   return "public, max-age=31536000, immutable";
 }
@@ -429,7 +467,7 @@ async function serveDashboardStaticAsset(request, env, corsPolicy, routeParts) {
   if (!assetPath) return null;
 
   if (!env?.ASSETS || typeof env.ASSETS.fetch !== "function") {
-    if (assetPath === "/dashboard.html") {
+    if (assetPath === "/dashboard" || assetPath === "/dashboard.html") {
       return new Response(dashboardFallbackHtml(), {
         status: 200,
         headers: {
@@ -450,10 +488,19 @@ async function serveDashboardStaticAsset(request, env, corsPolicy, routeParts) {
     });
   }
 
-  const assetUrl = new URL(request.url);
+  let assetUrl = new URL(request.url);
   assetUrl.pathname = assetPath;
   assetUrl.search = "";
-  const assetResponse = await env.ASSETS.fetch(new Request(assetUrl.toString(), request));
+
+  const redirectStatuses = new Set([301, 302, 303, 307, 308]);
+  let assetResponse = await env.ASSETS.fetch(new Request(assetUrl.toString(), request));
+  for (let i = 0; i < 2; i += 1) {
+    if (!redirectStatuses.has(assetResponse.status)) break;
+    const location = assetResponse.headers.get("Location");
+    if (!location) break;
+    assetUrl = new URL(location, assetUrl.origin);
+    assetResponse = await env.ASSETS.fetch(new Request(assetUrl.toString(), request));
+  }
   if (assetResponse.status === 404) return null;
 
   const headers = new Headers(assetResponse.headers);
@@ -780,6 +827,58 @@ function buildWebPasswordVerifyRateLimitIdentifier(request, session) {
     ? String(userId)
     : normalizeWebUsername(session?.sub || "unknown");
   return `${getClientIpForRateLimit(request)}:${identityPart}`;
+}
+
+function cleanupExpiredAuthNoncesInMemory(nowSeconds) {
+  if (authNonceMemoryStore.size === 0) return;
+  for (const [key, expiresAt] of authNonceMemoryStore.entries()) {
+    if (!Number.isInteger(expiresAt) || expiresAt <= nowSeconds) {
+      authNonceMemoryStore.delete(key);
+    }
+  }
+}
+
+async function buildAuthReplayNonceStorageKey(token, timestamp, nonce) {
+  const tokenDigest = await sha256Hex(new TextEncoder().encode(String(token || "")));
+  const tokenPart = tokenDigest
+    ? tokenDigest.slice(0, 32)
+    : sanitizeStorageSegment(String(token || ""), "token", 32);
+  return `auth_nonce:${tokenPart}:${timestamp}:${nonce}`;
+}
+
+async function consumeAuthReplayNonce(env, { token, timestamp, nonce }) {
+  const nonceValue = normalizeOptionalString(nonce, "");
+  if (!AUTH_NONCE_PATTERN.test(nonceValue) || nonceValue.length > AUTH_NONCE_MAX_LENGTH) {
+    throw new HttpError(401, "Nonce invalido.");
+  }
+
+  const key = await buildAuthReplayNonceStorageKey(token, timestamp, nonceValue);
+  const kv = getRateLimitKv(env);
+  if (kv) {
+    const existing = await kv.get(key);
+    if (existing) {
+      throw new HttpError(401, "Nonce ya utilizado.");
+    }
+    await kv.put(key, "1", { expirationTtl: AUTH_NONCE_TTL_SECONDS });
+    return;
+  }
+
+  const nowSeconds = nowUnixSeconds();
+  cleanupExpiredAuthNoncesInMemory(nowSeconds);
+  const existingExpiry = authNonceMemoryStore.get(key);
+  if (Number.isInteger(existingExpiry) && existingExpiry > nowSeconds) {
+    throw new HttpError(401, "Nonce ya utilizado.");
+  }
+  if (authNonceMemoryStore.size >= MAX_AUTH_INMEM_NONCE_TRACKED) {
+    cleanupExpiredAuthNoncesInMemory(nowSeconds);
+    if (authNonceMemoryStore.size >= MAX_AUTH_INMEM_NONCE_TRACKED) {
+      const oldest = authNonceMemoryStore.keys().next();
+      if (!oldest.done) {
+        authNonceMemoryStore.delete(oldest.value);
+      }
+    }
+  }
+  authNonceMemoryStore.set(key, nowSeconds + AUTH_NONCE_TTL_SECONDS);
 }
 
 async function checkWebLoginRateLimit(env, identifier) {
@@ -1170,7 +1269,7 @@ function parseOptionalPositiveInt(value, label) {
 
 async function readJsonOrThrowBadRequest(request, message = "Payload invalido.", options = {}) {
   const maxBytes = Number.isInteger(options.maxBytes) ? options.maxBytes : null;
-  const resolvedMaxBytes = maxBytes && maxBytes > 0 ? maxBytes : null;
+  const resolvedMaxBytes = maxBytes && maxBytes > 0 ? maxBytes : MAX_JSON_BODY_DEFAULT_BYTES;
   if (resolvedMaxBytes) {
     const contentLengthRaw = normalizeOptionalString(request.headers.get("content-length"), "");
     const contentLength = Number.parseInt(contentLengthRaw, 10);
@@ -1334,7 +1433,7 @@ function appendPaginationHeader(response, nextCursor) {
 }
 
 function getDriversBucketBinding(env) {
-  const bucket = env?.DRIVERS_BUCKET || env?.INCIDENTS_BUCKET;
+  const bucket = env?.DRIVERS_BUCKET;
   if (
     !bucket ||
     typeof bucket.get !== "function" ||
@@ -1343,7 +1442,7 @@ function getDriversBucketBinding(env) {
   ) {
     throw new HttpError(
       503,
-      "No hay bucket R2 configurado para drivers (usa DRIVERS_BUCKET o INCIDENTS_BUCKET).",
+      "No hay bucket R2 configurado para drivers (usa DRIVERS_BUCKET).",
     );
   }
   return bucket;
@@ -2998,6 +3097,12 @@ function requireAdminRole(role) {
   }
 }
 
+function requireWebWriteRole(role) {
+  if (!["admin", "super_admin"].includes(normalizeOptionalString(role, "").toLowerCase())) {
+    throw new HttpError(403, "No tienes permisos para modificar datos.");
+  }
+}
+
 async function countWebUsers(env) {
   try {
     const { results } = await env.DB.prepare("SELECT COUNT(*) AS total FROM web_users").all();
@@ -4216,9 +4321,10 @@ async function verifyAuth(request, env, url) {
   const token = request.headers.get("X-API-Token");
   const timestampRaw = request.headers.get("X-Request-Timestamp");
   const signature = request.headers.get("X-Request-Signature");
+  const nonce = normalizeOptionalString(request.headers.get("X-Request-Nonce"), "");
   const providedBodyHash = normalizeOptionalString(request.headers.get("X-Body-SHA256"), "");
 
-  if (!token || !timestampRaw || !signature) {
+  if (!token || !timestampRaw || !signature || !nonce) {
     throw new HttpError(401, "Faltan headers de autenticación.");
   }
 
@@ -4234,6 +4340,9 @@ async function verifyAuth(request, env, url) {
   const drift = Math.abs(nowUnixSeconds() - timestamp);
   if (drift > AUTH_WINDOW_SECONDS) {
     throw new HttpError(401, "Timestamp fuera de ventana permitida.");
+  }
+  if (!AUTH_NONCE_PATTERN.test(nonce) || nonce.length > AUTH_NONCE_MAX_LENGTH) {
+    throw new HttpError(401, "Nonce invalido.");
   }
   const method = request.method.toUpperCase();
   const isPhotoUploadRoute =
@@ -4277,12 +4386,18 @@ async function verifyAuth(request, env, url) {
     bodyHash = (await sha256Hex(bodyBytes)) || EMPTY_BODY_SHA256_HEX;
   }
 
-  const canonical = `${request.method.toUpperCase()}|${url.pathname}|${timestamp}|${bodyHash}`;
+  const canonical = `${request.method.toUpperCase()}|${url.pathname}|${timestamp}|${bodyHash}|${nonce}`;
   const expectedSignature = await hmacSha256Hex(expectedSecret, canonical);
 
   if (!timingSafeEqual(signature.toLowerCase(), expectedSignature.toLowerCase())) {
     throw new HttpError(401, "Firma inválida.");
   }
+
+  await consumeAuthReplayNonce(env, {
+    token,
+    timestamp,
+    nonce,
+  });
 }
 
 function buildIncidentR2Key(installationId, incidentId, extension, descriptor = "") {
@@ -5060,6 +5175,9 @@ export default {
         }
 
         if (routeParts.length === 2 && routeParts[1] === "resolve" && request.method === "POST") {
+          if (isWebRoute) {
+            requireWebWriteRole(webSession?.role);
+          }
           const data = await readJsonOrThrowBadRequest(request);
           const externalCode = normalizeAssetExternalCode(
             data?.external_code ?? data?.asset_id ?? data?.code,
@@ -5579,6 +5697,9 @@ export default {
           routeParts[2] === "link-installation" &&
           request.method === "POST"
         ) {
+          if (isWebRoute) {
+            requireWebWriteRole(webSession?.role);
+          }
           const assetId = parsePositiveInt(routeParts[1], "asset_id");
           const data = await readJsonOrThrowBadRequest(request);
           const installationId = parsePositiveInt(data?.installation_id, "installation_id");
@@ -6034,6 +6155,9 @@ export default {
         }
 
         if (request.method === "POST") {
+          if (isWebRoute) {
+            requireWebWriteRole(webSession?.role);
+          }
           const data = await readJsonOrThrowBadRequest(request);
           const payload = normalizeInstallationPayload(data, "unknown");
 
@@ -6160,7 +6284,7 @@ export default {
             requireAdminRole(webSession?.role);
           }
 
-          const data = await request.json();
+          const data = await readJsonOrThrowBadRequest(request);
 
           const action = normalizeOptionalString(data?.action, "");
           const payloadUsername = normalizeOptionalString(data?.username, "");
@@ -6244,12 +6368,7 @@ export default {
           throw new HttpError(401, "Registro de dispositivos requiere token Bearer web.");
         }
 
-        let data = {};
-        try {
-          data = await request.json();
-        } catch {
-          throw new HttpError(400, "Payload invalido.");
-        }
+        const data = await readJsonOrThrowBadRequest(request);
 
         const fcmToken = normalizeFcmToken(data?.fcm_token);
         await upsertDeviceTokenForWebUser(env, {
@@ -6271,6 +6390,9 @@ export default {
       }
 
       if (routeParts.length === 1 && routeParts[0] === "records" && request.method === "POST") {
+        if (isWebRoute) {
+          requireWebWriteRole(webSession?.role);
+        }
         const recordsTenantId = normalizeRealtimeTenantId(
           isWebRoute ? webSession?.tenant_id : realtimeTenantId,
         );
@@ -6398,6 +6520,9 @@ export default {
         }
 
         if (request.method === "POST") {
+          if (isWebRoute) {
+            requireWebWriteRole(webSession?.role);
+          }
           const data = await readJsonOrThrowBadRequest(request);
           const payload = validateIncidentPayload(data, {
             defaultSource: isWebRoute ? "web" : "mobile",
@@ -6828,6 +6953,9 @@ export default {
         routeParts[2] === "photos" &&
         request.method === "POST"
       ) {
+        if (isWebRoute) {
+          requireWebWriteRole(webSession?.role);
+        }
         const incidentId = parsePositiveInt(routeParts[1], "incident_id");
         const declaredContentType = normalizeContentType(request.headers.get("content-type"));
 
@@ -7000,6 +7128,9 @@ export default {
         }
 
         if (request.method === "PUT") {
+          if (isWebRoute) {
+            requireWebWriteRole(webSession?.role);
+          }
           const installationId = parsePositiveInt(recordId, "id");
           const data = await readJsonOrThrowBadRequest(request);
           const payload = normalizeInstallationUpdatePayload(data);
@@ -7030,6 +7161,9 @@ export default {
         }
 
         if (request.method === "DELETE") {
+          if (isWebRoute) {
+            requireWebWriteRole(webSession?.role);
+          }
           if (!recordId) {
             return textResponse(request, env, corsPolicy, "Error: El ID del registro es obligatorio.", 400);
           }
