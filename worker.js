@@ -732,6 +732,28 @@ function normalizeRateLimitCounter(value) {
   return parsed;
 }
 
+const inMemoryRateLimitCounters = new Map();
+let rateLimitFallbackWarningLogged = false;
+
+function getInMemoryRateLimitCounter(key) {
+  const now = Date.now();
+  const current = inMemoryRateLimitCounters.get(key);
+  if (!current) return 0;
+  if (!Number.isFinite(current.expiresAt) || current.expiresAt <= now) {
+    inMemoryRateLimitCounters.delete(key);
+    return 0;
+  }
+  return normalizeRateLimitCounter(current.count);
+}
+
+function setInMemoryRateLimitCounter(key, count, expirationTtlSeconds) {
+  const ttlMs = Math.max(1, Number(expirationTtlSeconds || 0)) * 1000;
+  inMemoryRateLimitCounters.set(key, {
+    count: normalizeRateLimitCounter(count),
+    expiresAt: Date.now() + ttlMs,
+  });
+}
+
 function getRateLimitKv(env) {
   const kv = env.RATE_LIMIT_KV;
   if (!kv) return null;
@@ -743,6 +765,54 @@ function getRateLimitKv(env) {
     return null;
   }
   return kv;
+}
+
+function getRateLimitBackend(env) {
+  const kv = getRateLimitKv(env);
+  if (kv) {
+    return { type: "kv", kv };
+  }
+
+  if (!rateLimitFallbackWarningLogged) {
+    rateLimitFallbackWarningLogged = true;
+    console.warn(
+      "[security] RATE_LIMIT_KV is not configured. Falling back to in-memory rate limiting.",
+    );
+  }
+  return { type: "memory" };
+}
+
+async function getRateLimitAttempts(env, key) {
+  const backend = getRateLimitBackend(env);
+  if (backend.type === "kv") {
+    return normalizeRateLimitCounter(await backend.kv.get(key));
+  }
+  return getInMemoryRateLimitCounter(key);
+}
+
+async function incrementRateLimitAttempts(env, key, expirationTtlSeconds) {
+  const backend = getRateLimitBackend(env);
+  if (backend.type === "kv") {
+    const currentAttempts = normalizeRateLimitCounter(await backend.kv.get(key));
+    const nextAttempts = currentAttempts + 1;
+    await backend.kv.put(key, String(nextAttempts), {
+      expirationTtl: expirationTtlSeconds,
+    });
+    return nextAttempts;
+  }
+
+  const nextAttempts = getInMemoryRateLimitCounter(key) + 1;
+  setInMemoryRateLimitCounter(key, nextAttempts, expirationTtlSeconds);
+  return nextAttempts;
+}
+
+async function clearRateLimitAttempts(env, key) {
+  const backend = getRateLimitBackend(env);
+  if (backend.type === "kv") {
+    await backend.kv.delete(key);
+    return;
+  }
+  inMemoryRateLimitCounters.delete(key);
 }
 
 function getClientIpForRateLimit(request) {
@@ -783,63 +853,39 @@ function buildWebPasswordVerifyRateLimitIdentifier(request, session) {
 }
 
 async function checkWebLoginRateLimit(env, identifier) {
-  const kv = getRateLimitKv(env);
-  if (!kv) return;
-
   const key = buildWebLoginRateLimitKey(identifier);
-  const attempts = normalizeRateLimitCounter(await kv.get(key));
+  const attempts = await getRateLimitAttempts(env, key);
   if (attempts >= WEB_LOGIN_RATE_LIMIT_MAX_ATTEMPTS) {
     throw new HttpError(429, "Demasiados intentos fallidos. Intenta en 15 minutos.");
   }
 }
 
 async function recordFailedWebLoginAttempt(env, identifier) {
-  const kv = getRateLimitKv(env);
-  if (!kv) return;
-
   const key = buildWebLoginRateLimitKey(identifier);
-  const currentAttempts = normalizeRateLimitCounter(await kv.get(key));
-  await kv.put(key, String(currentAttempts + 1), {
-    expirationTtl: WEB_LOGIN_RATE_LIMIT_LOCKOUT_SECONDS,
-  });
+  await incrementRateLimitAttempts(env, key, WEB_LOGIN_RATE_LIMIT_LOCKOUT_SECONDS);
 }
 
 async function clearWebLoginRateLimit(env, identifier) {
-  const kv = getRateLimitKv(env);
-  if (!kv) return;
-
   const key = buildWebLoginRateLimitKey(identifier);
-  await kv.delete(key);
+  await clearRateLimitAttempts(env, key);
 }
 
 async function checkWebPasswordVerifyRateLimit(env, identifier) {
-  const kv = getRateLimitKv(env);
-  if (!kv) return;
-
   const key = buildWebPasswordVerifyRateLimitKey(identifier);
-  const attempts = normalizeRateLimitCounter(await kv.get(key));
+  const attempts = await getRateLimitAttempts(env, key);
   if (attempts >= WEB_PASSWORD_VERIFY_RATE_LIMIT_MAX_ATTEMPTS) {
     throw new HttpError(429, "Demasiados intentos fallidos. Intenta nuevamente en unos minutos.");
   }
 }
 
 async function recordFailedWebPasswordVerifyAttempt(env, identifier) {
-  const kv = getRateLimitKv(env);
-  if (!kv) return;
-
   const key = buildWebPasswordVerifyRateLimitKey(identifier);
-  const currentAttempts = normalizeRateLimitCounter(await kv.get(key));
-  await kv.put(key, String(currentAttempts + 1), {
-    expirationTtl: WEB_PASSWORD_VERIFY_RATE_LIMIT_LOCKOUT_SECONDS,
-  });
+  await incrementRateLimitAttempts(env, key, WEB_PASSWORD_VERIFY_RATE_LIMIT_LOCKOUT_SECONDS);
 }
 
 async function clearWebPasswordVerifyRateLimit(env, identifier) {
-  const kv = getRateLimitKv(env);
-  if (!kv) return;
-
   const key = buildWebPasswordVerifyRateLimitKey(identifier);
-  await kv.delete(key);
+  await clearRateLimitAttempts(env, key);
 }
 
 function normalizeNonNegativeInteger(value, fallback = 0) {
@@ -945,6 +991,7 @@ function buildDefaultInstallationOperationalSummary() {
     incident_resolved_count: 0,
     incident_active_count: 0,
     incident_critical_active_count: 0,
+    latest_incident_note: null,
     attention_state: "clear",
   };
 }
@@ -990,6 +1037,8 @@ async function loadInstallationOperationalSummaries(env, installationIds, tenant
           row?.incident_critical_active_count,
           0,
         ),
+        latest_incident_note:
+          normalizeOptionalString(row?.latest_incident_note, "").trim() || null,
       };
       summary.attention_state = deriveInstallationAttentionState(summary);
       summaryById.set(installationId, summary);
@@ -998,17 +1047,45 @@ async function loadInstallationOperationalSummaries(env, installationIds, tenant
 
   try {
     const { results } = await env.DB.prepare(`
+      WITH scoped AS (
+        SELECT
+          installation_id,
+          LOWER(COALESCE(incident_status, 'open')) AS incident_status_normalized,
+          LOWER(COALESCE(severity, '')) AS severity_normalized,
+          NULLIF(TRIM(note), '') AS note_trimmed,
+          created_at,
+          id
+        FROM incidents
+        WHERE tenant_id = ?
+          AND installation_id IN (${placeholders})
+      ),
+      latest_note AS (
+        SELECT installation_id, note_trimmed AS latest_incident_note
+        FROM (
+          SELECT
+            installation_id,
+            note_trimmed,
+            ROW_NUMBER() OVER (
+              PARTITION BY installation_id
+              ORDER BY created_at DESC, id DESC
+            ) AS row_index
+          FROM scoped
+          WHERE note_trimmed IS NOT NULL
+        )
+        WHERE row_index = 1
+      )
       SELECT
-        installation_id,
-        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'open' THEN 1 ELSE 0 END) AS incident_open_count,
-        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
-        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'resolved' THEN 1 ELSE 0 END) AS incident_resolved_count,
-        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') THEN 1 ELSE 0 END) AS incident_active_count,
-        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count
-      FROM incidents
-      WHERE tenant_id = ?
-        AND installation_id IN (${placeholders})
-      GROUP BY installation_id
+        scoped.installation_id,
+        SUM(CASE WHEN scoped.incident_status_normalized = 'open' THEN 1 ELSE 0 END) AS incident_open_count,
+        SUM(CASE WHEN scoped.incident_status_normalized = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
+        SUM(CASE WHEN scoped.incident_status_normalized = 'resolved' THEN 1 ELSE 0 END) AS incident_resolved_count,
+        SUM(CASE WHEN scoped.incident_status_normalized IN ('open', 'in_progress') THEN 1 ELSE 0 END) AS incident_active_count,
+        SUM(CASE WHEN scoped.incident_status_normalized IN ('open', 'in_progress') AND scoped.severity_normalized = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count,
+        latest_note.latest_incident_note
+      FROM scoped
+      LEFT JOIN latest_note
+        ON latest_note.installation_id = scoped.installation_id
+      GROUP BY scoped.installation_id
     `)
       .bind(tenantId, ...ids)
       .all();
@@ -1024,16 +1101,44 @@ async function loadInstallationOperationalSummaries(env, installationIds, tenant
   }
 
   const { results } = await env.DB.prepare(`
+    WITH scoped AS (
+      SELECT
+        installation_id,
+        LOWER(COALESCE(incident_status, 'open')) AS incident_status_normalized,
+        LOWER(COALESCE(severity, '')) AS severity_normalized,
+        NULLIF(TRIM(note), '') AS note_trimmed,
+        created_at,
+        id
+      FROM incidents
+      WHERE installation_id IN (${placeholders})
+    ),
+    latest_note AS (
+      SELECT installation_id, note_trimmed AS latest_incident_note
+      FROM (
+        SELECT
+          installation_id,
+          note_trimmed,
+          ROW_NUMBER() OVER (
+            PARTITION BY installation_id
+            ORDER BY created_at DESC, id DESC
+          ) AS row_index
+        FROM scoped
+        WHERE note_trimmed IS NOT NULL
+      )
+      WHERE row_index = 1
+    )
     SELECT
-      installation_id,
-      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'open' THEN 1 ELSE 0 END) AS incident_open_count,
-      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
-      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'resolved' THEN 1 ELSE 0 END) AS incident_resolved_count,
-      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') THEN 1 ELSE 0 END) AS incident_active_count,
-      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count
-    FROM incidents
-    WHERE installation_id IN (${placeholders})
-    GROUP BY installation_id
+      scoped.installation_id,
+      SUM(CASE WHEN scoped.incident_status_normalized = 'open' THEN 1 ELSE 0 END) AS incident_open_count,
+      SUM(CASE WHEN scoped.incident_status_normalized = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
+      SUM(CASE WHEN scoped.incident_status_normalized = 'resolved' THEN 1 ELSE 0 END) AS incident_resolved_count,
+      SUM(CASE WHEN scoped.incident_status_normalized IN ('open', 'in_progress') THEN 1 ELSE 0 END) AS incident_active_count,
+      SUM(CASE WHEN scoped.incident_status_normalized IN ('open', 'in_progress') AND scoped.severity_normalized = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count,
+      latest_note.latest_incident_note
+    FROM scoped
+    LEFT JOIN latest_note
+      ON latest_note.installation_id = scoped.installation_id
+    GROUP BY scoped.installation_id
   `)
     .bind(...ids)
     .all();
@@ -1334,7 +1439,7 @@ function appendPaginationHeader(response, nextCursor) {
 }
 
 function getDriversBucketBinding(env) {
-  const bucket = env?.DRIVERS_BUCKET || env?.INCIDENTS_BUCKET;
+  const bucket = env?.DRIVERS_BUCKET;
   if (
     !bucket ||
     typeof bucket.get !== "function" ||
@@ -1343,7 +1448,7 @@ function getDriversBucketBinding(env) {
   ) {
     throw new HttpError(
       503,
-      "No hay bucket R2 configurado para drivers (usa DRIVERS_BUCKET o INCIDENTS_BUCKET).",
+      "No hay bucket R2 configurado para drivers (usa DRIVERS_BUCKET).",
     );
   }
   return bucket;
@@ -1386,11 +1491,11 @@ function formatLegacyDateTime(isoValue) {
   return parsed.toISOString().replace("T", " ").slice(0, 19);
 }
 
-function buildDriverStorageKey({ tenantId, brand, version, fileName }) {
-  const tenantSegment = sanitizeStorageSegment(tenantId, "default");
+function buildDriverStorageKey({ brand, version, fileName }) {
+  const scopeSegment = "global";
   const brandSegment = sanitizeStorageSegment(brand, "brand");
   const versionSegment = sanitizeStorageSegment(version, "version");
-  return `drivers/${tenantSegment}/${brandSegment}/${versionSegment}/${fileName}`;
+  return `drivers/${scopeSegment}/${brandSegment}/${versionSegment}/${fileName}`;
 }
 
 function createDefaultDriverManifest() {
@@ -1406,14 +1511,24 @@ function normalizeDriverManifestEntry(rawEntry) {
   const key = normalizeOptionalString(entry.key, "");
   if (!key) return null;
 
+  const scope = "global";
   const uploaded = normalizeOptionalString(entry.uploaded, nowIso());
   const sizeBytes = Math.max(0, Number(entry.size_bytes) || 0);
   const sizeMb = Number.isFinite(Number(entry.size_mb))
     ? Number(entry.size_mb)
     : Number((sizeBytes / (1024 * 1024)).toFixed(2));
+  const uploadedByUsername = normalizeWebUsername(entry.uploaded_by_username || "");
+  const uploadedByRole = normalizeOptionalString(entry.uploaded_by_role, "").toLowerCase();
+  const uploadedByTenantRaw =
+    normalizeOptionalString(entry.uploaded_by_tenant_id, "") ||
+    normalizeOptionalString(entry.tenant_id, "");
+  const uploadedByTenantId = uploadedByTenantRaw
+    ? normalizeRealtimeTenantId(uploadedByTenantRaw)
+    : DEFAULT_REALTIME_TENANT_ID;
 
   return {
-    tenant_id: normalizeRealtimeTenantId(entry.tenant_id),
+    scope,
+    tenant_id: uploadedByTenantId,
     brand: normalizeOptionalString(entry.brand, ""),
     version: normalizeOptionalString(entry.version, ""),
     description: normalizeOptionalString(entry.description, ""),
@@ -1423,6 +1538,9 @@ function normalizeDriverManifestEntry(rawEntry) {
     last_modified: normalizeOptionalString(entry.last_modified, formatLegacyDateTime(uploaded)),
     size_bytes: sizeBytes,
     size_mb: Number(sizeMb.toFixed(2)),
+    uploaded_by_username: uploadedByUsername || undefined,
+    uploaded_by_role: uploadedByRole || undefined,
+    uploaded_by_tenant_id: uploadedByTenantId,
   };
 }
 
@@ -1462,6 +1580,64 @@ async function writeDriverManifest(bucket, manifest) {
     httpMetadata: { contentType: "application/json" },
   });
   return normalized;
+}
+
+function isDriverStorageKey(key) {
+  return normalizeOptionalString(key, "").toLowerCase().startsWith("drivers/");
+}
+
+async function pruneDriverManifestStaleEntries(bucket, manifest) {
+  const source = normalizeDriverManifest(manifest);
+  const currentDrivers = Array.isArray(source.drivers) ? source.drivers : [];
+  if (!currentDrivers.length) {
+    return {
+      manifest: source,
+      removed_keys: [],
+    };
+  }
+
+  const canHeadObjects = typeof bucket?.head === "function";
+  const keep = [];
+  const removedKeys = [];
+
+  for (const entry of currentDrivers) {
+    const key = normalizeOptionalString(entry?.key, "");
+    if (!key || !isDriverStorageKey(key)) {
+      if (key) removedKeys.push(key);
+      continue;
+    }
+
+    if (canHeadObjects) {
+      try {
+        const objectHead = await bucket.head(key);
+        if (!objectHead) {
+          removedKeys.push(key);
+          continue;
+        }
+      } catch {
+        // If head fails unexpectedly, keep entry to avoid destructive cleanup.
+      }
+    }
+
+    keep.push(entry);
+  }
+
+  if (!removedKeys.length) {
+    return {
+      manifest: source,
+      removed_keys: [],
+    };
+  }
+
+  const updatedManifest = await writeDriverManifest(bucket, {
+    ...source,
+    drivers: keep,
+  });
+
+  return {
+    manifest: updatedManifest,
+    removed_keys: removedKeys,
+  };
 }
 
 function applyInstallationFilters(installations, searchParams) {
@@ -4190,6 +4366,69 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     });
   }
 
+  if (pathParts[1] === "desktop-config" && pathParts.length === 2 && request.method === "GET") {
+    const session = await verifyWebAccessToken(request, env);
+    if (session.role !== "super_admin") {
+      throw new HttpError(403, "Solo super_admin puede solicitar configuracion desktop.");
+    }
+
+    const accountId = normalizeOptionalString(env.DESKTOP_R2_ACCOUNT_ID, "");
+    const accessKeyId = normalizeOptionalString(env.DESKTOP_R2_ACCESS_KEY_ID, "");
+    const secretAccessKey = normalizeOptionalString(env.DESKTOP_R2_SECRET_ACCESS_KEY, "");
+    const bucketName = normalizeOptionalString(env.DESKTOP_R2_BUCKET_NAME, "");
+    const historyApiUrl =
+      normalizeOptionalString(env.DESKTOP_HISTORY_API_URL, "") ||
+      normalizeOptionalString(new URL(request.url).origin, "");
+    const apiToken = normalizeOptionalString(
+      env.DESKTOP_API_TOKEN || env.DRIVER_MANAGER_API_TOKEN || env.API_TOKEN,
+      "",
+    );
+    const apiSecret = normalizeOptionalString(
+      env.DESKTOP_API_SECRET || env.DRIVER_MANAGER_API_SECRET || env.API_SECRET,
+      "",
+    );
+
+    if (!accountId || !accessKeyId || !secretAccessKey || !bucketName) {
+      throw new HttpError(
+        503,
+        "Desktop config incompleta. Define DESKTOP_R2_ACCOUNT_ID, DESKTOP_R2_ACCESS_KEY_ID, DESKTOP_R2_SECRET_ACCESS_KEY y DESKTOP_R2_BUCKET_NAME.",
+      );
+    }
+
+    await logAuditEvent(env, {
+      action: "desktop_config_requested",
+      username: normalizeWebUsername(session.sub || "unknown"),
+      success: true,
+      tenantId: session.tenant_id,
+      details: {
+        performed_by: normalizeWebUsername(session.sub || "unknown"),
+        performed_by_role: session.role,
+      },
+      ipAddress: getClientIpForRateLimit(request),
+      platform: "web",
+    });
+
+    return jsonResponse(
+      request,
+      env,
+      corsPolicy,
+      {
+        success: true,
+        config: {
+          account_id: accountId,
+          access_key_id: accessKeyId,
+          secret_access_key: secretAccessKey,
+          bucket_name: bucketName,
+          api_url: historyApiUrl,
+          history_api_url: historyApiUrl,
+          api_token: apiToken,
+          api_secret: apiSecret,
+        },
+      },
+      200,
+    );
+  }
+
   return null;
 }
 
@@ -4501,6 +4740,7 @@ export default {
             web_login: "/web/auth/login",
             web_verify_password: "/web/auth/verify-password",
             web_bootstrap: "/web/auth/bootstrap",
+            web_desktop_config: "/web/auth/desktop-config",
             web_users: "/web/auth/users",
             web_user_update: "/web/auth/users/:user_id",
             web_user_force_password: "/web/auth/users/:user_id/force-password",
@@ -4516,8 +4756,8 @@ export default {
             incident_evidence: "/incidents/:incident_id/evidence",
             web_drivers: "/web/drivers",
             web_drivers_upload: "/web/drivers",
-            web_drivers_delete: "/web/drivers?key=drivers/default/Brand/Version/file.exe",
-            web_drivers_download: "/web/drivers/download?key=drivers/default/Brand/Version/file.exe",
+            web_drivers_delete: "/web/drivers?key=drivers/global/Brand/Version/file.exe",
+            web_drivers_download: "/web/drivers/download?key=drivers/global/Brand/Version/file.exe",
             web_devices: "/web/devices",
             web_lookup: "/web/lookup?type=asset&code=EQ-123",
             statistics_trend: "/statistics/trend?days=7",
@@ -5691,7 +5931,9 @@ export default {
           throw new HttpError(401, "Gestion de drivers requiere sesion web.");
         }
 
-        const driversTenantId = normalizeRealtimeTenantId(webSession?.tenant_id);
+        const actorTenantId = normalizeRealtimeTenantId(webSession?.tenant_id);
+        const actorRole = normalizeOptionalString(webSession?.role, "").toLowerCase();
+        const actorUsername = normalizeWebUsername(webSession?.sub || "unknown");
         const driversBucket = getDriversBucketBinding(env);
 
         if (routeParts.length === 1 && request.method === "GET") {
@@ -5701,9 +5943,11 @@ export default {
           const searchFilter = normalizeOptionalString(url.searchParams.get("search"), "").toLowerCase();
 
           const manifest = await readDriverManifest(driversBucket);
-          let items = (manifest.drivers || []).filter(
-            (entry) => normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId,
-          );
+          const pruneResult = await pruneDriverManifestStaleEntries(driversBucket, manifest);
+          let items = [...(manifest.drivers || [])];
+          if (pruneResult?.manifest?.drivers) {
+            items = [...pruneResult.manifest.drivers];
+          }
 
           if (brandFilter) {
             items = items.filter(
@@ -5741,6 +5985,7 @@ export default {
           return jsonResponse(request, env, corsPolicy, {
             success: true,
             total,
+            stale_removed: Array.isArray(pruneResult?.removed_keys) ? pruneResult.removed_keys.length : 0,
             items: items.map((entry) => ({
               ...entry,
               download_url: `/web/drivers/download?key=${encodeURIComponent(entry.key)}`,
@@ -5749,7 +5994,9 @@ export default {
         }
 
         if (routeParts.length === 1 && request.method === "POST") {
-          requireAdminRole(webSession?.role);
+          if (actorRole !== "super_admin") {
+            throw new HttpError(403, "Solo super_admin puede subir drivers globales.");
+          }
 
           let formData;
           try {
@@ -5792,13 +6039,11 @@ export default {
           );
           const contentType = normalizeContentType(fileField.type) || "application/octet-stream";
           const driverKey = buildDriverStorageKey({
-            tenantId: driversTenantId,
             brand,
             version,
             fileName: safeFileName,
           });
           const uploadedAt = nowIso();
-          const uploadedBy = normalizeWebUsername(webSession?.sub || "unknown");
 
           await driversBucket.put(driverKey, fileField.stream(), {
             httpMetadata: { contentType },
@@ -5807,7 +6052,6 @@ export default {
           const manifest = await readDriverManifest(driversBucket);
           const replacedEntries = (manifest.drivers || []).filter(
             (entry) =>
-              normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId &&
               normalizeOptionalString(entry.brand, "").toLowerCase() === brand.toLowerCase() &&
               normalizeOptionalString(entry.version, "").toLowerCase() === version.toLowerCase() &&
               normalizeOptionalString(entry.key, "") !== driverKey,
@@ -5815,7 +6059,6 @@ export default {
 
           manifest.drivers = (manifest.drivers || []).filter((entry) => {
             return !(
-              normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId &&
               normalizeOptionalString(entry.brand, "").toLowerCase() === brand.toLowerCase() &&
               normalizeOptionalString(entry.version, "").toLowerCase() === version.toLowerCase()
             );
@@ -5832,7 +6075,7 @@ export default {
           }
 
           const driverEntry = {
-            tenant_id: driversTenantId,
+            scope: "global",
             brand,
             version,
             description,
@@ -5842,22 +6085,25 @@ export default {
             last_modified: formatLegacyDateTime(uploadedAt),
             size_bytes: fileSize,
             size_mb: Number((fileSize / (1024 * 1024)).toFixed(2)),
-            uploaded_by_username: uploadedBy,
+            uploaded_by_username: actorUsername,
+            uploaded_by_role: actorRole,
+            uploaded_by_tenant_id: actorTenantId,
           };
           manifest.drivers.push(driverEntry);
           await writeDriverManifest(driversBucket, manifest);
 
           await logAuditEvent(env, {
             action: "upload_driver",
-            username: uploadedBy,
+            username: actorUsername,
             success: true,
-            tenantId: driversTenantId,
+            tenantId: actorTenantId,
             details: {
-              tenant_id: driversTenantId,
+              scope: "global",
               brand,
               version,
               key: driverKey,
               size_bytes: fileSize,
+              performed_by_role: actorRole,
             },
             ipAddress: getClientIpForRateLimit(request),
             platform: "web",
@@ -5873,7 +6119,9 @@ export default {
         }
 
         if (routeParts.length === 1 && request.method === "DELETE") {
-          requireAdminRole(webSession?.role);
+          if (actorRole !== "super_admin") {
+            throw new HttpError(403, "Solo super_admin puede eliminar drivers globales.");
+          }
 
           const key = normalizeOptionalString(url.searchParams.get("key"), "");
           if (!key) {
@@ -5882,9 +6130,7 @@ export default {
 
           const manifest = await readDriverManifest(driversBucket);
           const found = (manifest.drivers || []).find(
-            (entry) =>
-              normalizeOptionalString(entry.key, "") === key &&
-              normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId,
+            (entry) => normalizeOptionalString(entry.key, "") === key,
           );
           if (!found) {
             throw new HttpError(404, "Driver no encontrado.");
@@ -5892,24 +6138,21 @@ export default {
 
           await driversBucket.delete(key);
           manifest.drivers = (manifest.drivers || []).filter(
-            (entry) =>
-              !(
-                normalizeOptionalString(entry.key, "") === key &&
-                normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId
-              ),
+            (entry) => normalizeOptionalString(entry.key, "") !== key,
           );
           await writeDriverManifest(driversBucket, manifest);
 
           await logAuditEvent(env, {
             action: "delete_driver",
-            username: normalizeWebUsername(webSession?.sub || "unknown"),
+            username: actorUsername,
             success: true,
-            tenantId: driversTenantId,
+            tenantId: actorTenantId,
             details: {
-              tenant_id: driversTenantId,
+              scope: "global",
               key,
               brand: found.brand || "",
               version: found.version || "",
+              performed_by_role: actorRole,
             },
             ipAddress: getClientIpForRateLimit(request),
             platform: "web",
@@ -5929,9 +6172,7 @@ export default {
 
           const manifest = await readDriverManifest(driversBucket);
           const found = (manifest.drivers || []).find(
-            (entry) =>
-              normalizeOptionalString(entry.key, "") === key &&
-              normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId,
+            (entry) => normalizeOptionalString(entry.key, "") === key,
           );
           if (!found) {
             throw new HttpError(404, "Driver no encontrado.");
