@@ -5,6 +5,7 @@ const STATIC_ASSETS = [
   '/dashboard.css',
   '/chart.umd.js',
   '/dashboard-qr.js',
+  '/dashboard-api.js',
   '/dashboard.js',
   '/dashboard-pwa.js',
   '/manifest.json'
@@ -15,6 +16,7 @@ const STATIC_ASSET_PATHS = new Set([
   '/dashboard.css',
   '/chart.umd.js',
   '/dashboard-qr.js',
+  '/dashboard-api.js',
   '/dashboard.js',
   '/dashboard-pwa.js',
   '/manifest.json',

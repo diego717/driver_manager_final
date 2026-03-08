@@ -200,268 +200,28 @@ function applyChartDefaults(theme = 'light') {
 
 applyChartDefaults('light');
 
-async function parseApiResponsePayload(response) {
-    const rawText = await response.text();
-    if (!rawText) return null;
+const apiFactory = window.DashboardApi && typeof window.DashboardApi.createClient === 'function'
+    ? window.DashboardApi.createClient
+    : null;
 
-    const contentType = (response.headers.get('content-type') || '').toLowerCase();
-    const looksLikeJson = contentType.includes('application/json');
-    if (looksLikeJson) {
-        try {
-            return JSON.parse(rawText);
-        } catch {
-            return rawText;
-        }
-    }
-
-    return rawText;
+if (!apiFactory) {
+    throw new Error('No se pudo inicializar DashboardApi. Verifica la carga de /dashboard-api.js');
 }
 
-function extractApiErrorMessage(payload, response) {
-    if (payload && typeof payload === 'object') {
-        const fromNested = payload.error && typeof payload.error === 'object'
-            ? payload.error.message
-            : undefined;
-        const fromMessage = payload.message;
-        const message = fromNested || fromMessage;
-        if (typeof message === 'string' && message.trim()) {
-            return message.trim();
-        }
-    }
-
-    if (typeof payload === 'string' && payload.trim()) {
-        return payload.trim();
-    }
-
-    return `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
-}
-
-const api = {
-    async request(endpoint, options = {}) {
-        const baseHeaders = {
-            'Content-Type': 'application/json',
-            ...(options.headers || {})
-        };
-
-        const sendRequest = async (useBearer = true) => {
-            const authHeaders = useBearer && webAccessToken
-                ? { Authorization: 'Bearer ' + webAccessToken }
-                : {};
-            const headers = {
-                ...baseHeaders,
-                ...authHeaders,
-            };
-
-            const response = await fetch(API_BASE + endpoint, {
-                ...options,
-                headers,
-                credentials: 'include'
-            });
-            const payload = await parseApiResponsePayload(response);
-            return { response, payload };
-        };
-
-        let { response, payload } = await sendRequest(true);
-
-        // If bearer got stale (session rotated), retry once using only cookie session.
-        if (response.status === 401 && webAccessToken) {
-            const retryResult = await sendRequest(false);
-            response = retryResult.response;
-            payload = retryResult.payload;
-            if (response.ok) {
-                // Prefer cookie session from now on until next explicit login refreshes bearer.
-                webAccessToken = '';
-            }
-        }
-        
-        if (response.status === 401) {
-            currentUser = null;
-            webAccessToken = '';
-            closeSSE();
-            resetProtectedViews();
-            showLogin();
-            throw new Error(extractApiErrorMessage(payload, response) || 'No autorizado');
-        }
-
-        if (!response.ok) {
-            throw new Error(extractApiErrorMessage(payload, response));
-        }
-
-        if (payload === null) {
-            return {};
-        }
-
-        return payload;
+const api = apiFactory({
+    apiBase: API_BASE,
+    getAccessToken: () => webAccessToken,
+    setAccessToken: (value) => {
+        webAccessToken = String(value || '');
     },
-    
-    getInstallations(params = {}) {
-        const query = new URLSearchParams(params).toString();
-        return this.request('/web/installations?' + query);
+    onUnauthorized: () => {
+        currentUser = null;
+        webAccessToken = '';
+        closeSSE();
+        resetProtectedViews();
+        showLogin();
     },
-    
-    getStatistics() {
-        return this.request('/web/statistics');
-    },
-    
-    getAuditLogs(limit = 100) {
-        return this.request('/web/audit-logs?limit=' + limit);
-    },
-    
-    getIncidents(installationId) {
-        return this.request('/web/installations/' + installationId + '/incidents');
-    },
-
-    createRecord(payload) {
-        return this.request('/web/records', {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-    },
-
-    createIncident(installationId, payload) {
-        return this.request('/web/installations/' + installationId + '/incidents', {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-    },
-
-    updateIncidentStatus(incidentId, payload) {
-        return this.request('/web/incidents/' + incidentId + '/status', {
-            method: 'PATCH',
-            body: JSON.stringify(payload || {})
-        });
-    },
-
-    resolveAsset(payload) {
-        return this.request('/web/assets/resolve', {
-            method: 'POST',
-            body: JSON.stringify(payload || {})
-        });
-    },
-
-    getAssets(params = {}) {
-        const query = new URLSearchParams(params).toString();
-        return this.request(`/web/assets?${query}`);
-    },
-
-    getAssetIncidents(assetId, params = {}) {
-        const query = new URLSearchParams(params).toString();
-        const suffix = query ? `?${query}` : '';
-        return this.request(`/web/assets/${assetId}/incidents${suffix}`);
-    },
-
-    linkAssetToInstallation(assetId, payload) {
-        return this.request('/web/assets/' + assetId + '/link-installation', {
-            method: 'POST',
-            body: JSON.stringify(payload || {})
-        });
-    },
-
-    getDrivers(params = {}) {
-        const query = new URLSearchParams(params).toString();
-        return this.request(query ? `/web/drivers?${query}` : '/web/drivers');
-    },
-
-    async uploadDriver(file, metadata = {}) {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('brand', String(metadata.brand || '').trim());
-        formData.append('version', String(metadata.version || '').trim());
-        formData.append('description', String(metadata.description || '').trim());
-
-        const authHeaders = webAccessToken
-            ? { Authorization: 'Bearer ' + webAccessToken }
-            : {};
-
-        const response = await fetch(API_BASE + '/web/drivers', {
-            method: 'POST',
-            headers: {
-                ...authHeaders
-            },
-            body: formData,
-            credentials: 'include'
-        });
-
-        const payload = await parseApiResponsePayload(response);
-
-        if (response.status === 401) {
-            currentUser = null;
-            webAccessToken = '';
-            closeSSE();
-            resetProtectedViews();
-            showLogin();
-            throw new Error(extractApiErrorMessage(payload, response) || 'No autorizado');
-        }
-        if (!response.ok) {
-            throw new Error(extractApiErrorMessage(payload, response));
-        }
-
-        return payload || {};
-    },
-
-    deleteDriver(key) {
-        const encodedKey = encodeURIComponent(String(key || '').trim());
-        return this.request('/web/drivers?key=' + encodedKey, {
-            method: 'DELETE'
-        });
-    },
-
-    async uploadIncidentPhoto(incidentId, file) {
-        const authHeaders = webAccessToken
-            ? { Authorization: 'Bearer ' + webAccessToken }
-            : {};
-        const response = await fetch(API_BASE + '/web/incidents/' + incidentId + '/photos', {
-            method: 'POST',
-            headers: {
-                ...authHeaders,
-                'Content-Type': file.type || 'image/jpeg',
-                'X-File-Name': file.name || ('incident_' + incidentId + '.jpg')
-            },
-            body: file,
-            credentials: 'include'
-        });
-
-        if (response.status === 401) {
-            currentUser = null;
-            webAccessToken = '';
-            closeSSE();
-            showLogin();
-            throw new Error('No autorizado');
-        }
-
-        if (!response.ok) {
-            let message = 'Error subiendo foto.';
-            try {
-                const payload = await response.json();
-                message = payload?.error?.message || payload?.message || message;
-            } catch (_err) {
-                // Ignorar parseo de body en errores no JSON.
-            }
-            throw new Error(message);
-        }
-
-        return response.json();
-    },
-    
-    getTrendData() {
-        return this.request('/web/statistics/trend');
-    },
-    
-    login(username, password) {
-        return this.request('/web/auth/login', {
-            method: 'POST',
-            body: JSON.stringify({ username, password })
-        });
-    },
-    
-    getMe() {
-        return this.request('/web/auth/me');
-    },
-
-    logout() {
-        return this.request('/web/auth/logout', { method: 'POST' });
-    }
-};
+});
 
 function showLogin() {
     loginModalLastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -611,185 +371,545 @@ function normalizeSeverity(input) {
     return valid.includes(value) ? value : 'medium';
 }
 
-async function createManualRecordFromWeb() {
-    const clientName = prompt('Cliente (opcional):', currentUser?.username || '') ?? '';
-    const brand = prompt('Marca/Equipo (opcional):', 'N/A');
-    if (brand === null) return;
-    const version = prompt('Version/Referencia (opcional):', 'N/A');
-    if (version === null) return;
-    const statusInput = prompt('Estado (manual/success/failed/unknown):', 'manual');
-    if (statusInput === null) return;
-    const status = String(statusInput).trim().toLowerCase() || 'manual';
-    const validStatus = ['manual', 'success', 'failed', 'unknown'];
-    if (!validStatus.includes(status)) {
-        showNotification('Estado invalido. Usa: manual, success, failed o unknown.', 'error');
-        return;
+function parseStrictInteger(rawValue) {
+    const normalized = String(rawValue ?? '').trim();
+    if (!normalized || !/^-?\d+$/.test(normalized)) return null;
+    const parsed = Number.parseInt(normalized, 10);
+    return Number.isInteger(parsed) ? parsed : null;
+}
+
+let actionModalSubmitHandler = null;
+let actionModalSubmitBusy = false;
+let actionModalLastFocusedElement = null;
+let actionModalEventsBound = false;
+
+function setActionModalError(message = '') {
+    const errorEl = document.getElementById('actionModalError');
+    if (!errorEl) return;
+    errorEl.textContent = String(message || '');
+}
+
+function setActionModalBusy(isBusy) {
+    actionModalSubmitBusy = Boolean(isBusy);
+    const submitBtn = document.getElementById('actionModalSubmitBtn');
+    const cancelBtn = document.getElementById('actionModalCancelBtn');
+    if (submitBtn) {
+        const defaultLabel = submitBtn.dataset.defaultLabel || 'Guardar';
+        submitBtn.disabled = actionModalSubmitBusy;
+        submitBtn.textContent = actionModalSubmitBusy ? 'Procesando...' : defaultLabel;
     }
-    const notes = prompt('Notas (opcional):', '') ?? '';
-
-    try {
-        const result = await api.createRecord({
-            client_name: (clientName || '').trim() || 'Sin cliente',
-            driver_brand: (brand || '').trim() || 'N/A',
-            driver_version: (version || '').trim() || 'N/A',
-            status,
-            notes: (notes || '').trim(),
-            driver_description: 'Registro manual desde dashboard web',
-            os_info: 'web',
-            installation_time_seconds: 0
-        });
-
-        const recordId = result?.record?.id;
-        showNotification(
-            recordId ? `Registro manual creado (#${recordId})` : 'Registro manual creado.',
-            'success'
-        );
-        await loadInstallations();
-
-        if (recordId) {
-            currentSelectedInstallationId = Number(recordId);
-            await showIncidentsForInstallation(recordId);
-        }
-    } catch (err) {
-        showNotification(`No se pudo crear registro: ${err.message || err}`, 'error');
+    if (cancelBtn) {
+        cancelBtn.disabled = actionModalSubmitBusy;
     }
 }
 
-async function createIncidentFromWeb(installationId) {
-    const targetId = Number.parseInt(String(installationId), 10);
-    if (!Number.isInteger(targetId) || targetId <= 0) {
+function closeActionModal(force = false) {
+    if (actionModalSubmitBusy && !force) return;
+    const modal = document.getElementById('actionModal');
+    if (!modal) return;
+    modal.classList.remove('active');
+    document.body.classList.remove('modal-open');
+    setActionModalError('');
+    actionModalSubmitHandler = null;
+    if (actionModalLastFocusedElement && document.contains(actionModalLastFocusedElement)) {
+        actionModalLastFocusedElement.focus();
+    }
+    actionModalLastFocusedElement = null;
+}
+
+function openActionModal(config = {}) {
+    const modal = document.getElementById('actionModal');
+    const titleEl = document.getElementById('actionModalTitle');
+    const subtitleEl = document.getElementById('actionModalSubtitle');
+    const fieldsEl = document.getElementById('actionModalFields');
+    const submitBtn = document.getElementById('actionModalSubmitBtn');
+    if (!modal || !titleEl || !subtitleEl || !fieldsEl || !submitBtn) return false;
+
+    titleEl.textContent = String(config.title || 'Accion');
+
+    const subtitle = String(config.subtitle || '').trim();
+    subtitleEl.textContent = subtitle;
+    subtitleEl.classList.toggle('is-hidden', subtitle.length === 0);
+
+    fieldsEl.innerHTML = String(config.fieldsHtml || '');
+
+    const submitLabel = String(config.submitLabel || 'Guardar');
+    submitBtn.dataset.defaultLabel = submitLabel;
+    submitBtn.textContent = submitLabel;
+
+    setActionModalError('');
+    setActionModalBusy(false);
+    actionModalSubmitHandler = typeof config.onSubmit === 'function' ? config.onSubmit : null;
+    actionModalLastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    modal.classList.add('active');
+    document.body.classList.add('modal-open');
+
+    const preferredFocusId = String(config.focusId || '').trim();
+    requestAnimationFrame(() => {
+        const preferredElement = preferredFocusId
+            ? document.getElementById(preferredFocusId)
+            : null;
+        if (preferredElement instanceof HTMLElement) {
+            preferredElement.focus();
+            return;
+        }
+        const fallback = modal.querySelector(
+            'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled])',
+        );
+        if (fallback instanceof HTMLElement) {
+            fallback.focus();
+        }
+    });
+
+    return true;
+}
+
+function openActionConfirmModal(config = {}) {
+    const confirmCheckboxId = 'actionModalConfirmCheckbox';
+    const title = String(config.title || 'Confirmar accion').trim() || 'Confirmar accion';
+    const subtitle = String(config.subtitle || '').trim();
+    const submitLabel = String(config.submitLabel || 'Confirmar').trim() || 'Confirmar';
+    const acknowledgementText = String(config.acknowledgementText || 'Confirmo esta accion.').trim()
+        || 'Confirmo esta accion.';
+    const missingConfirmationMessage = String(
+        config.missingConfirmationMessage || 'Debes confirmar la accion para continuar.',
+    ).trim() || 'Debes confirmar la accion para continuar.';
+    const focusId = String(config.focusId || confirmCheckboxId).trim() || confirmCheckboxId;
+    const onSubmit = typeof config.onSubmit === 'function' ? config.onSubmit : async () => {};
+
+    return openActionModal({
+        title,
+        subtitle,
+        submitLabel,
+        focusId,
+        fieldsHtml: `
+            <label class="action-checkbox" for="${confirmCheckboxId}">
+                <input type="checkbox" id="${confirmCheckboxId}">
+                <span>${escapeHtml(acknowledgementText)}</span>
+            </label>
+        `,
+        onSubmit: async () => {
+            const confirmed = document.getElementById(confirmCheckboxId)?.checked === true;
+            if (!confirmed) {
+                setActionModalError(missingConfirmationMessage);
+                return;
+            }
+            await onSubmit();
+        },
+    });
+}
+
+function bindActionModalEvents() {
+    if (actionModalEventsBound) return;
+
+    document.querySelector('#actionModal .close')?.addEventListener('click', () => {
+        closeActionModal();
+    });
+
+    document.getElementById('actionModalCancelBtn')?.addEventListener('click', () => {
+        closeActionModal();
+    });
+
+    document.getElementById('actionModal')?.addEventListener('click', (event) => {
+        if (event.target !== event.currentTarget) return;
+        closeActionModal();
+    });
+
+    document.getElementById('actionModalForm')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (actionModalSubmitBusy) return;
+        if (typeof actionModalSubmitHandler !== 'function') return;
+
+        setActionModalError('');
+        try {
+            setActionModalBusy(true);
+            await actionModalSubmitHandler();
+        } catch (error) {
+            setActionModalError(error?.message || 'No se pudo completar la accion.');
+        } finally {
+            setActionModalBusy(false);
+        }
+    });
+
+    actionModalEventsBound = true;
+}
+
+function createManualRecordFromWeb() {
+    if (!requireActiveSession()) return;
+
+    const defaultClient = String(currentUser?.username || '').trim();
+    openActionModal({
+        title: 'Nuevo registro manual',
+        subtitle: 'Crea un registro sin depender de una instalacion previa.',
+        submitLabel: 'Crear registro',
+        focusId: 'actionRecordClient',
+        fieldsHtml: `
+            <div class="action-modal-grid">
+                <div class="input-group">
+                    <label for="actionRecordClient">Cliente (opcional)</label>
+                    <input type="text" id="actionRecordClient" value="${escapeHtml(defaultClient)}" autocomplete="off">
+                </div>
+                <div class="input-group">
+                    <label for="actionRecordStatus">Estado</label>
+                    <select id="actionRecordStatus">
+                        <option value="manual" selected>manual</option>
+                        <option value="success">success</option>
+                        <option value="failed">failed</option>
+                        <option value="unknown">unknown</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label for="actionRecordBrand">Marca/Equipo (opcional)</label>
+                    <input type="text" id="actionRecordBrand" value="N/A" autocomplete="off">
+                </div>
+                <div class="input-group">
+                    <label for="actionRecordVersion">Version/Referencia (opcional)</label>
+                    <input type="text" id="actionRecordVersion" value="N/A" autocomplete="off">
+                </div>
+                <div class="input-group full-width">
+                    <label for="actionRecordNotes">Notas (opcional)</label>
+                    <textarea id="actionRecordNotes" rows="4"></textarea>
+                </div>
+            </div>
+        `,
+        onSubmit: async () => {
+            const status = String(document.getElementById('actionRecordStatus')?.value || 'manual')
+                .trim()
+                .toLowerCase();
+            const validStatus = ['manual', 'success', 'failed', 'unknown'];
+            if (!validStatus.includes(status)) {
+                setActionModalError('Selecciona un estado valido.');
+                return;
+            }
+
+            const clientName = String(document.getElementById('actionRecordClient')?.value || '').trim();
+            const brand = String(document.getElementById('actionRecordBrand')?.value || '').trim();
+            const version = String(document.getElementById('actionRecordVersion')?.value || '').trim();
+            const notes = String(document.getElementById('actionRecordNotes')?.value || '').trim();
+
+            const result = await api.createRecord({
+                client_name: clientName || 'Sin cliente',
+                driver_brand: brand || 'N/A',
+                driver_version: version || 'N/A',
+                status,
+                notes,
+                driver_description: 'Registro manual desde dashboard web',
+                os_info: 'web',
+                installation_time_seconds: 0,
+            });
+
+            closeActionModal(true);
+            const recordId = Number(result?.record?.id);
+            showNotification(
+                Number.isInteger(recordId) && recordId > 0
+                    ? `Registro manual creado (#${recordId})`
+                    : 'Registro manual creado.',
+                'success',
+            );
+            await loadInstallations();
+
+            if (Number.isInteger(recordId) && recordId > 0) {
+                currentSelectedInstallationId = recordId;
+                await showIncidentsForInstallation(recordId);
+            }
+        },
+    });
+}
+
+function openIncidentModal(options = {}) {
+    const parsedInstallationId = parseStrictInteger(options.installationId);
+    const defaultInstallationId = Number.isInteger(parsedInstallationId) && parsedInstallationId > 0
+        ? String(parsedInstallationId)
+        : '';
+    const defaultNote = String(options.note || '').trim();
+    const defaultSeverity = normalizeSeverity(options.severity || 'medium');
+    const parsedAdjustment = parseStrictInteger(options.timeAdjustment);
+    const defaultAdjustment = Number.isInteger(parsedAdjustment) ? String(parsedAdjustment) : '0';
+    const defaultApply = options.applyToInstallation === true;
+    const numericAssetId = parseStrictInteger(options.assetId);
+    const activeInstallationId = parseStrictInteger(options.activeInstallationId);
+
+    const title = Number.isInteger(numericAssetId) && numericAssetId > 0
+        ? `Nueva incidencia para equipo #${numericAssetId}`
+        : 'Nueva incidencia';
+
+    const subtitle = Number.isInteger(numericAssetId) && numericAssetId > 0
+        ? 'Confirma el registro destino y los detalles de la incidencia.'
+        : 'Completa el detalle, severidad y ajuste de tiempo.';
+
+    openActionModal({
+        title,
+        subtitle,
+        submitLabel: 'Crear incidencia',
+        focusId: 'actionIncidentNote',
+        fieldsHtml: `
+            <div class="action-modal-grid">
+                <div class="input-group">
+                    <label for="actionIncidentInstallationId">ID de registro</label>
+                    <input type="text" id="actionIncidentInstallationId" value="${escapeHtml(defaultInstallationId)}" autocomplete="off" placeholder="Ej: 245">
+                </div>
+                <div class="input-group">
+                    <label for="actionIncidentSeverity">Severidad</label>
+                    <select id="actionIncidentSeverity">
+                        <option value="low" ${defaultSeverity === 'low' ? 'selected' : ''}>low</option>
+                        <option value="medium" ${defaultSeverity === 'medium' ? 'selected' : ''}>medium</option>
+                        <option value="high" ${defaultSeverity === 'high' ? 'selected' : ''}>high</option>
+                        <option value="critical" ${defaultSeverity === 'critical' ? 'selected' : ''}>critical</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label for="actionIncidentAdjustment">Ajuste de tiempo (segundos)</label>
+                    <input type="text" id="actionIncidentAdjustment" value="${escapeHtml(defaultAdjustment)}" autocomplete="off" placeholder="Ej: -90, 0, 120">
+                </div>
+                <div class="input-group full-width">
+                    <label for="actionIncidentNote">Detalle de la incidencia</label>
+                    <textarea id="actionIncidentNote" rows="4" placeholder="Describe el problema y el contexto">${escapeHtml(defaultNote)}</textarea>
+                </div>
+            </div>
+            <label class="action-checkbox" for="actionIncidentApplyToRecord">
+                <input type="checkbox" id="actionIncidentApplyToRecord" ${defaultApply ? 'checked' : ''}>
+                <span>Aplicar nota y ajuste al registro de instalacion.</span>
+            </label>
+        `,
+        onSubmit: async () => {
+            const targetInstallationId = parseStrictInteger(
+                document.getElementById('actionIncidentInstallationId')?.value,
+            );
+            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
+                setActionModalError('El ID de registro debe ser un entero positivo.');
+                return;
+            }
+
+            const note = String(document.getElementById('actionIncidentNote')?.value || '').trim();
+            if (!note) {
+                setActionModalError('La incidencia requiere una nota.');
+                return;
+            }
+
+            const timeAdjustment = parseStrictInteger(
+                document.getElementById('actionIncidentAdjustment')?.value,
+            );
+            if (!Number.isInteger(timeAdjustment)) {
+                setActionModalError('El ajuste de tiempo debe ser un numero entero.');
+                return;
+            }
+
+            const severity = normalizeSeverity(
+                document.getElementById('actionIncidentSeverity')?.value || 'medium',
+            );
+            const applyToInstallation = document.getElementById('actionIncidentApplyToRecord')?.checked === true;
+
+            if (Number.isInteger(numericAssetId) && numericAssetId > 0) {
+                if (
+                    !Number.isInteger(activeInstallationId)
+                    || activeInstallationId <= 0
+                    || activeInstallationId !== targetInstallationId
+                ) {
+                    await api.linkAssetToInstallation(numericAssetId, {
+                        installation_id: targetInstallationId,
+                        notes: 'Vinculo creado desde modulo Equipos',
+                    });
+                }
+            }
+
+            const result = await api.createIncident(targetInstallationId, {
+                note,
+                reporter_username: currentUser?.username || 'web_user',
+                time_adjustment_seconds: timeAdjustment,
+                severity,
+                source: 'web',
+                apply_to_installation: applyToInstallation,
+            });
+
+            closeActionModal(true);
+            const incidentId = Number(result?.incident?.id);
+            showNotification(
+                Number.isInteger(incidentId) && incidentId > 0
+                    ? `Incidencia creada (#${incidentId}) en registro #${targetInstallationId}`
+                    : `Incidencia creada en registro #${targetInstallationId}`,
+                'success',
+            );
+
+            if (Number.isInteger(numericAssetId) && numericAssetId > 0) {
+                await loadAssetDetail(numericAssetId, { keepSelection: true });
+            } else {
+                await showIncidentsForInstallation(targetInstallationId);
+            }
+            await loadInstallations();
+        },
+    });
+}
+
+function createIncidentFromWeb(installationId, options = {}) {
+    if (!requireActiveSession()) return;
+    const targetId = parseStrictInteger(installationId);
+    const numericAssetId = parseStrictInteger(options.assetId);
+
+    if (
+        (!Number.isInteger(targetId) || targetId <= 0)
+        && (!Number.isInteger(numericAssetId) || numericAssetId <= 0)
+    ) {
         showNotification('installation_id invalido para crear incidencia.', 'error');
         return;
     }
 
-    const note = prompt('Detalle de la incidencia:', '');
-    if (note === null) return;
-    if (!String(note).trim()) {
-        showNotification('La incidencia requiere una nota.', 'error');
-        return;
-    }
-
-    const severityInput = prompt('Severidad (low/medium/high/critical):', 'medium');
-    if (severityInput === null) return;
-    const severity = normalizeSeverity(severityInput);
-
-    const adjustmentRaw = prompt('Ajuste de tiempo en segundos (puede ser negativo):', '0');
-    if (adjustmentRaw === null) return;
-    const timeAdjustment = Number.parseInt(String(adjustmentRaw).trim(), 10);
-    if (!Number.isInteger(timeAdjustment)) {
-        showNotification('El ajuste de tiempo debe ser un numero entero.', 'error');
-        return;
-    }
-
-    const applyToInstallation = confirm('Aplicar nota/ajuste al registro de instalacion?');
-
-    try {
-        const result = await api.createIncident(targetId, {
-            note: String(note).trim(),
-            reporter_username: currentUser?.username || 'web_user',
-            time_adjustment_seconds: timeAdjustment,
-            severity,
-            source: 'web',
-            apply_to_installation: applyToInstallation
-        });
-
-        const incidentId = result?.incident?.id;
-        showNotification(
-            incidentId
-                ? `Incidencia creada (#${incidentId}) en instalacion #${targetId}`
-                : `Incidencia creada en instalacion #${targetId}`,
-            'success'
-        );
-
-        await showIncidentsForInstallation(targetId);
-        await loadInstallations();
-    } catch (err) {
-        showNotification(`No se pudo crear incidencia: ${err.message || err}`, 'error');
-    }
+    openIncidentModal({
+        installationId: Number.isInteger(targetId) && targetId > 0 ? targetId : '',
+        assetId: numericAssetId,
+        activeInstallationId: parseStrictInteger(options.activeInstallationId),
+    });
 }
 
-async function associateAssetFromWeb() {
-    const externalCodeRaw = prompt('Código externo del equipo (QR/serie):', '') ?? '';
-    const externalCode = String(externalCodeRaw || '').trim();
-    if (!externalCode) {
-        showNotification('Debes ingresar un código de equipo válido.', 'error');
-        return;
-    }
+function openAssetLinkModal(options = {}) {
+    const knownAssetId = parseStrictInteger(options.assetId);
+    const parsedInstallationId = parseStrictInteger(options.installationId);
+    const defaultInstallationId = Number.isInteger(parsedInstallationId) && parsedInstallationId > 0
+        ? String(parsedInstallationId)
+        : '';
+    const defaultCode = String(options.externalCode || '').trim();
+    const defaultNotes = String(options.notes || '').trim();
 
-    const installationInput = prompt(
-        'ID de registro destino:',
-        currentSelectedInstallationId ? String(currentSelectedInstallationId) : ''
-    );
-    if (installationInput === null) return;
-    const installationId = Number.parseInt(String(installationInput).trim(), 10);
-    if (!Number.isInteger(installationId) || installationId <= 0) {
-        showNotification('installation_id inválido para asociación.', 'error');
-        return;
-    }
+    const needsExternalCode = !Number.isInteger(knownAssetId) || knownAssetId <= 0;
+    const title = needsExternalCode ? 'Asociar equipo a registro' : `Vincular equipo #${knownAssetId}`;
+    const subtitle = needsExternalCode
+        ? 'Ingresa el codigo del equipo y el registro destino.'
+        : 'Asocia el equipo seleccionado a un registro destino.';
 
-    const notes = prompt('Nota opcional de asociación:', '') ?? '';
+    const codeField = needsExternalCode
+        ? `
+            <div class="input-group">
+                <label for="actionAssetCode">Codigo externo del equipo (QR/serie)</label>
+                <input type="text" id="actionAssetCode" value="${escapeHtml(defaultCode)}" autocomplete="off">
+            </div>
+        `
+        : '';
 
-    try {
-        const resolved = await api.resolveAsset({
-            external_code: externalCode
-        });
-        const assetId = Number(resolved?.asset?.id);
-        if (!Number.isInteger(assetId) || assetId <= 0) {
-            throw new Error('No se pudo resolver el ID del equipo.');
-        }
+    openActionModal({
+        title,
+        subtitle,
+        submitLabel: 'Asociar equipo',
+        focusId: needsExternalCode ? 'actionAssetCode' : 'actionAssetInstallationId',
+        fieldsHtml: `
+            <div class="action-modal-grid">
+                ${codeField}
+                <div class="input-group ${needsExternalCode ? '' : 'full-width'}">
+                    <label for="actionAssetInstallationId">ID de registro destino</label>
+                    <input type="text" id="actionAssetInstallationId" value="${escapeHtml(defaultInstallationId)}" autocomplete="off" placeholder="Ej: 245">
+                </div>
+                <div class="input-group full-width">
+                    <label for="actionAssetNotes">Nota de asociacion (opcional)</label>
+                    <textarea id="actionAssetNotes" rows="3">${escapeHtml(defaultNotes)}</textarea>
+                </div>
+            </div>
+        `,
+        onSubmit: async () => {
+            const installationId = parseStrictInteger(
+                document.getElementById('actionAssetInstallationId')?.value,
+            );
+            if (!Number.isInteger(installationId) || installationId <= 0) {
+                setActionModalError('El ID de registro debe ser un entero positivo.');
+                return;
+            }
 
-        await api.linkAssetToInstallation(assetId, {
-            installation_id: installationId,
-            notes: String(notes || '').trim()
-        });
+            const notes = String(document.getElementById('actionAssetNotes')?.value || '').trim();
 
-        showNotification(
-            `Equipo ${externalCode} asociado a registro #${installationId}.`,
-            'success'
-        );
-        currentSelectedInstallationId = installationId;
-        await loadInstallations();
-        await showIncidentsForInstallation(installationId);
-    } catch (err) {
-        showNotification(`No se pudo asociar equipo: ${err.message || err}`, 'error');
-    }
+            let resolvedAssetId = knownAssetId;
+            let resolvedCode = '';
+            if (!Number.isInteger(resolvedAssetId) || resolvedAssetId <= 0) {
+                const externalCode = String(document.getElementById('actionAssetCode')?.value || '').trim();
+                if (!externalCode) {
+                    setActionModalError('Debes ingresar un codigo de equipo valido.');
+                    return;
+                }
+                const resolved = await api.resolveAsset({
+                    external_code: externalCode,
+                });
+                resolvedAssetId = parseStrictInteger(resolved?.asset?.id);
+                resolvedCode = String(resolved?.asset?.external_code || externalCode).trim();
+                if (!Number.isInteger(resolvedAssetId) || resolvedAssetId <= 0) {
+                    setActionModalError('No se pudo resolver el ID del equipo.');
+                    return;
+                }
+            }
+
+            await api.linkAssetToInstallation(resolvedAssetId, {
+                installation_id: installationId,
+                notes,
+            });
+
+            closeActionModal(true);
+            showNotification(
+                resolvedCode
+                    ? `Equipo ${resolvedCode} asociado a registro #${installationId}.`
+                    : `Equipo asociado a registro #${installationId}.`,
+                'success',
+            );
+
+            if (Number.isInteger(knownAssetId) && knownAssetId > 0) {
+                await loadAssetDetail(knownAssetId, { keepSelection: true });
+                return;
+            }
+            currentSelectedInstallationId = installationId;
+            await loadInstallations();
+            await showIncidentsForInstallation(installationId);
+        },
+    });
 }
 
+function associateAssetFromWeb() {
+    if (!requireActiveSession()) return;
+    openAssetLinkModal({
+        installationId: currentSelectedInstallationId ? String(currentSelectedInstallationId) : '',
+    });
+}
 async function openAssetLookupFromWeb() {
     if (!requireActiveSession()) return;
-    const codeRaw = prompt('Codigo externo del equipo a consultar:', '') ?? '';
-    const code = normalizeAssetCodeForQr(codeRaw);
-    if (!code) {
-        showNotification('Debes ingresar un codigo de equipo valido.', 'error');
-        return;
-    }
-
-    try {
-        const response = await api.getAssets({
-            code,
-            limit: 1
-        });
-        const asset = Array.isArray(response?.items) ? response.items[0] : null;
-        if (!asset) {
-            showNotification(`No existe equipo con codigo ${code}.`, 'info');
-            return;
-        }
-
-        showQrModal({ type: 'asset', asset, readOnly: true });
-        generateQrPreview({
-            assetData: {
-                external_code: normalizeAssetCodeForQr(asset.external_code || code),
-                brand: normalizeAssetFormText(asset.brand, QR_MAX_BRAND_LENGTH),
-                model: normalizeAssetFormText(asset.model, QR_MAX_MODEL_LENGTH),
-                serial_number: normalizeAssetFormText(asset.serial_number, QR_MAX_SERIAL_LENGTH),
-                client_name: normalizeAssetFormText(asset.client_name, QR_MAX_CLIENT_LENGTH),
-                notes: normalizeAssetFormText(asset.notes, QR_MAX_NOTES_LENGTH),
+    openActionModal({
+        title: 'Buscar equipo',
+        subtitle: 'Ingresa el codigo externo para abrir el detalle en modo lectura.',
+        submitLabel: 'Buscar',
+        focusId: 'actionLookupAssetCode',
+        fieldsHtml: `
+            <div class="input-group">
+                <label for="actionLookupAssetCode">Codigo externo del equipo</label>
+                <input type="text" id="actionLookupAssetCode" autocomplete="off" placeholder="Ej: EQ-SL3-001">
+            </div>
+        `,
+        onSubmit: async () => {
+            const code = normalizeAssetCodeForQr(
+                document.getElementById('actionLookupAssetCode')?.value || '',
+            );
+            if (!code) {
+                setActionModalError('Debes ingresar un codigo de equipo valido.');
+                return;
             }
-        });
-        showNotification(`Equipo cargado: ${asset.external_code || code}`, 'success');
-    } catch (err) {
-        showNotification(`No se pudo consultar equipo: ${err.message || err}`, 'error');
-    }
+
+            const response = await api.getAssets({
+                code,
+                limit: 1,
+            });
+            const asset = Array.isArray(response?.items) ? response.items[0] : null;
+            if (!asset) {
+                setActionModalError(`No existe equipo con codigo ${code}.`);
+                return;
+            }
+
+            closeActionModal(true);
+            showQrModal({ type: 'asset', asset, readOnly: true });
+            generateQrPreview({
+                assetData: {
+                    external_code: normalizeAssetCodeForQr(asset.external_code || code),
+                    brand: normalizeAssetFormText(asset.brand, QR_MAX_BRAND_LENGTH),
+                    model: normalizeAssetFormText(asset.model, QR_MAX_MODEL_LENGTH),
+                    serial_number: normalizeAssetFormText(asset.serial_number, QR_MAX_SERIAL_LENGTH),
+                    client_name: normalizeAssetFormText(asset.client_name, QR_MAX_CLIENT_LENGTH),
+                    notes: normalizeAssetFormText(asset.notes, QR_MAX_NOTES_LENGTH),
+                },
+            });
+            showNotification(`Equipo cargado: ${asset.external_code || code}`, 'success');
+        },
+    });
 }
 
 async function selectAndUploadIncidentPhoto(incidentId, installationId) {
@@ -1963,6 +2083,121 @@ function normalizeIncidentChecklistItems(value) {
     return [];
 }
 
+function buildIncidentChecklistText(checklistItemsValue) {
+    const checklistItems = normalizeIncidentChecklistItems(checklistItemsValue);
+    return checklistItems.length ? `Checklist: ${checklistItems.join(' · ')}` : 'Checklist: -';
+}
+
+function buildIncidentEvidenceText(evidenceNoteValue) {
+    const evidenceNote = String(evidenceNoteValue || '').trim();
+    return evidenceNote ? `Nota operativa: ${evidenceNote}` : 'Nota operativa: -';
+}
+
+function buildIncidentResolutionText(resolutionNoteValue) {
+    const resolutionNote = String(resolutionNoteValue || '').trim();
+    return resolutionNote ? `Resolución: ${resolutionNote}` : 'Resolución: -';
+}
+
+function createIncidentMetaLine(text) {
+    const meta = document.createElement('small');
+    meta.className = 'asset-muted incident-meta-line';
+    meta.textContent = text;
+    return meta;
+}
+
+function appendIncidentMetaLines(parent, incident) {
+    parent.append(
+        createIncidentMetaLine(`Estado: ${buildIncidentStatusText(incident)}`),
+        createIncidentMetaLine(`Ajuste tiempo: ${formatDuration(incident.time_adjustment_seconds ?? 0)}`),
+        createIncidentMetaLine(buildIncidentChecklistText(incident.checklist_items)),
+        createIncidentMetaLine(buildIncidentEvidenceText(incident.evidence_note)),
+        createIncidentMetaLine(buildIncidentResolutionText(incident.resolution_note)),
+    );
+}
+
+function buildIncidentStatusUpdateOptions(incident, options = {}) {
+    const updateOptions = {};
+    const installationCandidate = options.installationId ?? incident?.installation_id;
+    const parsedInstallationId = parseStrictInteger(installationCandidate);
+    if (Number.isInteger(parsedInstallationId) && parsedInstallationId > 0) {
+        updateOptions.installationId = parsedInstallationId;
+    }
+
+    const parsedAssetId = parseStrictInteger(options.assetId);
+    if (Number.isInteger(parsedAssetId) && parsedAssetId > 0) {
+        updateOptions.assetId = parsedAssetId;
+    }
+    return updateOptions;
+}
+
+function appendIncidentStatusActions(parent, incident, options = {}) {
+    const statusActions = document.createElement('div');
+    statusActions.className = 'incident-actions';
+    const incidentStatus = normalizeIncidentStatus(incident.incident_status);
+    const canUpdateIncident = canCurrentUserEditAssets();
+    const updateOptions = buildIncidentStatusUpdateOptions(incident, options);
+
+    const makeStatusBtn = (label, statusValue) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn-secondary';
+        button.textContent = label;
+        button.disabled = !canUpdateIncident || incidentStatus === statusValue;
+        if (!canUpdateIncident) {
+            button.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
+        }
+        button.addEventListener('click', () => {
+            void updateIncidentStatusFromWeb(incident, statusValue, updateOptions);
+        });
+        return button;
+    };
+
+    statusActions.append(
+        makeStatusBtn('Abrir', 'open'),
+        makeStatusBtn('En curso', 'in_progress'),
+        makeStatusBtn('Resolver', 'resolved'),
+    );
+    parent.appendChild(statusActions);
+}
+
+function appendIncidentUploadPhotoAction(parent, incident, installationId, options = {}) {
+    const uploadPhotoBtn = document.createElement('button');
+    uploadPhotoBtn.className = 'btn-secondary';
+    uploadPhotoBtn.textContent = String(options.label || 'Subir foto');
+    uploadPhotoBtn.classList.add('incident-upload-btn');
+    uploadPhotoBtn.addEventListener('click', () => {
+        void selectAndUploadIncidentPhoto(incident.id, installationId);
+    });
+    parent.appendChild(uploadPhotoBtn);
+}
+
+async function appendIncidentPhotosGrid(parent, photos, options = {}) {
+    if (!Array.isArray(photos) || photos.length === 0) return;
+    const photosGrid = document.createElement('div');
+    photosGrid.className = 'photos-grid';
+
+    for (const photo of photos) {
+        const photoId = parseStrictInteger(photo?.id);
+        if (!Number.isInteger(photoId) || photoId <= 0) continue;
+        const photoUrl = await loadPhotoWithAuth(photoId);
+        if (!photoUrl) continue;
+
+        const image = document.createElement('img');
+        image.src = photoUrl;
+        image.className = 'photo-thumb';
+        image.alt = 'Foto de incidencia';
+        if (options.attachPhotoIdDataset === true) {
+            image.dataset.photoId = String(photoId);
+        }
+        image.addEventListener('click', () => viewPhoto(photoId));
+        photosGrid.appendChild(image);
+    }
+
+    if (photosGrid.childElementCount > 0) {
+        parent.appendChild(photosGrid);
+    }
+}
+
 async function updateIncidentStatusFromWeb(incident, targetStatus, options = {}) {
     if (!requireActiveSession()) return;
     const incidentId = Number.parseInt(String(incident?.id), 10);
@@ -1972,38 +2207,59 @@ async function updateIncidentStatusFromWeb(incident, targetStatus, options = {})
     }
 
     const normalizedStatus = normalizeIncidentStatus(targetStatus);
-    let resolutionNote = '';
+    const applyStatusUpdate = async (resolutionNote = '') => {
+        try {
+            await api.updateIncidentStatus(incidentId, {
+                incident_status: normalizedStatus,
+                resolution_note: resolutionNote,
+                reporter_username: currentUser?.username || 'web_user',
+            });
+            showNotification(
+                `Incidencia #${incidentId} actualizada a "${incidentStatusLabel(normalizedStatus)}".`,
+                'success',
+            );
+
+            if (Number.isInteger(options.installationId) && options.installationId > 0) {
+                await showIncidentsForInstallation(options.installationId);
+                return;
+            }
+            if (Number.isInteger(options.assetId) && options.assetId > 0) {
+                await loadAssetDetail(options.assetId, { keepSelection: true });
+                return;
+            }
+            if (currentSelectedInstallationId) {
+                await showIncidentsForInstallation(currentSelectedInstallationId);
+            }
+        } catch (err) {
+            showNotification(`No se pudo actualizar estado: ${err.message || err}`, 'error');
+        }
+    };
+
     if (normalizedStatus === 'resolved') {
-        const noteInput = prompt('Nota de resolución (opcional):', incident?.resolution_note || '');
-        if (noteInput === null) return;
-        resolutionNote = String(noteInput || '').trim();
-    }
-
-    try {
-        await api.updateIncidentStatus(incidentId, {
-            incident_status: normalizedStatus,
-            resolution_note: resolutionNote,
-            reporter_username: currentUser?.username || 'web_user',
+        const defaultNote = String(incident?.resolution_note || '').trim();
+        openActionModal({
+            title: `Resolver incidencia #${incidentId}`,
+            subtitle: 'Agrega una nota de resolucion opcional antes de cerrar la incidencia.',
+            submitLabel: 'Resolver incidencia',
+            focusId: 'actionIncidentResolutionNote',
+            fieldsHtml: `
+                <div class="input-group">
+                    <label for="actionIncidentResolutionNote">Nota de resolucion (opcional)</label>
+                    <textarea id="actionIncidentResolutionNote" rows="4" placeholder="Resumen de la solucion aplicada">${escapeHtml(defaultNote)}</textarea>
+                </div>
+            `,
+            onSubmit: async () => {
+                const resolutionNote = String(
+                    document.getElementById('actionIncidentResolutionNote')?.value || '',
+                ).trim();
+                await applyStatusUpdate(resolutionNote);
+                closeActionModal(true);
+            },
         });
-        showNotification(
-            `Incidencia #${incidentId} actualizada a "${incidentStatusLabel(normalizedStatus)}".`,
-            'success',
-        );
-
-        if (Number.isInteger(options.installationId) && options.installationId > 0) {
-            await showIncidentsForInstallation(options.installationId);
-            return;
-        }
-        if (Number.isInteger(options.assetId) && options.assetId > 0) {
-            await loadAssetDetail(options.assetId, { keepSelection: true });
-            return;
-        }
-        if (currentSelectedInstallationId) {
-            await showIncidentsForInstallation(currentSelectedInstallationId);
-        }
-    } catch (err) {
-        showNotification(`No se pudo actualizar estado: ${err.message || err}`, 'error');
+        return;
     }
+
+    await applyStatusUpdate('');
 }
 
 async function loadAssets() {
@@ -2170,14 +2426,20 @@ function renderDriversTable(drivers) {
             event.stopPropagation();
             const key = String(driver.key || '').trim();
             if (!key) return;
-            if (!confirm(`Eliminar driver ${driver.brand || ''} ${driver.version || ''}?`)) return;
-            try {
-                await api.deleteDriver(key);
-                showNotification('Driver eliminado', 'success');
-                await loadDrivers();
-            } catch (err) {
-                showNotification(`No se pudo eliminar driver: ${err.message || err}`, 'error');
-            }
+            const driverLabel = String(`${driver.brand || ''} ${driver.version || ''}`).trim() || 'sin nombre';
+            openActionConfirmModal({
+                title: 'Eliminar driver',
+                subtitle: `Confirma la eliminacion de ${driverLabel}. Esta accion no se puede deshacer.`,
+                submitLabel: 'Eliminar driver',
+                acknowledgementText: 'Entiendo que este driver sera eliminado permanentemente.',
+                missingConfirmationMessage: 'Debes confirmar la eliminacion para continuar.',
+                onSubmit: async () => {
+                    await api.deleteDriver(key);
+                    closeActionModal(true);
+                    showNotification('Driver eliminado', 'success');
+                    await loadDrivers();
+                },
+            });
         });
 
         actionsCell.append(downloadBtn, deleteBtn);
@@ -2354,55 +2616,10 @@ async function createIncidentForAsset(assetId) {
     try {
         const detail = await api.getAssetIncidents(numericAssetId, { limit: 1 });
         const activeInstallationId = Number(detail?.active_link?.installation_id);
-        let targetInstallationId = activeInstallationId;
-        if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-            const input = prompt('No hay registro activo para este equipo. ID de registro destino:', '');
-            if (input === null) return;
-            targetInstallationId = Number.parseInt(String(input).trim(), 10);
-            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                showNotification('installation_id invalido.', 'error');
-                return;
-            }
-            await api.linkAssetToInstallation(numericAssetId, {
-                installation_id: targetInstallationId,
-                notes: 'Vinculo creado desde modulo Equipos',
-            });
-        }
-
-        const noteInput = prompt('Detalle de la incidencia:', '');
-        if (noteInput === null) return;
-        const note = String(noteInput || '').trim();
-        if (!note) {
-            showNotification('La incidencia requiere una nota.', 'error');
-            return;
-        }
-        const severityInput = prompt('Severidad (low/medium/high/critical):', 'medium');
-        if (severityInput === null) return;
-        const severity = normalizeSeverity(severityInput);
-        const adjustmentInput = prompt('Ajuste de tiempo en segundos (puede ser negativo):', '0');
-        if (adjustmentInput === null) return;
-        const adjustment = Number.parseInt(String(adjustmentInput).trim(), 10);
-        if (!Number.isInteger(adjustment)) {
-            showNotification('El ajuste de tiempo debe ser entero.', 'error');
-            return;
-        }
-        const applyToInstallation = confirm('Aplicar nota/ajuste tambien al registro de instalacion?');
-
-        const result = await api.createIncident(targetInstallationId, {
-            note,
-            reporter_username: currentUser?.username || 'web_user',
-            time_adjustment_seconds: adjustment,
-            severity,
-            source: 'web',
-            apply_to_installation: applyToInstallation,
+        createIncidentFromWeb(activeInstallationId, {
+            assetId: numericAssetId,
+            activeInstallationId,
         });
-
-        showNotification(
-            `Incidencia #${result?.incident?.id || 'N/A'} creada para equipo #${numericAssetId}.`,
-            'success',
-        );
-        await loadInstallations();
-        await loadAssetDetail(numericAssetId, { keepSelection: true });
     } catch (err) {
         showNotification(`No se pudo crear incidencia del equipo: ${err.message || err}`, 'error');
     }
@@ -2410,24 +2627,15 @@ async function createIncidentForAsset(assetId) {
 
 async function linkAssetFromDetail(assetId) {
     if (!requireActiveSession()) return;
-    const installationInput = prompt('ID de registro a vincular con este equipo:', '');
-    if (installationInput === null) return;
-    const installationId = Number.parseInt(String(installationInput).trim(), 10);
-    if (!Number.isInteger(installationId) || installationId <= 0) {
-        showNotification('installation_id invalido.', 'error');
+    const numericAssetId = Number.parseInt(String(assetId), 10);
+    if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
+        showNotification('asset_id invalido.', 'error');
         return;
     }
-
-    try {
-        await api.linkAssetToInstallation(assetId, {
-            installation_id: installationId,
-            notes: 'Vinculo manual desde detalle de equipo',
-        });
-        showNotification(`Equipo vinculado a registro #${installationId}.`, 'success');
-        await loadAssetDetail(assetId, { keepSelection: true });
-    } catch (err) {
-        showNotification(`No se pudo vincular equipo: ${err.message || err}`, 'error');
-    }
+    openAssetLinkModal({
+        assetId: numericAssetId,
+        notes: 'Vinculo manual desde detalle de equipo',
+    });
 }
 
 async function loadAssetDetail(assetId, options = {}) {
@@ -2608,91 +2816,21 @@ async function renderAssetDetail(data) {
         note.className = 'incident-note-text';
         note.textContent = incident.note || '';
 
-        const statusMeta = document.createElement('small');
-        statusMeta.className = 'asset-muted incident-meta-line';
-        statusMeta.textContent = `Estado: ${buildIncidentStatusText(incident)}`;
-        const timeMeta = document.createElement('small');
-        timeMeta.className = 'asset-muted incident-meta-line';
-        timeMeta.textContent = `Ajuste tiempo: ${formatDuration(incident.time_adjustment_seconds ?? 0)}`;
-        const checklistItems = normalizeIncidentChecklistItems(incident.checklist_items);
-        const checklistMeta = document.createElement('small');
-        checklistMeta.className = 'asset-muted incident-meta-line';
-        checklistMeta.textContent = checklistItems.length
-            ? `Checklist: ${checklistItems.join(' · ')}`
-            : 'Checklist: -';
-        const evidenceMeta = document.createElement('small');
-        evidenceMeta.className = 'asset-muted incident-meta-line';
-        evidenceMeta.textContent = incident.evidence_note
-            ? `Nota operativa: ${incident.evidence_note}`
-            : 'Nota operativa: -';
-        const resolutionMeta = document.createElement('small');
-        resolutionMeta.className = 'asset-muted incident-meta-line';
-        resolutionMeta.textContent = incident.resolution_note
-            ? `Resolución: ${incident.resolution_note}`
-            : 'Resolución: -';
-
         const sub = document.createElement('small');
         sub.className = 'asset-muted';
         sub.textContent =
             `Cliente: ${incident.installation_client_name || '-'} · ` +
             `${incident.installation_brand || '-'} ${incident.installation_version || ''}`.trim();
 
-        card.append(header, note, statusMeta, timeMeta, checklistMeta, evidenceMeta, resolutionMeta, sub);
-
-        const statusActions = document.createElement('div');
-        statusActions.className = 'incident-actions';
-        const incidentStatus = normalizeIncidentStatus(incident.incident_status);
-
-        const makeStatusBtn = (label, statusValue) => {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'btn-secondary';
-            button.textContent = label;
-            const canUpdateIncident = canCurrentUserEditAssets();
-            button.disabled = !canUpdateIncident || incidentStatus === statusValue;
-            if (!canUpdateIncident) {
-                button.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
-            }
-            button.addEventListener('click', () => {
-                void updateIncidentStatusFromWeb(incident, statusValue, {
-                    assetId: Number.parseInt(String(asset.id), 10),
-                    installationId: Number.parseInt(String(incident.installation_id), 10),
-                });
-            });
-            return button;
-        };
-        statusActions.append(
-            makeStatusBtn('Abrir', 'open'),
-            makeStatusBtn('En curso', 'in_progress'),
-            makeStatusBtn('Resolver', 'resolved'),
-        );
-        card.appendChild(statusActions);
-
-        const uploadBtn = document.createElement('button');
-        uploadBtn.className = 'btn-secondary';
-        uploadBtn.textContent = 'Subir foto';
-        uploadBtn.classList.add('incident-upload-btn');
-        uploadBtn.addEventListener('click', () => {
-            void selectAndUploadIncidentPhoto(incident.id, incident.installation_id);
+        card.append(header, note);
+        appendIncidentMetaLines(card, incident);
+        card.appendChild(sub);
+        appendIncidentStatusActions(card, incident, {
+            assetId: Number.parseInt(String(asset.id), 10),
+            installationId: Number.parseInt(String(incident.installation_id), 10),
         });
-        card.appendChild(uploadBtn);
-
-        if (incident.photos && incident.photos.length) {
-            const photosGrid = document.createElement('div');
-            photosGrid.className = 'photos-grid';
-            for (const photo of incident.photos) {
-                const photoUrl = await loadPhotoWithAuth(photo.id);
-                if (photoUrl) {
-                    const image = document.createElement('img');
-                    image.src = photoUrl;
-                    image.className = 'photo-thumb';
-                    image.alt = 'Foto de incidencia';
-                    image.addEventListener('click', () => viewPhoto(photo.id));
-                    photosGrid.appendChild(image);
-                }
-            }
-            card.appendChild(photosGrid);
-        }
+        appendIncidentUploadPhotoAction(card, incident, incident.installation_id);
+        await appendIncidentPhotosGrid(card, incident.photos);
 
         incidentsWrap.appendChild(card);
     }
@@ -2765,7 +2903,7 @@ async function renderIncidents(incidents, installationId) {
     }
 
     for (const inc of incidents) {
-        const severityIcon = inc.severity === 'critical' ? '🔴' : inc.severity === 'high' ? '🟠' : inc.severity === 'medium' ? '🟡' : '🔵';
+        const severityIcon = getSeverityIcon(inc.severity);
 
         const incidentCard = document.createElement('div');
         incidentCard.className = 'incident-card';
@@ -2793,85 +2931,13 @@ async function renderIncidents(incidents, installationId) {
         note.className = 'incident-note-text';
         note.textContent = inc.note || '';
 
-        const statusMeta = document.createElement('small');
-        statusMeta.className = 'asset-muted incident-meta-line';
-        statusMeta.textContent = `Estado: ${buildIncidentStatusText(inc)}`;
-        const timeMeta = document.createElement('small');
-        timeMeta.className = 'asset-muted incident-meta-line';
-        timeMeta.textContent = `Ajuste tiempo: ${formatDuration(inc.time_adjustment_seconds ?? 0)}`;
-        const checklistItems = normalizeIncidentChecklistItems(inc.checklist_items);
-        const checklistMeta = document.createElement('small');
-        checklistMeta.className = 'asset-muted incident-meta-line';
-        checklistMeta.textContent = checklistItems.length
-            ? `Checklist: ${checklistItems.join(' · ')}`
-            : 'Checklist: -';
-        const evidenceMeta = document.createElement('small');
-        evidenceMeta.className = 'asset-muted incident-meta-line';
-        evidenceMeta.textContent = inc.evidence_note
-            ? `Nota operativa: ${inc.evidence_note}`
-            : 'Nota operativa: -';
-        const resolutionMeta = document.createElement('small');
-        resolutionMeta.className = 'asset-muted incident-meta-line';
-        resolutionMeta.textContent = inc.resolution_note
-            ? `Resolución: ${inc.resolution_note}`
-            : 'Resolución: -';
-
-        incidentCard.append(incidentHeader, note, statusMeta, timeMeta, checklistMeta, evidenceMeta, resolutionMeta);
-
-        const statusActions = document.createElement('div');
-        statusActions.className = 'incident-actions';
-        const incidentStatus = normalizeIncidentStatus(inc.incident_status);
-
-        const makeStatusBtn = (label, statusValue) => {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'btn-secondary';
-            button.textContent = label;
-            const canUpdateIncident = canCurrentUserEditAssets();
-            button.disabled = !canUpdateIncident || incidentStatus === statusValue;
-            if (!canUpdateIncident) {
-                button.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
-            }
-            button.addEventListener('click', () => {
-                void updateIncidentStatusFromWeb(inc, statusValue, {
-                    installationId: Number.parseInt(String(installationId), 10),
-                });
-            });
-            return button;
-        };
-        statusActions.append(
-            makeStatusBtn('Abrir', 'open'),
-            makeStatusBtn('En curso', 'in_progress'),
-            makeStatusBtn('Resolver', 'resolved'),
-        );
-        incidentCard.appendChild(statusActions);
-
-        const uploadPhotoBtn = document.createElement('button');
-        uploadPhotoBtn.className = 'btn-secondary';
-        uploadPhotoBtn.textContent = '📤 Subir foto';
-        uploadPhotoBtn.classList.add('incident-upload-btn');
-        uploadPhotoBtn.addEventListener('click', () => {
-            void selectAndUploadIncidentPhoto(inc.id, installationId);
+        incidentCard.append(incidentHeader, note);
+        appendIncidentMetaLines(incidentCard, inc);
+        appendIncidentStatusActions(incidentCard, inc, {
+            installationId: Number.parseInt(String(installationId), 10),
         });
-        incidentCard.appendChild(uploadPhotoBtn);
-
-        if (inc.photos && inc.photos.length) {
-            const photosGrid = document.createElement('div');
-            photosGrid.className = 'photos-grid';
-            for (const photo of inc.photos) {
-                const photoUrl = await loadPhotoWithAuth(photo.id);
-                if (photoUrl) {
-                    const image = document.createElement('img');
-                    image.src = photoUrl;
-                    image.className = 'photo-thumb';
-                    image.dataset.photoId = String(photo.id);
-                    image.alt = 'Foto de incidencia';
-                    image.addEventListener('click', () => viewPhoto(photo.id));
-                    photosGrid.appendChild(image);
-                }
-            }
-            incidentCard.appendChild(photosGrid);
-        }
+        appendIncidentUploadPhotoAction(incidentCard, inc, installationId, { label: '📤 Subir foto' });
+        await appendIncidentPhotosGrid(incidentCard, inc.photos, { attachPhotoIdDataset: true });
 
         container.appendChild(incidentCard);
     }
@@ -4071,6 +4137,8 @@ document.getElementById('qrPasswordModal')?.addEventListener('click', (event) =>
     closeQrPasswordModal();
 });
 
+bindActionModalEvents();
+
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
     if (handleLoginModalKeydown(e)) {
@@ -4081,6 +4149,7 @@ document.addEventListener('keydown', (e) => {
         document.getElementById('photoModal').classList.remove('active');
         closeQrPasswordModal();
         closeQrModal();
+        closeActionModal();
     }
     const normalizedKey = String(e.key || '').toLowerCase();
     if (e.altKey && !e.ctrlKey && !e.metaKey && normalizedKey === 'r') {

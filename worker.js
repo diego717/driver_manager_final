@@ -829,6 +829,35 @@ function buildWebPasswordVerifyRateLimitIdentifier(request, session) {
   return `${getClientIpForRateLimit(request)}:${identityPart}`;
 }
 
+function buildWebAuthFailureAuditDetails(error) {
+  return {
+    reason: normalizeOptionalString(error?.message, "Error de autenticacion"),
+    status_code: Number.isInteger(Number(error?.status)) ? Number(error.status) : 0,
+  };
+}
+
+async function logWebAuditEvent(
+  env,
+  request,
+  {
+    action,
+    username,
+    success = true,
+    tenantId = DEFAULT_REALTIME_TENANT_ID,
+    details = {},
+  },
+) {
+  await logAuditEvent(env, {
+    action: normalizeOptionalString(action, "web_event"),
+    username: normalizeOptionalString(username, "unknown"),
+    success: Boolean(success),
+    tenantId: normalizeRealtimeTenantId(tenantId),
+    details: details && typeof details === "object" ? details : {},
+    ipAddress: getClientIpForRateLimit(request),
+    platform: "web",
+  });
+}
+
 function cleanupExpiredAuthNoncesInMemory(nowSeconds) {
   if (authNonceMemoryStore.size === 0) return;
   for (const [key, expiresAt] of authNonceMemoryStore.entries()) {
@@ -3784,40 +3813,32 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     } catch (error) {
       if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
         await recordFailedWebLoginAttempt(env, rateLimitIdentifier);
-        
-        // Log audit event for failed login
-        await logAuditEvent(env, {
+
+        // Log audit event for failed login.
+        await logWebAuditEvent(env, request, {
           action: "web_login_failed",
-          username: username,
+          username,
           success: false,
           tenantId: DEFAULT_REALTIME_TENANT_ID,
-          details: {
-            reason: error.message,
-            status_code: error.status
-          },
-          ipAddress: getClientIpForRateLimit(request),
-          platform: "web"
+          details: buildWebAuthFailureAuditDetails(error),
         });
       }
       throw error;
     }
 
     await clearWebLoginRateLimit(env, rateLimitIdentifier);
-    
-    // Log audit event for successful login
-    await logAuditEvent(env, {
+
+    // Log audit event for successful login.
+    await logWebAuditEvent(env, request, {
       action: "web_login_success",
       username: user.username,
-      success: true,
       tenantId: user.tenant_id,
       details: {
         role: user.role,
-        user_id: Number(user.id)
+        user_id: Number(user.id),
       },
-      ipAddress: getClientIpForRateLimit(request),
-      platform: "web"
     });
-    
+
     const sessionVersion = await rotateWebSessionVersion(env, Number(user.id));
     const token = await buildWebAccessToken(env, {
       username: user.username,
@@ -3868,10 +3889,9 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       const user = await verifyCurrentWebUserPassword(env, session, providedPassword);
       await clearWebPasswordVerifyRateLimit(env, rateLimitIdentifier);
 
-      await logAuditEvent(env, {
+      await logWebAuditEvent(env, request, {
         action: "web_password_verified",
         username: session.sub,
-        success: true,
         tenantId: user.tenant_id,
         details: {
           user_id: Number(user.id),
@@ -3888,17 +3908,12 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     } catch (error) {
       if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
         await recordFailedWebPasswordVerifyAttempt(env, rateLimitIdentifier);
-        await logAuditEvent(env, {
+        await logWebAuditEvent(env, request, {
           action: "web_password_verify_failed",
           username: session.sub || "unknown",
           success: false,
           tenantId: session.tenant_id,
-          details: {
-            reason: error.message,
-            status_code: error.status,
-          },
-          ipAddress: getClientIpForRateLimit(request),
-          platform: "web",
+          details: buildWebAuthFailureAuditDetails(error),
         });
       }
       throw error;
@@ -4039,21 +4054,18 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       tenantId: targetTenantId,
     });
 
-    // Log audit event for user creation
-    await logAuditEvent(env, {
+    // Log audit event for user creation.
+    await logWebAuditEvent(env, request, {
       action: "web_user_created",
       username: session.sub,
-      success: true,
       tenantId: createdUser.tenant_id,
       details: {
         created_user: createdUser.username,
         created_user_id: createdUser.id,
         created_role: createdUser.role,
         performed_by: session.sub,
-        performed_by_role: session.role
+        performed_by_role: session.role,
       },
-      ipAddress: getClientIpForRateLimit(request),
-      platform: "web"
     });
 
     return jsonResponse(request, env, corsPolicy,
@@ -4115,11 +4127,10 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       isActive: nextIsActive,
     });
 
-    // Log audit event for user update
-    await logAuditEvent(env, {
+    // Log audit event for user update.
+    await logWebAuditEvent(env, request, {
       action: "web_user_updated",
       username: session.sub,
-      success: true,
       tenantId: existingUser.tenant_id,
       details: {
         updated_user_id: userId,
@@ -4129,10 +4140,8 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
         old_active: Boolean(existingUser.is_active),
         new_active: Boolean(nextIsActive),
         performed_by: session.sub,
-        performed_by_role: session.role
+        performed_by_role: session.role,
       },
-      ipAddress: getClientIpForRateLimit(request),
-      platform: "web"
     });
 
     const updatedUser = await getWebUserById(env, userId);
@@ -4171,20 +4180,17 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     const newPassword = validateWebPassword(body?.new_password, "new_password");
     await forceResetWebUserPassword(env, { userId, newPassword });
 
-    // Log audit event for password reset
-    await logAuditEvent(env, {
+    // Log audit event for password reset.
+    await logWebAuditEvent(env, request, {
       action: "web_password_reset",
       username: session.sub,
-      success: true,
       tenantId: existingUser.tenant_id,
       details: {
         target_user_id: userId,
         target_user: existingUser.username,
         performed_by: session.sub,
-        performed_by_role: session.role
+        performed_by_role: session.role,
       },
-      ipAddress: getClientIpForRateLimit(request),
-      platform: "web"
     });
 
     const updatedUser = await getWebUserById(env, userId);
@@ -4239,21 +4245,18 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
       });
     }
 
-    // Log audit event for user import
-    await logAuditEvent(env, {
+    // Log audit event for user import.
+    await logWebAuditEvent(env, request, {
       action: "web_users_imported",
       username: session.sub,
-      success: true,
       tenantId: sessionTenantId,
       details: {
         total_imported: processedUsers.length,
         created,
         updated,
         performed_by: session.sub,
-        performed_by_role: session.role
+        performed_by_role: session.role,
       },
-      ipAddress: getClientIpForRateLimit(request),
-      platform: "web"
     });
 
     return jsonResponse(request, env, corsPolicy,

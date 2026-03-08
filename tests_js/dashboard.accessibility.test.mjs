@@ -44,10 +44,15 @@ function setupDomWithDashboardScript() {
     close() {}
   };
 
-  const scriptPath = path.join(process.cwd(), 'dashboard.js');
-  const scriptContent = fs.readFileSync(scriptPath, 'utf-8');
-  const script = new vm.Script(scriptContent, { filename: 'dashboard.js' });
-  script.runInContext(context);
+  const apiScriptPath = path.join(process.cwd(), 'dashboard-api.js');
+  const apiScriptContent = fs.readFileSync(apiScriptPath, 'utf-8');
+  const apiScript = new vm.Script(apiScriptContent, { filename: 'dashboard-api.js' });
+  apiScript.runInContext(context);
+
+  const dashboardScriptPath = path.join(process.cwd(), 'dashboard.js');
+  const dashboardScriptContent = fs.readFileSync(dashboardScriptPath, 'utf-8');
+  const dashboardScript = new vm.Script(dashboardScriptContent, { filename: 'dashboard.js' });
+  dashboardScript.runInContext(context);
 
   return dom;
 }

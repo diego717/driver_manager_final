@@ -10,6 +10,7 @@ const sources = {
   css: path.join(rootDir, "dashboard.css"),
   chart: path.join(rootDir, "node_modules", "chart.js", "dist", "chart.umd.js"),
   qr: path.join(rootDir, "dashboard-qr.js"),
+  api: path.join(rootDir, "dashboard-api.js"),
   js: path.join(rootDir, "dashboard.js"),
   pwa: path.join(rootDir, "dashboard-pwa.js"),
   manifest: path.join(rootDir, "manifest.json"),
@@ -33,6 +34,7 @@ function rewriteDashboardHtml(content, versions) {
     .replace(/href="\/manifest\.json(?:\?v=[^"]+)?"/g, `href="/manifest.json?v=${versions.manifest}"`)
     .replace(/src="\/chart\.umd\.js(?:\?v=[^"]+)?"/g, `src="/chart.umd.js?v=${versions.chart}"`)
     .replace(/src="\/dashboard-qr\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-qr.js?v=${versions.qr}"`)
+    .replace(/src="\/dashboard-api\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-api.js?v=${versions.api}"`)
     .replace(/src="\/dashboard\.js(?:\?v=[^"]+)?"/g, `src="/dashboard.js?v=${versions.js}"`)
     .replace(/src="\/dashboard-pwa\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-pwa.js?v=${versions.pwa}"`);
 }
@@ -48,6 +50,7 @@ function rewriteServiceWorker(content, versions) {
     `/dashboard.css?v=${versions.css}`,
     `/chart.umd.js?v=${versions.chart}`,
     `/dashboard-qr.js?v=${versions.qr}`,
+    `/dashboard-api.js?v=${versions.api}`,
     `/dashboard.js?v=${versions.js}`,
     `/dashboard-pwa.js?v=${versions.pwa}`,
     `/manifest.json?v=${versions.manifest}`,
@@ -81,6 +84,7 @@ function main() {
   const css = readFile(sources.css);
   const chart = readFile(sources.chart);
   const qr = readFile(sources.qr);
+  const api = readFile(sources.api);
   const js = readFile(sources.js);
   const pwa = readFile(sources.pwa);
   const manifest = readFile(sources.manifest);
@@ -90,19 +94,30 @@ function main() {
     css: hashOf(css),
     chart: hashOf(chart),
     qr: hashOf(qr),
+    api: hashOf(api),
     js: hashOf(js),
     pwa: hashOf(pwa),
     manifest: hashOf(manifest),
     sw: hashOf(sw),
   };
   versions.build = hashOf(
-    [versions.css, versions.chart, versions.qr, versions.js, versions.pwa, versions.manifest, versions.sw].join(":"),
+    [
+      versions.css,
+      versions.chart,
+      versions.qr,
+      versions.api,
+      versions.js,
+      versions.pwa,
+      versions.manifest,
+      versions.sw,
+    ].join(":"),
   );
 
   fs.mkdirSync(publicDir, { recursive: true });
   writeFile("dashboard.css", css);
   writeFile("chart.umd.js", chart);
   writeFile("dashboard-qr.js", qr);
+  writeFile("dashboard-api.js", api);
   writeFile("dashboard.js", js);
   writeFile("manifest.json", manifest);
   writeFile("dashboard.html", rewriteDashboardHtml(html, versions));

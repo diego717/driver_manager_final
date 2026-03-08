@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 
+const dashboardApiScript = fs.readFileSync(new URL('../dashboard-api.js', import.meta.url), 'utf8');
 const dashboardScript = fs.readFileSync(new URL('../dashboard.js', import.meta.url), 'utf8');
 
 function createDashboardDom() {
@@ -25,6 +26,13 @@ function createDashboardDom() {
     <h1 id="pageTitle"></h1>
     <div id="photoModal"><span class="close"></span></div>
     <img id="photoViewer" />
+    <div id="qrModal"><button type="button" class="close"></button></div>
+    <input id="qrValueInput" />
+    <button id="qrGenerateBtn"></button>
+    <button id="qrSaveAssetBtn"></button>
+    <button id="qrCopyBtn"></button>
+    <button id="qrDownloadBtn"></button>
+    <button id="qrPrintBtn"></button>
     <div id="dashboardSection" class="section active"></div>
     <div id="installationsSection" class="section"></div>
     <div id="incidentsSection" class="section"></div>
@@ -68,6 +76,7 @@ describe('dashboard render XSS hardening', () => {
     window.fetch = async () => ({ status: 200, ok: true, json: async () => ({}) });
     window.EventSource = class { close() {} };
 
+    window.eval(dashboardApiScript);
     window.eval(dashboardScript);
   });
 
@@ -104,8 +113,8 @@ describe('dashboard render XSS hardening', () => {
     assert.equal(window.document.querySelector('#installationsTable td img'), null);
     assert.equal(window.document.querySelector('#auditLogs td img'), null);
 
-    const notesCell = window.document.querySelector('#installationsTable tbody tr td:nth-child(7)');
-    assert.ok(notesCell.textContent.includes('<img src=x onerror=window.__xs'));
+    const installationRow = window.document.querySelector('#installationsTable tbody tr');
+    assert.ok(installationRow.textContent.includes('<img src=x onerror=window.__xss=1>'));
   });
 
   it('renders incidents and filter chips with malicious text as plain content', async () => {

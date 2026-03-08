@@ -1,4 +1,4 @@
-﻿// API base URL:
+// API base URL:
 // - By default uses same-origin (recommended and safest).
 // - Optional override via window.__DM_API_BASE__ or localStorage.dm_api_base_url.
 // - Cross-origin overrides are blocked unless explicitly enabled for debug.
@@ -161,7 +161,7 @@ const SECTION_TITLES = {
     assets: 'Equipos',
     drivers: 'Drivers',
     incidents: 'Incidencias',
-    audit: 'AuditorÃ­a',
+    audit: 'Auditoría',
 };
 const SECTION_SUBTITLES = {
     dashboard: 'Panorama general en tiempo real',
@@ -172,7 +172,7 @@ const SECTION_SUBTITLES = {
     audit: 'Trazas criticas y cumplimiento',
 };
 const TOAST_TYPE_ICONS = {
-    success: 'âœ“',
+    success: '✓',
     error: '!',
     warning: '!',
     info: 'i',
@@ -200,268 +200,28 @@ function applyChartDefaults(theme = 'light') {
 
 applyChartDefaults('light');
 
-async function parseApiResponsePayload(response) {
-    const rawText = await response.text();
-    if (!rawText) return null;
+const apiFactory = window.DashboardApi && typeof window.DashboardApi.createClient === 'function'
+    ? window.DashboardApi.createClient
+    : null;
 
-    const contentType = (response.headers.get('content-type') || '').toLowerCase();
-    const looksLikeJson = contentType.includes('application/json');
-    if (looksLikeJson) {
-        try {
-            return JSON.parse(rawText);
-        } catch {
-            return rawText;
-        }
-    }
-
-    return rawText;
+if (!apiFactory) {
+    throw new Error('No se pudo inicializar DashboardApi. Verifica la carga de /dashboard-api.js');
 }
 
-function extractApiErrorMessage(payload, response) {
-    if (payload && typeof payload === 'object') {
-        const fromNested = payload.error && typeof payload.error === 'object'
-            ? payload.error.message
-            : undefined;
-        const fromMessage = payload.message;
-        const message = fromNested || fromMessage;
-        if (typeof message === 'string' && message.trim()) {
-            return message.trim();
-        }
-    }
-
-    if (typeof payload === 'string' && payload.trim()) {
-        return payload.trim();
-    }
-
-    return `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
-}
-
-const api = {
-    async request(endpoint, options = {}) {
-        const baseHeaders = {
-            'Content-Type': 'application/json',
-            ...(options.headers || {})
-        };
-
-        const sendRequest = async (useBearer = true) => {
-            const authHeaders = useBearer && webAccessToken
-                ? { Authorization: 'Bearer ' + webAccessToken }
-                : {};
-            const headers = {
-                ...baseHeaders,
-                ...authHeaders,
-            };
-
-            const response = await fetch(API_BASE + endpoint, {
-                ...options,
-                headers,
-                credentials: 'include'
-            });
-            const payload = await parseApiResponsePayload(response);
-            return { response, payload };
-        };
-
-        let { response, payload } = await sendRequest(true);
-
-        // If bearer got stale (session rotated), retry once using only cookie session.
-        if (response.status === 401 && webAccessToken) {
-            const retryResult = await sendRequest(false);
-            response = retryResult.response;
-            payload = retryResult.payload;
-            if (response.ok) {
-                // Prefer cookie session from now on until next explicit login refreshes bearer.
-                webAccessToken = '';
-            }
-        }
-        
-        if (response.status === 401) {
-            currentUser = null;
-            webAccessToken = '';
-            closeSSE();
-            resetProtectedViews();
-            showLogin();
-            throw new Error(extractApiErrorMessage(payload, response) || 'No autorizado');
-        }
-
-        if (!response.ok) {
-            throw new Error(extractApiErrorMessage(payload, response));
-        }
-
-        if (payload === null) {
-            return {};
-        }
-
-        return payload;
+const api = apiFactory({
+    apiBase: API_BASE,
+    getAccessToken: () => webAccessToken,
+    setAccessToken: (value) => {
+        webAccessToken = String(value || '');
     },
-    
-    getInstallations(params = {}) {
-        const query = new URLSearchParams(params).toString();
-        return this.request('/web/installations?' + query);
+    onUnauthorized: () => {
+        currentUser = null;
+        webAccessToken = '';
+        closeSSE();
+        resetProtectedViews();
+        showLogin();
     },
-    
-    getStatistics() {
-        return this.request('/web/statistics');
-    },
-    
-    getAuditLogs(limit = 100) {
-        return this.request('/web/audit-logs?limit=' + limit);
-    },
-    
-    getIncidents(installationId) {
-        return this.request('/web/installations/' + installationId + '/incidents');
-    },
-
-    createRecord(payload) {
-        return this.request('/web/records', {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-    },
-
-    createIncident(installationId, payload) {
-        return this.request('/web/installations/' + installationId + '/incidents', {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-    },
-
-    updateIncidentStatus(incidentId, payload) {
-        return this.request('/web/incidents/' + incidentId + '/status', {
-            method: 'PATCH',
-            body: JSON.stringify(payload || {})
-        });
-    },
-
-    resolveAsset(payload) {
-        return this.request('/web/assets/resolve', {
-            method: 'POST',
-            body: JSON.stringify(payload || {})
-        });
-    },
-
-    getAssets(params = {}) {
-        const query = new URLSearchParams(params).toString();
-        return this.request(`/web/assets?${query}`);
-    },
-
-    getAssetIncidents(assetId, params = {}) {
-        const query = new URLSearchParams(params).toString();
-        const suffix = query ? `?${query}` : '';
-        return this.request(`/web/assets/${assetId}/incidents${suffix}`);
-    },
-
-    linkAssetToInstallation(assetId, payload) {
-        return this.request('/web/assets/' + assetId + '/link-installation', {
-            method: 'POST',
-            body: JSON.stringify(payload || {})
-        });
-    },
-
-    getDrivers(params = {}) {
-        const query = new URLSearchParams(params).toString();
-        return this.request(query ? `/web/drivers?${query}` : '/web/drivers');
-    },
-
-    async uploadDriver(file, metadata = {}) {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('brand', String(metadata.brand || '').trim());
-        formData.append('version', String(metadata.version || '').trim());
-        formData.append('description', String(metadata.description || '').trim());
-
-        const authHeaders = webAccessToken
-            ? { Authorization: 'Bearer ' + webAccessToken }
-            : {};
-
-        const response = await fetch(API_BASE + '/web/drivers', {
-            method: 'POST',
-            headers: {
-                ...authHeaders
-            },
-            body: formData,
-            credentials: 'include'
-        });
-
-        const payload = await parseApiResponsePayload(response);
-
-        if (response.status === 401) {
-            currentUser = null;
-            webAccessToken = '';
-            closeSSE();
-            resetProtectedViews();
-            showLogin();
-            throw new Error(extractApiErrorMessage(payload, response) || 'No autorizado');
-        }
-        if (!response.ok) {
-            throw new Error(extractApiErrorMessage(payload, response));
-        }
-
-        return payload || {};
-    },
-
-    deleteDriver(key) {
-        const encodedKey = encodeURIComponent(String(key || '').trim());
-        return this.request('/web/drivers?key=' + encodedKey, {
-            method: 'DELETE'
-        });
-    },
-
-    async uploadIncidentPhoto(incidentId, file) {
-        const authHeaders = webAccessToken
-            ? { Authorization: 'Bearer ' + webAccessToken }
-            : {};
-        const response = await fetch(API_BASE + '/web/incidents/' + incidentId + '/photos', {
-            method: 'POST',
-            headers: {
-                ...authHeaders,
-                'Content-Type': file.type || 'image/jpeg',
-                'X-File-Name': file.name || ('incident_' + incidentId + '.jpg')
-            },
-            body: file,
-            credentials: 'include'
-        });
-
-        if (response.status === 401) {
-            currentUser = null;
-            webAccessToken = '';
-            closeSSE();
-            showLogin();
-            throw new Error('No autorizado');
-        }
-
-        if (!response.ok) {
-            let message = 'Error subiendo foto.';
-            try {
-                const payload = await response.json();
-                message = payload?.error?.message || payload?.message || message;
-            } catch (_err) {
-                // Ignorar parseo de body en errores no JSON.
-            }
-            throw new Error(message);
-        }
-
-        return response.json();
-    },
-    
-    getTrendData() {
-        return this.request('/web/statistics/trend');
-    },
-    
-    login(username, password) {
-        return this.request('/web/auth/login', {
-            method: 'POST',
-            body: JSON.stringify({ username, password })
-        });
-    },
-    
-    getMe() {
-        return this.request('/web/auth/me');
-    },
-
-    logout() {
-        return this.request('/web/auth/logout', { method: 'POST' });
-    }
-};
+});
 
 function showLogin() {
     loginModalLastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -621,6 +381,7 @@ function parseStrictInteger(rawValue) {
 let actionModalSubmitHandler = null;
 let actionModalSubmitBusy = false;
 let actionModalLastFocusedElement = null;
+let actionModalEventsBound = false;
 
 function setActionModalError(message = '') {
     const errorEl = document.getElementById('actionModalError');
@@ -702,6 +463,76 @@ function openActionModal(config = {}) {
     });
 
     return true;
+}
+
+function openActionConfirmModal(config = {}) {
+    const confirmCheckboxId = 'actionModalConfirmCheckbox';
+    const title = String(config.title || 'Confirmar accion').trim() || 'Confirmar accion';
+    const subtitle = String(config.subtitle || '').trim();
+    const submitLabel = String(config.submitLabel || 'Confirmar').trim() || 'Confirmar';
+    const acknowledgementText = String(config.acknowledgementText || 'Confirmo esta accion.').trim()
+        || 'Confirmo esta accion.';
+    const missingConfirmationMessage = String(
+        config.missingConfirmationMessage || 'Debes confirmar la accion para continuar.',
+    ).trim() || 'Debes confirmar la accion para continuar.';
+    const focusId = String(config.focusId || confirmCheckboxId).trim() || confirmCheckboxId;
+    const onSubmit = typeof config.onSubmit === 'function' ? config.onSubmit : async () => {};
+
+    return openActionModal({
+        title,
+        subtitle,
+        submitLabel,
+        focusId,
+        fieldsHtml: `
+            <label class="action-checkbox" for="${confirmCheckboxId}">
+                <input type="checkbox" id="${confirmCheckboxId}">
+                <span>${escapeHtml(acknowledgementText)}</span>
+            </label>
+        `,
+        onSubmit: async () => {
+            const confirmed = document.getElementById(confirmCheckboxId)?.checked === true;
+            if (!confirmed) {
+                setActionModalError(missingConfirmationMessage);
+                return;
+            }
+            await onSubmit();
+        },
+    });
+}
+
+function bindActionModalEvents() {
+    if (actionModalEventsBound) return;
+
+    document.querySelector('#actionModal .close')?.addEventListener('click', () => {
+        closeActionModal();
+    });
+
+    document.getElementById('actionModalCancelBtn')?.addEventListener('click', () => {
+        closeActionModal();
+    });
+
+    document.getElementById('actionModal')?.addEventListener('click', (event) => {
+        if (event.target !== event.currentTarget) return;
+        closeActionModal();
+    });
+
+    document.getElementById('actionModalForm')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (actionModalSubmitBusy) return;
+        if (typeof actionModalSubmitHandler !== 'function') return;
+
+        setActionModalError('');
+        try {
+            setActionModalBusy(true);
+            await actionModalSubmitHandler();
+        } catch (error) {
+            setActionModalError(error?.message || 'No se pudo completar la accion.');
+        } finally {
+            setActionModalBusy(false);
+        }
+    });
+
+    actionModalEventsBound = true;
 }
 
 function createManualRecordFromWeb() {
@@ -1261,7 +1092,7 @@ function renderSuccessChart(stats) {
     charts.success = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Ã‰xito', 'Fallido', 'Otro'],
+            labels: ['Éxito', 'Fallido', 'Otro'],
             datasets: [{
                 data: [success, failed, Math.max(0, other)],
                 backgroundColor: [
@@ -1496,7 +1327,7 @@ function renderRecentInstallations(installations) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'Estado', 'AtenciÃ³n', 'Fecha'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'Estado', 'Atención', 'Fecha'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -1507,7 +1338,7 @@ function renderRecentInstallations(installations) {
 
     installations.forEach(inst => {
         const statusClass = inst.status || 'unknown';
-        const statusIcon = inst.status === 'success' ? 'âœ…' : inst.status === 'failed' ? 'âŒ' : 'â“';
+        const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
 
         const row = document.createElement('tr');
 
@@ -1590,31 +1421,31 @@ function updateFilterChips() {
         const removeSpan = document.createElement('span');
         removeSpan.className = 'chip-remove';
         removeSpan.dataset.filter = filterType;
-        removeSpan.textContent = 'Ã—';
+        removeSpan.textContent = '×';
 
         chip.append(labelSpan, valueSpan, removeSpan);
         chipsContainer.appendChild(chip);
     };
 
     if (filters.search) {
-        appendChip('ðŸ”', `"${filters.search}"`, 'search');
+        appendChip('🔍', `"${filters.search}"`, 'search');
     }
 
     if (filters.brand) {
-        appendChip('ðŸ·ï¸ Marca:', filters.brand, 'brand');
+        appendChip('🏷️ Marca:', filters.brand, 'brand');
     }
 
     if (filters.status) {
-        const statusLabel = filters.status === 'success' ? 'âœ… Ã‰xito' : 
-                           filters.status === 'failed' ? 'âŒ Fallido' : 'â“ Desconocido';
-        appendChip('ðŸ“Š Estado:', statusLabel, 'status');
+        const statusLabel = filters.status === 'success' ? '✅ Éxito' : 
+                           filters.status === 'failed' ? '❌ Fallido' : '❓ Desconocido';
+        appendChip('📊 Estado:', statusLabel, 'status');
     }
 
     if (filters.startDate || filters.endDate) {
         const dateLabel = filters.startDate && filters.endDate ? 
             `${filters.startDate} - ${filters.endDate}` :
             filters.startDate ? `Desde: ${filters.startDate}` : `Hasta: ${filters.endDate}`;
-        appendChip('ðŸ“…', dateLabel, 'date');
+        appendChip('📅', dateLabel, 'date');
     }
     
     // Add click handlers to remove buttons
@@ -1693,7 +1524,7 @@ function normalizeRecordAttentionState(value) {
 
 function recordAttentionStateLabel(value) {
     const normalized = normalizeRecordAttentionState(value);
-    if (normalized === 'critical') return 'CrÃ­tica';
+    if (normalized === 'critical') return 'Crítica';
     if (normalized === 'in_progress') return 'En curso';
     if (normalized === 'open') return 'Abierta';
     if (normalized === 'resolved') return 'Resuelta';
@@ -1702,11 +1533,11 @@ function recordAttentionStateLabel(value) {
 
 function recordAttentionStateIcon(value) {
     const normalized = normalizeRecordAttentionState(value);
-    if (normalized === 'critical') return 'ðŸš¨';
-    if (normalized === 'in_progress') return 'ðŸŸ ';
-    if (normalized === 'open') return 'ðŸŸ¡';
-    if (normalized === 'resolved') return 'âœ…';
-    return 'ðŸŸ¢';
+    if (normalized === 'critical') return '🚨';
+    if (normalized === 'in_progress') return '🟠';
+    if (normalized === 'open') return '🟡';
+    if (normalized === 'resolved') return '✅';
+    return '🟢';
 }
 
 function buildRecordAttentionBadge(record) {
@@ -1993,7 +1824,7 @@ function setupAdvancedFilters() {
         const createRecordBtn = document.createElement('button');
         createRecordBtn.id = 'createManualRecordBtn';
         createRecordBtn.className = 'btn-secondary';
-        createRecordBtn.textContent = 'ðŸ“ Nuevo registro manual';
+        createRecordBtn.textContent = '📝 Nuevo registro manual';
         createRecordBtn.addEventListener('click', () => {
             void createManualRecordFromWeb();
         });
@@ -2081,7 +1912,7 @@ async function loadInstallations() {
         // Update filter chips (in case they were cleared externally)
         updateFilterChips();
     } catch (err) {
-        container.innerHTML = '<p class="error">âŒ Error cargando registros</p>';
+        container.innerHTML = '<p class="error">❌ Error cargando registros</p>';
         if (resultsCount) {
             resultsCount.textContent = 'Error al cargar';
         }
@@ -2182,7 +2013,7 @@ async function showIncidentsForInstallation(installationId) {
         const data = await api.getIncidents(installationId);
         renderIncidents(data.incidents || [], installationId);
     } catch (err) {
-        container.innerHTML = '<p class="error">âŒ Error cargando incidencias</p>';
+        container.innerHTML = '<p class="error">❌ Error cargando incidencias</p>';
     }
 }
 
@@ -2193,10 +2024,10 @@ function normalizeAssetStatusLabel(status) {
 }
 
 function getSeverityIcon(severity) {
-    if (severity === 'critical') return 'ðŸ”´';
-    if (severity === 'high') return 'ðŸŸ ';
-    if (severity === 'medium') return 'ðŸŸ¡';
-    return 'ðŸ”µ';
+    if (severity === 'critical') return '🔴';
+    if (severity === 'high') return '🟠';
+    if (severity === 'medium') return '🟡';
+    return '🔵';
 }
 
 function normalizeIncidentStatus(value) {
@@ -2215,18 +2046,18 @@ function incidentStatusLabel(value) {
 
 function incidentStatusIcon(value) {
     const normalized = normalizeIncidentStatus(value);
-    if (normalized === 'resolved') return 'âœ…';
-    if (normalized === 'in_progress') return 'ðŸŸ ';
-    return 'ðŸŸ¢';
+    if (normalized === 'resolved') return '✅';
+    if (normalized === 'in_progress') return '🟠';
+    return '🟢';
 }
 
 function buildIncidentStatusText(incident) {
     const status = normalizeIncidentStatus(incident?.incident_status);
     let text = `${incidentStatusIcon(status)} ${incidentStatusLabel(status)}`;
     if (status === 'resolved' && incident?.resolved_at) {
-        text += ` Â· ${new Date(incident.resolved_at).toLocaleString('es-ES')}`;
+        text += ` · ${new Date(incident.resolved_at).toLocaleString('es-ES')}`;
     } else if (incident?.status_updated_at) {
-        text += ` Â· ${new Date(incident.status_updated_at).toLocaleString('es-ES')}`;
+        text += ` · ${new Date(incident.status_updated_at).toLocaleString('es-ES')}`;
     }
     return text;
 }
@@ -2252,11 +2083,126 @@ function normalizeIncidentChecklistItems(value) {
     return [];
 }
 
+function buildIncidentChecklistText(checklistItemsValue) {
+    const checklistItems = normalizeIncidentChecklistItems(checklistItemsValue);
+    return checklistItems.length ? `Checklist: ${checklistItems.join(' · ')}` : 'Checklist: -';
+}
+
+function buildIncidentEvidenceText(evidenceNoteValue) {
+    const evidenceNote = String(evidenceNoteValue || '').trim();
+    return evidenceNote ? `Nota operativa: ${evidenceNote}` : 'Nota operativa: -';
+}
+
+function buildIncidentResolutionText(resolutionNoteValue) {
+    const resolutionNote = String(resolutionNoteValue || '').trim();
+    return resolutionNote ? `Resolución: ${resolutionNote}` : 'Resolución: -';
+}
+
+function createIncidentMetaLine(text) {
+    const meta = document.createElement('small');
+    meta.className = 'asset-muted incident-meta-line';
+    meta.textContent = text;
+    return meta;
+}
+
+function appendIncidentMetaLines(parent, incident) {
+    parent.append(
+        createIncidentMetaLine(`Estado: ${buildIncidentStatusText(incident)}`),
+        createIncidentMetaLine(`Ajuste tiempo: ${formatDuration(incident.time_adjustment_seconds ?? 0)}`),
+        createIncidentMetaLine(buildIncidentChecklistText(incident.checklist_items)),
+        createIncidentMetaLine(buildIncidentEvidenceText(incident.evidence_note)),
+        createIncidentMetaLine(buildIncidentResolutionText(incident.resolution_note)),
+    );
+}
+
+function buildIncidentStatusUpdateOptions(incident, options = {}) {
+    const updateOptions = {};
+    const installationCandidate = options.installationId ?? incident?.installation_id;
+    const parsedInstallationId = parseStrictInteger(installationCandidate);
+    if (Number.isInteger(parsedInstallationId) && parsedInstallationId > 0) {
+        updateOptions.installationId = parsedInstallationId;
+    }
+
+    const parsedAssetId = parseStrictInteger(options.assetId);
+    if (Number.isInteger(parsedAssetId) && parsedAssetId > 0) {
+        updateOptions.assetId = parsedAssetId;
+    }
+    return updateOptions;
+}
+
+function appendIncidentStatusActions(parent, incident, options = {}) {
+    const statusActions = document.createElement('div');
+    statusActions.className = 'incident-actions';
+    const incidentStatus = normalizeIncidentStatus(incident.incident_status);
+    const canUpdateIncident = canCurrentUserEditAssets();
+    const updateOptions = buildIncidentStatusUpdateOptions(incident, options);
+
+    const makeStatusBtn = (label, statusValue) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn-secondary';
+        button.textContent = label;
+        button.disabled = !canUpdateIncident || incidentStatus === statusValue;
+        if (!canUpdateIncident) {
+            button.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
+        }
+        button.addEventListener('click', () => {
+            void updateIncidentStatusFromWeb(incident, statusValue, updateOptions);
+        });
+        return button;
+    };
+
+    statusActions.append(
+        makeStatusBtn('Abrir', 'open'),
+        makeStatusBtn('En curso', 'in_progress'),
+        makeStatusBtn('Resolver', 'resolved'),
+    );
+    parent.appendChild(statusActions);
+}
+
+function appendIncidentUploadPhotoAction(parent, incident, installationId, options = {}) {
+    const uploadPhotoBtn = document.createElement('button');
+    uploadPhotoBtn.className = 'btn-secondary';
+    uploadPhotoBtn.textContent = String(options.label || 'Subir foto');
+    uploadPhotoBtn.classList.add('incident-upload-btn');
+    uploadPhotoBtn.addEventListener('click', () => {
+        void selectAndUploadIncidentPhoto(incident.id, installationId);
+    });
+    parent.appendChild(uploadPhotoBtn);
+}
+
+async function appendIncidentPhotosGrid(parent, photos, options = {}) {
+    if (!Array.isArray(photos) || photos.length === 0) return;
+    const photosGrid = document.createElement('div');
+    photosGrid.className = 'photos-grid';
+
+    for (const photo of photos) {
+        const photoId = parseStrictInteger(photo?.id);
+        if (!Number.isInteger(photoId) || photoId <= 0) continue;
+        const photoUrl = await loadPhotoWithAuth(photoId);
+        if (!photoUrl) continue;
+
+        const image = document.createElement('img');
+        image.src = photoUrl;
+        image.className = 'photo-thumb';
+        image.alt = 'Foto de incidencia';
+        if (options.attachPhotoIdDataset === true) {
+            image.dataset.photoId = String(photoId);
+        }
+        image.addEventListener('click', () => viewPhoto(photoId));
+        photosGrid.appendChild(image);
+    }
+
+    if (photosGrid.childElementCount > 0) {
+        parent.appendChild(photosGrid);
+    }
+}
+
 async function updateIncidentStatusFromWeb(incident, targetStatus, options = {}) {
     if (!requireActiveSession()) return;
     const incidentId = Number.parseInt(String(incident?.id), 10);
     if (!Number.isInteger(incidentId) || incidentId <= 0) {
-        showNotification('Incidencia invÃ¡lida para actualizar estado.', 'error');
+        showNotification('Incidencia inválida para actualizar estado.', 'error');
         return;
     }
 
@@ -2352,7 +2298,7 @@ async function loadAssets() {
             }
         }
     } catch (err) {
-        tableContainer.innerHTML = '<p class="error">âŒ Error cargando equipos</p>';
+        tableContainer.innerHTML = '<p class="error">❌ Error cargando equipos</p>';
         if (resultsCount) {
             resultsCount.textContent = 'Error al cargar';
         }
@@ -2481,24 +2427,13 @@ function renderDriversTable(drivers) {
             const key = String(driver.key || '').trim();
             if (!key) return;
             const driverLabel = String(`${driver.brand || ''} ${driver.version || ''}`).trim() || 'sin nombre';
-            openActionModal({
+            openActionConfirmModal({
                 title: 'Eliminar driver',
                 subtitle: `Confirma la eliminacion de ${driverLabel}. Esta accion no se puede deshacer.`,
                 submitLabel: 'Eliminar driver',
-                focusId: 'actionDeleteDriverConfirm',
-                fieldsHtml: `
-                    <label class="action-checkbox" for="actionDeleteDriverConfirm">
-                        <input type="checkbox" id="actionDeleteDriverConfirm">
-                        <span>Entiendo que este driver sera eliminado permanentemente.</span>
-                    </label>
-                `,
+                acknowledgementText: 'Entiendo que este driver sera eliminado permanentemente.',
+                missingConfirmationMessage: 'Debes confirmar la eliminacion para continuar.',
                 onSubmit: async () => {
-                    const confirmed = document.getElementById('actionDeleteDriverConfirm')?.checked === true;
-                    if (!confirmed) {
-                        setActionModalError('Debes confirmar la eliminacion para continuar.');
-                        return;
-                    }
-
                     await api.deleteDriver(key);
                     closeActionModal(true);
                     showNotification('Driver eliminado', 'success');
@@ -2721,7 +2656,7 @@ async function loadAssetDetail(assetId, options = {}) {
         await renderAssetDetail(data);
     } catch (err) {
         if (detailContainer) {
-            detailContainer.innerHTML = `<p class="error">âŒ ${escapeHtml(err.message || String(err))}</p>`;
+            detailContainer.innerHTML = `<p class="error">❌ ${escapeHtml(err.message || String(err))}</p>`;
         }
     }
 }
@@ -2870,102 +2805,32 @@ async function renderAssetDetail(data) {
         badge.className = `badge ${incident.severity || 'low'}`;
         badge.textContent = `${getSeverityIcon(incident.severity)} ${incident.severity || 'low'}`;
         const meta = document.createElement('small');
-        meta.textContent = `inst #${incident.installation_id} Â· ${incident.reporter_username || 'desconocido'}`;
+        meta.textContent = `inst #${incident.installation_id} · ${incident.reporter_username || 'desconocido'}`;
         left.append(badge, document.createTextNode(' '), meta);
 
         const created = document.createElement('small');
-        created.textContent = `ðŸ• ${new Date(incident.created_at).toLocaleString('es-ES')}`;
+        created.textContent = `🕐 ${new Date(incident.created_at).toLocaleString('es-ES')}`;
         header.append(left, created);
 
         const note = document.createElement('p');
         note.className = 'incident-note-text';
         note.textContent = incident.note || '';
 
-        const statusMeta = document.createElement('small');
-        statusMeta.className = 'asset-muted incident-meta-line';
-        statusMeta.textContent = `Estado: ${buildIncidentStatusText(incident)}`;
-        const timeMeta = document.createElement('small');
-        timeMeta.className = 'asset-muted incident-meta-line';
-        timeMeta.textContent = `Ajuste tiempo: ${formatDuration(incident.time_adjustment_seconds ?? 0)}`;
-        const checklistItems = normalizeIncidentChecklistItems(incident.checklist_items);
-        const checklistMeta = document.createElement('small');
-        checklistMeta.className = 'asset-muted incident-meta-line';
-        checklistMeta.textContent = checklistItems.length
-            ? `Checklist: ${checklistItems.join(' Â· ')}`
-            : 'Checklist: -';
-        const evidenceMeta = document.createElement('small');
-        evidenceMeta.className = 'asset-muted incident-meta-line';
-        evidenceMeta.textContent = incident.evidence_note
-            ? `Nota operativa: ${incident.evidence_note}`
-            : 'Nota operativa: -';
-        const resolutionMeta = document.createElement('small');
-        resolutionMeta.className = 'asset-muted incident-meta-line';
-        resolutionMeta.textContent = incident.resolution_note
-            ? `ResoluciÃ³n: ${incident.resolution_note}`
-            : 'ResoluciÃ³n: -';
-
         const sub = document.createElement('small');
         sub.className = 'asset-muted';
         sub.textContent =
-            `Cliente: ${incident.installation_client_name || '-'} Â· ` +
+            `Cliente: ${incident.installation_client_name || '-'} · ` +
             `${incident.installation_brand || '-'} ${incident.installation_version || ''}`.trim();
 
-        card.append(header, note, statusMeta, timeMeta, checklistMeta, evidenceMeta, resolutionMeta, sub);
-
-        const statusActions = document.createElement('div');
-        statusActions.className = 'incident-actions';
-        const incidentStatus = normalizeIncidentStatus(incident.incident_status);
-
-        const makeStatusBtn = (label, statusValue) => {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'btn-secondary';
-            button.textContent = label;
-            const canUpdateIncident = canCurrentUserEditAssets();
-            button.disabled = !canUpdateIncident || incidentStatus === statusValue;
-            if (!canUpdateIncident) {
-                button.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
-            }
-            button.addEventListener('click', () => {
-                void updateIncidentStatusFromWeb(incident, statusValue, {
-                    assetId: Number.parseInt(String(asset.id), 10),
-                    installationId: Number.parseInt(String(incident.installation_id), 10),
-                });
-            });
-            return button;
-        };
-        statusActions.append(
-            makeStatusBtn('Abrir', 'open'),
-            makeStatusBtn('En curso', 'in_progress'),
-            makeStatusBtn('Resolver', 'resolved'),
-        );
-        card.appendChild(statusActions);
-
-        const uploadBtn = document.createElement('button');
-        uploadBtn.className = 'btn-secondary';
-        uploadBtn.textContent = 'Subir foto';
-        uploadBtn.classList.add('incident-upload-btn');
-        uploadBtn.addEventListener('click', () => {
-            void selectAndUploadIncidentPhoto(incident.id, incident.installation_id);
+        card.append(header, note);
+        appendIncidentMetaLines(card, incident);
+        card.appendChild(sub);
+        appendIncidentStatusActions(card, incident, {
+            assetId: Number.parseInt(String(asset.id), 10),
+            installationId: Number.parseInt(String(incident.installation_id), 10),
         });
-        card.appendChild(uploadBtn);
-
-        if (incident.photos && incident.photos.length) {
-            const photosGrid = document.createElement('div');
-            photosGrid.className = 'photos-grid';
-            for (const photo of incident.photos) {
-                const photoUrl = await loadPhotoWithAuth(photo.id);
-                if (photoUrl) {
-                    const image = document.createElement('img');
-                    image.src = photoUrl;
-                    image.className = 'photo-thumb';
-                    image.alt = 'Foto de incidencia';
-                    image.addEventListener('click', () => viewPhoto(photo.id));
-                    photosGrid.appendChild(image);
-                }
-            }
-            card.appendChild(photosGrid);
-        }
+        appendIncidentUploadPhotoAction(card, incident, incident.installation_id);
+        await appendIncidentPhotosGrid(card, incident.photos);
 
         incidentsWrap.appendChild(card);
     }
@@ -3006,18 +2871,18 @@ async function renderIncidents(incidents, installationId) {
     header.classList.add('incidents-header');
 
     const heading = document.createElement('h3');
-    heading.textContent = `âš ï¸ Incidencias de Registro #${installationId}`;
+    heading.textContent = `⚠️ Incidencias de Registro #${installationId}`;
 
     const backButton = document.createElement('button');
     backButton.className = 'btn-secondary';
-    backButton.textContent = 'â† Volver';
+    backButton.textContent = '← Volver';
     backButton.addEventListener('click', () => {
         document.querySelector('[data-section="installations"]')?.click();
     });
 
     const createIncidentBtn = document.createElement('button');
     createIncidentBtn.className = 'btn-primary';
-    createIncidentBtn.textContent = 'âš ï¸ Crear incidencia';
+    createIncidentBtn.textContent = '⚠️ Crear incidencia';
     createIncidentBtn.addEventListener('click', () => {
         void createIncidentFromWeb(installationId);
     });
@@ -3038,7 +2903,7 @@ async function renderIncidents(incidents, installationId) {
     }
 
     for (const inc of incidents) {
-        const severityIcon = inc.severity === 'critical' ? 'ðŸ”´' : inc.severity === 'high' ? 'ðŸŸ ' : inc.severity === 'medium' ? 'ðŸŸ¡' : 'ðŸ”µ';
+        const severityIcon = getSeverityIcon(inc.severity);
 
         const incidentCard = document.createElement('div');
         incidentCard.className = 'incident-card';
@@ -3058,7 +2923,7 @@ async function renderIncidents(incidents, installationId) {
         leftMeta.append(severityBadge, document.createTextNode(' '), reporter);
 
         const createdAt = document.createElement('small');
-        createdAt.textContent = `ðŸ• ${new Date(inc.created_at).toLocaleString('es-ES')}`;
+        createdAt.textContent = `🕐 ${new Date(inc.created_at).toLocaleString('es-ES')}`;
 
         incidentHeader.append(leftMeta, createdAt);
 
@@ -3066,85 +2931,13 @@ async function renderIncidents(incidents, installationId) {
         note.className = 'incident-note-text';
         note.textContent = inc.note || '';
 
-        const statusMeta = document.createElement('small');
-        statusMeta.className = 'asset-muted incident-meta-line';
-        statusMeta.textContent = `Estado: ${buildIncidentStatusText(inc)}`;
-        const timeMeta = document.createElement('small');
-        timeMeta.className = 'asset-muted incident-meta-line';
-        timeMeta.textContent = `Ajuste tiempo: ${formatDuration(inc.time_adjustment_seconds ?? 0)}`;
-        const checklistItems = normalizeIncidentChecklistItems(inc.checklist_items);
-        const checklistMeta = document.createElement('small');
-        checklistMeta.className = 'asset-muted incident-meta-line';
-        checklistMeta.textContent = checklistItems.length
-            ? `Checklist: ${checklistItems.join(' Â· ')}`
-            : 'Checklist: -';
-        const evidenceMeta = document.createElement('small');
-        evidenceMeta.className = 'asset-muted incident-meta-line';
-        evidenceMeta.textContent = inc.evidence_note
-            ? `Nota operativa: ${inc.evidence_note}`
-            : 'Nota operativa: -';
-        const resolutionMeta = document.createElement('small');
-        resolutionMeta.className = 'asset-muted incident-meta-line';
-        resolutionMeta.textContent = inc.resolution_note
-            ? `ResoluciÃ³n: ${inc.resolution_note}`
-            : 'ResoluciÃ³n: -';
-
-        incidentCard.append(incidentHeader, note, statusMeta, timeMeta, checklistMeta, evidenceMeta, resolutionMeta);
-
-        const statusActions = document.createElement('div');
-        statusActions.className = 'incident-actions';
-        const incidentStatus = normalizeIncidentStatus(inc.incident_status);
-
-        const makeStatusBtn = (label, statusValue) => {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'btn-secondary';
-            button.textContent = label;
-            const canUpdateIncident = canCurrentUserEditAssets();
-            button.disabled = !canUpdateIncident || incidentStatus === statusValue;
-            if (!canUpdateIncident) {
-                button.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
-            }
-            button.addEventListener('click', () => {
-                void updateIncidentStatusFromWeb(inc, statusValue, {
-                    installationId: Number.parseInt(String(installationId), 10),
-                });
-            });
-            return button;
-        };
-        statusActions.append(
-            makeStatusBtn('Abrir', 'open'),
-            makeStatusBtn('En curso', 'in_progress'),
-            makeStatusBtn('Resolver', 'resolved'),
-        );
-        incidentCard.appendChild(statusActions);
-
-        const uploadPhotoBtn = document.createElement('button');
-        uploadPhotoBtn.className = 'btn-secondary';
-        uploadPhotoBtn.textContent = 'ðŸ“¤ Subir foto';
-        uploadPhotoBtn.classList.add('incident-upload-btn');
-        uploadPhotoBtn.addEventListener('click', () => {
-            void selectAndUploadIncidentPhoto(inc.id, installationId);
+        incidentCard.append(incidentHeader, note);
+        appendIncidentMetaLines(incidentCard, inc);
+        appendIncidentStatusActions(incidentCard, inc, {
+            installationId: Number.parseInt(String(installationId), 10),
         });
-        incidentCard.appendChild(uploadPhotoBtn);
-
-        if (inc.photos && inc.photos.length) {
-            const photosGrid = document.createElement('div');
-            photosGrid.className = 'photos-grid';
-            for (const photo of inc.photos) {
-                const photoUrl = await loadPhotoWithAuth(photo.id);
-                if (photoUrl) {
-                    const image = document.createElement('img');
-                    image.src = photoUrl;
-                    image.className = 'photo-thumb';
-                    image.dataset.photoId = String(photo.id);
-                    image.alt = 'Foto de incidencia';
-                    image.addEventListener('click', () => viewPhoto(photo.id));
-                    photosGrid.appendChild(image);
-                }
-            }
-            incidentCard.appendChild(photosGrid);
-        }
+        appendIncidentUploadPhotoAction(incidentCard, inc, installationId, { label: '📤 Subir foto' });
+        await appendIncidentPhotosGrid(incidentCard, inc.photos, { attachPhotoIdDataset: true });
 
         container.appendChild(incidentCard);
     }
@@ -3814,7 +3607,7 @@ async function downloadQrImage() {
                 labelPreset
             );
         } catch (_error) {
-            // fallback: mantener download de QR simple si falla composiciÃ³n de etiqueta
+            // fallback: mantener download de QR simple si falla composición de etiqueta
         }
     }
 
@@ -3911,7 +3704,7 @@ async function loadAuditLogs() {
         const logs = await api.getAuditLogs();
         renderAuditLogs(logs);
     } catch (err) {
-        container.innerHTML = '<p class="error">âŒ Error cargando logs</p>';
+        container.innerHTML = '<p class="error">❌ Error cargando logs</p>';
     }
 }
 
@@ -3923,7 +3716,7 @@ function renderAuditLogs(logs) {
     if (!logs || !logs.length) {
         const emptyMessage = document.createElement('p');
         emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No hay logs de auditorÃ­a';
+        emptyMessage.textContent = 'No hay logs de auditoría';
         container.appendChild(emptyMessage);
         return;
     }
@@ -3944,7 +3737,7 @@ function renderAuditLogs(logs) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ðŸ• Fecha', 'ðŸ“ AcciÃ³n', 'ðŸ‘¤ Usuario', 'âœ… Estado', 'ðŸ’» Detalles'].forEach(label => {
+    ['🕐 Fecha', '📝 Acción', '👤 Usuario', '✅ Estado', '💻 Detalles'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -3954,7 +3747,7 @@ function renderAuditLogs(logs) {
     const tbody = document.createElement('tbody');
 
     filteredLogs.forEach(log => {
-        const successIcon = log.success ? 'âœ…' : 'âŒ';
+        const successIcon = log.success ? '✅' : '❌';
         const successClass = log.success ? 'success' : 'failed';
         
         let details = '-';
@@ -4017,7 +3810,7 @@ function updatePageSubtitleForSection(section) {
     if (!subtitleEl) return;
     const normalizedSection = SECTION_SUBTITLES[section] ? section : 'dashboard';
     const subtitle = SECTION_SUBTITLES[normalizedSection];
-    subtitleEl.textContent = `${subtitle} Â· ${getCurrentShiftLabel()}`;
+    subtitleEl.textContent = `${subtitle} · ${getCurrentShiftLabel()}`;
 }
 
 function buildOpsPulseText(status, section) {
@@ -4124,9 +3917,9 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         syncSSEForCurrentContext(true);
         
         // Show success notification
-        showNotification('âœ… Bienvenido, ' + result.user.username + '!', 'success');
+        showNotification('✅ Bienvenido, ' + result.user.username + '!', 'success');
     } catch (err) {
-        document.getElementById('loginError').textContent = 'âŒ Credenciales invÃ¡lidas';
+        document.getElementById('loginError').textContent = '❌ Credenciales inválidas';
         document.getElementById('loginPassword').value = '';
     }
 });
@@ -4142,7 +3935,7 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     closeSSE();
     resetProtectedViews();
     showLogin();
-    showNotification('ðŸ‘‹ SesiÃ³n cerrada', 'info');
+    showNotification('👋 Sesión cerrada', 'info');
 });
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
@@ -4154,7 +3947,7 @@ document.getElementById('refreshBtn').addEventListener('click', () => {
     }, 520);
     
     loadDashboard();
-    showNotification('ðŸ”„ Dashboard actualizado', 'info');
+    showNotification('🔄 Dashboard actualizado', 'info');
 });
 
 document.querySelectorAll('.nav-links a').forEach(link => {
@@ -4344,34 +4137,7 @@ document.getElementById('qrPasswordModal')?.addEventListener('click', (event) =>
     closeQrPasswordModal();
 });
 
-document.querySelector('#actionModal .close')?.addEventListener('click', () => {
-    closeActionModal();
-});
-
-document.getElementById('actionModalCancelBtn')?.addEventListener('click', () => {
-    closeActionModal();
-});
-
-document.getElementById('actionModal')?.addEventListener('click', (event) => {
-    if (event.target !== event.currentTarget) return;
-    closeActionModal();
-});
-
-document.getElementById('actionModalForm')?.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (actionModalSubmitBusy) return;
-    if (typeof actionModalSubmitHandler !== 'function') return;
-
-    setActionModalError('');
-    try {
-        setActionModalBusy(true);
-        await actionModalSubmitHandler();
-    } catch (error) {
-        setActionModalError(error?.message || 'No se pudo completar la accion.');
-    } finally {
-        setActionModalBusy(false);
-    }
-});
+bindActionModalEvents();
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
@@ -4459,7 +4225,7 @@ function scheduleSSEReconnect(preferredDelayMs = null) {
     if (sseReconnectAttempts >= MAX_SSE_RECONNECT_ATTEMPTS) {
         console.error('[SSE] Max reconnection attempts reached');
         updateConnectionStatus('failed');
-        showNotification('âš ï¸ ConexiÃ³n en tiempo real perdida. Recarga la pÃ¡gina para reconectar.', 'error');
+        showNotification('⚠️ Conexión en tiempo real perdida. Recarga la página para reconectar.', 'error');
         return;
     }
 
@@ -4563,7 +4329,7 @@ function handleSSEMessage(data) {
     switch (data.type) {
         case 'connected':
             console.log('[SSE]', data.message);
-            showNotification('ðŸ”Œ Conectado en tiempo real', 'success');
+            showNotification('🔌 Conectado en tiempo real', 'success');
             break;
 
         case 'installation_created':
@@ -4622,7 +4388,7 @@ function handleRealtimeInstallation(installation) {
     }
     
     // Show notification
-    const statusIcon = installation.status === 'success' ? 'âœ…' : installation.status === 'failed' ? 'âŒ' : 'ðŸ’»';
+    const statusIcon = installation.status === 'success' ? '✅' : installation.status === 'failed' ? '❌' : '💻';
     showNotification(`${statusIcon} Nuevo registro: ${installation.client_name || 'Sin cliente'}`, 'info');
     
     // Refresh dashboard stats if on dashboard
@@ -4654,18 +4420,18 @@ function handleRealtimeInstallationDeleted(installation) {
             renderInstallationsTable(currentInstallationsData);
         }
     }
-    showNotification(`ðŸ—‘ï¸ Registro #${installation.id} eliminado`, 'info');
+    showNotification(`🗑️ Registro #${installation.id} eliminado`, 'info');
 }
 
 function handleRealtimeIncident(incident) {
-    const severityIcon = incident.severity === 'critical' ? 'ðŸ”´' : incident.severity === 'high' ? 'ðŸŸ ' : 'âš ï¸';
+    const severityIcon = incident.severity === 'critical' ? '🔴' : incident.severity === 'high' ? '🟠' : '⚠️';
     showNotification(`${severityIcon} Nueva incidencia en registro #${incident.installation_id}`, 'warning');
 }
 
 function handleRealtimeIncidentStatusUpdate(incident) {
     if (!incident || !incident.id) return;
     showNotification(
-        `â„¹ï¸ Incidencia #${incident.id} ahora estÃ¡ "${incidentStatusLabel(incident.incident_status)}".`,
+        `ℹ️ Incidencia #${incident.id} ahora está "${incidentStatusLabel(incident.incident_status)}".`,
         'info',
     );
 
@@ -4963,7 +4729,7 @@ function toggleTheme() {
     
     // Show notification
     const themeLabel = newTheme === 'light' ? 'claro' : 'oscuro';
-    showNotification(`ðŸŽ¨ Tema ${themeLabel} activado`, 'info');
+    showNotification(`🎨 Tema ${themeLabel} activado`, 'info');
 }
 
 function updateChartTheme(theme) {
