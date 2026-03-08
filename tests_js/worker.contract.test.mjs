@@ -640,6 +640,62 @@ function createMockDB({
 
           if (
             normalized.startsWith(
+              "SELECT i.id, i.installation_id, i.reporter_username, i.note, i.time_adjustment_seconds, i.severity, i.source, i.created_at, i.incident_status, i.status_updated_at, i.status_updated_by, i.resolved_at, i.resolved_by, i.resolution_note, i.checklist_json, i.evidence_note FROM incidents i INNER JOIN installations inst ON inst.id = i.installation_id WHERE i.id = ? AND i.tenant_id = ? AND inst.tenant_id = ?",
+            )
+          ) {
+            const incidentId = Number(call.bound?.[0]);
+            const incidentTenantId = String(call.bound?.[1] ?? "default");
+            const installationTenantId = String(call.bound?.[2] ?? incidentTenantId);
+            const installationIdFilter =
+              normalized.includes("AND i.installation_id = ?") ? Number(call.bound?.[3]) : null;
+
+            const incident = state.incidents.find(
+              (item) =>
+                Number(item.id) === incidentId &&
+                String(item.tenant_id ?? "default") === incidentTenantId,
+            );
+            if (!incident) return { results: [] };
+
+            const installation = state.installations.find(
+              (item) =>
+                Number(item.id) === Number(incident.installation_id) &&
+                String(item.tenant_id ?? "default") === installationTenantId,
+            );
+            if (!installation) return { results: [] };
+            if (
+              Number.isInteger(installationIdFilter) &&
+              installationIdFilter > 0 &&
+              Number(incident.installation_id) !== installationIdFilter
+            ) {
+              return { results: [] };
+            }
+
+            return {
+              results: [
+                {
+                  id: incident.id,
+                  installation_id: incident.installation_id,
+                  reporter_username: incident.reporter_username,
+                  note: incident.note,
+                  time_adjustment_seconds: incident.time_adjustment_seconds,
+                  severity: incident.severity,
+                  source: incident.source,
+                  created_at: incident.created_at,
+                  incident_status: incident.incident_status ?? "open",
+                  status_updated_at: incident.status_updated_at ?? null,
+                  status_updated_by: incident.status_updated_by ?? null,
+                  resolved_at: incident.resolved_at ?? null,
+                  resolved_by: incident.resolved_by ?? null,
+                  resolution_note: incident.resolution_note ?? null,
+                  checklist_json: incident.checklist_json ?? null,
+                  evidence_note: incident.evidence_note ?? null,
+                },
+              ],
+            };
+          }
+
+          if (
+            normalized.startsWith(
               "SELECT id, incident_id, r2_key, file_name, content_type, size_bytes, sha256, created_at FROM incident_photos WHERE id = ?",
             )
           ) {
@@ -935,6 +991,55 @@ function createMockDB({
             if (row) {
               row.notes = notes;
               row.installation_time_seconds = installationTimeSeconds;
+            }
+            return { success: true, meta: { changes: row ? 1 : 0 } };
+          }
+
+          if (
+            normalized.startsWith(
+              "UPDATE incidents SET checklist_json = ?, evidence_note = ? WHERE id = ? AND tenant_id = ?",
+            )
+          ) {
+            const [checklistJson, evidenceNote, incidentId, tenantId] = call.bound;
+            const row = state.incidents.find(
+              (item) =>
+                String(item.id) === String(incidentId) &&
+                String(item.tenant_id ?? "default") === String(tenantId ?? "default"),
+            );
+            if (row) {
+              row.checklist_json = checklistJson;
+              row.evidence_note = evidenceNote;
+            }
+            return { success: true, meta: { changes: row ? 1 : 0 } };
+          }
+
+          if (
+            normalized.startsWith(
+              "UPDATE incidents SET incident_status = ?, status_updated_at = ?, status_updated_by = ?, resolved_at = ?, resolved_by = ?, resolution_note = ? WHERE id = ? AND tenant_id = ?",
+            )
+          ) {
+            const [
+              incidentStatus,
+              statusUpdatedAt,
+              statusUpdatedBy,
+              resolvedAt,
+              resolvedBy,
+              resolutionNote,
+              incidentId,
+              tenantId,
+            ] = call.bound;
+            const row = state.incidents.find(
+              (item) =>
+                String(item.id) === String(incidentId) &&
+                String(item.tenant_id ?? "default") === String(tenantId ?? "default"),
+            );
+            if (row) {
+              row.incident_status = incidentStatus;
+              row.status_updated_at = statusUpdatedAt;
+              row.status_updated_by = statusUpdatedBy;
+              row.resolved_at = resolvedAt;
+              row.resolved_by = resolvedBy;
+              row.resolution_note = resolutionNote;
             }
             return { success: true, meta: { changes: row ? 1 : 0 } };
           }
@@ -2175,6 +2280,186 @@ test("GET /installations/:id/incidents returns incidents with nested photos", as
   assert.equal(body.incidents[0].photos[0].file_name, "photo1.jpg");
 });
 
+test("PATCH /incidents/:id/evidence updates checklist_items and evidence_note", async () => {
+  const db = createMockDB({
+    installations: [{ id: 45 }],
+    incidents: [
+      {
+        id: 11,
+        installation_id: 45,
+        reporter_username: "admin",
+        note: "Incidencia A",
+        time_adjustment_seconds: 10,
+        severity: "medium",
+        source: "mobile",
+        created_at: "2026-02-15T10:00:00Z",
+        incident_status: "open",
+        checklist_json: JSON.stringify(["Item inicial"]),
+        evidence_note: "nota anterior",
+      },
+    ],
+  });
+
+  const request = new Request("https://worker.example/incidents/11/evidence", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      checklist_items: ["Verificado", "Sellado", "Verificado"],
+      evidence_note: "Evidencia actualizada",
+    }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.success, true);
+  assert.deepEqual(body.incident.checklist_items, ["Verificado", "Sellado"]);
+  assert.equal(body.incident.evidence_note, "Evidencia actualizada");
+
+  const updatedIncident = db.state.incidents.find((row) => Number(row.id) === 11);
+  assert.equal(updatedIncident.checklist_json, JSON.stringify(["Verificado", "Sellado"]));
+  assert.equal(updatedIncident.evidence_note, "Evidencia actualizada");
+
+  const auditEvent = db.state.auditLogs.find((row) => row.action === "update_incident_evidence");
+  assert.ok(auditEvent);
+});
+
+test("PATCH /incidents/:id/status updates incident status and resolution fields", async () => {
+  const db = createMockDB({
+    installations: [{ id: 45 }],
+    incidents: [
+      {
+        id: 11,
+        installation_id: 45,
+        reporter_username: "admin",
+        note: "Incidencia A",
+        time_adjustment_seconds: 10,
+        severity: "high",
+        source: "mobile",
+        created_at: "2026-02-15T10:00:00Z",
+        incident_status: "open",
+        checklist_json: JSON.stringify(["Item inicial"]),
+        evidence_note: "nota",
+      },
+    ],
+  });
+
+  const request = new Request("https://worker.example/incidents/11/status", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      incident_status: "resolved",
+      resolution_note: "Resuelto en sitio",
+      reporter_username: "tech_user",
+    }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.success, true);
+  assert.equal(body.incident.incident_status, "resolved");
+  assert.equal(body.incident.resolution_note, "Resuelto en sitio");
+  assert.equal(body.incident.resolved_by, "tech_user");
+  assert.equal(body.incident.status_updated_by, "tech_user");
+  assert.equal(typeof body.incident.resolved_at, "string");
+  assert.ok(body.incident.resolved_at.length > 0);
+
+  const updatedIncident = db.state.incidents.find((row) => Number(row.id) === 11);
+  assert.equal(updatedIncident.incident_status, "resolved");
+  assert.equal(updatedIncident.resolution_note, "Resuelto en sitio");
+  assert.equal(updatedIncident.resolved_by, "tech_user");
+  assert.equal(updatedIncident.status_updated_by, "tech_user");
+
+  const auditEvent = db.state.auditLogs.find((row) => row.action === "update_incident_status");
+  assert.ok(auditEvent);
+});
+
+test("PATCH /installations/:id/incidents/:id/status validates installation ownership", async () => {
+  const db = createMockDB({
+    installations: [{ id: 45 }, { id: 99 }],
+    incidents: [
+      {
+        id: 11,
+        installation_id: 45,
+        reporter_username: "admin",
+        note: "Incidencia A",
+        time_adjustment_seconds: 10,
+        severity: "high",
+        source: "mobile",
+        created_at: "2026-02-15T10:00:00Z",
+        incident_status: "open",
+      },
+    ],
+  });
+
+  const request = new Request("https://worker.example/installations/99/incidents/11/status", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      incident_status: "in_progress",
+      reporter_username: "tech_user",
+    }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 404);
+  assert.equal(body.success, false);
+  assert.equal(body.error.code, "NOT_FOUND");
+});
+
+test("PATCH /incidents/:id/evidence rejects non-PATCH method", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/incidents/11/evidence", {
+    method: "GET",
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 405);
+  assert.equal(body.success, false);
+  assert.equal(body.error.code, "METHOD_NOT_ALLOWED");
+});
+
+test("PATCH /incidents/:id/evidence rejects payload without evidence fields", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/incidents/11/evidence", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /checklist_items|evidence_note/i);
+});
+
+test("PATCH /incidents/:id/status rejects invalid status value", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/incidents/11/status", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      incident_status: "unknown_status",
+    }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /incident_status|status/i);
+});
+
 test("POST /incidents/:id/photos uploads to R2 and persists metadata", async () => {
   const db = createMockDB({
     incidents: [{ id: 11, installation_id: 45 }],
@@ -3264,6 +3549,82 @@ test("viewer role cannot mutate records on /web routes", async () => {
   assert.equal(createRecordResponse.status, 403);
   assert.equal(createRecordBody.success, false);
   assert.match(createRecordBody.error.message, /permisos/i);
+});
+
+test("viewer role cannot patch incident status on /web routes", async () => {
+  const db = createMockDB();
+  const env = {
+    DB: db,
+    API_TOKEN: "token-123",
+    API_SECRET: "secret-abc",
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_root",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+  const bootstrapBody = await bootstrapResponse.json();
+
+  const createViewerResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bootstrapBody.access_token}`,
+      },
+      body: JSON.stringify({
+        username: "viewer_2",
+        password: "StrongPass#2028",
+        role: "viewer",
+      }),
+    }),
+    env,
+  );
+  assert.equal(createViewerResponse.status, 201);
+
+  const loginViewerResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: "viewer_2",
+        password: "StrongPass#2028",
+      }),
+    }),
+    env,
+  );
+  assert.equal(loginViewerResponse.status, 200);
+  const loginViewerBody = await loginViewerResponse.json();
+
+  const patchStatusResponse = await workerFetch(
+    new Request("https://worker.example/web/incidents/11/status", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${loginViewerBody.access_token}`,
+      },
+      body: JSON.stringify({
+        incident_status: "resolved",
+      }),
+    }),
+    env,
+  );
+  const patchStatusBody = await patchStatusResponse.json();
+
+  assert.equal(patchStatusResponse.status, 403);
+  assert.equal(patchStatusBody.success, false);
+  assert.match(String(patchStatusBody?.error?.message || ""), /permisos/i);
 });
 
 test("web JSON responses include no-store headers", async () => {

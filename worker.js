@@ -4735,7 +4735,7 @@ async function handleSseEventsRoute(request, env, url, corsPolicy, routeParts) {
       // Send initial connection message
       sendEvent({
         type: "connected",
-        message: "ConexiÃ³n en tiempo real establecida",
+        message: "Conexion en tiempo real establecida",
         timestamp: nowIso()
       });
       sendEvent({
@@ -4831,7 +4831,7 @@ async function handleSseEventsRoute(request, env, url, corsPolicy, routeParts) {
             clearInterval(pollTimer);
             sendEvent({
               type: "reconnect",
-              message: "ReconexiÃ³n requerida",
+              message: "Reconexion requerida",
               timestamp: nowIso()
             });
             controller.close();
@@ -6782,6 +6782,428 @@ async function handleInstallationIncidentsRoute(
         return null;
 }
 
+function resolveIncidentActorUsername(isWebRoute, webSession, data) {
+  return normalizeOptionalString(
+    isWebRoute ? webSession?.sub : data?.reporter_username || data?.username,
+    isWebRoute ? "web" : "api",
+  );
+}
+
+function enforceIncidentPatchAccess(
+  request,
+  isWebRoute,
+  webSession,
+  methodNotAllowedMessage,
+) {
+  if (request.method !== "PATCH") {
+    throw new HttpError(405, methodNotAllowedMessage);
+  }
+  if (isWebRoute) {
+    requireAdminRole(webSession?.role);
+  }
+}
+
+async function loadIncidentForTenant(
+  env,
+  {
+    incidentId,
+    incidentsTenantId,
+    installationId = null,
+  },
+) {
+  let query = `
+    SELECT
+      i.id,
+      i.installation_id,
+      i.reporter_username,
+      i.note,
+      i.time_adjustment_seconds,
+      i.severity,
+      i.source,
+      i.created_at,
+      i.incident_status,
+      i.status_updated_at,
+      i.status_updated_by,
+      i.resolved_at,
+      i.resolved_by,
+      i.resolution_note,
+      i.checklist_json,
+      i.evidence_note
+    FROM incidents i
+    INNER JOIN installations inst
+      ON inst.id = i.installation_id
+    WHERE i.id = ?
+      AND i.tenant_id = ?
+      AND inst.tenant_id = ?
+  `;
+  const bindings = [incidentId, incidentsTenantId, incidentsTenantId];
+
+  if (installationId !== null) {
+    query += " AND i.installation_id = ?";
+    bindings.push(installationId);
+  }
+  query += " LIMIT 1";
+
+  const { results } = await env.DB.prepare(query).bind(...bindings).all();
+  return results?.[0] || null;
+}
+
+function requireIncidentsBucketOperation(env, operation) {
+  const bucket = env?.INCIDENTS_BUCKET;
+  if (!bucket || typeof bucket[operation] !== "function") {
+    throw new Error("El bucket R2 (INCIDENTS_BUCKET) no esta configurado.");
+  }
+  return bucket;
+}
+
+async function loadIncidentByIdForTenant(env, incidentId, incidentsTenantId) {
+  const { results } = await env.DB.prepare(`
+    SELECT id, installation_id
+    FROM incidents
+    WHERE id = ?
+      AND tenant_id = ?
+  `)
+    .bind(incidentId, incidentsTenantId)
+    .all();
+  return results?.[0] || null;
+}
+
+async function loadIncidentPhotoByIdForTenant(env, photoId, incidentsTenantId) {
+  const { results } = await env.DB.prepare(`
+    SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
+    FROM incident_photos p
+    INNER JOIN incidents i
+      ON i.id = p.incident_id
+    WHERE p.id = ?
+      AND p.tenant_id = ?
+      AND i.tenant_id = ?
+  `)
+    .bind(photoId, incidentsTenantId, incidentsTenantId)
+    .all();
+  return results?.[0] || null;
+}
+
+async function handleInstallationByIdRoute(
+  request,
+  env,
+  corsPolicy,
+  routeParts,
+  isWebRoute,
+  webSession,
+  realtimeTenantId,
+) {
+  if (routeParts.length === 2 && routeParts[0] === "installations") {
+    const installationsTenantId = normalizeRealtimeTenantId(
+      isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+    );
+    const recordId = routeParts[1];
+
+    if (request.method === "GET") {
+      const installationId = parsePositiveInt(recordId, "id");
+      const { results } = await env.DB.prepare(
+        "SELECT * FROM installations WHERE id = ? AND tenant_id = ? LIMIT 1",
+      )
+        .bind(installationId, installationsTenantId)
+        .all();
+
+      if (!results?.length) {
+        throw new HttpError(404, "Registro no encontrado.");
+      }
+
+      const summaryById = await loadInstallationOperationalSummaries(
+        env,
+        [installationId],
+        installationsTenantId,
+      );
+      const enrichedRecord = mapInstallationWithOperationalState(results[0], summaryById);
+
+      return jsonResponse(request, env, corsPolicy, enrichedRecord);
+    }
+
+    if (request.method === "PUT") {
+      if (isWebRoute) {
+        requireWebWriteRole(webSession?.role);
+      }
+      const installationId = parsePositiveInt(recordId, "id");
+      const data = await readJsonOrThrowBadRequest(request);
+      const payload = normalizeInstallationUpdatePayload(data);
+      const updateResult = await env.DB.prepare(`
+        UPDATE installations
+        SET notes = ?, installation_time_seconds = ?
+        WHERE id = ?
+          AND tenant_id = ?
+      `)
+        .bind(payload.notes, payload.installation_time_seconds, installationId, installationsTenantId)
+        .run();
+
+      if (!Number(updateResult?.meta?.changes || 0)) {
+        throw new HttpError(404, "Registro no encontrado.");
+      }
+
+      await publishRealtimeEvent(env, {
+        type: "installation_updated",
+        installation: {
+          id: installationId,
+          notes: payload.notes,
+          installation_time_seconds: payload.installation_time_seconds,
+        },
+      }, realtimeTenantId);
+      await publishRealtimeStatsUpdate(env, realtimeTenantId);
+
+      return jsonResponse(request, env, corsPolicy, { success: true, updated: String(installationId) });
+    }
+
+    if (request.method === "DELETE") {
+      if (isWebRoute) {
+        requireWebWriteRole(webSession?.role);
+      }
+      if (!recordId) {
+        return textResponse(request, env, corsPolicy, "Error: El ID del registro es obligatorio.", 400);
+      }
+
+      const installationId = parsePositiveInt(recordId, "id");
+      const normalizedTenantId = installationsTenantId;
+      const installationExists = await ensureInstallationExistsForDelete(
+        env,
+        installationId,
+        normalizedTenantId,
+      );
+      if (!installationExists) {
+        throw new HttpError(404, "Registro no encontrado.");
+      }
+
+      const incidentPhotoKeys = await listIncidentPhotoR2KeysForInstallation(
+        env,
+        installationId,
+        normalizedTenantId,
+      );
+      await deleteIncidentPhotoObjectsFromR2(env, incidentPhotoKeys);
+
+      // Log audit event for installation deletion
+      await logAuditEvent(env, {
+        action: "installation_deleted",
+        username: webSession?.sub || "api",
+        success: true,
+        tenantId: normalizedTenantId,
+        details: {
+          deleted_id: installationId,
+          deleted_incident_photos: incidentPhotoKeys.length,
+          tenant_id: normalizedTenantId,
+        },
+        ipAddress: getClientIpForRateLimit(request),
+        platform: isWebRoute ? "web" : "api",
+      });
+
+      await deleteInstallationCascade(env, installationId, normalizedTenantId);
+      await publishRealtimeEvent(env, {
+        type: "installation_deleted",
+        installation: {
+          id: installationId,
+        },
+      }, realtimeTenantId);
+      await publishRealtimeStatsUpdate(env, realtimeTenantId);
+      return jsonResponse(request, env, corsPolicy, { message: `Registro ${installationId} eliminado.` });
+    }
+  }
+
+  return null;
+}
+
+async function handleStatisticsTrendRoute(
+  request,
+  env,
+  url,
+  corsPolicy,
+  routeParts,
+  isWebRoute,
+  webSession,
+  realtimeTenantId,
+) {
+  if (routeParts.length === 2 && routeParts[0] === "statistics" && routeParts[1] === "trend") {
+    const statsTenantId = normalizeRealtimeTenantId(
+      isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+    );
+    if (request.method !== "GET") {
+      return textResponse(request, env, corsPolicy, "Ruta no encontrada.", 404);
+    }
+
+    const requestedDays = parseOptionalPositiveInt(url.searchParams.get("days"), "days");
+    const normalizedDays = requestedDays === null ? 7 : Math.min(Math.max(requestedDays, 1), 90);
+    const startDateFilter = parseDateOrNull(url.searchParams.get("start_date"));
+    const endDateFilter = parseDateOrNull(url.searchParams.get("end_date"));
+
+    const endExclusive = endDateFilter
+      ? startOfUtcDay(endDateFilter)
+      : addUtcDays(startOfUtcDay(new Date()), 1);
+    const startInclusive = startDateFilter
+      ? startOfUtcDay(startDateFilter)
+      : addUtcDays(endExclusive, -normalizedDays);
+
+    if (startInclusive.getTime() >= endExclusive.getTime()) {
+      throw new HttpError(400, "Rango de fechas invalido para trend.");
+    }
+
+    const { results: trendRows } = await env.DB.prepare(`
+      SELECT
+        substr(timestamp, 1, 10) AS day,
+        COUNT(*) AS total_installations,
+        SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_installations,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_installations
+      FROM installations
+      WHERE tenant_id = ?
+        AND timestamp >= ?
+        AND timestamp < ?
+      GROUP BY substr(timestamp, 1, 10)
+      ORDER BY day ASC
+    `)
+      .bind(statsTenantId, startInclusive.toISOString(), endExclusive.toISOString())
+      .all();
+
+    const byDay = new Map();
+    for (const row of trendRows || []) {
+      const day = normalizeOptionalString(row?.day, "");
+      if (!day) continue;
+      byDay.set(day, {
+        total_installations: Number(row?.total_installations) || 0,
+        successful_installations: Number(row?.successful_installations) || 0,
+        failed_installations: Number(row?.failed_installations) || 0,
+      });
+    }
+
+    const points = [];
+    for (
+      let cursor = new Date(startInclusive.getTime());
+      cursor.getTime() < endExclusive.getTime();
+      cursor = addUtcDays(cursor, 1)
+    ) {
+      const key = toUtcDayKey(cursor);
+      const values = byDay.get(key) || {
+        total_installations: 0,
+        successful_installations: 0,
+        failed_installations: 0,
+      };
+      points.push({
+        date: key,
+        total_installations: values.total_installations,
+        successful_installations: values.successful_installations,
+        failed_installations: values.failed_installations,
+      });
+    }
+
+    return jsonResponse(request, env, corsPolicy, {
+      start_date: startInclusive.toISOString(),
+      end_date: endExclusive.toISOString(),
+      days: points.length,
+      points,
+    });
+  }
+
+  return null;
+}
+
+async function handleStatisticsRoute(
+  request,
+  env,
+  url,
+  corsPolicy,
+  routeParts,
+  isWebRoute,
+  webSession,
+  realtimeTenantId,
+) {
+  if (routeParts.length === 1 && routeParts[0] === "statistics") {
+    const statsTenantId = normalizeRealtimeTenantId(
+      isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+    );
+    const startDate = parseDateOrNull(url.searchParams.get("start_date"));
+    const endDate = parseDateOrNull(url.searchParams.get("end_date"));
+    const startFilter = startDate ? startDate.toISOString() : null;
+    const endFilter = endDate ? endDate.toISOString() : null;
+
+    const { results: totalsRows } = await env.DB.prepare(`
+      SELECT
+        COUNT(*) AS total_installations,
+        SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_installations,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_installations,
+        ROUND(
+          100.0 * SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0),
+          2
+        ) AS success_rate,
+        ROUND(
+          AVG(CASE WHEN installation_time_seconds > 0 THEN installation_time_seconds END) / 60.0,
+          2
+        ) AS average_time_minutes,
+        COUNT(DISTINCT NULLIF(TRIM(client_name), '')) AS unique_clients
+      FROM installations
+      WHERE tenant_id = ?
+        AND (? IS NULL OR timestamp >= ?)
+        AND (? IS NULL OR timestamp < ?)
+    `)
+      .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
+      .all();
+
+    const { results: byBrandRows } = await env.DB.prepare(`
+      SELECT driver_brand AS brand, COUNT(*) AS count
+      FROM installations
+      WHERE tenant_id = ?
+        AND (? IS NULL OR timestamp >= ?)
+        AND (? IS NULL OR timestamp < ?)
+        AND NULLIF(TRIM(driver_brand), '') IS NOT NULL
+      GROUP BY driver_brand
+      ORDER BY count DESC
+    `)
+      .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
+      .all();
+
+    const { results: topDriverRows } = await env.DB.prepare(`
+      SELECT TRIM(driver_brand) AS brand, TRIM(driver_version) AS version, COUNT(*) AS count
+      FROM installations
+      WHERE tenant_id = ?
+        AND (? IS NULL OR timestamp >= ?)
+        AND (? IS NULL OR timestamp < ?)
+        AND NULLIF(TRIM(driver_brand || ' ' || driver_version), '') IS NOT NULL
+      GROUP BY TRIM(driver_brand), TRIM(driver_version)
+      ORDER BY count DESC
+    `)
+      .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
+      .all();
+
+    const totals = totalsRows?.[0] || {};
+    const byBrand = {};
+    for (const row of byBrandRows || []) {
+      const brand = normalizeOptionalString(row.brand, "");
+      const count = Number(row.count);
+      if (brand && Number.isFinite(count) && count > 0) {
+        byBrand[brand] = count;
+      }
+    }
+
+    const topDrivers = {};
+    for (const row of topDriverRows || []) {
+      const brand = normalizeOptionalString(row.brand, "");
+      const version = normalizeOptionalString(row.version, "");
+      const count = Number(row.count);
+      const key = `${brand} ${version}`.trim();
+      if (key && Number.isFinite(count) && count > 0) {
+        topDrivers[key] = count;
+      }
+    }
+
+    return jsonResponse(request, env, corsPolicy, {
+      total_installations: Number(totals.total_installations) || 0,
+      successful_installations: Number(totals.successful_installations) || 0,
+      failed_installations: Number(totals.failed_installations) || 0,
+      success_rate: Number(totals.success_rate) || 0,
+      average_time_minutes: Number(totals.average_time_minutes) || 0,
+      unique_clients: Number(totals.unique_clients) || 0,
+      top_drivers: topDrivers,
+      by_brand: byBrand,
+    });
+  }
+
+  return null;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -6976,52 +7398,21 @@ export default {
         routeParts[0] === "incidents" &&
         routeParts[2] === "evidence"
       ) {
-        if (request.method !== "PATCH") {
-          throw new HttpError(405, "Metodo no permitido para actualizar evidencia de incidencia.");
-        }
-
-        if (isWebRoute) {
-          requireAdminRole(webSession?.role);
-        }
+        enforceIncidentPatchAccess(
+          request,
+          isWebRoute,
+          webSession,
+          "Metodo no permitido para actualizar evidencia de incidencia.",
+        );
 
         const incidentId = parsePositiveInt(routeParts[1], "incident_id");
         const data = await readJsonOrThrowBadRequest(request);
         const payload = normalizeIncidentEvidencePayload(data);
-        const actorUsername = normalizeOptionalString(
-          isWebRoute ? webSession?.sub : data?.reporter_username || data?.username,
-          isWebRoute ? "web" : "api",
-        );
-
-        const { results: existingRows } = await env.DB.prepare(`
-          SELECT
-            i.id,
-            i.installation_id,
-            i.reporter_username,
-            i.note,
-            i.time_adjustment_seconds,
-            i.severity,
-            i.source,
-            i.created_at,
-            i.incident_status,
-            i.status_updated_at,
-            i.status_updated_by,
-            i.resolved_at,
-            i.resolved_by,
-            i.resolution_note,
-            i.checklist_json,
-            i.evidence_note
-          FROM incidents i
-          INNER JOIN installations inst
-            ON inst.id = i.installation_id
-          WHERE i.id = ?
-            AND i.tenant_id = ?
-            AND inst.tenant_id = ?
-          LIMIT 1
-        `)
-          .bind(incidentId, incidentsTenantId, incidentsTenantId)
-          .all();
-
-        const existingIncident = existingRows?.[0];
+        const actorUsername = resolveIncidentActorUsername(isWebRoute, webSession, data);
+        const existingIncident = await loadIncidentForTenant(env, {
+          incidentId,
+          incidentsTenantId,
+        });
         if (!existingIncident) {
           throw new HttpError(404, "Incidencia no encontrada.");
         }
@@ -7094,13 +7485,12 @@ export default {
           routeParts[4] === "status"
         )
       ) {
-        if (request.method !== "PATCH") {
-          throw new HttpError(405, "Metodo no permitido para actualizacion de estado de incidencia.");
-        }
-
-        if (isWebRoute) {
-          requireAdminRole(webSession?.role);
-        }
+        enforceIncidentPatchAccess(
+          request,
+          isWebRoute,
+          webSession,
+          "Metodo no permitido para actualizacion de estado de incidencia.",
+        );
 
         const incidentId = parsePositiveInt(
           routeParts.length === 3 ? routeParts[1] : routeParts[3],
@@ -7111,46 +7501,12 @@ export default {
         const data = await readJsonOrThrowBadRequest(request);
         const payload = normalizeIncidentStatusPayload(data);
         const statusUpdatedAt = nowIso();
-        const actorUsername = normalizeOptionalString(
-          isWebRoute ? webSession?.sub : data?.reporter_username || data?.username,
-          isWebRoute ? "web" : "api",
-        );
-
-        let query = `
-          SELECT
-            i.id,
-            i.installation_id,
-            i.reporter_username,
-            i.note,
-            i.time_adjustment_seconds,
-            i.severity,
-            i.source,
-            i.created_at,
-            i.incident_status,
-            i.status_updated_at,
-            i.status_updated_by,
-            i.resolved_at,
-            i.resolved_by,
-            i.resolution_note,
-            i.checklist_json,
-            i.evidence_note
-          FROM incidents i
-          INNER JOIN installations inst
-            ON inst.id = i.installation_id
-          WHERE i.id = ?
-            AND i.tenant_id = ?
-            AND inst.tenant_id = ?
-        `;
-        const bindings = [incidentId, incidentsTenantId, incidentsTenantId];
-
-        if (installationIdFromPath !== null) {
-          query += " AND i.installation_id = ?";
-          bindings.push(installationIdFromPath);
-        }
-        query += " LIMIT 1";
-
-        const { results: existingRows } = await env.DB.prepare(query).bind(...bindings).all();
-        const existingIncident = existingRows?.[0];
+        const actorUsername = resolveIncidentActorUsername(isWebRoute, webSession, data);
+        const existingIncident = await loadIncidentForTenant(env, {
+          incidentId,
+          incidentsTenantId,
+          installationId: installationIdFromPath,
+        });
         if (!existingIncident) {
           throw new HttpError(404, "Incidencia no encontrada.");
         }
@@ -7184,22 +7540,13 @@ export default {
           .run();
 
         const incidentEventPayload = mapIncidentRow({
-          id: existingIncident.id,
-          installation_id: existingIncident.installation_id,
-          reporter_username: existingIncident.reporter_username,
-          note: existingIncident.note,
-          time_adjustment_seconds: existingIncident.time_adjustment_seconds,
-          severity: existingIncident.severity,
-          source: existingIncident.source,
-          created_at: existingIncident.created_at,
+          ...existingIncident,
           incident_status: payload.incidentStatus,
           status_updated_at: statusUpdatedAt,
           status_updated_by: actorUsername,
           resolved_at: resolvedAt,
           resolved_by: resolvedBy,
           resolution_note: resolutionNote,
-          checklist_json: existingIncident.checklist_json,
-          evidence_note: existingIncident.evidence_note,
         });
 
         await logAuditEvent(env, {
@@ -7248,20 +7595,8 @@ export default {
         const bodyBuffer = await request.arrayBuffer();
         const { sizeBytes, contentType } = validateAndProcessPhoto(bodyBuffer, declaredContentType);
 
-        if (!env.INCIDENTS_BUCKET || typeof env.INCIDENTS_BUCKET.put !== "function") {
-          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no está configurado.");
-        }
-
-        const { results: incidentRows } = await env.DB.prepare(`
-          SELECT id, installation_id
-          FROM incidents
-          WHERE id = ?
-            AND tenant_id = ?
-        `)
-          .bind(incidentId, incidentsTenantId)
-          .all();
-
-        const incident = incidentRows?.[0];
+        const incidentsBucket = requireIncidentsBucketOperation(env, "put");
+        const incident = await loadIncidentByIdForTenant(env, incidentId, incidentsTenantId);
         if (!incident) {
           throw new HttpError(404, "Incidencia no encontrada.");
         }
@@ -7309,7 +7644,7 @@ export default {
         }
         const createdAt = nowIso();
 
-        await env.INCIDENTS_BUCKET.put(r2Key, bodyBuffer, {
+        await incidentsBucket.put(r2Key, bodyBuffer, {
           httpMetadata: { contentType },
         });
 
@@ -7341,28 +7676,13 @@ export default {
       if (routeParts.length === 2 && routeParts[0] === "photos" && request.method === "GET") {
         const photoId = parsePositiveInt(routeParts[1], "photo_id");
 
-        if (!env.INCIDENTS_BUCKET || typeof env.INCIDENTS_BUCKET.get !== "function") {
-          throw new Error("El bucket R2 (INCIDENTS_BUCKET) no está configurado.");
-        }
-
-        const { results: photoRows } = await env.DB.prepare(`
-          SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
-          FROM incident_photos p
-          INNER JOIN incidents i
-            ON i.id = p.incident_id
-          WHERE p.id = ?
-            AND p.tenant_id = ?
-            AND i.tenant_id = ?
-        `)
-          .bind(photoId, incidentsTenantId, incidentsTenantId)
-          .all();
-
-        const photo = photoRows?.[0];
+        const incidentsBucket = requireIncidentsBucketOperation(env, "get");
+        const photo = await loadIncidentPhotoByIdForTenant(env, photoId, incidentsTenantId);
         if (!photo) {
           throw new HttpError(404, "Foto no encontrada.");
         }
 
-        const object = await env.INCIDENTS_BUCKET.get(photo.r2_key);
+        const object = await incidentsBucket.get(photo.r2_key);
         if (!object || !object.body) {
           throw new HttpError(404, "Archivo de foto no encontrado en almacenamiento.");
         }
@@ -7381,287 +7701,43 @@ export default {
         });
       }
 
-      if (routeParts.length === 2 && routeParts[0] === "installations") {
-        const installationsTenantId = normalizeRealtimeTenantId(
-          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
-        );
-        const recordId = routeParts[1];
-
-        if (request.method === "GET") {
-          const installationId = parsePositiveInt(recordId, "id");
-          const { results } = await env.DB.prepare(
-            "SELECT * FROM installations WHERE id = ? AND tenant_id = ? LIMIT 1",
-          )
-            .bind(installationId, installationsTenantId)
-            .all();
-
-          if (!results?.length) {
-            throw new HttpError(404, "Registro no encontrado.");
-          }
-
-          const summaryById = await loadInstallationOperationalSummaries(
-            env,
-            [installationId],
-            installationsTenantId,
-          );
-          const enrichedRecord = mapInstallationWithOperationalState(results[0], summaryById);
-
-          return jsonResponse(request, env, corsPolicy, enrichedRecord);
-        }
-
-        if (request.method === "PUT") {
-          if (isWebRoute) {
-            requireWebWriteRole(webSession?.role);
-          }
-          const installationId = parsePositiveInt(recordId, "id");
-          const data = await readJsonOrThrowBadRequest(request);
-          const payload = normalizeInstallationUpdatePayload(data);
-          const updateResult = await env.DB.prepare(`
-            UPDATE installations
-            SET notes = ?, installation_time_seconds = ?
-            WHERE id = ?
-              AND tenant_id = ?
-          `)
-            .bind(payload.notes, payload.installation_time_seconds, installationId, installationsTenantId)
-            .run();
-
-          if (!Number(updateResult?.meta?.changes || 0)) {
-            throw new HttpError(404, "Registro no encontrado.");
-          }
-
-          await publishRealtimeEvent(env, {
-            type: "installation_updated",
-            installation: {
-              id: installationId,
-              notes: payload.notes,
-              installation_time_seconds: payload.installation_time_seconds,
-            },
-          }, realtimeTenantId);
-          await publishRealtimeStatsUpdate(env, realtimeTenantId);
-
-          return jsonResponse(request, env, corsPolicy,{ success: true, updated: String(installationId) });
-        }
-
-        if (request.method === "DELETE") {
-          if (isWebRoute) {
-            requireWebWriteRole(webSession?.role);
-          }
-          if (!recordId) {
-            return textResponse(request, env, corsPolicy, "Error: El ID del registro es obligatorio.", 400);
-          }
-
-          const installationId = parsePositiveInt(recordId, "id");
-          const normalizedTenantId = installationsTenantId;
-          const installationExists = await ensureInstallationExistsForDelete(
-            env,
-            installationId,
-            normalizedTenantId,
-          );
-          if (!installationExists) {
-            throw new HttpError(404, "Registro no encontrado.");
-          }
-
-          const incidentPhotoKeys = await listIncidentPhotoR2KeysForInstallation(
-            env,
-            installationId,
-            normalizedTenantId,
-          );
-          await deleteIncidentPhotoObjectsFromR2(env, incidentPhotoKeys);
-
-          // Log audit event for installation deletion
-          await logAuditEvent(env, {
-            action: "installation_deleted",
-            username: webSession?.sub || "api",
-            success: true,
-            tenantId: normalizedTenantId,
-            details: {
-              deleted_id: installationId,
-              deleted_incident_photos: incidentPhotoKeys.length,
-              tenant_id: normalizedTenantId,
-            },
-            ipAddress: getClientIpForRateLimit(request),
-            platform: isWebRoute ? "web" : "api"
-          });
-
-          await deleteInstallationCascade(env, installationId, normalizedTenantId);
-          await publishRealtimeEvent(env, {
-            type: "installation_deleted",
-            installation: {
-              id: installationId,
-            },
-          }, realtimeTenantId);
-          await publishRealtimeStatsUpdate(env, realtimeTenantId);
-          return jsonResponse(request, env, corsPolicy,{ message: `Registro ${installationId} eliminado.` });
-        }
+      const installationByIdResponse = await handleInstallationByIdRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        realtimeTenantId,
+      );
+      if (installationByIdResponse) {
+        return installationByIdResponse;
       }
-
-      if (routeParts.length === 2 && routeParts[0] === "statistics" && routeParts[1] === "trend") {
-        const statsTenantId = normalizeRealtimeTenantId(
-          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
-        );
-        if (request.method !== "GET") {
-          return textResponse(request, env, corsPolicy, "Ruta no encontrada.", 404);
-        }
-
-        const requestedDays = parseOptionalPositiveInt(url.searchParams.get("days"), "days");
-        const normalizedDays = requestedDays === null ? 7 : Math.min(Math.max(requestedDays, 1), 90);
-        const startDateFilter = parseDateOrNull(url.searchParams.get("start_date"));
-        const endDateFilter = parseDateOrNull(url.searchParams.get("end_date"));
-
-        const endExclusive = endDateFilter
-          ? startOfUtcDay(endDateFilter)
-          : addUtcDays(startOfUtcDay(new Date()), 1);
-        const startInclusive = startDateFilter
-          ? startOfUtcDay(startDateFilter)
-          : addUtcDays(endExclusive, -normalizedDays);
-
-        if (startInclusive.getTime() >= endExclusive.getTime()) {
-          throw new HttpError(400, "Rango de fechas invalido para trend.");
-        }
-
-        const { results: trendRows } = await env.DB.prepare(`
-          SELECT
-            substr(timestamp, 1, 10) AS day,
-            COUNT(*) AS total_installations,
-            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_installations,
-            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_installations
-          FROM installations
-          WHERE tenant_id = ?
-            AND timestamp >= ?
-            AND timestamp < ?
-          GROUP BY substr(timestamp, 1, 10)
-          ORDER BY day ASC
-        `)
-          .bind(statsTenantId, startInclusive.toISOString(), endExclusive.toISOString())
-          .all();
-
-        const byDay = new Map();
-        for (const row of trendRows || []) {
-          const day = normalizeOptionalString(row?.day, "");
-          if (!day) continue;
-          byDay.set(day, {
-            total_installations: Number(row?.total_installations) || 0,
-            successful_installations: Number(row?.successful_installations) || 0,
-            failed_installations: Number(row?.failed_installations) || 0,
-          });
-        }
-
-        const points = [];
-        for (
-          let cursor = new Date(startInclusive.getTime());
-          cursor.getTime() < endExclusive.getTime();
-          cursor = addUtcDays(cursor, 1)
-        ) {
-          const key = toUtcDayKey(cursor);
-          const values = byDay.get(key) || {
-            total_installations: 0,
-            successful_installations: 0,
-            failed_installations: 0,
-          };
-          points.push({
-            date: key,
-            total_installations: values.total_installations,
-            successful_installations: values.successful_installations,
-            failed_installations: values.failed_installations,
-          });
-        }
-
-        return jsonResponse(request, env, corsPolicy, {
-          start_date: startInclusive.toISOString(),
-          end_date: endExclusive.toISOString(),
-          days: points.length,
-          points,
-        });
+      const statisticsTrendResponse = await handleStatisticsTrendRoute(
+        request,
+        env,
+        url,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        realtimeTenantId,
+      );
+      if (statisticsTrendResponse) {
+        return statisticsTrendResponse;
       }
-
-      if (routeParts.length === 1 && routeParts[0] === "statistics") {
-        const statsTenantId = normalizeRealtimeTenantId(
-          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
-        );
-        const startDate = parseDateOrNull(url.searchParams.get("start_date"));
-        const endDate = parseDateOrNull(url.searchParams.get("end_date"));
-        const startFilter = startDate ? startDate.toISOString() : null;
-        const endFilter = endDate ? endDate.toISOString() : null;
-
-        const { results: totalsRows } = await env.DB.prepare(`
-          SELECT
-            COUNT(*) AS total_installations,
-            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_installations,
-            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_installations,
-            ROUND(
-              100.0 * SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0),
-              2
-            ) AS success_rate,
-            ROUND(
-              AVG(CASE WHEN installation_time_seconds > 0 THEN installation_time_seconds END) / 60.0,
-              2
-            ) AS average_time_minutes,
-            COUNT(DISTINCT NULLIF(TRIM(client_name), '')) AS unique_clients
-          FROM installations
-          WHERE tenant_id = ?
-            AND (? IS NULL OR timestamp >= ?)
-            AND (? IS NULL OR timestamp < ?)
-        `)
-          .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
-          .all();
-
-        const { results: byBrandRows } = await env.DB.prepare(`
-          SELECT driver_brand AS brand, COUNT(*) AS count
-          FROM installations
-          WHERE tenant_id = ?
-            AND (? IS NULL OR timestamp >= ?)
-            AND (? IS NULL OR timestamp < ?)
-            AND NULLIF(TRIM(driver_brand), '') IS NOT NULL
-          GROUP BY driver_brand
-          ORDER BY count DESC
-        `)
-          .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
-          .all();
-
-        const { results: topDriverRows } = await env.DB.prepare(`
-          SELECT TRIM(driver_brand) AS brand, TRIM(driver_version) AS version, COUNT(*) AS count
-          FROM installations
-          WHERE tenant_id = ?
-            AND (? IS NULL OR timestamp >= ?)
-            AND (? IS NULL OR timestamp < ?)
-            AND NULLIF(TRIM(driver_brand || ' ' || driver_version), '') IS NOT NULL
-          GROUP BY TRIM(driver_brand), TRIM(driver_version)
-          ORDER BY count DESC
-        `)
-          .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
-          .all();
-
-        const totals = totalsRows?.[0] || {};
-        const byBrand = {};
-        for (const row of byBrandRows || []) {
-          const brand = normalizeOptionalString(row.brand, "");
-          const count = Number(row.count);
-          if (brand && Number.isFinite(count) && count > 0) {
-            byBrand[brand] = count;
-          }
-        }
-
-        const topDrivers = {};
-        for (const row of topDriverRows || []) {
-          const brand = normalizeOptionalString(row.brand, "");
-          const version = normalizeOptionalString(row.version, "");
-          const count = Number(row.count);
-          const key = `${brand} ${version}`.trim();
-          if (key && Number.isFinite(count) && count > 0) {
-            topDrivers[key] = count;
-          }
-        }
-
-        return jsonResponse(request, env, corsPolicy,{
-          total_installations: Number(totals.total_installations) || 0,
-          successful_installations: Number(totals.successful_installations) || 0,
-          failed_installations: Number(totals.failed_installations) || 0,
-          success_rate: Number(totals.success_rate) || 0,
-          average_time_minutes: Number(totals.average_time_minutes) || 0,
-          unique_clients: Number(totals.unique_clients) || 0,
-          top_drivers: topDrivers,
-          by_brand: byBrand,
-        });
+      const statisticsResponse = await handleStatisticsRoute(
+        request,
+        env,
+        url,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        realtimeTenantId,
+      );
+      if (statisticsResponse) {
+        return statisticsResponse;
       }
 
       return textResponse(request, env, corsPolicy, "Ruta no encontrada.", 404);

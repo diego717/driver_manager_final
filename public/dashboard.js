@@ -321,7 +321,7 @@ function resetProtectedViews() {
     ids.forEach((id) => {
         const el = document.getElementById(id);
         if (!el) return;
-        el.innerHTML = '<p class="loading">Inicia sesion para ver informacion.</p>';
+        el.innerHTML = '<p class="loading">Inicia sesi?n para ver informaci?n.</p>';
     });
     currentInstallationsData = [];
     currentSelectedInstallationId = null;
@@ -425,7 +425,7 @@ function openActionModal(config = {}) {
     const submitBtn = document.getElementById('actionModalSubmitBtn');
     if (!modal || !titleEl || !subtitleEl || !fieldsEl || !submitBtn) return false;
 
-    titleEl.textContent = String(config.title || 'Accion');
+    titleEl.textContent = String(config.title || 'Acci?n');
 
     const subtitle = String(config.subtitle || '').trim();
     subtitleEl.textContent = subtitle;
@@ -467,14 +467,14 @@ function openActionModal(config = {}) {
 
 function openActionConfirmModal(config = {}) {
     const confirmCheckboxId = 'actionModalConfirmCheckbox';
-    const title = String(config.title || 'Confirmar accion').trim() || 'Confirmar accion';
+    const title = String(config.title || 'Confirmar acci?n').trim() || 'Confirmar acci?n';
     const subtitle = String(config.subtitle || '').trim();
     const submitLabel = String(config.submitLabel || 'Confirmar').trim() || 'Confirmar';
-    const acknowledgementText = String(config.acknowledgementText || 'Confirmo esta accion.').trim()
-        || 'Confirmo esta accion.';
+    const acknowledgementText = String(config.acknowledgementText || 'Confirmo esta acci?n.').trim()
+        || 'Confirmo esta acci?n.';
     const missingConfirmationMessage = String(
-        config.missingConfirmationMessage || 'Debes confirmar la accion para continuar.',
-    ).trim() || 'Debes confirmar la accion para continuar.';
+        config.missingConfirmationMessage || 'Debes confirmar la acci?n para continuar.',
+    ).trim() || 'Debes confirmar la acci?n para continuar.';
     const focusId = String(config.focusId || confirmCheckboxId).trim() || confirmCheckboxId;
     const onSubmit = typeof config.onSubmit === 'function' ? config.onSubmit : async () => {};
 
@@ -526,7 +526,7 @@ function bindActionModalEvents() {
             setActionModalBusy(true);
             await actionModalSubmitHandler();
         } catch (error) {
-            setActionModalError(error?.message || 'No se pudo completar la accion.');
+            setActionModalError(error?.message || 'No se pudo completar la acci?n.');
         } finally {
             setActionModalBusy(false);
         }
@@ -541,7 +541,7 @@ function createManualRecordFromWeb() {
     const defaultClient = String(currentUser?.username || '').trim();
     openActionModal({
         title: 'Nuevo registro manual',
-        subtitle: 'Crea un registro sin depender de una instalacion previa.',
+        subtitle: 'Crea un registro sin depender de una instalaci?n previa.',
         submitLabel: 'Crear registro',
         focusId: 'actionRecordClient',
         fieldsHtml: `
@@ -669,7 +669,7 @@ function openIncidentModal(options = {}) {
             </div>
             <label class="action-checkbox" for="actionIncidentApplyToRecord">
                 <input type="checkbox" id="actionIncidentApplyToRecord" ${defaultApply ? 'checked' : ''}>
-                <span>Aplicar nota y ajuste al registro de instalacion.</span>
+                <span>Aplicar nota y ajuste al registro de instalaci?n.</span>
             </label>
         `,
         onSubmit: async () => {
@@ -691,7 +691,7 @@ function openIncidentModal(options = {}) {
                 document.getElementById('actionIncidentAdjustment')?.value,
             );
             if (!Number.isInteger(timeAdjustment)) {
-                setActionModalError('El ajuste de tiempo debe ser un numero entero.');
+                setActionModalError('El ajuste de tiempo debe ser un n?mero entero.');
                 return;
             }
 
@@ -750,7 +750,7 @@ function createIncidentFromWeb(installationId, options = {}) {
         (!Number.isInteger(targetId) || targetId <= 0)
         && (!Number.isInteger(numericAssetId) || numericAssetId <= 0)
     ) {
-        showNotification('installation_id invalido para crear incidencia.', 'error');
+        showNotification('installation_id inv?lido para crear incidencia.', 'error');
         return;
     }
 
@@ -773,7 +773,7 @@ function openAssetLinkModal(options = {}) {
     const needsExternalCode = !Number.isInteger(knownAssetId) || knownAssetId <= 0;
     const title = needsExternalCode ? 'Asociar equipo a registro' : `Vincular equipo #${knownAssetId}`;
     const subtitle = needsExternalCode
-        ? 'Ingresa el codigo del equipo y el registro destino.'
+        ? 'Ingresa el c?digo del equipo y el registro destino.'
         : 'Asocia el equipo seleccionado a un registro destino.';
 
     const codeField = needsExternalCode
@@ -819,7 +819,7 @@ function openAssetLinkModal(options = {}) {
             if (!Number.isInteger(resolvedAssetId) || resolvedAssetId <= 0) {
                 const externalCode = String(document.getElementById('actionAssetCode')?.value || '').trim();
                 if (!externalCode) {
-                    setActionModalError('Debes ingresar un codigo de equipo valido.');
+                    setActionModalError('Debes ingresar un c?digo de equipo v?lido.');
                     return;
                 }
                 const resolved = await api.resolveAsset({
@@ -867,7 +867,7 @@ async function openAssetLookupFromWeb() {
     if (!requireActiveSession()) return;
     openActionModal({
         title: 'Buscar equipo',
-        subtitle: 'Ingresa el codigo externo para abrir el detalle en modo lectura.',
+        subtitle: 'Ingresa el c?digo externo para abrir el detalle en modo lectura.',
         submitLabel: 'Buscar',
         focusId: 'actionLookupAssetCode',
         fieldsHtml: `
@@ -881,7 +881,7 @@ async function openAssetLookupFromWeb() {
                 document.getElementById('actionLookupAssetCode')?.value || '',
             );
             if (!code) {
-                setActionModalError('Debes ingresar un codigo de equipo valido.');
+                setActionModalError('Debes ingresar un c?digo de equipo v?lido.');
                 return;
             }
 
@@ -891,7 +891,7 @@ async function openAssetLookupFromWeb() {
             });
             const asset = Array.isArray(response?.items) ? response.items[0] : null;
             if (!asset) {
-                setActionModalError(`No existe equipo con codigo ${code}.`);
+                setActionModalError(`No existe equipo con c?digo ${code}.`);
                 return;
             }
 
@@ -915,7 +915,7 @@ async function openAssetLookupFromWeb() {
 async function selectAndUploadIncidentPhoto(incidentId, installationId) {
     const targetIncidentId = Number.parseInt(String(incidentId), 10);
     if (!Number.isInteger(targetIncidentId) || targetIncidentId <= 0) {
-        showNotification('incident_id invalido para subir foto.', 'error');
+        showNotification('incident_id inv?lido para subir foto.', 'error');
         return;
     }
 
@@ -2239,12 +2239,12 @@ async function updateIncidentStatusFromWeb(incident, targetStatus, options = {})
         const defaultNote = String(incident?.resolution_note || '').trim();
         openActionModal({
             title: `Resolver incidencia #${incidentId}`,
-            subtitle: 'Agrega una nota de resolucion opcional antes de cerrar la incidencia.',
+            subtitle: 'Agrega una nota de resoluci?n opcional antes de cerrar la incidencia.',
             submitLabel: 'Resolver incidencia',
             focusId: 'actionIncidentResolutionNote',
             fieldsHtml: `
                 <div class="input-group">
-                    <label for="actionIncidentResolutionNote">Nota de resolucion (opcional)</label>
+                    <label for="actionIncidentResolutionNote">Nota de resoluci?n (opcional)</label>
                     <textarea id="actionIncidentResolutionNote" rows="4" placeholder="Resumen de la solucion aplicada">${escapeHtml(defaultNote)}</textarea>
                 </div>
             `,
@@ -2375,7 +2375,7 @@ function renderDriversTable(drivers) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['Marca', 'Version', 'Archivo', 'Tamano', 'Subido', 'Acciones'].forEach((label) => {
+    ['Marca', 'Version', 'Archivo', 'Tamano', 'Subido', 'Acci?nes'].forEach((label) => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -2429,10 +2429,10 @@ function renderDriversTable(drivers) {
             const driverLabel = String(`${driver.brand || ''} ${driver.version || ''}`).trim() || 'sin nombre';
             openActionConfirmModal({
                 title: 'Eliminar driver',
-                subtitle: `Confirma la eliminacion de ${driverLabel}. Esta accion no se puede deshacer.`,
+                subtitle: `Confirma la eliminaci?n de ${driverLabel}. Esta acci?n no se puede deshacer.`,
                 submitLabel: 'Eliminar driver',
                 acknowledgementText: 'Entiendo que este driver sera eliminado permanentemente.',
-                missingConfirmationMessage: 'Debes confirmar la eliminacion para continuar.',
+                missingConfirmationMessage: 'Debes confirmar la eliminaci?n para continuar.',
                 onSubmit: async () => {
                     await api.deleteDriver(key);
                     closeActionModal(true);
@@ -2467,7 +2467,7 @@ async function uploadDriverFromWeb() {
         return;
     }
     if (!version) {
-        showNotification('La version es obligatoria.', 'error');
+        showNotification('La versi?n es obligatoria.', 'error');
         return;
     }
     if (!selectedDriverFile) {
@@ -2520,7 +2520,7 @@ function renderAssetsTable(assets) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Codigo', 'Marca', 'Modelo', 'Serie', 'Cliente', 'Estado', 'Actualizado', 'Acciones'].forEach((label) => {
+    ['ID', 'Codigo', 'Marca', 'Modelo', 'Serie', 'Cliente', 'Estado', 'Actualizado', 'Acci?nes'].forEach((label) => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -2609,7 +2609,7 @@ async function createIncidentForAsset(assetId) {
     if (!requireActiveSession()) return;
     const numericAssetId = Number.parseInt(String(assetId), 10);
     if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
-        showNotification('asset_id invalido.', 'error');
+        showNotification('asset_id inv?lido.', 'error');
         return;
     }
 
@@ -2629,7 +2629,7 @@ async function linkAssetFromDetail(assetId) {
     if (!requireActiveSession()) return;
     const numericAssetId = Number.parseInt(String(assetId), 10);
     if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
-        showNotification('asset_id invalido.', 'error');
+        showNotification('asset_id inv?lido.', 'error');
         return;
     }
     openAssetLinkModal({
@@ -2689,7 +2689,7 @@ async function renderAssetDetail(data) {
     const linkBtn = document.createElement('button');
     linkBtn.type = 'button';
     linkBtn.className = 'btn-secondary';
-    linkBtn.textContent = 'Vincular instalacion';
+    linkBtn.textContent = 'Vincular instalaci?n';
     linkBtn.addEventListener('click', () => {
         void linkAssetFromDetail(asset.id);
     });
@@ -2747,7 +2747,7 @@ async function renderAssetDetail(data) {
             `Instalacion activa: #${activeLink.installation_id}` +
             (activeLink.installation_client_name ? ` (${activeLink.installation_client_name})` : '');
     } else {
-        activeInfo.textContent = 'Sin instalacion activa vinculada.';
+        activeInfo.textContent = 'Sin instalaci?n activa vinculada.';
     }
     container.appendChild(activeInfo);
 
@@ -3036,14 +3036,14 @@ function applyQrModalAccessState() {
     const helper = document.getElementById('qrAssetHelper');
     if (helper) {
         if (isReadOnlyAssetView && canEdit) {
-            helper.textContent = 'Modo solo lectura. Para editar, usa "Habilitar edicion" y confirma tu contrasena.';
+            helper.textContent = 'Modo solo lectura. Para editar, usa "Habilitar edici?n" y confirma tu contrase?a.';
         } else if (isReadOnlyAssetView && !canEdit) {
             helper.textContent = 'Modo solo lectura. Solo admin/super_admin pueden editar este equipo.';
         } else if (qrModalReadOnly && qrModalEditUnlocked && hasTimedUnlock) {
             const minutesLeft = Math.max(1, Math.ceil(getQrEditSessionRemainingMs() / 60000));
             helper.textContent = `Edicion habilitada temporalmente (${minutesLeft} min restantes).`;
         } else {
-            helper.textContent = 'Requisitos: marca o modelo, y numero de serie. El codigo externo se genera automaticamente desde serie si queda vacio.';
+            helper.textContent = 'Requisitos: marca o modelo, y n?mero de serie. El c?digo externo se genera autom?ticamente desde serie si queda vac?o.';
         }
     }
 }
@@ -3051,7 +3051,7 @@ function applyQrModalAccessState() {
 async function verifyCurrentUserPassword(password) {
     const candidate = String(password || '');
     if (!candidate.trim()) {
-        throw new Error('Debes ingresar tu contrasena.');
+        throw new Error('Debes ingresar tu contrase?a.');
     }
 
     await api.request('/web/auth/verify-password', {
@@ -3115,7 +3115,7 @@ async function confirmQrEditUnlockFromModal() {
         showNotification('Edicion habilitada por 10 minutos.', 'success');
     } catch (error) {
         setQrPasswordModalBusy(false);
-        setQrPasswordModalError(error?.message || 'No se pudo validar la contrasena.');
+        setQrPasswordModalError(error?.message || 'No se pudo validar la contrase?a.');
     }
 }
 
@@ -3140,14 +3140,14 @@ function readAssetFormData() {
         throw new Error('Debes ingresar al menos marca o modelo.');
     }
     if (!serialNumber) {
-        throw new Error('El numero de serie es obligatorio para la etiqueta.');
+        throw new Error('El n?mero de serie es obligatorio para la etiqueta.');
     }
 
     const explicitCode = normalizeAssetCodeForQr(codeInput.value);
     const fallbackCode = normalizeAssetCodeForQr(serialNumber);
     const externalCode = explicitCode || fallbackCode;
     if (!externalCode) {
-        throw new Error('No se pudo construir un codigo externo de equipo.');
+        throw new Error('No se pudo construir un c?digo externo de equipo.');
     }
 
     return {
@@ -3228,7 +3228,7 @@ function buildQrPayload(qrType, rawValue, assetData = null) {
 
     const assetCode = normalizeAssetCodeForQr(assetData?.external_code || rawValue);
     if (!assetCode) {
-        throw new Error('El codigo de equipo es obligatorio.');
+        throw new Error('El c?digo de equipo es obligatorio.');
     }
     return `dm://asset/${encodeURIComponent(assetCode)}`;
 }
@@ -3418,7 +3418,7 @@ function generateQrPreview(options = {}) {
 async function saveAssetFromQrModal(options = {}) {
     if (!requireActiveSession()) return;
     if (qrModalReadOnly && !qrModalEditUnlocked) {
-        setQrError('Modo solo lectura. Habilita edicion y confirma tu contrasena para guardar cambios.');
+        setQrError('Modo solo lectura. Habilita edici?n y confirma tu contrase?a para guardar cambios.');
         return;
     }
     const generateAfterSave = Boolean(options.generateAfterSave);
@@ -4071,7 +4071,7 @@ document.getElementById('qrEnableEditBtn')?.addEventListener('click', () => {
     if (isQrEditSessionActive() && qrModalEditUnlocked) {
         applyQrModalAccessState();
         setQrError('');
-        showNotification('La edicion ya esta habilitada temporalmente.', 'info');
+        showNotification('La edici?n ya est? habilitada temporalmente.', 'info');
         return;
     }
     openQrPasswordModal();
@@ -4512,108 +4512,26 @@ function ensureConnectionStatusMobileBindings() {
 
 function updateConnectionStatus(status) {
     const now = Date.now();
-    const existingIndicator = document.getElementById('connectionStatus');
     if (
-        existingIndicator &&
         connectionStatusLastRendered.status === status &&
         (now - connectionStatusLastRendered.at) < CONNECTION_STATUS_DEDUP_MS
     ) {
         return;
     }
 
-    ensureConnectionStatusMobileBindings();
     connectionStatusLastRendered = { status, at: now };
 
-    const statusConfig = {
-        connected: { icon: '??', text: 'En vivo' },
-        disconnected: { icon: '??', text: 'Desconectado' },
-        reconnecting: { icon: '??', text: 'Reconectando...' },
-        paused: { icon: '??', text: 'En pausa' },
-        failed: { icon: '?', text: 'Error de conexion' }
-    };
+    const normalizedStatus = ['connected', 'disconnected', 'reconnecting', 'paused', 'failed'].includes(status)
+        ? status
+        : 'disconnected';
 
-    const normalizedStatus = statusConfig[status] ? status : 'disconnected';
-    const config = statusConfig[normalizedStatus];
-    const isMobileViewport = isMobileDashboardViewport();
-    const canManualReconnect = normalizedStatus === 'disconnected' || normalizedStatus === 'failed' || normalizedStatus === 'paused';
-    const compactMobileText = {
-        connected: 'En vivo',
-        disconnected: 'Sin red',
-        reconnecting: 'Reconectando',
-        paused: 'En pausa',
-        failed: 'Sin conexion'
-    };
-    const displayText = isMobileViewport
-        ? (compactMobileText[normalizedStatus] || config.text)
-        : config.text;
-    const showStatusIcon = !(isMobileViewport && normalizedStatus === 'reconnecting');
-
-    const indicator = existingIndicator || document.createElement('div');
-    indicator.id = 'connectionStatus';
-    indicator.className = 'connection-status-indicator';
-    indicator.classList.toggle('is-mobile', isMobileViewport);
-    indicator.classList.add(`status-${normalizedStatus}`);
-    indicator.innerHTML = showStatusIcon
-        ? `<span aria-hidden="true">${config.icon}</span><span>${displayText}</span>`
-        : `<span>${displayText}</span>`;
-    indicator.setAttribute('aria-live', 'polite');
-
-    indicator.dataset.canReconnect = canManualReconnect ? '1' : '0';
-    indicator.dataset.dimmed = '0';
-    indicator.dataset.hiddenByScroll = '0';
-    connectionStatusForceVisibleUntil = now + (isMobileViewport ? 3600 : 0);
-    applyConnectionStatusVisualState(indicator);
-
-    if (canManualReconnect) {
-        indicator.onclick = () => {
-            showNotification('Intentando reconectar...', 'info');
-            sseReconnectAttempts = 0;
-            syncSSEForCurrentContext(true);
-        };
-        indicator.title = 'Click para reconectar';
-    } else {
-        indicator.onclick = null;
-        indicator.removeAttribute('title');
-    }
-
-    if (!existingIndicator) {
-        document.body.appendChild(indicator);
+    const existingIndicator = document.getElementById('connectionStatus');
+    if (existingIndicator) {
+        existingIndicator.remove();
     }
 
     syncHeaderDelight(getActiveSectionName() || 'dashboard', normalizedStatus);
-
-    if (connectionStatusScrollHideTimer) {
-        clearTimeout(connectionStatusScrollHideTimer);
-        connectionStatusScrollHideTimer = null;
-    }
-    if (isMobileViewport && !canManualReconnect) {
-        const hideDelayMs = normalizedStatus === 'connected' ? 2600 : 4200;
-        connectionStatusScrollHideTimer = setTimeout(() => {
-            const liveIndicator = document.getElementById('connectionStatus');
-            if (!liveIndicator) return;
-            if (Date.now() < connectionStatusForceVisibleUntil) return;
-            liveIndicator.dataset.hiddenByScroll = '1';
-            applyConnectionStatusVisualState(liveIndicator);
-        }, hideDelayMs);
-    }
-
-    if (normalizedStatus === 'connected') {
-        const renderStamp = connectionStatusLastRendered.at;
-        setTimeout(() => {
-            const liveIndicator = document.getElementById('connectionStatus');
-            if (!liveIndicator) return;
-            if (
-                connectionStatusLastRendered.status !== 'connected' ||
-                connectionStatusLastRendered.at !== renderStamp
-            ) {
-                return;
-            }
-            liveIndicator.dataset.dimmed = '1';
-            applyConnectionStatusVisualState(liveIndicator);
-        }, 5000);
-    }
 }
-
 function closeSSE() {
     if (eventSource) {
         eventSource.close();
@@ -4642,7 +4560,7 @@ async function init() {
             try {
                 await api.logout();
             } catch (_err) {
-                // Ignorar si no habia sesion activa.
+                // Ignorar si no hab?a sesi?n activa.
             }
             currentUser = null;
             webAccessToken = '';
