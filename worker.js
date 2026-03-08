@@ -3775,383 +3775,540 @@ async function sendPushNotification(env, fcmTokens, notification) {
   };
 }
 
+async function readWebAuthRequestBody(request, maxBytes = MAX_WEB_AUTH_DEFAULT_BODY_BYTES) {
+  return readJsonOrThrowBadRequest(request, "Payload invalido.", {
+    maxBytes,
+  });
+}
+
+function requireWebAuthStringField(body, fieldName) {
+  const value = normalizeOptionalString(body?.[fieldName], "");
+  if (!value) {
+    throw new HttpError(400, `Campo '${fieldName}' es obligatorio.`);
+  }
+  return value;
+}
+
+async function handleWebAuthLoginRoute(request, env, corsPolicy) {
+  ensureWebSessionSecret(env);
+
+  const body = await readWebAuthRequestBody(request);
+  const providedPassword = requireWebAuthStringField(body, "password");
+
+  const providedUsername = normalizeWebUsername(body?.username);
+  if (!providedUsername) {
+    throw new HttpError(400, "Campo 'username' es obligatorio.");
+  }
+
+  const username = validateWebUsername(providedUsername);
+  const rateLimitIdentifier = buildWebLoginRateLimitIdentifier(request, username);
+
+  ensureDbBinding(env);
+  await checkWebLoginRateLimit(env, rateLimitIdentifier);
+
+  let user = null;
+  try {
+    user = await authenticateWebUserByCredentials(env, {
+      username,
+      password: providedPassword,
+    });
+  } catch (error) {
+    if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
+      await recordFailedWebLoginAttempt(env, rateLimitIdentifier);
+
+      await logWebAuditEvent(env, request, {
+        action: "web_login_failed",
+        username,
+        success: false,
+        tenantId: DEFAULT_REALTIME_TENANT_ID,
+        details: buildWebAuthFailureAuditDetails(error),
+      });
+    }
+    throw error;
+  }
+
+  await clearWebLoginRateLimit(env, rateLimitIdentifier);
+
+  await logWebAuditEvent(env, request, {
+    action: "web_login_success",
+    username: user.username,
+    tenantId: user.tenant_id,
+    details: {
+      role: user.role,
+      user_id: Number(user.id),
+    },
+  });
+
+  const sessionVersion = await rotateWebSessionVersion(env, Number(user.id));
+  const token = await buildWebAccessToken(env, {
+    username: user.username,
+    role: user.role,
+    user_id: Number(user.id),
+    session_version: sessionVersion,
+    tenant_id: user.tenant_id,
+  });
+
+  const response = jsonResponse(
+    request,
+    env,
+    corsPolicy,
+    {
+      success: true,
+      access_token: token.token,
+      token_type: "Bearer",
+      expires_in: token.expires_in,
+      expires_at: token.expires_at,
+      user: {
+        id: Number(user.id),
+        username: user.username,
+        role: user.role,
+        tenant_id: normalizeRealtimeTenantId(user.tenant_id),
+      },
+    },
+    200,
+  );
+  response.headers.append("Set-Cookie", buildWebSessionCookie(token.token, token.expires_in));
+  return response;
+}
+
+async function handleWebAuthVerifyPasswordRoute(request, env, corsPolicy) {
+  ensureDbBinding(env);
+  const session = await verifyWebAccessToken(request, env);
+  const rateLimitIdentifier = buildWebPasswordVerifyRateLimitIdentifier(request, session);
+  await checkWebPasswordVerifyRateLimit(env, rateLimitIdentifier);
+
+  const body = await readWebAuthRequestBody(request);
+  const providedPassword = requireWebAuthStringField(body, "password");
+
+  try {
+    const user = await verifyCurrentWebUserPassword(env, session, providedPassword);
+    await clearWebPasswordVerifyRateLimit(env, rateLimitIdentifier);
+
+    await logWebAuditEvent(env, request, {
+      action: "web_password_verified",
+      username: session.sub,
+      tenantId: user.tenant_id,
+      details: {
+        user_id: Number(user.id),
+        role: user.role,
+      },
+    });
+
+    return jsonResponse(request, env, corsPolicy, {
+      success: true,
+      verified: true,
+    });
+  } catch (error) {
+    if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
+      await recordFailedWebPasswordVerifyAttempt(env, rateLimitIdentifier);
+      await logWebAuditEvent(env, request, {
+        action: "web_password_verify_failed",
+        username: session.sub || "unknown",
+        success: false,
+        tenantId: session.tenant_id,
+        details: buildWebAuthFailureAuditDetails(error),
+      });
+    }
+    throw error;
+  }
+}
+
+async function handleWebAuthBootstrapRoute(request, env, corsPolicy) {
+  ensureDbBinding(env);
+
+  if (!env.WEB_LOGIN_PASSWORD) {
+    throw new HttpError(
+      500,
+      "Bootstrap no configurado. Define WEB_LOGIN_PASSWORD para inicializar el primer usuario web.",
+    );
+  }
+
+  const rateLimitIdentifier = buildWebBootstrapRateLimitIdentifier(request);
+  await checkWebLoginRateLimit(env, rateLimitIdentifier);
+
+  const userCount = await countWebUsers(env);
+  if (userCount > 0) {
+    throw new HttpError(409, "Bootstrap ya ejecutado. La tabla web_users ya tiene usuarios.");
+  }
+
+  const body = await readWebAuthRequestBody(request);
+  const bootstrapPassword = requireWebAuthStringField(body, "bootstrap_password");
+  if (!timingSafeEqual(bootstrapPassword, String(env.WEB_LOGIN_PASSWORD))) {
+    await recordFailedWebLoginAttempt(env, rateLimitIdentifier);
+    throw new HttpError(401, "Bootstrap password invalido.");
+  }
+
+  const username = validateWebUsername(body?.username);
+  const password = validateWebPassword(body?.password);
+  const role = normalizeWebRole(body?.role || WEB_DEFAULT_ROLE);
+  const tenantId = normalizeRealtimeTenantId(body?.tenant_id);
+  const createdUser = await createWebUser(env, { username, password, role, tenantId });
+  await clearWebLoginRateLimit(env, rateLimitIdentifier);
+
+  const sessionVersion = await rotateWebSessionVersion(env, Number(createdUser.id));
+  const token = await buildWebAccessToken(env, {
+    username: createdUser.username,
+    role: createdUser.role,
+    user_id: Number(createdUser.id),
+    session_version: sessionVersion,
+    tenant_id: createdUser.tenant_id,
+  });
+
+  const response = jsonResponse(
+    request,
+    env,
+    corsPolicy,
+    {
+      success: true,
+      bootstrapped: true,
+      user: {
+        id: createdUser.id,
+        username: createdUser.username,
+        role: createdUser.role,
+        tenant_id: createdUser.tenant_id,
+      },
+      access_token: token.token,
+      token_type: "Bearer",
+      expires_in: token.expires_in,
+      expires_at: token.expires_at,
+    },
+    201,
+  );
+  response.headers.append("Set-Cookie", buildWebSessionCookie(token.token, token.expires_in));
+  return response;
+}
+
+async function handleWebAuthUsersListRoute(request, env, corsPolicy) {
+  ensureDbBinding(env);
+
+  const session = await verifyWebAccessToken(request, env);
+  requireAdminRole(session.role);
+  const searchParams = new URL(request.url).searchParams;
+
+  const requestTenantFilter = normalizeOptionalString(
+    searchParams.get("tenant_id"),
+    "",
+  );
+  const limit = parsePageLimit(searchParams, { fallback: 100, max: 500 });
+  const cursor = parseUsernameIdCursor(searchParams.get("cursor"));
+  const usersPage = await listWebUsers(env, {
+    tenantId: canManageAllTenants(session.role)
+      ? requestTenantFilter || null
+      : normalizeRealtimeTenantId(session.tenant_id),
+    limit,
+    cursor,
+  });
+  return jsonResponse(
+    request,
+    env,
+    corsPolicy,
+    {
+      success: true,
+      users: usersPage.users,
+      pagination: {
+        limit,
+        has_more: usersPage.hasMore,
+        next_cursor: usersPage.nextCursor,
+      },
+    },
+    200,
+  );
+}
+
+async function handleWebAuthUsersCreateRoute(request, env, corsPolicy) {
+  ensureDbBinding(env);
+
+  const session = await verifyWebAccessToken(request, env);
+  requireAdminRole(session.role);
+
+  const body = await readWebAuthRequestBody(request);
+
+  const username = validateWebUsername(body?.username);
+  const password = validateWebPassword(body?.password);
+  const role = normalizeWebRole(body?.role || "viewer");
+  const sessionTenantId = normalizeRealtimeTenantId(session.tenant_id);
+  const requestedTenantId = normalizeOptionalString(body?.tenant_id, "");
+  const targetTenantId = requestedTenantId
+    ? normalizeRealtimeTenantId(requestedTenantId)
+    : sessionTenantId;
+  assertSameTenantOrSuperAdmin(session, targetTenantId);
+
+  const createdUser = await createWebUser(env, {
+    username,
+    password,
+    role,
+    tenantId: targetTenantId,
+  });
+
+  // Log audit event for user creation.
+  await logWebAuditEvent(env, request, {
+    action: "web_user_created",
+    username: session.sub,
+    tenantId: createdUser.tenant_id,
+    details: {
+      created_user: createdUser.username,
+      created_user_id: createdUser.id,
+      created_role: createdUser.role,
+      performed_by: session.sub,
+      performed_by_role: session.role,
+    },
+  });
+
+  return jsonResponse(
+    request,
+    env,
+    corsPolicy,
+    {
+      success: true,
+      user: {
+        id: createdUser.id,
+        username: createdUser.username,
+        role: createdUser.role,
+        tenant_id: createdUser.tenant_id,
+      },
+    },
+    201,
+  );
+}
+
+async function handleWebAuthUsersPatchRoute(request, env, pathParts, corsPolicy) {
+  ensureDbBinding(env);
+
+  const session = await verifyWebAccessToken(request, env);
+  requireAdminRole(session.role);
+
+  const userId = parsePositiveInt(pathParts[2], "user_id");
+  const existingUser = await getWebUserById(env, userId);
+  if (!existingUser) {
+    throw new HttpError(404, "Usuario web no encontrado.");
+  }
+  assertSameTenantOrSuperAdmin(session, existingUser.tenant_id);
+
+  const body = await readWebAuthRequestBody(request);
+
+  const requestedRole = body?.role === undefined ? null : normalizeWebRole(body.role);
+  const requestedActive = parseBooleanOrNull(body?.is_active);
+  if (requestedRole === null && requestedActive === null) {
+    throw new HttpError(400, "Debes enviar al menos uno de: role, is_active.");
+  }
+
+  const nextRole = requestedRole === null ? existingUser.role : requestedRole;
+  const nextIsActive =
+    requestedActive === null ? normalizeActiveFlag(existingUser.is_active, 1) : requestedActive ? 1 : 0;
+
+  if (session.user_id && Number(session.user_id) === userId && nextIsActive === 0) {
+    throw new HttpError(400, "No puedes desactivar tu propio usuario.");
+  }
+  if (
+    session.user_id &&
+    Number(session.user_id) === userId &&
+    !["admin", "super_admin"].includes(nextRole)
+  ) {
+    throw new HttpError(400, "No puedes quitarte permisos de administrador.");
+  }
+
+  await updateWebUserRoleAndStatus(env, {
+    userId,
+    role: nextRole,
+    isActive: nextIsActive,
+  });
+
+  // Log audit event for user update.
+  await logWebAuditEvent(env, request, {
+    action: "web_user_updated",
+    username: session.sub,
+    tenantId: existingUser.tenant_id,
+    details: {
+      updated_user_id: userId,
+      updated_user: existingUser.username,
+      old_role: existingUser.role,
+      new_role: nextRole,
+      old_active: Boolean(existingUser.is_active),
+      new_active: Boolean(nextIsActive),
+      performed_by: session.sub,
+      performed_by_role: session.role,
+    },
+  });
+
+  const updatedUser = await getWebUserById(env, userId);
+  return jsonResponse(
+    request,
+    env,
+    corsPolicy,
+    {
+      success: true,
+      user: serializeWebUser(updatedUser),
+    },
+    200,
+  );
+}
+
+async function handleWebAuthUsersForcePasswordRoute(request, env, pathParts, corsPolicy) {
+  ensureDbBinding(env);
+
+  const session = await verifyWebAccessToken(request, env);
+  requireAdminRole(session.role);
+
+  const userId = parsePositiveInt(pathParts[2], "user_id");
+  const existingUser = await getWebUserById(env, userId);
+  if (!existingUser) {
+    throw new HttpError(404, "Usuario web no encontrado.");
+  }
+  assertSameTenantOrSuperAdmin(session, existingUser.tenant_id);
+
+  const body = await readWebAuthRequestBody(request, MAX_WEB_AUTH_IMPORT_BODY_BYTES);
+
+  const newPassword = validateWebPassword(body?.new_password, "new_password");
+  await forceResetWebUserPassword(env, { userId, newPassword });
+
+  // Log audit event for password reset.
+  await logWebAuditEvent(env, request, {
+    action: "web_password_reset",
+    username: session.sub,
+    tenantId: existingUser.tenant_id,
+    details: {
+      target_user_id: userId,
+      target_user: existingUser.username,
+      performed_by: session.sub,
+      performed_by_role: session.role,
+    },
+  });
+
+  const updatedUser = await getWebUserById(env, userId);
+  return jsonResponse(
+    request,
+    env,
+    corsPolicy,
+    {
+      success: true,
+      user: serializeWebUser(updatedUser),
+    },
+    200,
+  );
+}
+
+async function handleWebAuthImportUsersRoute(request, env, corsPolicy) {
+  ensureDbBinding(env);
+
+  const session = await verifyWebAccessToken(request, env);
+  if (!["admin", "super_admin"].includes(session.role)) {
+    throw new HttpError(403, "No tienes permisos para importar usuarios web.");
+  }
+
+  const body = await readWebAuthRequestBody(request, MAX_WEB_AUTH_IMPORT_BODY_BYTES);
+
+  const users = Array.isArray(body?.users) ? body.users : [];
+  if (!users.length) {
+    throw new HttpError(400, "Debes enviar al menos un usuario en 'users'.");
+  }
+  if (users.length > 1000) {
+    throw new HttpError(400, "El lote supera el maximo permitido (1000 usuarios).");
+  }
+
+  let created = 0;
+  let updated = 0;
+  const sessionTenantId = normalizeRealtimeTenantId(session.tenant_id);
+  const processedUsers = [];
+  for (const rawUser of users) {
+    const imported = normalizeImportedWebUser(rawUser);
+    const targetTenantId = imported.tenantId || sessionTenantId;
+    assertSameTenantOrSuperAdmin(session, targetTenantId);
+    imported.tenantId = normalizeRealtimeTenantId(targetTenantId);
+    const result = await upsertWebUserFromImport(env, imported);
+    if (result === "created") created += 1;
+    if (result === "updated") updated += 1;
+    processedUsers.push({
+      username: imported.username,
+      role: imported.role,
+      tenant_id: imported.tenantId,
+      is_active: imported.isActive,
+      password_hash_type: imported.passwordHashType,
+    });
+  }
+
+  // Log audit event for user import.
+  await logWebAuditEvent(env, request, {
+    action: "web_users_imported",
+    username: session.sub,
+    tenantId: sessionTenantId,
+    details: {
+      total_imported: processedUsers.length,
+      created,
+      updated,
+      performed_by: session.sub,
+      performed_by_role: session.role,
+    },
+  });
+
+  return jsonResponse(
+    request,
+    env,
+    corsPolicy,
+    {
+      success: true,
+      imported: processedUsers.length,
+      created,
+      updated,
+      users: processedUsers,
+    },
+    200,
+  );
+}
+
+async function handleWebAuthLogoutRoute(request, env, corsPolicy) {
+  const payload = await verifyWebAccessToken(request, env);
+  if (payload.user_id) {
+    await invalidateWebSessionVersion(env, Number(payload.user_id));
+  }
+
+  const response = jsonResponse(request, env, corsPolicy, {
+    success: true,
+    logged_out: true,
+  });
+  response.headers.append("Set-Cookie", buildWebSessionCookieClearHeader());
+  return response;
+}
+
+async function handleWebAuthMeRoute(request, env, corsPolicy) {
+  const payload = await verifyWebAccessToken(request, env);
+  return jsonResponse(request, env, corsPolicy, {
+    success: true,
+    authenticated: true,
+    scope: payload.scope,
+    username: payload.sub,
+    role: payload.role,
+    tenant_id: normalizeRealtimeTenantId(payload.tenant_id),
+    expires_at: new Date(Number(payload.exp) * 1000).toISOString(),
+  });
+}
+
 async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
   if (pathParts.length < 2 || pathParts[0] !== "auth") {
     return null;
   }
 
   if (pathParts[1] === "login" && request.method === "POST") {
-    ensureWebSessionSecret(env);
-
-    let body = {};
-    body = await readJsonOrThrowBadRequest(request, "Payload invalido.", {
-      maxBytes: MAX_WEB_AUTH_DEFAULT_BODY_BYTES,
-    });
-
-    const providedPassword = normalizeOptionalString(body?.password, "");
-    if (!providedPassword) {
-      throw new HttpError(400, "Campo 'password' es obligatorio.");
-    }
-
-    const providedUsername = normalizeWebUsername(body?.username);
-    if (!providedUsername) {
-      throw new HttpError(400, "Campo 'username' es obligatorio.");
-    }
-
-    const username = validateWebUsername(providedUsername);
-    const rateLimitIdentifier = buildWebLoginRateLimitIdentifier(request, username);
-
-    ensureDbBinding(env);
-    await checkWebLoginRateLimit(env, rateLimitIdentifier);
-
-    let user = null;
-    try {
-      user = await authenticateWebUserByCredentials(env, {
-        username,
-        password: providedPassword,
-      });
-    } catch (error) {
-      if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
-        await recordFailedWebLoginAttempt(env, rateLimitIdentifier);
-
-        // Log audit event for failed login.
-        await logWebAuditEvent(env, request, {
-          action: "web_login_failed",
-          username,
-          success: false,
-          tenantId: DEFAULT_REALTIME_TENANT_ID,
-          details: buildWebAuthFailureAuditDetails(error),
-        });
-      }
-      throw error;
-    }
-
-    await clearWebLoginRateLimit(env, rateLimitIdentifier);
-
-    // Log audit event for successful login.
-    await logWebAuditEvent(env, request, {
-      action: "web_login_success",
-      username: user.username,
-      tenantId: user.tenant_id,
-      details: {
-        role: user.role,
-        user_id: Number(user.id),
-      },
-    });
-
-    const sessionVersion = await rotateWebSessionVersion(env, Number(user.id));
-    const token = await buildWebAccessToken(env, {
-      username: user.username,
-      role: user.role,
-      user_id: Number(user.id),
-      session_version: sessionVersion,
-      tenant_id: user.tenant_id,
-    });
-
-    const response = jsonResponse(
-      request,
-      env,
-      corsPolicy,
-      {
-        success: true,
-        access_token: token.token,
-        token_type: "Bearer",
-        expires_in: token.expires_in,
-        expires_at: token.expires_at,
-        user: {
-          id: Number(user.id),
-          username: user.username,
-          role: user.role,
-          tenant_id: normalizeRealtimeTenantId(user.tenant_id),
-        },
-      },
-      200,
-    );
-    response.headers.append("Set-Cookie", buildWebSessionCookie(token.token, token.expires_in));
-    return response;
+    return handleWebAuthLoginRoute(request, env, corsPolicy);
   }
 
   if (pathParts[1] === "verify-password" && request.method === "POST") {
-    ensureDbBinding(env);
-    const session = await verifyWebAccessToken(request, env);
-    const rateLimitIdentifier = buildWebPasswordVerifyRateLimitIdentifier(request, session);
-    await checkWebPasswordVerifyRateLimit(env, rateLimitIdentifier);
-
-    const body = await readJsonOrThrowBadRequest(request, "Payload invalido.", {
-      maxBytes: MAX_WEB_AUTH_DEFAULT_BODY_BYTES,
-    });
-    const providedPassword = normalizeOptionalString(body?.password, "");
-    if (!providedPassword) {
-      throw new HttpError(400, "Campo 'password' es obligatorio.");
-    }
-
-    try {
-      const user = await verifyCurrentWebUserPassword(env, session, providedPassword);
-      await clearWebPasswordVerifyRateLimit(env, rateLimitIdentifier);
-
-      await logWebAuditEvent(env, request, {
-        action: "web_password_verified",
-        username: session.sub,
-        tenantId: user.tenant_id,
-        details: {
-          user_id: Number(user.id),
-          role: user.role,
-        },
-        ipAddress: getClientIpForRateLimit(request),
-        platform: "web",
-      });
-
-      return jsonResponse(request, env, corsPolicy, {
-        success: true,
-        verified: true,
-      });
-    } catch (error) {
-      if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
-        await recordFailedWebPasswordVerifyAttempt(env, rateLimitIdentifier);
-        await logWebAuditEvent(env, request, {
-          action: "web_password_verify_failed",
-          username: session.sub || "unknown",
-          success: false,
-          tenantId: session.tenant_id,
-          details: buildWebAuthFailureAuditDetails(error),
-        });
-      }
-      throw error;
-    }
+    return handleWebAuthVerifyPasswordRoute(request, env, corsPolicy);
   }
 
   if (pathParts[1] === "bootstrap" && request.method === "POST") {
-    ensureDbBinding(env);
-
-    if (!env.WEB_LOGIN_PASSWORD) {
-      throw new HttpError(
-        500,
-        "Bootstrap no configurado. Define WEB_LOGIN_PASSWORD para inicializar el primer usuario web.",
-      );
-    }
-
-    const rateLimitIdentifier = buildWebBootstrapRateLimitIdentifier(request);
-    await checkWebLoginRateLimit(env, rateLimitIdentifier);
-
-    const userCount = await countWebUsers(env);
-    if (userCount > 0) {
-      throw new HttpError(409, "Bootstrap ya ejecutado. La tabla web_users ya tiene usuarios.");
-    }
-
-    let body = {};
-    body = await readJsonOrThrowBadRequest(request, "Payload invalido.", {
-      maxBytes: MAX_WEB_AUTH_DEFAULT_BODY_BYTES,
-    });
-
-    const bootstrapPassword = normalizeOptionalString(body?.bootstrap_password, "");
-    if (!bootstrapPassword) {
-      throw new HttpError(400, "Campo 'bootstrap_password' es obligatorio.");
-    }
-    if (!timingSafeEqual(bootstrapPassword, String(env.WEB_LOGIN_PASSWORD))) {
-      await recordFailedWebLoginAttempt(env, rateLimitIdentifier);
-      throw new HttpError(401, "Bootstrap password invalido.");
-    }
-
-    const username = validateWebUsername(body?.username);
-    const password = validateWebPassword(body?.password);
-    const role = normalizeWebRole(body?.role || WEB_DEFAULT_ROLE);
-    const tenantId = normalizeRealtimeTenantId(body?.tenant_id);
-    const createdUser = await createWebUser(env, { username, password, role, tenantId });
-    await clearWebLoginRateLimit(env, rateLimitIdentifier);
-
-    const sessionVersion = await rotateWebSessionVersion(env, Number(createdUser.id));
-    const token = await buildWebAccessToken(env, {
-      username: createdUser.username,
-      role: createdUser.role,
-      user_id: Number(createdUser.id),
-      session_version: sessionVersion,
-      tenant_id: createdUser.tenant_id,
-    });
-
-    const response = jsonResponse(
-      request,
-      env,
-      corsPolicy,
-      {
-        success: true,
-        bootstrapped: true,
-        user: {
-          id: createdUser.id,
-          username: createdUser.username,
-          role: createdUser.role,
-          tenant_id: createdUser.tenant_id,
-        },
-        access_token: token.token,
-        token_type: "Bearer",
-        expires_in: token.expires_in,
-        expires_at: token.expires_at,
-      },
-      201,
-    );
-    response.headers.append("Set-Cookie", buildWebSessionCookie(token.token, token.expires_in));
-    return response;
+    return handleWebAuthBootstrapRoute(request, env, corsPolicy);
   }
 
   if (pathParts[1] === "users" && pathParts.length === 2 && request.method === "GET") {
-    ensureDbBinding(env);
-
-    const session = await verifyWebAccessToken(request, env);
-    requireAdminRole(session.role);
-    const searchParams = new URL(request.url).searchParams;
-
-    const requestTenantFilter = normalizeOptionalString(
-      searchParams.get("tenant_id"),
-      "",
-    );
-    const limit = parsePageLimit(searchParams, { fallback: 100, max: 500 });
-    const cursor = parseUsernameIdCursor(searchParams.get("cursor"));
-    const usersPage = await listWebUsers(env, {
-      tenantId: canManageAllTenants(session.role)
-        ? requestTenantFilter || null
-        : normalizeRealtimeTenantId(session.tenant_id),
-      limit,
-      cursor,
-    });
-    return jsonResponse(request, env, corsPolicy,
-      {
-        success: true,
-        users: usersPage.users,
-        pagination: {
-          limit,
-          has_more: usersPage.hasMore,
-          next_cursor: usersPage.nextCursor,
-        },
-      },
-      200,
-    );
+    return handleWebAuthUsersListRoute(request, env, corsPolicy);
   }
 
   if (pathParts[1] === "users" && pathParts.length === 2 && request.method === "POST") {
-    ensureDbBinding(env);
-
-    const session = await verifyWebAccessToken(request, env);
-    requireAdminRole(session.role);
-
-    let body = {};
-    body = await readJsonOrThrowBadRequest(request, "Payload invalido.", {
-      maxBytes: MAX_WEB_AUTH_DEFAULT_BODY_BYTES,
-    });
-
-    const username = validateWebUsername(body?.username);
-    const password = validateWebPassword(body?.password);
-    const role = normalizeWebRole(body?.role || "viewer");
-    const sessionTenantId = normalizeRealtimeTenantId(session.tenant_id);
-    const requestedTenantId = normalizeOptionalString(body?.tenant_id, "");
-    const targetTenantId = requestedTenantId
-      ? normalizeRealtimeTenantId(requestedTenantId)
-      : sessionTenantId;
-    assertSameTenantOrSuperAdmin(session, targetTenantId);
-
-    const createdUser = await createWebUser(env, {
-      username,
-      password,
-      role,
-      tenantId: targetTenantId,
-    });
-
-    // Log audit event for user creation.
-    await logWebAuditEvent(env, request, {
-      action: "web_user_created",
-      username: session.sub,
-      tenantId: createdUser.tenant_id,
-      details: {
-        created_user: createdUser.username,
-        created_user_id: createdUser.id,
-        created_role: createdUser.role,
-        performed_by: session.sub,
-        performed_by_role: session.role,
-      },
-    });
-
-    return jsonResponse(request, env, corsPolicy,
-      {
-        success: true,
-        user: {
-          id: createdUser.id,
-          username: createdUser.username,
-          role: createdUser.role,
-          tenant_id: createdUser.tenant_id,
-        },
-      },
-      201,
-    );
+    return handleWebAuthUsersCreateRoute(request, env, corsPolicy);
   }
 
   if (pathParts[1] === "users" && pathParts.length === 3 && request.method === "PATCH") {
-    ensureDbBinding(env);
-
-    const session = await verifyWebAccessToken(request, env);
-    requireAdminRole(session.role);
-
-    const userId = parsePositiveInt(pathParts[2], "user_id");
-    const existingUser = await getWebUserById(env, userId);
-    if (!existingUser) {
-      throw new HttpError(404, "Usuario web no encontrado.");
-    }
-    assertSameTenantOrSuperAdmin(session, existingUser.tenant_id);
-
-    let body = {};
-    body = await readJsonOrThrowBadRequest(request, "Payload invalido.", {
-      maxBytes: MAX_WEB_AUTH_DEFAULT_BODY_BYTES,
-    });
-
-    const requestedRole = body?.role === undefined ? null : normalizeWebRole(body.role);
-    const requestedActive = parseBooleanOrNull(body?.is_active);
-    if (requestedRole === null && requestedActive === null) {
-      throw new HttpError(400, "Debes enviar al menos uno de: role, is_active.");
-    }
-
-    const nextRole = requestedRole === null ? existingUser.role : requestedRole;
-    const nextIsActive =
-      requestedActive === null ? normalizeActiveFlag(existingUser.is_active, 1) : requestedActive ? 1 : 0;
-
-    if (session.user_id && Number(session.user_id) === userId && nextIsActive === 0) {
-      throw new HttpError(400, "No puedes desactivar tu propio usuario.");
-    }
-    if (
-      session.user_id &&
-      Number(session.user_id) === userId &&
-      !["admin", "super_admin"].includes(nextRole)
-    ) {
-      throw new HttpError(400, "No puedes quitarte permisos de administrador.");
-    }
-
-    await updateWebUserRoleAndStatus(env, {
-      userId,
-      role: nextRole,
-      isActive: nextIsActive,
-    });
-
-    // Log audit event for user update.
-    await logWebAuditEvent(env, request, {
-      action: "web_user_updated",
-      username: session.sub,
-      tenantId: existingUser.tenant_id,
-      details: {
-        updated_user_id: userId,
-        updated_user: existingUser.username,
-        old_role: existingUser.role,
-        new_role: nextRole,
-        old_active: Boolean(existingUser.is_active),
-        new_active: Boolean(nextIsActive),
-        performed_by: session.sub,
-        performed_by_role: session.role,
-      },
-    });
-
-    const updatedUser = await getWebUserById(env, userId);
-    return jsonResponse(request, env, corsPolicy,
-      {
-        success: true,
-        user: serializeWebUser(updatedUser),
-      },
-      200,
-    );
+    return handleWebAuthUsersPatchRoute(request, env, pathParts, corsPolicy);
   }
 
   if (
@@ -4160,142 +4317,19 @@ async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
     pathParts[3] === "force-password" &&
     request.method === "POST"
   ) {
-    ensureDbBinding(env);
-
-    const session = await verifyWebAccessToken(request, env);
-    requireAdminRole(session.role);
-
-    const userId = parsePositiveInt(pathParts[2], "user_id");
-    const existingUser = await getWebUserById(env, userId);
-    if (!existingUser) {
-      throw new HttpError(404, "Usuario web no encontrado.");
-    }
-    assertSameTenantOrSuperAdmin(session, existingUser.tenant_id);
-
-    let body = {};
-    body = await readJsonOrThrowBadRequest(request, "Payload invalido.", {
-      maxBytes: MAX_WEB_AUTH_IMPORT_BODY_BYTES,
-    });
-
-    const newPassword = validateWebPassword(body?.new_password, "new_password");
-    await forceResetWebUserPassword(env, { userId, newPassword });
-
-    // Log audit event for password reset.
-    await logWebAuditEvent(env, request, {
-      action: "web_password_reset",
-      username: session.sub,
-      tenantId: existingUser.tenant_id,
-      details: {
-        target_user_id: userId,
-        target_user: existingUser.username,
-        performed_by: session.sub,
-        performed_by_role: session.role,
-      },
-    });
-
-    const updatedUser = await getWebUserById(env, userId);
-    return jsonResponse(request, env, corsPolicy,
-      {
-        success: true,
-        user: serializeWebUser(updatedUser),
-      },
-      200,
-    );
+    return handleWebAuthUsersForcePasswordRoute(request, env, pathParts, corsPolicy);
   }
 
   if (pathParts[1] === "import-users" && request.method === "POST") {
-    ensureDbBinding(env);
-
-    const session = await verifyWebAccessToken(request, env);
-    if (!["admin", "super_admin"].includes(session.role)) {
-      throw new HttpError(403, "No tienes permisos para importar usuarios web.");
-    }
-
-    let body = {};
-    body = await readJsonOrThrowBadRequest(request, "Payload invalido.", {
-      maxBytes: MAX_WEB_AUTH_IMPORT_BODY_BYTES,
-    });
-
-    const users = Array.isArray(body?.users) ? body.users : [];
-    if (!users.length) {
-      throw new HttpError(400, "Debes enviar al menos un usuario en 'users'.");
-    }
-    if (users.length > 1000) {
-      throw new HttpError(400, "El lote supera el maximo permitido (1000 usuarios).");
-    }
-
-    let created = 0;
-    let updated = 0;
-    const sessionTenantId = normalizeRealtimeTenantId(session.tenant_id);
-    const processedUsers = [];
-    for (const rawUser of users) {
-      const imported = normalizeImportedWebUser(rawUser);
-      const targetTenantId = imported.tenantId || sessionTenantId;
-      assertSameTenantOrSuperAdmin(session, targetTenantId);
-      imported.tenantId = normalizeRealtimeTenantId(targetTenantId);
-      const result = await upsertWebUserFromImport(env, imported);
-      if (result === "created") created += 1;
-      if (result === "updated") updated += 1;
-      processedUsers.push({
-        username: imported.username,
-        role: imported.role,
-        tenant_id: imported.tenantId,
-        is_active: imported.isActive,
-        password_hash_type: imported.passwordHashType,
-      });
-    }
-
-    // Log audit event for user import.
-    await logWebAuditEvent(env, request, {
-      action: "web_users_imported",
-      username: session.sub,
-      tenantId: sessionTenantId,
-      details: {
-        total_imported: processedUsers.length,
-        created,
-        updated,
-        performed_by: session.sub,
-        performed_by_role: session.role,
-      },
-    });
-
-    return jsonResponse(request, env, corsPolicy,
-      {
-        success: true,
-        imported: processedUsers.length,
-        created,
-        updated,
-        users: processedUsers,
-      },
-      200,
-    );
+    return handleWebAuthImportUsersRoute(request, env, corsPolicy);
   }
 
   if (pathParts[1] === "logout" && request.method === "POST") {
-    const payload = await verifyWebAccessToken(request, env);
-    if (payload.user_id) {
-      await invalidateWebSessionVersion(env, Number(payload.user_id));
-    }
-
-    const response = jsonResponse(request, env, corsPolicy, {
-      success: true,
-      logged_out: true,
-    });
-    response.headers.append("Set-Cookie", buildWebSessionCookieClearHeader());
-    return response;
+    return handleWebAuthLogoutRoute(request, env, corsPolicy);
   }
 
   if (pathParts[1] === "me" && request.method === "GET") {
-    const payload = await verifyWebAccessToken(request, env);
-    return jsonResponse(request, env, corsPolicy,{
-      success: true,
-      authenticated: true,
-      scope: payload.scope,
-      username: payload.sub,
-      role: payload.role,
-      tenant_id: normalizeRealtimeTenantId(payload.tenant_id),
-      expires_at: new Date(Number(payload.exp) * 1000).toISOString(),
-    });
+    return handleWebAuthMeRoute(request, env, corsPolicy);
   }
 
   return null;
@@ -4589,421 +4623,393 @@ function validateIncidentPayload(data, options = {}) {
   };
 }
 
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    const pathParts = url.pathname.split("/").filter((part) => part !== "");
-    const isWebRoute = pathParts[0] === "web";
-    const routeParts = isWebRoute ? pathParts.slice(1) : pathParts;
-    const corsPolicy = buildCorsPolicy(isWebRoute, routeParts);
+function handleServiceMetadataRoute(request, env, corsPolicy, routeParts) {
+  if (routeParts.length !== 0 || request.method !== "GET") {
+    return null;
+  }
+  return jsonResponse(request, env, corsPolicy,{
+    service: "driver-manager-api",
+    status: "ok",
+    docs: {
+      health: "/health",
+      web_login: "/web/auth/login",
+      web_verify_password: "/web/auth/verify-password",
+      web_bootstrap: "/web/auth/bootstrap",
+      web_users: "/web/auth/users",
+      web_user_update: "/web/auth/users/:user_id",
+      web_user_force_password: "/web/auth/users/:user_id/force-password",
+      web_import_users: "/web/auth/import-users",
+      installations: "/installations",
+      web_installations: "/web/installations",
+      web_assets: "/web/assets",
+      web_assets_resolve: "/web/assets/resolve",
+      web_asset_link: "/web/assets/:asset_id/link-installation",
+      web_incident_status: "/web/incidents/:incident_id/status",
+      web_incident_evidence: "/web/incidents/:incident_id/evidence",
+      web_installation_incident_status: "/web/installations/:installation_id/incidents/:incident_id/status",
+      incident_evidence: "/incidents/:incident_id/evidence",
+      web_drivers: "/web/drivers",
+      web_drivers_upload: "/web/drivers",
+      web_drivers_delete: "/web/drivers?key=drivers/default/Brand/Version/file.exe",
+      web_drivers_download: "/web/drivers/download?key=drivers/default/Brand/Version/file.exe",
+      web_devices: "/web/devices",
+      web_lookup: "/web/lookup?type=asset&code=EQ-123",
+      statistics_trend: "/statistics/trend?days=7",
+      web_statistics_trend: "/web/statistics/trend?days=7",
+      audit_logs: "/audit-logs",
+      web_audit_logs: "/web/audit-logs",
+      maintenance_cleanup_orphans: "/maintenance/cleanup-orphans",
+      web_maintenance_cleanup_orphans: "/web/maintenance/cleanup-orphans",
+    },
+  });
+}
 
-    if (request.method === "OPTIONS") {
-      const origin = normalizeOptionalString(request.headers.get("Origin"), "");
-      const preflightHeaders = corsHeaders(request, env, corsPolicy);
-      if (origin && !preflightHeaders["Access-Control-Allow-Origin"]) {
-        return new Response("Origin no permitido.", { status: 403 });
-      }
-      return new Response(null, {
-        status: 204,
-        headers: preflightHeaders,
+function handleHealthCheckRoute(request, env, corsPolicy, routeParts) {
+  if (routeParts.length !== 1 || routeParts[0] !== "health" || request.method !== "GET") {
+    return null;
+  }
+  return jsonResponse(request, env, corsPolicy,{ ok: true, now: nowIso() });
+}
+
+async function handleSseEventsRoute(request, env, url, corsPolicy, routeParts) {
+  if (routeParts.length !== 1 || routeParts[0] !== "events" || request.method !== "GET") {
+    return null;
+  }
+
+  const tokenInQuery = normalizeOptionalString(url.searchParams.get("token"), "");
+  if (tokenInQuery) {
+    throw new HttpError(
+      400,
+      "No se permite token en query string para SSE. Usa Authorization Bearer o cookie de sesion.",
+    );
+  }
+
+  // Verify authentication
+  let sseWebSession = null;
+  try {
+    sseWebSession = await verifyWebAccessToken(request, env);
+  } catch (err) {
+    return jsonResponse(request, env, corsPolicy,{ error: "Unauthorized" }, 401);
+  }
+  const sseTenantId = resolveRealtimeTenantId(request, sseWebSession);
+  const sseClientKey = buildRealtimeClientKeyFromSession(sseWebSession);
+
+  const brokerStreamResponse = await connectRealtimeBrokerStream(
+    request,
+    env,
+    corsPolicy,
+    sseTenantId,
+    sseClientKey,
+  );
+  if (brokerStreamResponse) {
+    return brokerStreamResponse;
+  }
+  if (!env.DB) {
+    throw new Error("La base de datos (D1) no esta vinculada a este Worker.");
+  }
+
+  const encoder = new TextEncoder();
+  let closed = false;
+  let pollingInFlight = false;
+  let pollTimer = null;
+  let keepAlive = null;
+  let forceCloseTimer = null;
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const sendEvent = (payload) => {
+        if (closed) return;
+        const withTenant = {
+          tenant_id: sseTenantId,
+          ...payload,
+        };
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(withTenant)}\n\n`));
+      };
+      const sendComment = (comment) => {
+        if (closed) return;
+        controller.enqueue(encoder.encode(`:${comment}\n\n`));
+      };
+
+      const sseState = await getSseLatestState(env, sseTenantId);
+
+      // Send initial connection message
+      sendEvent({
+        type: "connected",
+        message: "ConexiÃ³n en tiempo real establecida",
+        timestamp: nowIso()
       });
-    }
+      sendEvent({
+        type: "cursor",
+        last_installation_id: sseState.lastInstallationId,
+        last_incident_id: sseState.lastIncidentId,
+        timestamp: nowIso(),
+      });
 
-    try {
-      if (routeParts.length === 0 && request.method === "GET") {
-        return jsonResponse(request, env, corsPolicy,{
-          service: "driver-manager-api",
-          status: "ok",
-          docs: {
-            health: "/health",
-            web_login: "/web/auth/login",
-            web_verify_password: "/web/auth/verify-password",
-            web_bootstrap: "/web/auth/bootstrap",
-            web_users: "/web/auth/users",
-            web_user_update: "/web/auth/users/:user_id",
-            web_user_force_password: "/web/auth/users/:user_id/force-password",
-            web_import_users: "/web/auth/import-users",
-            installations: "/installations",
-            web_installations: "/web/installations",
-            web_assets: "/web/assets",
-            web_assets_resolve: "/web/assets/resolve",
-            web_asset_link: "/web/assets/:asset_id/link-installation",
-            web_incident_status: "/web/incidents/:incident_id/status",
-            web_incident_evidence: "/web/incidents/:incident_id/evidence",
-            web_installation_incident_status: "/web/installations/:installation_id/incidents/:incident_id/status",
-            incident_evidence: "/incidents/:incident_id/evidence",
-            web_drivers: "/web/drivers",
-            web_drivers_upload: "/web/drivers",
-            web_drivers_delete: "/web/drivers?key=drivers/default/Brand/Version/file.exe",
-            web_drivers_download: "/web/drivers/download?key=drivers/default/Brand/Version/file.exe",
-            web_devices: "/web/devices",
-            web_lookup: "/web/lookup?type=asset&code=EQ-123",
-            statistics_trend: "/statistics/trend?days=7",
-            web_statistics_trend: "/web/statistics/trend?days=7",
-            audit_logs: "/audit-logs",
-            web_audit_logs: "/web/audit-logs",
-            maintenance_cleanup_orphans: "/maintenance/cleanup-orphans",
-            web_maintenance_cleanup_orphans: "/web/maintenance/cleanup-orphans",
-          },
-        });
-      }
-
-      if (routeParts.length === 1 && routeParts[0] === "health" && request.method === "GET") {
-        return jsonResponse(request, env, corsPolicy,{ ok: true, now: nowIso() });
-      }
-
-      const dashboardAssetResponse = await serveDashboardStaticAsset(request, env, corsPolicy, routeParts);
-      if (dashboardAssetResponse) {
-        return dashboardAssetResponse;
-      }
-
-      // SSE endpoint for real-time updates
-      if (routeParts.length === 1 && routeParts[0] === "events" && request.method === "GET") {
-        const tokenInQuery = normalizeOptionalString(url.searchParams.get("token"), "");
-        if (tokenInQuery) {
-          throw new HttpError(
-            400,
-            "No se permite token en query string para SSE. Usa Authorization Bearer o cookie de sesion.",
-          );
-        }
-
-        // Verify authentication
-        let sseWebSession = null;
+      const pollAndEmit = async () => {
+        if (closed || pollingInFlight) return;
+        pollingInFlight = true;
         try {
-          sseWebSession = await verifyWebAccessToken(request, env);
-        } catch (err) {
-          return jsonResponse(request, env, corsPolicy,{ error: "Unauthorized" }, 401);
-        }
-        const sseTenantId = resolveRealtimeTenantId(request, sseWebSession);
-        const sseClientKey = buildRealtimeClientKeyFromSession(sseWebSession);
+          let emittedMutation = false;
 
-        const brokerStreamResponse = await connectRealtimeBrokerStream(
-          request,
-          env,
-          corsPolicy,
-          sseTenantId,
-          sseClientKey,
-        );
-        if (brokerStreamResponse) {
-          return brokerStreamResponse;
-        }
-        if (!env.DB) {
-          throw new Error("La base de datos (D1) no esta vinculada a este Worker.");
-        }
-
-        const encoder = new TextEncoder();
-        let closed = false;
-        let pollingInFlight = false;
-        let pollTimer = null;
-        let keepAlive = null;
-        let forceCloseTimer = null;
-
-        const stream = new ReadableStream({
-          async start(controller) {
-            const sendEvent = (payload) => {
-              if (closed) return;
-              const withTenant = {
-                tenant_id: sseTenantId,
-                ...payload,
-              };
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(withTenant)}\n\n`));
-            };
-            const sendComment = (comment) => {
-              if (closed) return;
-              controller.enqueue(encoder.encode(`:${comment}\n\n`));
-            };
-
-            const sseState = await getSseLatestState(env, sseTenantId);
-
-            // Send initial connection message
+          const newInstallations = await getInstallationsAfterId(
+            env,
+            sseState.lastInstallationId,
+            25,
+            sseTenantId,
+          );
+          for (const installation of newInstallations) {
+            sseState.lastInstallationId = Math.max(sseState.lastInstallationId, Number(installation.id || 0));
             sendEvent({
-              type: "connected",
-              message: "Conexión en tiempo real establecida",
-              timestamp: nowIso()
-            });
-            sendEvent({
-              type: "cursor",
-              last_installation_id: sseState.lastInstallationId,
-              last_incident_id: sseState.lastIncidentId,
+              type: "installation_created",
+              installation,
               timestamp: nowIso(),
             });
-
-            const pollAndEmit = async () => {
-              if (closed || pollingInFlight) return;
-              pollingInFlight = true;
-              try {
-                let emittedMutation = false;
-
-                const newInstallations = await getInstallationsAfterId(
-                  env,
-                  sseState.lastInstallationId,
-                  25,
-                  sseTenantId,
-                );
-                for (const installation of newInstallations) {
-                  sseState.lastInstallationId = Math.max(sseState.lastInstallationId, Number(installation.id || 0));
-                  sendEvent({
-                    type: "installation_created",
-                    installation,
-                    timestamp: nowIso(),
-                  });
-                  emittedMutation = true;
-                }
-
-                const newIncidents = await getIncidentsAfterId(
-                  env,
-                  sseState.lastIncidentId,
-                  25,
-                  sseTenantId,
-                );
-                for (const incident of newIncidents) {
-                  sseState.lastIncidentId = Math.max(sseState.lastIncidentId, Number(incident.id || 0));
-                  sendEvent({
-                    type: "incident_created",
-                    incident,
-                    timestamp: nowIso(),
-                  });
-                  emittedMutation = true;
-                }
-
-                if (emittedMutation) {
-                  const statistics = await getSseStatisticsSnapshot(env, sseTenantId);
-                  sendEvent({
-                    type: "stats_update",
-                    statistics,
-                    timestamp: nowIso(),
-                  });
-                }
-              } catch (pollErr) {
-                sendEvent({
-                  type: "error",
-                  message: "Error en sondeo de cambios SSE",
-                  timestamp: nowIso(),
-                });
-                console.error("[SSE] poll failed:", pollErr);
-              } finally {
-                pollingInFlight = false;
-              }
-            };
-
-            // Try immediately so clients don't wait a full interval after connect.
-            await pollAndEmit();
-            pollTimer = setInterval(() => {
-              pollAndEmit().catch(() => {});
-            }, SSE_POLL_INTERVAL_MS);
-
-            // Keep connection alive with ping every 30 seconds
-            keepAlive = setInterval(() => {
-              if (closed) {
-                clearInterval(keepAlive);
-                return;
-              }
-              try {
-                sendComment("ping");
-              } catch {
-                clearInterval(keepAlive);
-              }
-            }, SSE_KEEP_ALIVE_INTERVAL_MS);
-
-            // Close after 5 minutes (clients should reconnect)
-            forceCloseTimer = setTimeout(() => {
-              if (!closed) {
-                closed = true;
-                try {
-                  clearInterval(keepAlive);
-                  clearInterval(pollTimer);
-                  sendEvent({
-                    type: "reconnect",
-                    message: "Reconexión requerida",
-                    timestamp: nowIso()
-                  });
-                  controller.close();
-                } catch {}
-              }
-            }, SSE_MAX_CONNECTION_MS);
-          },
-          cancel() {
-            closed = true;
-            if (keepAlive) clearInterval(keepAlive);
-            if (pollTimer) clearInterval(pollTimer);
-            if (forceCloseTimer) clearTimeout(forceCloseTimer);
-          }
-        });
-
-        return new Response(stream, {
-          headers: {
-            ...corsHeaders(request, env, corsPolicy),
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive"
-          }
-        });
-      }
-      if (isWebRoute) {
-        const webAuthResponse = await handleWebAuthRoute(request, env, routeParts, corsPolicy);
-        if (webAuthResponse) {
-          return applyNoStoreHeaders(webAuthResponse);
-        }
-      }
-
-      if (!env.DB) {
-        throw new Error("La base de datos (D1) no esta vinculada a este Worker.");
-      }
-
-      let webSession = null;
-      if (isWebRoute) {
-        webSession = await verifyWebAccessToken(request, env);
-      } else {
-        await verifyAuth(request, env, url);
-      }
-      const realtimeTenantId = resolveRealtimeTenantId(request, webSession);
-      const incidentsTenantId = normalizeRealtimeTenantId(
-        isWebRoute ? webSession?.tenant_id : realtimeTenantId,
-      );
-
-
-      if (routeParts.length === 1 && routeParts[0] === "lookup" && request.method === "GET") {
-        const requestedType = normalizeOptionalString(url.searchParams.get("type"), "").toLowerCase();
-        const code = normalizeOptionalString(url.searchParams.get("code"), "").trim();
-        const lookupTenantId = normalizeRealtimeTenantId(
-          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
-        );
-
-        if (!code) {
-          throw new HttpError(400, "Parametro 'code' es obligatorio.");
-        }
-
-        if (requestedType && requestedType !== "installation" && requestedType !== "asset") {
-          throw new HttpError(400, "Parametro 'type' invalido. Usa installation o asset.");
-        }
-
-        const normalizedCode = code.toLowerCase();
-
-        if (requestedType === "installation") {
-          const asNumber = Number.parseInt(code, 10);
-          if (!Number.isInteger(asNumber) || asNumber <= 0) {
-            throw new HttpError(400, "Codigo de instalacion invalido.");
+            emittedMutation = true;
           }
 
-          const { results } = await env.DB.prepare(`
-            SELECT id, timestamp, status, client_name, driver_brand, driver_version
-            FROM installations
-            WHERE id = ?
-              AND tenant_id = ?
-            LIMIT 1
-          `)
-            .bind(asNumber, lookupTenantId)
-            .all();
-
-          if (!results?.[0]) {
-            throw new HttpError(404, "Instalacion no encontrada.");
+          const newIncidents = await getIncidentsAfterId(
+            env,
+            sseState.lastIncidentId,
+            25,
+            sseTenantId,
+          );
+          for (const incident of newIncidents) {
+            sseState.lastIncidentId = Math.max(sseState.lastIncidentId, Number(incident.id || 0));
+            sendEvent({
+              type: "incident_created",
+              incident,
+              timestamp: nowIso(),
+            });
+            emittedMutation = true;
           }
 
-          return jsonResponse(request, env, corsPolicy, {
-            success: true,
-            match: {
-              type: "installation",
-              installation_id: results[0].id,
-            },
+          if (emittedMutation) {
+            const statistics = await getSseStatisticsSnapshot(env, sseTenantId);
+            sendEvent({
+              type: "stats_update",
+              statistics,
+              timestamp: nowIso(),
+            });
+          }
+        } catch (pollErr) {
+          sendEvent({
+            type: "error",
+            message: "Error en sondeo de cambios SSE",
+            timestamp: nowIso(),
           });
+          console.error("[SSE] poll failed:", pollErr);
+        } finally {
+          pollingInFlight = false;
         }
+      };
 
-        let matchedAsset = null;
+      // Try immediately so clients don't wait a full interval after connect.
+      await pollAndEmit();
+      pollTimer = setInterval(() => {
+        pollAndEmit().catch(() => {});
+      }, SSE_POLL_INTERVAL_MS);
+
+      // Keep connection alive with ping every 30 seconds
+      keepAlive = setInterval(() => {
+        if (closed) {
+          clearInterval(keepAlive);
+          return;
+        }
         try {
-          const numericAssetId = Number.parseInt(code, 10);
-          const resolvedNumericAssetId =
-            Number.isInteger(numericAssetId) && numericAssetId > 0 ? numericAssetId : null;
-          const { results: assetMatches } = await env.DB.prepare(`
-            SELECT
-              a.id,
-              a.external_code,
-              (
-                SELECT l.installation_id
-                FROM asset_installation_links l
-                WHERE l.asset_id = a.id
-                  AND l.tenant_id = a.tenant_id
-                  AND l.unlinked_at IS NULL
-                ORDER BY l.linked_at DESC, l.id DESC
-                LIMIT 1
-              ) AS installation_id
-            FROM assets a
-            WHERE a.tenant_id = ?
-              AND (
-                LOWER(a.external_code) = ?
-                OR a.external_code = ?
-                OR (? IS NOT NULL AND a.id = ?)
-              )
-            ORDER BY a.id DESC
-            LIMIT 1
-          `)
-            .bind(
-              lookupTenantId,
-              normalizedCode,
-              code,
-              resolvedNumericAssetId,
-              resolvedNumericAssetId,
-            )
-            .all();
-          matchedAsset = assetMatches?.[0] || null;
-        } catch (error) {
-          if (!isMissingAssetsTableError(error)) {
-            throw error;
-          }
+          sendComment("ping");
+        } catch {
+          clearInterval(keepAlive);
         }
+      }, SSE_KEEP_ALIVE_INTERVAL_MS);
 
-        if (matchedAsset) {
-          return jsonResponse(request, env, corsPolicy, {
-            success: true,
-            match: {
-              type: "asset",
-              asset_record_id: Number(matchedAsset.id),
-              asset_id: normalizeOptionalString(matchedAsset.external_code, code),
-              external_code: normalizeOptionalString(matchedAsset.external_code, code),
-              installation_id: matchedAsset.installation_id ? Number(matchedAsset.installation_id) : null,
-            },
-          });
+      // Close after 5 minutes (clients should reconnect)
+      forceCloseTimer = setTimeout(() => {
+        if (!closed) {
+          closed = true;
+          try {
+            clearInterval(keepAlive);
+            clearInterval(pollTimer);
+            sendEvent({
+              type: "reconnect",
+              message: "ReconexiÃ³n requerida",
+              timestamp: nowIso()
+            });
+            controller.close();
+          } catch {}
         }
+      }, SSE_MAX_CONNECTION_MS);
+    },
+    cancel() {
+      closed = true;
+      if (keepAlive) clearInterval(keepAlive);
+      if (pollTimer) clearInterval(pollTimer);
+      if (forceCloseTimer) clearTimeout(forceCloseTimer);
+    }
+  });
 
-        const wildcard = `%${code}%`;
-        const { results: installationMatches } = await env.DB.prepare(`
-          SELECT id
-          FROM installations
-          WHERE tenant_id = ?
-            AND (
-              LOWER(client_name) = ?
-              OR LOWER(driver_description) = ?
-              OR LOWER(notes) = ?
-              OR client_name LIKE ?
-              OR driver_description LIKE ?
-              OR notes LIKE ?
-            )
-          ORDER BY id DESC
+  return new Response(stream, {
+    headers: {
+      ...corsHeaders(request, env, corsPolicy),
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive"
+    }
+  });
+}
+
+async function handleLookupRoute(request, env, url, corsPolicy, routeParts, lookupTenantId) {
+  if (routeParts.length !== 1 || routeParts[0] !== "lookup" || request.method !== "GET") {
+    return null;
+  }
+
+  const requestedType = normalizeOptionalString(url.searchParams.get("type"), "").toLowerCase();
+  const code = normalizeOptionalString(url.searchParams.get("code"), "").trim();
+
+  if (!code) {
+    throw new HttpError(400, "Parametro 'code' es obligatorio.");
+  }
+
+  if (requestedType && requestedType !== "installation" && requestedType !== "asset") {
+    throw new HttpError(400, "Parametro 'type' invalido. Usa installation o asset.");
+  }
+
+  const normalizedCode = code.toLowerCase();
+
+  if (requestedType === "installation") {
+    const asNumber = Number.parseInt(code, 10);
+    if (!Number.isInteger(asNumber) || asNumber <= 0) {
+      throw new HttpError(400, "Codigo de instalacion invalido.");
+    }
+
+    const { results } = await env.DB.prepare(`
+      SELECT id, timestamp, status, client_name, driver_brand, driver_version
+      FROM installations
+      WHERE id = ?
+        AND tenant_id = ?
+      LIMIT 1
+    `)
+      .bind(asNumber, lookupTenantId)
+      .all();
+
+    if (!results?.[0]) {
+      throw new HttpError(404, "Instalacion no encontrada.");
+    }
+
+    return jsonResponse(request, env, corsPolicy, {
+      success: true,
+      match: {
+        type: "installation",
+        installation_id: results[0].id,
+      },
+    });
+  }
+
+  let matchedAsset = null;
+  try {
+    const numericAssetId = Number.parseInt(code, 10);
+    const resolvedNumericAssetId =
+      Number.isInteger(numericAssetId) && numericAssetId > 0 ? numericAssetId : null;
+    const { results: assetMatches } = await env.DB.prepare(`
+      SELECT
+        a.id,
+        a.external_code,
+        (
+          SELECT l.installation_id
+          FROM asset_installation_links l
+          WHERE l.asset_id = a.id
+            AND l.tenant_id = a.tenant_id
+            AND l.unlinked_at IS NULL
+          ORDER BY l.linked_at DESC, l.id DESC
           LIMIT 1
-        `)
-          .bind(
-            lookupTenantId,
-            normalizedCode,
-            normalizedCode,
-            normalizedCode,
-            wildcard,
-            wildcard,
-            wildcard,
-          )
-          .all();
+        ) AS installation_id
+      FROM assets a
+      WHERE a.tenant_id = ?
+        AND (
+          LOWER(a.external_code) = ?
+          OR a.external_code = ?
+          OR (? IS NOT NULL AND a.id = ?)
+        )
+      ORDER BY a.id DESC
+      LIMIT 1
+    `)
+      .bind(
+        lookupTenantId,
+        normalizedCode,
+        code,
+        resolvedNumericAssetId,
+        resolvedNumericAssetId,
+      )
+      .all();
+    matchedAsset = assetMatches?.[0] || null;
+  } catch (error) {
+    if (!isMissingAssetsTableError(error)) {
+      throw error;
+    }
+  }
 
-        const installationId = installationMatches?.[0]?.id || null;
+  if (matchedAsset) {
+    return jsonResponse(request, env, corsPolicy, {
+      success: true,
+      match: {
+        type: "asset",
+        asset_record_id: Number(matchedAsset.id),
+        asset_id: normalizeOptionalString(matchedAsset.external_code, code),
+        external_code: normalizeOptionalString(matchedAsset.external_code, code),
+        installation_id: matchedAsset.installation_id ? Number(matchedAsset.installation_id) : null,
+      },
+    });
+  }
 
-        return jsonResponse(request, env, corsPolicy, {
-          success: true,
-          match: {
-            type: "asset",
-            asset_id: code,
-            external_code: code,
-            installation_id: installationId,
-          },
-        });
-      }
+  const wildcard = `%${code}%`;
+  const { results: installationMatches } = await env.DB.prepare(`
+    SELECT id
+    FROM installations
+    WHERE tenant_id = ?
+      AND (
+        LOWER(client_name) = ?
+        OR LOWER(driver_description) = ?
+        OR LOWER(notes) = ?
+        OR client_name LIKE ?
+        OR driver_description LIKE ?
+        OR notes LIKE ?
+      )
+    ORDER BY id DESC
+    LIMIT 1
+  `)
+    .bind(
+      lookupTenantId,
+      normalizedCode,
+      normalizedCode,
+      normalizedCode,
+      wildcard,
+      wildcard,
+      wildcard,
+    )
+    .all();
 
+  const installationId = installationMatches?.[0]?.id || null;
+
+  return jsonResponse(request, env, corsPolicy, {
+    success: true,
+    match: {
+      type: "asset",
+      asset_id: code,
+      external_code: code,
+      installation_id: installationId,
+    },
+  });
+}
+
+async function handleAssetsRoute(
+  request,
+  env,
+  url,
+  corsPolicy,
+  routeParts,
+  isWebRoute,
+  webSession,
+  realtimeTenantId,
+) {
       if (routeParts.length >= 1 && routeParts[0] === "assets") {
         const assetsTenantId = normalizeRealtimeTenantId(
           isWebRoute ? webSession?.tenant_id : realtimeTenantId,
@@ -5810,6 +5816,17 @@ export default {
         }
       }
 
+  return null;
+}
+async function handleDriversRoute(
+  request,
+  env,
+  url,
+  corsPolicy,
+  routeParts,
+  isWebRoute,
+  webSession,
+) {
       if (routeParts.length >= 1 && routeParts[0] === "drivers") {
         if (!isWebRoute) {
           throw new HttpError(401, "Gestion de drivers requiere sesion web.");
@@ -6083,6 +6100,18 @@ export default {
         }
       }
 
+  return null;
+}
+async function handleInstallationsRoute(
+  request,
+  env,
+  url,
+  corsPolicy,
+  routeParts,
+  isWebRoute,
+  webSession,
+  realtimeTenantId,
+) {
       if (routeParts.length === 1 && routeParts[0] === "installations") {
         const installationsTenantId = normalizeRealtimeTenantId(
           isWebRoute ? webSession?.tenant_id : realtimeTenantId,
@@ -6227,6 +6256,17 @@ export default {
         }
       }
 
+  return null;
+}
+async function handleMaintenanceCleanupRoute(
+  request,
+  env,
+  corsPolicy,
+  routeParts,
+  isWebRoute,
+  webSession,
+  realtimeTenantId,
+) {
       if (routeParts.length === 2 && routeParts[0] === "maintenance" && routeParts[1] === "cleanup-orphans") {
         if (request.method !== "POST") {
           return textResponse(request, env, corsPolicy, "Ruta no encontrada.", 404);
@@ -6277,6 +6317,18 @@ export default {
         });
       }
 
+  return null;
+}
+async function handleAuditLogsRoute(
+  request,
+  env,
+  url,
+  corsPolicy,
+  routeParts,
+  isWebRoute,
+  webSession,
+  realtimeTenantId,
+) {
       if (routeParts.length === 1 && routeParts[0] === "audit-logs") {
         const auditTenantId = normalizeRealtimeTenantId(
           isWebRoute ? webSession?.tenant_id : realtimeTenantId,
@@ -6366,6 +6418,16 @@ export default {
         }
       }
 
+  return null;
+}
+async function handleDevicesRoute(
+  request,
+  env,
+  corsPolicy,
+  routeParts,
+  isWebRoute,
+  webSession,
+) {
       if (routeParts.length === 1 && routeParts[0] === "devices" && request.method === "POST") {
         if (!isWebRoute || !webSession?.user_id) {
           throw new HttpError(401, "Registro de dispositivos requiere token Bearer web.");
@@ -6392,6 +6454,17 @@ export default {
         );
       }
 
+  return null;
+}
+async function handleRecordsRoute(
+  request,
+  env,
+  corsPolicy,
+  routeParts,
+  isWebRoute,
+  webSession,
+  realtimeTenantId,
+) {
       if (routeParts.length === 1 && routeParts[0] === "records" && request.method === "POST") {
         if (isWebRoute) {
           requireWebWriteRole(webSession?.role);
@@ -6457,6 +6530,20 @@ export default {
           201,
         );
       }
+
+        return null;
+}
+
+async function handleInstallationIncidentsRoute(
+  request,
+  env,
+  corsPolicy,
+  routeParts,
+  isWebRoute,
+  webSession,
+  incidentsTenantId,
+  realtimeTenantId,
+) {
 
       if (
         routeParts.length === 3 &&
@@ -6691,6 +6778,198 @@ export default {
         }
       }
 
+
+        return null;
+}
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const pathParts = url.pathname.split("/").filter((part) => part !== "");
+    const isWebRoute = pathParts[0] === "web";
+    const routeParts = isWebRoute ? pathParts.slice(1) : pathParts;
+    const corsPolicy = buildCorsPolicy(isWebRoute, routeParts);
+
+    if (request.method === "OPTIONS") {
+      const origin = normalizeOptionalString(request.headers.get("Origin"), "");
+      const preflightHeaders = corsHeaders(request, env, corsPolicy);
+      if (origin && !preflightHeaders["Access-Control-Allow-Origin"]) {
+        return new Response("Origin no permitido.", { status: 403 });
+      }
+      return new Response(null, {
+        status: 204,
+        headers: preflightHeaders,
+      });
+    }
+
+    try {
+      const serviceMetadataResponse = handleServiceMetadataRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+      );
+      if (serviceMetadataResponse) {
+        return serviceMetadataResponse;
+      }
+
+      const healthCheckResponse = handleHealthCheckRoute(request, env, corsPolicy, routeParts);
+      if (healthCheckResponse) {
+        return healthCheckResponse;
+      }
+
+      const dashboardAssetResponse = await serveDashboardStaticAsset(request, env, corsPolicy, routeParts);
+      if (dashboardAssetResponse) {
+        return dashboardAssetResponse;
+      }
+
+      const sseEventsResponse = await handleSseEventsRoute(
+        request,
+        env,
+        url,
+        corsPolicy,
+        routeParts,
+      );
+      if (sseEventsResponse) {
+        return sseEventsResponse;
+      }
+      if (isWebRoute) {
+        const webAuthResponse = await handleWebAuthRoute(request, env, routeParts, corsPolicy);
+        if (webAuthResponse) {
+          return applyNoStoreHeaders(webAuthResponse);
+        }
+      }
+
+      if (!env.DB) {
+        throw new Error("La base de datos (D1) no esta vinculada a este Worker.");
+      }
+
+      let webSession = null;
+      if (isWebRoute) {
+        webSession = await verifyWebAccessToken(request, env);
+      } else {
+        await verifyAuth(request, env, url);
+      }
+      const realtimeTenantId = resolveRealtimeTenantId(request, webSession);
+      const incidentsTenantId = normalizeRealtimeTenantId(
+        isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+      );
+
+
+      const lookupTenantId = normalizeRealtimeTenantId(
+        isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+      );
+      const lookupResponse = await handleLookupRoute(
+        request,
+        env,
+        url,
+        corsPolicy,
+        routeParts,
+        lookupTenantId,
+      );
+      if (lookupResponse) {
+        return lookupResponse;
+      }
+
+      const assetsResponse = await handleAssetsRoute(
+        request,
+        env,
+        url,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        realtimeTenantId,
+      );
+      if (assetsResponse) {
+        return assetsResponse;
+      }
+      const driversResponse = await handleDriversRoute(
+        request,
+        env,
+        url,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+      );
+      if (driversResponse) {
+        return driversResponse;
+      }
+      const installationsResponse = await handleInstallationsRoute(
+        request,
+        env,
+        url,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        realtimeTenantId,
+      );
+      if (installationsResponse) {
+        return installationsResponse;
+      }
+      const maintenanceResponse = await handleMaintenanceCleanupRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        realtimeTenantId,
+      );
+      if (maintenanceResponse) {
+        return maintenanceResponse;
+      }
+      const auditLogsResponse = await handleAuditLogsRoute(
+        request,
+        env,
+        url,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        realtimeTenantId,
+      );
+      if (auditLogsResponse) {
+        return auditLogsResponse;
+      }
+      const devicesResponse = await handleDevicesRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+      );
+      if (devicesResponse) {
+        return devicesResponse;
+      }
+      const recordsResponse = await handleRecordsRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        realtimeTenantId,
+      );
+      if (recordsResponse) {
+        return recordsResponse;
+      }
+      const installationIncidentsResponse = await handleInstallationIncidentsRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        incidentsTenantId,
+        realtimeTenantId,
+      );
+      if (installationIncidentsResponse) {
+        return installationIncidentsResponse;
+      }
 
       if (
         routeParts.length === 3 &&
