@@ -301,6 +301,27 @@ class MainWindow(QMainWindow):
             return None
         return self.cloud_manager
 
+    def _is_web_session_active(self):
+        """Indica si hay sesión web (Bearer) activa en el desktop."""
+        auth_mode = self._resolve_desktop_auth_mode()
+        if self.user_manager:
+            auth_mode = str(getattr(self.user_manager, "auth_mode", auth_mode)).strip().lower() or auth_mode
+        return auth_mode in ("web", "auto") and bool(self._resolve_current_web_token())
+
+    def _is_web_auth_context(self):
+        """Indica si el runtime debe operar en experiencia web-first (sin exigir R2)."""
+        auth_mode = self._resolve_desktop_auth_mode()
+        current_user = None
+        if self.user_manager:
+            auth_mode = str(getattr(self.user_manager, "auth_mode", auth_mode)).strip().lower() or auth_mode
+            current_user = getattr(self.user_manager, "current_user", None) or {}
+
+        if auth_mode in ("web", "auto"):
+            return True
+        if str((current_user or {}).get("source") or "").strip().lower() == "web":
+            return True
+        return bool(self._resolve_current_web_token())
+
     def _init_managers(self):
         """Inicializar todos los managers"""
         
@@ -2177,12 +2198,17 @@ class MainWindow(QMainWindow):
             
             if user_role == "super_admin":
                 logger.info(f"Configurando panel para super_admin: {username}")
-                
+                web_auth_context = self._is_web_auth_context()
+
                 # Super admin: acceso completo al panel
                 # 1. Mostrar TODAS las secciones incluyendo Cloudflare R2
                 for widget in self.admin_tab.findChildren(QGroupBox):
-                    widget.setVisible(True)
-                    logger.debug(f"GroupBox visible: {widget.title()}")
+                    if web_auth_context and "Cloudflare R2" in widget.title():
+                        widget.setVisible(False)
+                        logger.debug("Sección R2 oculta para contexto web")
+                    else:
+                        widget.setVisible(True)
+                        logger.debug(f"GroupBox visible: {widget.title()}")
                 
                 # 2. Mostrar botón de gestión de usuarios
                 if hasattr(self.admin_tab, 'user_mgmt_btn'):
@@ -2197,26 +2223,48 @@ class MainWindow(QMainWindow):
                         logger.debug(f"Botón visible para super_admin: {widget.text()}")
                     # También botones de R2
                     if any(text in widget.text() for text in ["Guardar Configuración R2", "Probar Conexión"]):
-                        widget.setVisible(True)
-                        logger.debug(f"Botón R2 visible para super_admin: {widget.text()}")
+                        widget.setVisible(not web_auth_context)
+                        if web_auth_context:
+                            logger.debug(f"Botón R2 oculto para contexto web: {widget.text()}")
+                        else:
+                            logger.debug(f"Botón R2 visible para super_admin: {widget.text()}")
                 
                 # 4. Mostrar campos de entrada para subir drivers
                 for widget in self.admin_tab.findChildren(QLineEdit):
-                    if widget.placeholderText() and any(text in widget.placeholderText().lower() for text in ["driver", "account", "key", "bucket"]):
+                    placeholder = (widget.placeholderText() or "").lower()
+                    if not placeholder:
+                        continue
+
+                    is_driver_field = "driver" in placeholder
+                    is_r2_field = any(text in placeholder for text in ["account", "key", "bucket"])
+
+                    if is_driver_field:
                         widget.setVisible(True)
                         logger.debug(f"Campo visible: {widget.placeholderText()}")
+                    elif is_r2_field:
+                        widget.setVisible(not web_auth_context)
+                        if web_auth_context:
+                            logger.debug(f"Campo R2 oculto para contexto web: {widget.placeholderText()}")
+                        else:
+                            logger.debug(f"Campo visible: {widget.placeholderText()}")
                 
                 # 5. IMPORTANTE: Cargar credenciales R2 en los campos
-                logger.info("Cargando credenciales R2 para super_admin")
-                self.event_handlers.load_r2_config_to_admin_panel()
-                
-                logger.security_event(
-                    event_type="r2_credentials_accessed",
-                    username=username,
-                    success=True,
-                    details={'action': 'view_credentials'},
-                    severity='WARNING'
-                )
+                if not web_auth_context:
+                    logger.info("Cargando credenciales R2 para super_admin")
+                    self.event_handlers.load_r2_config_to_admin_panel()
+
+                    logger.security_event(
+                        event_type="r2_credentials_accessed",
+                        username=username,
+                        success=True,
+                        details={'action': 'view_credentials'},
+                        severity='WARNING'
+                    )
+                else:
+                    self.statusBar().showMessage(
+                        "ℹ️ Sesión web activa: configuración R2 no requerida para iniciar sesión.",
+                        5000,
+                    )
                 
             elif user_role == "admin":
                 logger.info(f"Configurando panel para admin: {username}")
