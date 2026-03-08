@@ -1,4 +1,4 @@
-// API base URL:
+﻿// API base URL:
 // - By default uses same-origin (recommended and safest).
 // - Optional override via window.__DM_API_BASE__ or localStorage.dm_api_base_url.
 // - Cross-origin overrides are blocked unless explicitly enabled for debug.
@@ -161,7 +161,7 @@ const SECTION_TITLES = {
     assets: 'Equipos',
     drivers: 'Drivers',
     incidents: 'Incidencias',
-    audit: 'Auditoría',
+    audit: 'AuditorÃ­a',
 };
 const SECTION_SUBTITLES = {
     dashboard: 'Panorama general en tiempo real',
@@ -172,7 +172,7 @@ const SECTION_SUBTITLES = {
     audit: 'Trazas criticas y cumplimiento',
 };
 const TOAST_TYPE_ICONS = {
-    success: '✓',
+    success: 'âœ“',
     error: '!',
     warning: '!',
     info: 'i',
@@ -611,185 +611,474 @@ function normalizeSeverity(input) {
     return valid.includes(value) ? value : 'medium';
 }
 
-async function createManualRecordFromWeb() {
-    const clientName = prompt('Cliente (opcional):', currentUser?.username || '') ?? '';
-    const brand = prompt('Marca/Equipo (opcional):', 'N/A');
-    if (brand === null) return;
-    const version = prompt('Version/Referencia (opcional):', 'N/A');
-    if (version === null) return;
-    const statusInput = prompt('Estado (manual/success/failed/unknown):', 'manual');
-    if (statusInput === null) return;
-    const status = String(statusInput).trim().toLowerCase() || 'manual';
-    const validStatus = ['manual', 'success', 'failed', 'unknown'];
-    if (!validStatus.includes(status)) {
-        showNotification('Estado invalido. Usa: manual, success, failed o unknown.', 'error');
-        return;
+function parseStrictInteger(rawValue) {
+    const normalized = String(rawValue ?? '').trim();
+    if (!normalized || !/^-?\d+$/.test(normalized)) return null;
+    const parsed = Number.parseInt(normalized, 10);
+    return Number.isInteger(parsed) ? parsed : null;
+}
+
+let actionModalSubmitHandler = null;
+let actionModalSubmitBusy = false;
+let actionModalLastFocusedElement = null;
+
+function setActionModalError(message = '') {
+    const errorEl = document.getElementById('actionModalError');
+    if (!errorEl) return;
+    errorEl.textContent = String(message || '');
+}
+
+function setActionModalBusy(isBusy) {
+    actionModalSubmitBusy = Boolean(isBusy);
+    const submitBtn = document.getElementById('actionModalSubmitBtn');
+    const cancelBtn = document.getElementById('actionModalCancelBtn');
+    if (submitBtn) {
+        const defaultLabel = submitBtn.dataset.defaultLabel || 'Guardar';
+        submitBtn.disabled = actionModalSubmitBusy;
+        submitBtn.textContent = actionModalSubmitBusy ? 'Procesando...' : defaultLabel;
     }
-    const notes = prompt('Notas (opcional):', '') ?? '';
-
-    try {
-        const result = await api.createRecord({
-            client_name: (clientName || '').trim() || 'Sin cliente',
-            driver_brand: (brand || '').trim() || 'N/A',
-            driver_version: (version || '').trim() || 'N/A',
-            status,
-            notes: (notes || '').trim(),
-            driver_description: 'Registro manual desde dashboard web',
-            os_info: 'web',
-            installation_time_seconds: 0
-        });
-
-        const recordId = result?.record?.id;
-        showNotification(
-            recordId ? `Registro manual creado (#${recordId})` : 'Registro manual creado.',
-            'success'
-        );
-        await loadInstallations();
-
-        if (recordId) {
-            currentSelectedInstallationId = Number(recordId);
-            await showIncidentsForInstallation(recordId);
-        }
-    } catch (err) {
-        showNotification(`No se pudo crear registro: ${err.message || err}`, 'error');
+    if (cancelBtn) {
+        cancelBtn.disabled = actionModalSubmitBusy;
     }
 }
 
-async function createIncidentFromWeb(installationId) {
-    const targetId = Number.parseInt(String(installationId), 10);
-    if (!Number.isInteger(targetId) || targetId <= 0) {
+function closeActionModal(force = false) {
+    if (actionModalSubmitBusy && !force) return;
+    const modal = document.getElementById('actionModal');
+    if (!modal) return;
+    modal.classList.remove('active');
+    document.body.classList.remove('modal-open');
+    setActionModalError('');
+    actionModalSubmitHandler = null;
+    if (actionModalLastFocusedElement && document.contains(actionModalLastFocusedElement)) {
+        actionModalLastFocusedElement.focus();
+    }
+    actionModalLastFocusedElement = null;
+}
+
+function openActionModal(config = {}) {
+    const modal = document.getElementById('actionModal');
+    const titleEl = document.getElementById('actionModalTitle');
+    const subtitleEl = document.getElementById('actionModalSubtitle');
+    const fieldsEl = document.getElementById('actionModalFields');
+    const submitBtn = document.getElementById('actionModalSubmitBtn');
+    if (!modal || !titleEl || !subtitleEl || !fieldsEl || !submitBtn) return false;
+
+    titleEl.textContent = String(config.title || 'Accion');
+
+    const subtitle = String(config.subtitle || '').trim();
+    subtitleEl.textContent = subtitle;
+    subtitleEl.classList.toggle('is-hidden', subtitle.length === 0);
+
+    fieldsEl.innerHTML = String(config.fieldsHtml || '');
+
+    const submitLabel = String(config.submitLabel || 'Guardar');
+    submitBtn.dataset.defaultLabel = submitLabel;
+    submitBtn.textContent = submitLabel;
+
+    setActionModalError('');
+    setActionModalBusy(false);
+    actionModalSubmitHandler = typeof config.onSubmit === 'function' ? config.onSubmit : null;
+    actionModalLastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    modal.classList.add('active');
+    document.body.classList.add('modal-open');
+
+    const preferredFocusId = String(config.focusId || '').trim();
+    requestAnimationFrame(() => {
+        const preferredElement = preferredFocusId
+            ? document.getElementById(preferredFocusId)
+            : null;
+        if (preferredElement instanceof HTMLElement) {
+            preferredElement.focus();
+            return;
+        }
+        const fallback = modal.querySelector(
+            'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled])',
+        );
+        if (fallback instanceof HTMLElement) {
+            fallback.focus();
+        }
+    });
+
+    return true;
+}
+
+function createManualRecordFromWeb() {
+    if (!requireActiveSession()) return;
+
+    const defaultClient = String(currentUser?.username || '').trim();
+    openActionModal({
+        title: 'Nuevo registro manual',
+        subtitle: 'Crea un registro sin depender de una instalacion previa.',
+        submitLabel: 'Crear registro',
+        focusId: 'actionRecordClient',
+        fieldsHtml: `
+            <div class="action-modal-grid">
+                <div class="input-group">
+                    <label for="actionRecordClient">Cliente (opcional)</label>
+                    <input type="text" id="actionRecordClient" value="${escapeHtml(defaultClient)}" autocomplete="off">
+                </div>
+                <div class="input-group">
+                    <label for="actionRecordStatus">Estado</label>
+                    <select id="actionRecordStatus">
+                        <option value="manual" selected>manual</option>
+                        <option value="success">success</option>
+                        <option value="failed">failed</option>
+                        <option value="unknown">unknown</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label for="actionRecordBrand">Marca/Equipo (opcional)</label>
+                    <input type="text" id="actionRecordBrand" value="N/A" autocomplete="off">
+                </div>
+                <div class="input-group">
+                    <label for="actionRecordVersion">Version/Referencia (opcional)</label>
+                    <input type="text" id="actionRecordVersion" value="N/A" autocomplete="off">
+                </div>
+                <div class="input-group full-width">
+                    <label for="actionRecordNotes">Notas (opcional)</label>
+                    <textarea id="actionRecordNotes" rows="4"></textarea>
+                </div>
+            </div>
+        `,
+        onSubmit: async () => {
+            const status = String(document.getElementById('actionRecordStatus')?.value || 'manual')
+                .trim()
+                .toLowerCase();
+            const validStatus = ['manual', 'success', 'failed', 'unknown'];
+            if (!validStatus.includes(status)) {
+                setActionModalError('Selecciona un estado valido.');
+                return;
+            }
+
+            const clientName = String(document.getElementById('actionRecordClient')?.value || '').trim();
+            const brand = String(document.getElementById('actionRecordBrand')?.value || '').trim();
+            const version = String(document.getElementById('actionRecordVersion')?.value || '').trim();
+            const notes = String(document.getElementById('actionRecordNotes')?.value || '').trim();
+
+            const result = await api.createRecord({
+                client_name: clientName || 'Sin cliente',
+                driver_brand: brand || 'N/A',
+                driver_version: version || 'N/A',
+                status,
+                notes,
+                driver_description: 'Registro manual desde dashboard web',
+                os_info: 'web',
+                installation_time_seconds: 0,
+            });
+
+            closeActionModal(true);
+            const recordId = Number(result?.record?.id);
+            showNotification(
+                Number.isInteger(recordId) && recordId > 0
+                    ? `Registro manual creado (#${recordId})`
+                    : 'Registro manual creado.',
+                'success',
+            );
+            await loadInstallations();
+
+            if (Number.isInteger(recordId) && recordId > 0) {
+                currentSelectedInstallationId = recordId;
+                await showIncidentsForInstallation(recordId);
+            }
+        },
+    });
+}
+
+function openIncidentModal(options = {}) {
+    const parsedInstallationId = parseStrictInteger(options.installationId);
+    const defaultInstallationId = Number.isInteger(parsedInstallationId) && parsedInstallationId > 0
+        ? String(parsedInstallationId)
+        : '';
+    const defaultNote = String(options.note || '').trim();
+    const defaultSeverity = normalizeSeverity(options.severity || 'medium');
+    const parsedAdjustment = parseStrictInteger(options.timeAdjustment);
+    const defaultAdjustment = Number.isInteger(parsedAdjustment) ? String(parsedAdjustment) : '0';
+    const defaultApply = options.applyToInstallation === true;
+    const numericAssetId = parseStrictInteger(options.assetId);
+    const activeInstallationId = parseStrictInteger(options.activeInstallationId);
+
+    const title = Number.isInteger(numericAssetId) && numericAssetId > 0
+        ? `Nueva incidencia para equipo #${numericAssetId}`
+        : 'Nueva incidencia';
+
+    const subtitle = Number.isInteger(numericAssetId) && numericAssetId > 0
+        ? 'Confirma el registro destino y los detalles de la incidencia.'
+        : 'Completa el detalle, severidad y ajuste de tiempo.';
+
+    openActionModal({
+        title,
+        subtitle,
+        submitLabel: 'Crear incidencia',
+        focusId: 'actionIncidentNote',
+        fieldsHtml: `
+            <div class="action-modal-grid">
+                <div class="input-group">
+                    <label for="actionIncidentInstallationId">ID de registro</label>
+                    <input type="text" id="actionIncidentInstallationId" value="${escapeHtml(defaultInstallationId)}" autocomplete="off" placeholder="Ej: 245">
+                </div>
+                <div class="input-group">
+                    <label for="actionIncidentSeverity">Severidad</label>
+                    <select id="actionIncidentSeverity">
+                        <option value="low" ${defaultSeverity === 'low' ? 'selected' : ''}>low</option>
+                        <option value="medium" ${defaultSeverity === 'medium' ? 'selected' : ''}>medium</option>
+                        <option value="high" ${defaultSeverity === 'high' ? 'selected' : ''}>high</option>
+                        <option value="critical" ${defaultSeverity === 'critical' ? 'selected' : ''}>critical</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label for="actionIncidentAdjustment">Ajuste de tiempo (segundos)</label>
+                    <input type="text" id="actionIncidentAdjustment" value="${escapeHtml(defaultAdjustment)}" autocomplete="off" placeholder="Ej: -90, 0, 120">
+                </div>
+                <div class="input-group full-width">
+                    <label for="actionIncidentNote">Detalle de la incidencia</label>
+                    <textarea id="actionIncidentNote" rows="4" placeholder="Describe el problema y el contexto">${escapeHtml(defaultNote)}</textarea>
+                </div>
+            </div>
+            <label class="action-checkbox" for="actionIncidentApplyToRecord">
+                <input type="checkbox" id="actionIncidentApplyToRecord" ${defaultApply ? 'checked' : ''}>
+                <span>Aplicar nota y ajuste al registro de instalacion.</span>
+            </label>
+        `,
+        onSubmit: async () => {
+            const targetInstallationId = parseStrictInteger(
+                document.getElementById('actionIncidentInstallationId')?.value,
+            );
+            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
+                setActionModalError('El ID de registro debe ser un entero positivo.');
+                return;
+            }
+
+            const note = String(document.getElementById('actionIncidentNote')?.value || '').trim();
+            if (!note) {
+                setActionModalError('La incidencia requiere una nota.');
+                return;
+            }
+
+            const timeAdjustment = parseStrictInteger(
+                document.getElementById('actionIncidentAdjustment')?.value,
+            );
+            if (!Number.isInteger(timeAdjustment)) {
+                setActionModalError('El ajuste de tiempo debe ser un numero entero.');
+                return;
+            }
+
+            const severity = normalizeSeverity(
+                document.getElementById('actionIncidentSeverity')?.value || 'medium',
+            );
+            const applyToInstallation = document.getElementById('actionIncidentApplyToRecord')?.checked === true;
+
+            if (Number.isInteger(numericAssetId) && numericAssetId > 0) {
+                if (
+                    !Number.isInteger(activeInstallationId)
+                    || activeInstallationId <= 0
+                    || activeInstallationId !== targetInstallationId
+                ) {
+                    await api.linkAssetToInstallation(numericAssetId, {
+                        installation_id: targetInstallationId,
+                        notes: 'Vinculo creado desde modulo Equipos',
+                    });
+                }
+            }
+
+            const result = await api.createIncident(targetInstallationId, {
+                note,
+                reporter_username: currentUser?.username || 'web_user',
+                time_adjustment_seconds: timeAdjustment,
+                severity,
+                source: 'web',
+                apply_to_installation: applyToInstallation,
+            });
+
+            closeActionModal(true);
+            const incidentId = Number(result?.incident?.id);
+            showNotification(
+                Number.isInteger(incidentId) && incidentId > 0
+                    ? `Incidencia creada (#${incidentId}) en registro #${targetInstallationId}`
+                    : `Incidencia creada en registro #${targetInstallationId}`,
+                'success',
+            );
+
+            if (Number.isInteger(numericAssetId) && numericAssetId > 0) {
+                await loadAssetDetail(numericAssetId, { keepSelection: true });
+            } else {
+                await showIncidentsForInstallation(targetInstallationId);
+            }
+            await loadInstallations();
+        },
+    });
+}
+
+function createIncidentFromWeb(installationId, options = {}) {
+    if (!requireActiveSession()) return;
+    const targetId = parseStrictInteger(installationId);
+    const numericAssetId = parseStrictInteger(options.assetId);
+
+    if (
+        (!Number.isInteger(targetId) || targetId <= 0)
+        && (!Number.isInteger(numericAssetId) || numericAssetId <= 0)
+    ) {
         showNotification('installation_id invalido para crear incidencia.', 'error');
         return;
     }
 
-    const note = prompt('Detalle de la incidencia:', '');
-    if (note === null) return;
-    if (!String(note).trim()) {
-        showNotification('La incidencia requiere una nota.', 'error');
-        return;
-    }
-
-    const severityInput = prompt('Severidad (low/medium/high/critical):', 'medium');
-    if (severityInput === null) return;
-    const severity = normalizeSeverity(severityInput);
-
-    const adjustmentRaw = prompt('Ajuste de tiempo en segundos (puede ser negativo):', '0');
-    if (adjustmentRaw === null) return;
-    const timeAdjustment = Number.parseInt(String(adjustmentRaw).trim(), 10);
-    if (!Number.isInteger(timeAdjustment)) {
-        showNotification('El ajuste de tiempo debe ser un numero entero.', 'error');
-        return;
-    }
-
-    const applyToInstallation = confirm('Aplicar nota/ajuste al registro de instalacion?');
-
-    try {
-        const result = await api.createIncident(targetId, {
-            note: String(note).trim(),
-            reporter_username: currentUser?.username || 'web_user',
-            time_adjustment_seconds: timeAdjustment,
-            severity,
-            source: 'web',
-            apply_to_installation: applyToInstallation
-        });
-
-        const incidentId = result?.incident?.id;
-        showNotification(
-            incidentId
-                ? `Incidencia creada (#${incidentId}) en instalacion #${targetId}`
-                : `Incidencia creada en instalacion #${targetId}`,
-            'success'
-        );
-
-        await showIncidentsForInstallation(targetId);
-        await loadInstallations();
-    } catch (err) {
-        showNotification(`No se pudo crear incidencia: ${err.message || err}`, 'error');
-    }
+    openIncidentModal({
+        installationId: Number.isInteger(targetId) && targetId > 0 ? targetId : '',
+        assetId: numericAssetId,
+        activeInstallationId: parseStrictInteger(options.activeInstallationId),
+    });
 }
 
-async function associateAssetFromWeb() {
-    const externalCodeRaw = prompt('Código externo del equipo (QR/serie):', '') ?? '';
-    const externalCode = String(externalCodeRaw || '').trim();
-    if (!externalCode) {
-        showNotification('Debes ingresar un código de equipo válido.', 'error');
-        return;
-    }
+function openAssetLinkModal(options = {}) {
+    const knownAssetId = parseStrictInteger(options.assetId);
+    const parsedInstallationId = parseStrictInteger(options.installationId);
+    const defaultInstallationId = Number.isInteger(parsedInstallationId) && parsedInstallationId > 0
+        ? String(parsedInstallationId)
+        : '';
+    const defaultCode = String(options.externalCode || '').trim();
+    const defaultNotes = String(options.notes || '').trim();
 
-    const installationInput = prompt(
-        'ID de registro destino:',
-        currentSelectedInstallationId ? String(currentSelectedInstallationId) : ''
-    );
-    if (installationInput === null) return;
-    const installationId = Number.parseInt(String(installationInput).trim(), 10);
-    if (!Number.isInteger(installationId) || installationId <= 0) {
-        showNotification('installation_id inválido para asociación.', 'error');
-        return;
-    }
+    const needsExternalCode = !Number.isInteger(knownAssetId) || knownAssetId <= 0;
+    const title = needsExternalCode ? 'Asociar equipo a registro' : `Vincular equipo #${knownAssetId}`;
+    const subtitle = needsExternalCode
+        ? 'Ingresa el codigo del equipo y el registro destino.'
+        : 'Asocia el equipo seleccionado a un registro destino.';
 
-    const notes = prompt('Nota opcional de asociación:', '') ?? '';
+    const codeField = needsExternalCode
+        ? `
+            <div class="input-group">
+                <label for="actionAssetCode">Codigo externo del equipo (QR/serie)</label>
+                <input type="text" id="actionAssetCode" value="${escapeHtml(defaultCode)}" autocomplete="off">
+            </div>
+        `
+        : '';
 
-    try {
-        const resolved = await api.resolveAsset({
-            external_code: externalCode
-        });
-        const assetId = Number(resolved?.asset?.id);
-        if (!Number.isInteger(assetId) || assetId <= 0) {
-            throw new Error('No se pudo resolver el ID del equipo.');
-        }
+    openActionModal({
+        title,
+        subtitle,
+        submitLabel: 'Asociar equipo',
+        focusId: needsExternalCode ? 'actionAssetCode' : 'actionAssetInstallationId',
+        fieldsHtml: `
+            <div class="action-modal-grid">
+                ${codeField}
+                <div class="input-group ${needsExternalCode ? '' : 'full-width'}">
+                    <label for="actionAssetInstallationId">ID de registro destino</label>
+                    <input type="text" id="actionAssetInstallationId" value="${escapeHtml(defaultInstallationId)}" autocomplete="off" placeholder="Ej: 245">
+                </div>
+                <div class="input-group full-width">
+                    <label for="actionAssetNotes">Nota de asociacion (opcional)</label>
+                    <textarea id="actionAssetNotes" rows="3">${escapeHtml(defaultNotes)}</textarea>
+                </div>
+            </div>
+        `,
+        onSubmit: async () => {
+            const installationId = parseStrictInteger(
+                document.getElementById('actionAssetInstallationId')?.value,
+            );
+            if (!Number.isInteger(installationId) || installationId <= 0) {
+                setActionModalError('El ID de registro debe ser un entero positivo.');
+                return;
+            }
 
-        await api.linkAssetToInstallation(assetId, {
-            installation_id: installationId,
-            notes: String(notes || '').trim()
-        });
+            const notes = String(document.getElementById('actionAssetNotes')?.value || '').trim();
 
-        showNotification(
-            `Equipo ${externalCode} asociado a registro #${installationId}.`,
-            'success'
-        );
-        currentSelectedInstallationId = installationId;
-        await loadInstallations();
-        await showIncidentsForInstallation(installationId);
-    } catch (err) {
-        showNotification(`No se pudo asociar equipo: ${err.message || err}`, 'error');
-    }
+            let resolvedAssetId = knownAssetId;
+            let resolvedCode = '';
+            if (!Number.isInteger(resolvedAssetId) || resolvedAssetId <= 0) {
+                const externalCode = String(document.getElementById('actionAssetCode')?.value || '').trim();
+                if (!externalCode) {
+                    setActionModalError('Debes ingresar un codigo de equipo valido.');
+                    return;
+                }
+                const resolved = await api.resolveAsset({
+                    external_code: externalCode,
+                });
+                resolvedAssetId = parseStrictInteger(resolved?.asset?.id);
+                resolvedCode = String(resolved?.asset?.external_code || externalCode).trim();
+                if (!Number.isInteger(resolvedAssetId) || resolvedAssetId <= 0) {
+                    setActionModalError('No se pudo resolver el ID del equipo.');
+                    return;
+                }
+            }
+
+            await api.linkAssetToInstallation(resolvedAssetId, {
+                installation_id: installationId,
+                notes,
+            });
+
+            closeActionModal(true);
+            showNotification(
+                resolvedCode
+                    ? `Equipo ${resolvedCode} asociado a registro #${installationId}.`
+                    : `Equipo asociado a registro #${installationId}.`,
+                'success',
+            );
+
+            if (Number.isInteger(knownAssetId) && knownAssetId > 0) {
+                await loadAssetDetail(knownAssetId, { keepSelection: true });
+                return;
+            }
+            currentSelectedInstallationId = installationId;
+            await loadInstallations();
+            await showIncidentsForInstallation(installationId);
+        },
+    });
 }
 
+function associateAssetFromWeb() {
+    if (!requireActiveSession()) return;
+    openAssetLinkModal({
+        installationId: currentSelectedInstallationId ? String(currentSelectedInstallationId) : '',
+    });
+}
 async function openAssetLookupFromWeb() {
     if (!requireActiveSession()) return;
-    const codeRaw = prompt('Codigo externo del equipo a consultar:', '') ?? '';
-    const code = normalizeAssetCodeForQr(codeRaw);
-    if (!code) {
-        showNotification('Debes ingresar un codigo de equipo valido.', 'error');
-        return;
-    }
-
-    try {
-        const response = await api.getAssets({
-            code,
-            limit: 1
-        });
-        const asset = Array.isArray(response?.items) ? response.items[0] : null;
-        if (!asset) {
-            showNotification(`No existe equipo con codigo ${code}.`, 'info');
-            return;
-        }
-
-        showQrModal({ type: 'asset', asset, readOnly: true });
-        generateQrPreview({
-            assetData: {
-                external_code: normalizeAssetCodeForQr(asset.external_code || code),
-                brand: normalizeAssetFormText(asset.brand, QR_MAX_BRAND_LENGTH),
-                model: normalizeAssetFormText(asset.model, QR_MAX_MODEL_LENGTH),
-                serial_number: normalizeAssetFormText(asset.serial_number, QR_MAX_SERIAL_LENGTH),
-                client_name: normalizeAssetFormText(asset.client_name, QR_MAX_CLIENT_LENGTH),
-                notes: normalizeAssetFormText(asset.notes, QR_MAX_NOTES_LENGTH),
+    openActionModal({
+        title: 'Buscar equipo',
+        subtitle: 'Ingresa el codigo externo para abrir el detalle en modo lectura.',
+        submitLabel: 'Buscar',
+        focusId: 'actionLookupAssetCode',
+        fieldsHtml: `
+            <div class="input-group">
+                <label for="actionLookupAssetCode">Codigo externo del equipo</label>
+                <input type="text" id="actionLookupAssetCode" autocomplete="off" placeholder="Ej: EQ-SL3-001">
+            </div>
+        `,
+        onSubmit: async () => {
+            const code = normalizeAssetCodeForQr(
+                document.getElementById('actionLookupAssetCode')?.value || '',
+            );
+            if (!code) {
+                setActionModalError('Debes ingresar un codigo de equipo valido.');
+                return;
             }
-        });
-        showNotification(`Equipo cargado: ${asset.external_code || code}`, 'success');
-    } catch (err) {
-        showNotification(`No se pudo consultar equipo: ${err.message || err}`, 'error');
-    }
+
+            const response = await api.getAssets({
+                code,
+                limit: 1,
+            });
+            const asset = Array.isArray(response?.items) ? response.items[0] : null;
+            if (!asset) {
+                setActionModalError(`No existe equipo con codigo ${code}.`);
+                return;
+            }
+
+            closeActionModal(true);
+            showQrModal({ type: 'asset', asset, readOnly: true });
+            generateQrPreview({
+                assetData: {
+                    external_code: normalizeAssetCodeForQr(asset.external_code || code),
+                    brand: normalizeAssetFormText(asset.brand, QR_MAX_BRAND_LENGTH),
+                    model: normalizeAssetFormText(asset.model, QR_MAX_MODEL_LENGTH),
+                    serial_number: normalizeAssetFormText(asset.serial_number, QR_MAX_SERIAL_LENGTH),
+                    client_name: normalizeAssetFormText(asset.client_name, QR_MAX_CLIENT_LENGTH),
+                    notes: normalizeAssetFormText(asset.notes, QR_MAX_NOTES_LENGTH),
+                },
+            });
+            showNotification(`Equipo cargado: ${asset.external_code || code}`, 'success');
+        },
+    });
 }
 
 async function selectAndUploadIncidentPhoto(incidentId, installationId) {
@@ -972,7 +1261,7 @@ function renderSuccessChart(stats) {
     charts.success = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Éxito', 'Fallido', 'Otro'],
+            labels: ['Ã‰xito', 'Fallido', 'Otro'],
             datasets: [{
                 data: [success, failed, Math.max(0, other)],
                 backgroundColor: [
@@ -1207,7 +1496,7 @@ function renderRecentInstallations(installations) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'Estado', 'Atención', 'Fecha'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'Estado', 'AtenciÃ³n', 'Fecha'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -1218,7 +1507,7 @@ function renderRecentInstallations(installations) {
 
     installations.forEach(inst => {
         const statusClass = inst.status || 'unknown';
-        const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
+        const statusIcon = inst.status === 'success' ? 'âœ…' : inst.status === 'failed' ? 'âŒ' : 'â“';
 
         const row = document.createElement('tr');
 
@@ -1301,31 +1590,31 @@ function updateFilterChips() {
         const removeSpan = document.createElement('span');
         removeSpan.className = 'chip-remove';
         removeSpan.dataset.filter = filterType;
-        removeSpan.textContent = '×';
+        removeSpan.textContent = 'Ã—';
 
         chip.append(labelSpan, valueSpan, removeSpan);
         chipsContainer.appendChild(chip);
     };
 
     if (filters.search) {
-        appendChip('🔍', `"${filters.search}"`, 'search');
+        appendChip('ðŸ”', `"${filters.search}"`, 'search');
     }
 
     if (filters.brand) {
-        appendChip('🏷️ Marca:', filters.brand, 'brand');
+        appendChip('ðŸ·ï¸ Marca:', filters.brand, 'brand');
     }
 
     if (filters.status) {
-        const statusLabel = filters.status === 'success' ? '✅ Éxito' : 
-                           filters.status === 'failed' ? '❌ Fallido' : '❓ Desconocido';
-        appendChip('📊 Estado:', statusLabel, 'status');
+        const statusLabel = filters.status === 'success' ? 'âœ… Ã‰xito' : 
+                           filters.status === 'failed' ? 'âŒ Fallido' : 'â“ Desconocido';
+        appendChip('ðŸ“Š Estado:', statusLabel, 'status');
     }
 
     if (filters.startDate || filters.endDate) {
         const dateLabel = filters.startDate && filters.endDate ? 
             `${filters.startDate} - ${filters.endDate}` :
             filters.startDate ? `Desde: ${filters.startDate}` : `Hasta: ${filters.endDate}`;
-        appendChip('📅', dateLabel, 'date');
+        appendChip('ðŸ“…', dateLabel, 'date');
     }
     
     // Add click handlers to remove buttons
@@ -1404,7 +1693,7 @@ function normalizeRecordAttentionState(value) {
 
 function recordAttentionStateLabel(value) {
     const normalized = normalizeRecordAttentionState(value);
-    if (normalized === 'critical') return 'Crítica';
+    if (normalized === 'critical') return 'CrÃ­tica';
     if (normalized === 'in_progress') return 'En curso';
     if (normalized === 'open') return 'Abierta';
     if (normalized === 'resolved') return 'Resuelta';
@@ -1413,11 +1702,11 @@ function recordAttentionStateLabel(value) {
 
 function recordAttentionStateIcon(value) {
     const normalized = normalizeRecordAttentionState(value);
-    if (normalized === 'critical') return '🚨';
-    if (normalized === 'in_progress') return '🟠';
-    if (normalized === 'open') return '🟡';
-    if (normalized === 'resolved') return '✅';
-    return '🟢';
+    if (normalized === 'critical') return 'ðŸš¨';
+    if (normalized === 'in_progress') return 'ðŸŸ ';
+    if (normalized === 'open') return 'ðŸŸ¡';
+    if (normalized === 'resolved') return 'âœ…';
+    return 'ðŸŸ¢';
 }
 
 function buildRecordAttentionBadge(record) {
@@ -1704,7 +1993,7 @@ function setupAdvancedFilters() {
         const createRecordBtn = document.createElement('button');
         createRecordBtn.id = 'createManualRecordBtn';
         createRecordBtn.className = 'btn-secondary';
-        createRecordBtn.textContent = '📝 Nuevo registro manual';
+        createRecordBtn.textContent = 'ðŸ“ Nuevo registro manual';
         createRecordBtn.addEventListener('click', () => {
             void createManualRecordFromWeb();
         });
@@ -1792,7 +2081,7 @@ async function loadInstallations() {
         // Update filter chips (in case they were cleared externally)
         updateFilterChips();
     } catch (err) {
-        container.innerHTML = '<p class="error">❌ Error cargando registros</p>';
+        container.innerHTML = '<p class="error">âŒ Error cargando registros</p>';
         if (resultsCount) {
             resultsCount.textContent = 'Error al cargar';
         }
@@ -1893,7 +2182,7 @@ async function showIncidentsForInstallation(installationId) {
         const data = await api.getIncidents(installationId);
         renderIncidents(data.incidents || [], installationId);
     } catch (err) {
-        container.innerHTML = '<p class="error">❌ Error cargando incidencias</p>';
+        container.innerHTML = '<p class="error">âŒ Error cargando incidencias</p>';
     }
 }
 
@@ -1904,10 +2193,10 @@ function normalizeAssetStatusLabel(status) {
 }
 
 function getSeverityIcon(severity) {
-    if (severity === 'critical') return '🔴';
-    if (severity === 'high') return '🟠';
-    if (severity === 'medium') return '🟡';
-    return '🔵';
+    if (severity === 'critical') return 'ðŸ”´';
+    if (severity === 'high') return 'ðŸŸ ';
+    if (severity === 'medium') return 'ðŸŸ¡';
+    return 'ðŸ”µ';
 }
 
 function normalizeIncidentStatus(value) {
@@ -1926,18 +2215,18 @@ function incidentStatusLabel(value) {
 
 function incidentStatusIcon(value) {
     const normalized = normalizeIncidentStatus(value);
-    if (normalized === 'resolved') return '✅';
-    if (normalized === 'in_progress') return '🟠';
-    return '🟢';
+    if (normalized === 'resolved') return 'âœ…';
+    if (normalized === 'in_progress') return 'ðŸŸ ';
+    return 'ðŸŸ¢';
 }
 
 function buildIncidentStatusText(incident) {
     const status = normalizeIncidentStatus(incident?.incident_status);
     let text = `${incidentStatusIcon(status)} ${incidentStatusLabel(status)}`;
     if (status === 'resolved' && incident?.resolved_at) {
-        text += ` · ${new Date(incident.resolved_at).toLocaleString('es-ES')}`;
+        text += ` Â· ${new Date(incident.resolved_at).toLocaleString('es-ES')}`;
     } else if (incident?.status_updated_at) {
-        text += ` · ${new Date(incident.status_updated_at).toLocaleString('es-ES')}`;
+        text += ` Â· ${new Date(incident.status_updated_at).toLocaleString('es-ES')}`;
     }
     return text;
 }
@@ -1967,43 +2256,64 @@ async function updateIncidentStatusFromWeb(incident, targetStatus, options = {})
     if (!requireActiveSession()) return;
     const incidentId = Number.parseInt(String(incident?.id), 10);
     if (!Number.isInteger(incidentId) || incidentId <= 0) {
-        showNotification('Incidencia inválida para actualizar estado.', 'error');
+        showNotification('Incidencia invÃ¡lida para actualizar estado.', 'error');
         return;
     }
 
     const normalizedStatus = normalizeIncidentStatus(targetStatus);
-    let resolutionNote = '';
+    const applyStatusUpdate = async (resolutionNote = '') => {
+        try {
+            await api.updateIncidentStatus(incidentId, {
+                incident_status: normalizedStatus,
+                resolution_note: resolutionNote,
+                reporter_username: currentUser?.username || 'web_user',
+            });
+            showNotification(
+                `Incidencia #${incidentId} actualizada a "${incidentStatusLabel(normalizedStatus)}".`,
+                'success',
+            );
+
+            if (Number.isInteger(options.installationId) && options.installationId > 0) {
+                await showIncidentsForInstallation(options.installationId);
+                return;
+            }
+            if (Number.isInteger(options.assetId) && options.assetId > 0) {
+                await loadAssetDetail(options.assetId, { keepSelection: true });
+                return;
+            }
+            if (currentSelectedInstallationId) {
+                await showIncidentsForInstallation(currentSelectedInstallationId);
+            }
+        } catch (err) {
+            showNotification(`No se pudo actualizar estado: ${err.message || err}`, 'error');
+        }
+    };
+
     if (normalizedStatus === 'resolved') {
-        const noteInput = prompt('Nota de resolución (opcional):', incident?.resolution_note || '');
-        if (noteInput === null) return;
-        resolutionNote = String(noteInput || '').trim();
-    }
-
-    try {
-        await api.updateIncidentStatus(incidentId, {
-            incident_status: normalizedStatus,
-            resolution_note: resolutionNote,
-            reporter_username: currentUser?.username || 'web_user',
+        const defaultNote = String(incident?.resolution_note || '').trim();
+        openActionModal({
+            title: `Resolver incidencia #${incidentId}`,
+            subtitle: 'Agrega una nota de resolucion opcional antes de cerrar la incidencia.',
+            submitLabel: 'Resolver incidencia',
+            focusId: 'actionIncidentResolutionNote',
+            fieldsHtml: `
+                <div class="input-group">
+                    <label for="actionIncidentResolutionNote">Nota de resolucion (opcional)</label>
+                    <textarea id="actionIncidentResolutionNote" rows="4" placeholder="Resumen de la solucion aplicada">${escapeHtml(defaultNote)}</textarea>
+                </div>
+            `,
+            onSubmit: async () => {
+                const resolutionNote = String(
+                    document.getElementById('actionIncidentResolutionNote')?.value || '',
+                ).trim();
+                await applyStatusUpdate(resolutionNote);
+                closeActionModal(true);
+            },
         });
-        showNotification(
-            `Incidencia #${incidentId} actualizada a "${incidentStatusLabel(normalizedStatus)}".`,
-            'success',
-        );
-
-        if (Number.isInteger(options.installationId) && options.installationId > 0) {
-            await showIncidentsForInstallation(options.installationId);
-            return;
-        }
-        if (Number.isInteger(options.assetId) && options.assetId > 0) {
-            await loadAssetDetail(options.assetId, { keepSelection: true });
-            return;
-        }
-        if (currentSelectedInstallationId) {
-            await showIncidentsForInstallation(currentSelectedInstallationId);
-        }
-    } catch (err) {
-        showNotification(`No se pudo actualizar estado: ${err.message || err}`, 'error');
+        return;
     }
+
+    await applyStatusUpdate('');
 }
 
 async function loadAssets() {
@@ -2042,7 +2352,7 @@ async function loadAssets() {
             }
         }
     } catch (err) {
-        tableContainer.innerHTML = '<p class="error">❌ Error cargando equipos</p>';
+        tableContainer.innerHTML = '<p class="error">âŒ Error cargando equipos</p>';
         if (resultsCount) {
             resultsCount.textContent = 'Error al cargar';
         }
@@ -2170,14 +2480,31 @@ function renderDriversTable(drivers) {
             event.stopPropagation();
             const key = String(driver.key || '').trim();
             if (!key) return;
-            if (!confirm(`Eliminar driver ${driver.brand || ''} ${driver.version || ''}?`)) return;
-            try {
-                await api.deleteDriver(key);
-                showNotification('Driver eliminado', 'success');
-                await loadDrivers();
-            } catch (err) {
-                showNotification(`No se pudo eliminar driver: ${err.message || err}`, 'error');
-            }
+            const driverLabel = String(`${driver.brand || ''} ${driver.version || ''}`).trim() || 'sin nombre';
+            openActionModal({
+                title: 'Eliminar driver',
+                subtitle: `Confirma la eliminacion de ${driverLabel}. Esta accion no se puede deshacer.`,
+                submitLabel: 'Eliminar driver',
+                focusId: 'actionDeleteDriverConfirm',
+                fieldsHtml: `
+                    <label class="action-checkbox" for="actionDeleteDriverConfirm">
+                        <input type="checkbox" id="actionDeleteDriverConfirm">
+                        <span>Entiendo que este driver sera eliminado permanentemente.</span>
+                    </label>
+                `,
+                onSubmit: async () => {
+                    const confirmed = document.getElementById('actionDeleteDriverConfirm')?.checked === true;
+                    if (!confirmed) {
+                        setActionModalError('Debes confirmar la eliminacion para continuar.');
+                        return;
+                    }
+
+                    await api.deleteDriver(key);
+                    closeActionModal(true);
+                    showNotification('Driver eliminado', 'success');
+                    await loadDrivers();
+                },
+            });
         });
 
         actionsCell.append(downloadBtn, deleteBtn);
@@ -2354,55 +2681,10 @@ async function createIncidentForAsset(assetId) {
     try {
         const detail = await api.getAssetIncidents(numericAssetId, { limit: 1 });
         const activeInstallationId = Number(detail?.active_link?.installation_id);
-        let targetInstallationId = activeInstallationId;
-        if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-            const input = prompt('No hay registro activo para este equipo. ID de registro destino:', '');
-            if (input === null) return;
-            targetInstallationId = Number.parseInt(String(input).trim(), 10);
-            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                showNotification('installation_id invalido.', 'error');
-                return;
-            }
-            await api.linkAssetToInstallation(numericAssetId, {
-                installation_id: targetInstallationId,
-                notes: 'Vinculo creado desde modulo Equipos',
-            });
-        }
-
-        const noteInput = prompt('Detalle de la incidencia:', '');
-        if (noteInput === null) return;
-        const note = String(noteInput || '').trim();
-        if (!note) {
-            showNotification('La incidencia requiere una nota.', 'error');
-            return;
-        }
-        const severityInput = prompt('Severidad (low/medium/high/critical):', 'medium');
-        if (severityInput === null) return;
-        const severity = normalizeSeverity(severityInput);
-        const adjustmentInput = prompt('Ajuste de tiempo en segundos (puede ser negativo):', '0');
-        if (adjustmentInput === null) return;
-        const adjustment = Number.parseInt(String(adjustmentInput).trim(), 10);
-        if (!Number.isInteger(adjustment)) {
-            showNotification('El ajuste de tiempo debe ser entero.', 'error');
-            return;
-        }
-        const applyToInstallation = confirm('Aplicar nota/ajuste tambien al registro de instalacion?');
-
-        const result = await api.createIncident(targetInstallationId, {
-            note,
-            reporter_username: currentUser?.username || 'web_user',
-            time_adjustment_seconds: adjustment,
-            severity,
-            source: 'web',
-            apply_to_installation: applyToInstallation,
+        createIncidentFromWeb(activeInstallationId, {
+            assetId: numericAssetId,
+            activeInstallationId,
         });
-
-        showNotification(
-            `Incidencia #${result?.incident?.id || 'N/A'} creada para equipo #${numericAssetId}.`,
-            'success',
-        );
-        await loadInstallations();
-        await loadAssetDetail(numericAssetId, { keepSelection: true });
     } catch (err) {
         showNotification(`No se pudo crear incidencia del equipo: ${err.message || err}`, 'error');
     }
@@ -2410,24 +2692,15 @@ async function createIncidentForAsset(assetId) {
 
 async function linkAssetFromDetail(assetId) {
     if (!requireActiveSession()) return;
-    const installationInput = prompt('ID de registro a vincular con este equipo:', '');
-    if (installationInput === null) return;
-    const installationId = Number.parseInt(String(installationInput).trim(), 10);
-    if (!Number.isInteger(installationId) || installationId <= 0) {
-        showNotification('installation_id invalido.', 'error');
+    const numericAssetId = Number.parseInt(String(assetId), 10);
+    if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
+        showNotification('asset_id invalido.', 'error');
         return;
     }
-
-    try {
-        await api.linkAssetToInstallation(assetId, {
-            installation_id: installationId,
-            notes: 'Vinculo manual desde detalle de equipo',
-        });
-        showNotification(`Equipo vinculado a registro #${installationId}.`, 'success');
-        await loadAssetDetail(assetId, { keepSelection: true });
-    } catch (err) {
-        showNotification(`No se pudo vincular equipo: ${err.message || err}`, 'error');
-    }
+    openAssetLinkModal({
+        assetId: numericAssetId,
+        notes: 'Vinculo manual desde detalle de equipo',
+    });
 }
 
 async function loadAssetDetail(assetId, options = {}) {
@@ -2448,7 +2721,7 @@ async function loadAssetDetail(assetId, options = {}) {
         await renderAssetDetail(data);
     } catch (err) {
         if (detailContainer) {
-            detailContainer.innerHTML = `<p class="error">❌ ${escapeHtml(err.message || String(err))}</p>`;
+            detailContainer.innerHTML = `<p class="error">âŒ ${escapeHtml(err.message || String(err))}</p>`;
         }
     }
 }
@@ -2597,11 +2870,11 @@ async function renderAssetDetail(data) {
         badge.className = `badge ${incident.severity || 'low'}`;
         badge.textContent = `${getSeverityIcon(incident.severity)} ${incident.severity || 'low'}`;
         const meta = document.createElement('small');
-        meta.textContent = `inst #${incident.installation_id} · ${incident.reporter_username || 'desconocido'}`;
+        meta.textContent = `inst #${incident.installation_id} Â· ${incident.reporter_username || 'desconocido'}`;
         left.append(badge, document.createTextNode(' '), meta);
 
         const created = document.createElement('small');
-        created.textContent = `🕐 ${new Date(incident.created_at).toLocaleString('es-ES')}`;
+        created.textContent = `ðŸ• ${new Date(incident.created_at).toLocaleString('es-ES')}`;
         header.append(left, created);
 
         const note = document.createElement('p');
@@ -2618,7 +2891,7 @@ async function renderAssetDetail(data) {
         const checklistMeta = document.createElement('small');
         checklistMeta.className = 'asset-muted incident-meta-line';
         checklistMeta.textContent = checklistItems.length
-            ? `Checklist: ${checklistItems.join(' · ')}`
+            ? `Checklist: ${checklistItems.join(' Â· ')}`
             : 'Checklist: -';
         const evidenceMeta = document.createElement('small');
         evidenceMeta.className = 'asset-muted incident-meta-line';
@@ -2628,13 +2901,13 @@ async function renderAssetDetail(data) {
         const resolutionMeta = document.createElement('small');
         resolutionMeta.className = 'asset-muted incident-meta-line';
         resolutionMeta.textContent = incident.resolution_note
-            ? `Resolución: ${incident.resolution_note}`
-            : 'Resolución: -';
+            ? `ResoluciÃ³n: ${incident.resolution_note}`
+            : 'ResoluciÃ³n: -';
 
         const sub = document.createElement('small');
         sub.className = 'asset-muted';
         sub.textContent =
-            `Cliente: ${incident.installation_client_name || '-'} · ` +
+            `Cliente: ${incident.installation_client_name || '-'} Â· ` +
             `${incident.installation_brand || '-'} ${incident.installation_version || ''}`.trim();
 
         card.append(header, note, statusMeta, timeMeta, checklistMeta, evidenceMeta, resolutionMeta, sub);
@@ -2733,18 +3006,18 @@ async function renderIncidents(incidents, installationId) {
     header.classList.add('incidents-header');
 
     const heading = document.createElement('h3');
-    heading.textContent = `⚠️ Incidencias de Registro #${installationId}`;
+    heading.textContent = `âš ï¸ Incidencias de Registro #${installationId}`;
 
     const backButton = document.createElement('button');
     backButton.className = 'btn-secondary';
-    backButton.textContent = '← Volver';
+    backButton.textContent = 'â† Volver';
     backButton.addEventListener('click', () => {
         document.querySelector('[data-section="installations"]')?.click();
     });
 
     const createIncidentBtn = document.createElement('button');
     createIncidentBtn.className = 'btn-primary';
-    createIncidentBtn.textContent = '⚠️ Crear incidencia';
+    createIncidentBtn.textContent = 'âš ï¸ Crear incidencia';
     createIncidentBtn.addEventListener('click', () => {
         void createIncidentFromWeb(installationId);
     });
@@ -2765,7 +3038,7 @@ async function renderIncidents(incidents, installationId) {
     }
 
     for (const inc of incidents) {
-        const severityIcon = inc.severity === 'critical' ? '🔴' : inc.severity === 'high' ? '🟠' : inc.severity === 'medium' ? '🟡' : '🔵';
+        const severityIcon = inc.severity === 'critical' ? 'ðŸ”´' : inc.severity === 'high' ? 'ðŸŸ ' : inc.severity === 'medium' ? 'ðŸŸ¡' : 'ðŸ”µ';
 
         const incidentCard = document.createElement('div');
         incidentCard.className = 'incident-card';
@@ -2785,7 +3058,7 @@ async function renderIncidents(incidents, installationId) {
         leftMeta.append(severityBadge, document.createTextNode(' '), reporter);
 
         const createdAt = document.createElement('small');
-        createdAt.textContent = `🕐 ${new Date(inc.created_at).toLocaleString('es-ES')}`;
+        createdAt.textContent = `ðŸ• ${new Date(inc.created_at).toLocaleString('es-ES')}`;
 
         incidentHeader.append(leftMeta, createdAt);
 
@@ -2803,7 +3076,7 @@ async function renderIncidents(incidents, installationId) {
         const checklistMeta = document.createElement('small');
         checklistMeta.className = 'asset-muted incident-meta-line';
         checklistMeta.textContent = checklistItems.length
-            ? `Checklist: ${checklistItems.join(' · ')}`
+            ? `Checklist: ${checklistItems.join(' Â· ')}`
             : 'Checklist: -';
         const evidenceMeta = document.createElement('small');
         evidenceMeta.className = 'asset-muted incident-meta-line';
@@ -2813,8 +3086,8 @@ async function renderIncidents(incidents, installationId) {
         const resolutionMeta = document.createElement('small');
         resolutionMeta.className = 'asset-muted incident-meta-line';
         resolutionMeta.textContent = inc.resolution_note
-            ? `Resolución: ${inc.resolution_note}`
-            : 'Resolución: -';
+            ? `ResoluciÃ³n: ${inc.resolution_note}`
+            : 'ResoluciÃ³n: -';
 
         incidentCard.append(incidentHeader, note, statusMeta, timeMeta, checklistMeta, evidenceMeta, resolutionMeta);
 
@@ -2848,7 +3121,7 @@ async function renderIncidents(incidents, installationId) {
 
         const uploadPhotoBtn = document.createElement('button');
         uploadPhotoBtn.className = 'btn-secondary';
-        uploadPhotoBtn.textContent = '📤 Subir foto';
+        uploadPhotoBtn.textContent = 'ðŸ“¤ Subir foto';
         uploadPhotoBtn.classList.add('incident-upload-btn');
         uploadPhotoBtn.addEventListener('click', () => {
             void selectAndUploadIncidentPhoto(inc.id, installationId);
@@ -3541,7 +3814,7 @@ async function downloadQrImage() {
                 labelPreset
             );
         } catch (_error) {
-            // fallback: mantener download de QR simple si falla composición de etiqueta
+            // fallback: mantener download de QR simple si falla composiciÃ³n de etiqueta
         }
     }
 
@@ -3638,7 +3911,7 @@ async function loadAuditLogs() {
         const logs = await api.getAuditLogs();
         renderAuditLogs(logs);
     } catch (err) {
-        container.innerHTML = '<p class="error">❌ Error cargando logs</p>';
+        container.innerHTML = '<p class="error">âŒ Error cargando logs</p>';
     }
 }
 
@@ -3650,7 +3923,7 @@ function renderAuditLogs(logs) {
     if (!logs || !logs.length) {
         const emptyMessage = document.createElement('p');
         emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No hay logs de auditoría';
+        emptyMessage.textContent = 'No hay logs de auditorÃ­a';
         container.appendChild(emptyMessage);
         return;
     }
@@ -3671,7 +3944,7 @@ function renderAuditLogs(logs) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['🕐 Fecha', '📝 Acción', '👤 Usuario', '✅ Estado', '💻 Detalles'].forEach(label => {
+    ['ðŸ• Fecha', 'ðŸ“ AcciÃ³n', 'ðŸ‘¤ Usuario', 'âœ… Estado', 'ðŸ’» Detalles'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -3681,7 +3954,7 @@ function renderAuditLogs(logs) {
     const tbody = document.createElement('tbody');
 
     filteredLogs.forEach(log => {
-        const successIcon = log.success ? '✅' : '❌';
+        const successIcon = log.success ? 'âœ…' : 'âŒ';
         const successClass = log.success ? 'success' : 'failed';
         
         let details = '-';
@@ -3744,7 +4017,7 @@ function updatePageSubtitleForSection(section) {
     if (!subtitleEl) return;
     const normalizedSection = SECTION_SUBTITLES[section] ? section : 'dashboard';
     const subtitle = SECTION_SUBTITLES[normalizedSection];
-    subtitleEl.textContent = `${subtitle} · ${getCurrentShiftLabel()}`;
+    subtitleEl.textContent = `${subtitle} Â· ${getCurrentShiftLabel()}`;
 }
 
 function buildOpsPulseText(status, section) {
@@ -3851,9 +4124,9 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         syncSSEForCurrentContext(true);
         
         // Show success notification
-        showNotification('✅ Bienvenido, ' + result.user.username + '!', 'success');
+        showNotification('âœ… Bienvenido, ' + result.user.username + '!', 'success');
     } catch (err) {
-        document.getElementById('loginError').textContent = '❌ Credenciales inválidas';
+        document.getElementById('loginError').textContent = 'âŒ Credenciales invÃ¡lidas';
         document.getElementById('loginPassword').value = '';
     }
 });
@@ -3869,7 +4142,7 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     closeSSE();
     resetProtectedViews();
     showLogin();
-    showNotification('👋 Sesión cerrada', 'info');
+    showNotification('ðŸ‘‹ SesiÃ³n cerrada', 'info');
 });
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
@@ -3881,7 +4154,7 @@ document.getElementById('refreshBtn').addEventListener('click', () => {
     }, 520);
     
     loadDashboard();
-    showNotification('🔄 Dashboard actualizado', 'info');
+    showNotification('ðŸ”„ Dashboard actualizado', 'info');
 });
 
 document.querySelectorAll('.nav-links a').forEach(link => {
@@ -4071,6 +4344,35 @@ document.getElementById('qrPasswordModal')?.addEventListener('click', (event) =>
     closeQrPasswordModal();
 });
 
+document.querySelector('#actionModal .close')?.addEventListener('click', () => {
+    closeActionModal();
+});
+
+document.getElementById('actionModalCancelBtn')?.addEventListener('click', () => {
+    closeActionModal();
+});
+
+document.getElementById('actionModal')?.addEventListener('click', (event) => {
+    if (event.target !== event.currentTarget) return;
+    closeActionModal();
+});
+
+document.getElementById('actionModalForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (actionModalSubmitBusy) return;
+    if (typeof actionModalSubmitHandler !== 'function') return;
+
+    setActionModalError('');
+    try {
+        setActionModalBusy(true);
+        await actionModalSubmitHandler();
+    } catch (error) {
+        setActionModalError(error?.message || 'No se pudo completar la accion.');
+    } finally {
+        setActionModalBusy(false);
+    }
+});
+
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
     if (handleLoginModalKeydown(e)) {
@@ -4081,6 +4383,7 @@ document.addEventListener('keydown', (e) => {
         document.getElementById('photoModal').classList.remove('active');
         closeQrPasswordModal();
         closeQrModal();
+        closeActionModal();
     }
     const normalizedKey = String(e.key || '').toLowerCase();
     if (e.altKey && !e.ctrlKey && !e.metaKey && normalizedKey === 'r') {
@@ -4156,7 +4459,7 @@ function scheduleSSEReconnect(preferredDelayMs = null) {
     if (sseReconnectAttempts >= MAX_SSE_RECONNECT_ATTEMPTS) {
         console.error('[SSE] Max reconnection attempts reached');
         updateConnectionStatus('failed');
-        showNotification('⚠️ Conexión en tiempo real perdida. Recarga la página para reconectar.', 'error');
+        showNotification('âš ï¸ ConexiÃ³n en tiempo real perdida. Recarga la pÃ¡gina para reconectar.', 'error');
         return;
     }
 
@@ -4260,7 +4563,7 @@ function handleSSEMessage(data) {
     switch (data.type) {
         case 'connected':
             console.log('[SSE]', data.message);
-            showNotification('🔌 Conectado en tiempo real', 'success');
+            showNotification('ðŸ”Œ Conectado en tiempo real', 'success');
             break;
 
         case 'installation_created':
@@ -4319,7 +4622,7 @@ function handleRealtimeInstallation(installation) {
     }
     
     // Show notification
-    const statusIcon = installation.status === 'success' ? '✅' : installation.status === 'failed' ? '❌' : '💻';
+    const statusIcon = installation.status === 'success' ? 'âœ…' : installation.status === 'failed' ? 'âŒ' : 'ðŸ’»';
     showNotification(`${statusIcon} Nuevo registro: ${installation.client_name || 'Sin cliente'}`, 'info');
     
     // Refresh dashboard stats if on dashboard
@@ -4351,18 +4654,18 @@ function handleRealtimeInstallationDeleted(installation) {
             renderInstallationsTable(currentInstallationsData);
         }
     }
-    showNotification(`🗑️ Registro #${installation.id} eliminado`, 'info');
+    showNotification(`ðŸ—‘ï¸ Registro #${installation.id} eliminado`, 'info');
 }
 
 function handleRealtimeIncident(incident) {
-    const severityIcon = incident.severity === 'critical' ? '🔴' : incident.severity === 'high' ? '🟠' : '⚠️';
+    const severityIcon = incident.severity === 'critical' ? 'ðŸ”´' : incident.severity === 'high' ? 'ðŸŸ ' : 'âš ï¸';
     showNotification(`${severityIcon} Nueva incidencia en registro #${incident.installation_id}`, 'warning');
 }
 
 function handleRealtimeIncidentStatusUpdate(incident) {
     if (!incident || !incident.id) return;
     showNotification(
-        `ℹ️ Incidencia #${incident.id} ahora está "${incidentStatusLabel(incident.incident_status)}".`,
+        `â„¹ï¸ Incidencia #${incident.id} ahora estÃ¡ "${incidentStatusLabel(incident.incident_status)}".`,
         'info',
     );
 
@@ -4660,7 +4963,7 @@ function toggleTheme() {
     
     // Show notification
     const themeLabel = newTheme === 'light' ? 'claro' : 'oscuro';
-    showNotification(`🎨 Tema ${themeLabel} activado`, 'info');
+    showNotification(`ðŸŽ¨ Tema ${themeLabel} activado`, 'info');
 }
 
 function updateChartTheme(theme) {

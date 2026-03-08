@@ -384,6 +384,22 @@
             </div>
         </div>
     </div>
+
+    <div id="actionModal" class="modal">
+        <div class="modal-content action-modal">
+            <button type="button" class="close" aria-label="Cerrar formulario">&times;</button>
+            <h3 id="actionModalTitle">Accion</h3>
+            <p id="actionModalSubtitle" class="qr-modal-subtitle is-hidden"></p>
+            <form id="actionModalForm" novalidate>
+                <div id="actionModalFields"></div>
+                <p id="actionModalError" class="error"></p>
+                <div class="qr-actions">
+                    <button type="submit" id="actionModalSubmitBtn" class="btn-primary">Guardar</button>
+                    <button type="button" id="actionModalCancelBtn" class="btn-secondary">Cancelar</button>
+                </div>
+            </form>
+        </div>
+    </div>
     
     <script src="/dashboard-qr.js" defer></script>
     <script src="/dashboard.js" defer></script>
