@@ -37,6 +37,10 @@ export default function TabLayout() {
           shadowRadius: 8,
           elevation: 8,
         },
+        tabBarItemStyle: {
+          minHeight: 44,
+          paddingVertical: 4,
+        },
         tabBarLabelStyle: {
           fontFamily: fontFamilies.semibold,
           fontSize: 12.5,
@@ -80,6 +84,8 @@ export default function TabLayout() {
               <Link href="/modal" asChild>
                 <Pressable
                   hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Abrir configuracion"
                   android_ripple={{ color: palette.hoverBg, borderless: true }}
                   style={({ pressed }) => [
                     styles.settingsButton,
@@ -148,8 +154,8 @@ const styles = StyleSheet.create({
     height: 48,
   },
   settingsButton: {
-    width: Platform.select({ ios: 42, default: 40 }),
-    height: Platform.select({ ios: 42, default: 40 }),
+    width: Platform.select({ ios: 44, default: 44 }),
+    height: Platform.select({ ios: 44, default: 44 }),
     borderRadius: 999,
     borderWidth: 1,
     alignItems: "center",

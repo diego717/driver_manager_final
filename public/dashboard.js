@@ -150,11 +150,18 @@ let qrModalReadOnly = false;
 let qrModalEditUnlocked = false;
 let qrModalEditUnlockUntil = 0;
 let qrPasswordModalBusy = false;
-let loginModalLastFocusedElement = null;
 const QR_EDIT_UNLOCK_TTL_MS = 10 * 60 * 1000;
 const KPI_NUMBER_ANIMATION_MS = 620;
 const SECTION_TRANSITION_OUT_MS = 150;
 const TOAST_DURATION_MS = 3100;
+const MODAL_FOCUSABLE_SELECTOR = [
+    'button:not([disabled])',
+    'input:not([type="hidden"]):not([disabled])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    '[href]',
+    '[tabindex]:not([tabindex="-1"])',
+].join(',');
 const SECTION_TITLES = {
     dashboard: 'Dashboard',
     installations: 'Registros',
@@ -178,7 +185,147 @@ const TOAST_TYPE_ICONS = {
     info: 'i',
 };
 const ACTIVE_KPI_ANIMATIONS = new WeakMap();
+const MODAL_LAST_FOCUSED = new Map();
 let sectionTransitionVersion = 0;
+
+function isElementFocusable(node) {
+    if (!(node instanceof HTMLElement)) return false;
+    if (node.hasAttribute('disabled')) return false;
+    if (node.getAttribute('aria-hidden') === 'true') return false;
+    if (node.getAttribute('inert') === '' || node.getAttribute('inert') === 'true') return false;
+    return true;
+}
+
+function getModalFocusableElements(modalElement) {
+    if (!(modalElement instanceof HTMLElement)) return [];
+    return Array.from(modalElement.querySelectorAll(MODAL_FOCUSABLE_SELECTOR)).filter(isElementFocusable);
+}
+
+function getActiveModalElements() {
+    return Array.from(document.querySelectorAll('.modal.active'));
+}
+
+function getTopActiveModalElement() {
+    const activeModals = getActiveModalElements();
+    if (!activeModals.length) return null;
+    return activeModals[activeModals.length - 1];
+}
+
+function syncBodyModalOpenState() {
+    document.body.classList.toggle('modal-open', getActiveModalElements().length > 0);
+}
+
+function focusModalEntry(modalElement, preferredElement = null, { selectText = false } = {}) {
+    if (!(modalElement instanceof HTMLElement)) return;
+    const fallback = getModalFocusableElements(modalElement)[0] || null;
+    const target = preferredElement instanceof HTMLElement ? preferredElement : fallback;
+    if (!(target instanceof HTMLElement)) return;
+    target.focus();
+    if (
+        selectText
+        && typeof target.select === 'function'
+        && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)
+    ) {
+        target.select();
+    }
+}
+
+function openAccessibleModal(modalId, options = {}) {
+    const modal = document.getElementById(modalId);
+    if (!(modal instanceof HTMLElement)) return false;
+    if (!modal.classList.contains('active')) {
+        const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        MODAL_LAST_FOCUSED.set(modalId, activeElement);
+    }
+    modal.classList.add('active');
+    syncBodyModalOpenState();
+    focusModalEntry(modal, options.preferredElement || null, {
+        selectText: options.selectText === true,
+    });
+    return true;
+}
+
+function closeAccessibleModal(modalId, options = {}) {
+    const modal = document.getElementById(modalId);
+    if (!(modal instanceof HTMLElement)) return false;
+    const wasActive = modal.classList.contains('active');
+    modal.classList.remove('active');
+    syncBodyModalOpenState();
+    if (!wasActive) return false;
+    const shouldRestoreFocus = options.restoreFocus !== false;
+    const fallbackFocus = options.fallbackFocus instanceof HTMLElement ? options.fallbackFocus : null;
+    if (shouldRestoreFocus) {
+        const previousFocus = MODAL_LAST_FOCUSED.get(modalId);
+        if (previousFocus instanceof HTMLElement && document.contains(previousFocus)) {
+            previousFocus.focus();
+        } else if (fallbackFocus) {
+            fallbackFocus.focus();
+        }
+    }
+    MODAL_LAST_FOCUSED.delete(modalId);
+    return true;
+}
+
+function trapFocusInsideModal(event, modalElement) {
+    if (event.key !== 'Tab') return false;
+    const focusables = getModalFocusableElements(modalElement);
+    if (!focusables.length) {
+        event.preventDefault();
+        return true;
+    }
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+        return true;
+    }
+    if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+        return true;
+    }
+    return false;
+}
+
+function closeTopActiveModal() {
+    const modal = getTopActiveModalElement();
+    if (!(modal instanceof HTMLElement)) return false;
+    const modalId = modal.id;
+    if (modalId === 'loginModal') {
+        hideLogin();
+        return true;
+    }
+    if (modalId === 'photoModal') {
+        closePhotoModal();
+        return true;
+    }
+    if (modalId === 'qrPasswordModal') {
+        if (qrPasswordModalBusy) return true;
+        closeQrPasswordModal();
+        return true;
+    }
+    if (modalId === 'qrModal') {
+        closeQrModal();
+        return true;
+    }
+    if (modalId === 'actionModal') {
+        closeActionModal();
+        return true;
+    }
+    return false;
+}
+
+function handleModalKeyboardInteraction(event) {
+    const topModal = getTopActiveModalElement();
+    if (!(topModal instanceof HTMLElement)) return false;
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        return closeTopActiveModal();
+    }
+    return trapFocusInsideModal(event, topModal);
+}
 
 function renderContextualEmptyState(container, options = {}) {
     if (!container) return;
@@ -262,87 +409,15 @@ const api = apiFactory({
 });
 
 function showLogin() {
-    loginModalLastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     resetProtectedViews();
     syncRoleBasedNavigationAccess();
-    document.getElementById('loginModal').classList.add('active');
-    document.body.classList.add('modal-open');
-    focusLoginModalEntryField();
+    const usernameField = document.getElementById('loginUsername');
+    openAccessibleModal('loginModal', { preferredElement: usernameField });
 }
 
 function hideLogin() {
-    document.getElementById('loginModal').classList.remove('active');
-    document.body.classList.remove('modal-open');
+    closeAccessibleModal('loginModal');
     document.getElementById('loginError').textContent = '';
-    if (loginModalLastFocusedElement && document.contains(loginModalLastFocusedElement)) {
-        loginModalLastFocusedElement.focus();
-    }
-    loginModalLastFocusedElement = null;
-}
-
-function isLoginModalActive() {
-    return document.getElementById('loginModal')?.classList.contains('active') === true;
-}
-
-function getLoginModalFocusableElements() {
-    const modal = document.getElementById('loginModal');
-    if (!modal) return [];
-    const selectors = [
-        'button:not([disabled])',
-        'input:not([type="hidden"]):not([disabled])',
-        'select:not([disabled])',
-        'textarea:not([disabled])',
-        '[href]',
-        '[tabindex]:not([tabindex="-1"])',
-    ];
-    return Array.from(modal.querySelectorAll(selectors.join(','))).filter((element) => {
-        if (!(element instanceof HTMLElement)) return false;
-        return !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true';
-    });
-}
-
-function focusLoginModalEntryField() {
-    const usernameField = document.getElementById('loginUsername');
-    if (usernameField instanceof HTMLElement) {
-        usernameField.focus();
-        return;
-    }
-    const focusables = getLoginModalFocusableElements();
-    if (focusables.length > 0) {
-        focusables[0].focus();
-    }
-}
-
-function handleLoginModalKeydown(event) {
-    if (!isLoginModalActive()) return false;
-
-    if (event.key === 'Escape') {
-        event.preventDefault();
-        hideLogin();
-        return true;
-    }
-
-    if (event.key !== 'Tab') return false;
-
-    const focusables = getLoginModalFocusableElements();
-    if (focusables.length === 0) return false;
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
-    const active = document.activeElement;
-
-    if (event.shiftKey && active === first) {
-        event.preventDefault();
-        last.focus();
-        return true;
-    }
-
-    if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-        return true;
-    }
-
-    return false;
 }
 
 function resetProtectedViews() {
@@ -418,7 +493,6 @@ function parseStrictInteger(rawValue) {
 
 let actionModalSubmitHandler = null;
 let actionModalSubmitBusy = false;
-let actionModalLastFocusedElement = null;
 let actionModalEventsBound = false;
 
 function setActionModalError(message = '') {
@@ -443,16 +517,9 @@ function setActionModalBusy(isBusy) {
 
 function closeActionModal(force = false) {
     if (actionModalSubmitBusy && !force) return;
-    const modal = document.getElementById('actionModal');
-    if (!modal) return;
-    modal.classList.remove('active');
-    document.body.classList.remove('modal-open');
+    closeAccessibleModal('actionModal');
     setActionModalError('');
     actionModalSubmitHandler = null;
-    if (actionModalLastFocusedElement && document.contains(actionModalLastFocusedElement)) {
-        actionModalLastFocusedElement.focus();
-    }
-    actionModalLastFocusedElement = null;
 }
 
 function openActionModal(config = {}) {
@@ -478,27 +545,10 @@ function openActionModal(config = {}) {
     setActionModalError('');
     setActionModalBusy(false);
     actionModalSubmitHandler = typeof config.onSubmit === 'function' ? config.onSubmit : null;
-    actionModalLastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-    modal.classList.add('active');
-    document.body.classList.add('modal-open');
 
     const preferredFocusId = String(config.focusId || '').trim();
-    requestAnimationFrame(() => {
-        const preferredElement = preferredFocusId
-            ? document.getElementById(preferredFocusId)
-            : null;
-        if (preferredElement instanceof HTMLElement) {
-            preferredElement.focus();
-            return;
-        }
-        const fallback = modal.querySelector(
-            'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled])',
-        );
-        if (fallback instanceof HTMLElement) {
-            fallback.focus();
-        }
-    });
+    const preferredElement = preferredFocusId ? document.getElementById(preferredFocusId) : null;
+    openAccessibleModal('actionModal', { preferredElement });
 
     return true;
 }
@@ -1379,7 +1429,9 @@ function renderRecentInstallations(installations) {
 
     installations.forEach(inst => {
         const statusClass = inst.status || 'unknown';
-        const statusIcon = inst.status === 'success' ? 'OK' : inst.status === 'failed' ? 'X' : '?';
+        const statusIconName = inst.status === 'success'
+            ? 'check_circle'
+            : (inst.status === 'failed' ? 'error' : 'help');
 
         const row = document.createElement('tr');
 
@@ -1397,14 +1449,18 @@ function renderRecentInstallations(installations) {
         const statusCell = document.createElement('td');
         const statusBadge = document.createElement('span');
         statusBadge.className = `badge ${statusClass}`;
-        statusBadge.textContent = `${statusIcon} ${inst.status || 'unknown'}`;
+        setElementTextWithMaterialIcon(
+            statusBadge,
+            statusIconName,
+            String(inst.status || 'unknown').toUpperCase(),
+        );
         statusCell.appendChild(statusBadge);
 
         const attentionCell = document.createElement('td');
         const attentionBadge = document.createElement('span');
         const attentionMeta = buildRecordAttentionBadge(inst);
         attentionBadge.className = `badge ${attentionMeta.stateClass}`;
-        attentionBadge.textContent = attentionMeta.text;
+        setElementTextWithMaterialIcon(attentionBadge, attentionMeta.iconName, attentionMeta.label);
         attentionCell.appendChild(attentionBadge);
 
         const dateCell = document.createElement('td');
@@ -1572,13 +1628,13 @@ function recordAttentionStateLabel(value) {
     return 'Sin incidencias';
 }
 
-function recordAttentionStateIcon(value) {
+function recordAttentionStateIconName(value) {
     const normalized = normalizeRecordAttentionState(value);
-    if (normalized === 'critical') return 'Ys';
-    if (normalized === 'in_progress') return 'YY';
-    if (normalized === 'open') return 'YY';
-    if (normalized === 'resolved') return 'OK';
-    return 'YY';
+    if (normalized === 'critical') return 'error';
+    if (normalized === 'in_progress') return 'pending';
+    if (normalized === 'open') return 'report_problem';
+    if (normalized === 'resolved') return 'check_circle';
+    return 'radio_button_unchecked';
 }
 
 function buildRecordAttentionBadge(record) {
@@ -1593,7 +1649,8 @@ function buildRecordAttentionBadge(record) {
     }
     return {
         stateClass: `attention-${state}`,
-        text: `${recordAttentionStateIcon(state)} ${recordAttentionStateLabel(state)}${countLabel}`,
+        iconName: recordAttentionStateIconName(state),
+        label: `${recordAttentionStateLabel(state)}${countLabel}`,
     };
 }
 
@@ -1620,6 +1677,31 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function createMaterialIconNode(iconName, sizeClass = 'icon-inline-sm') {
+    const normalizedIcon = String(iconName || '').trim();
+    if (!normalizedIcon) return null;
+    const icon = document.createElement('span');
+    icon.className = `material-symbols-outlined ${sizeClass}`.trim();
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = normalizedIcon;
+    return icon;
+}
+
+function setElementTextWithMaterialIcon(element, iconName, text, sizeClass = 'icon-inline-sm') {
+    if (!(element instanceof HTMLElement)) return;
+    const normalizedText = String(text || '').trim();
+    const iconNode = createMaterialIconNode(iconName, sizeClass);
+    if (!iconNode) {
+        element.textContent = normalizedText;
+        return;
+    }
+    if (normalizedText) {
+        element.replaceChildren(iconNode, document.createTextNode(` ${normalizedText}`));
+        return;
+    }
+    element.replaceChildren(iconNode);
 }
 
 function toExcelCell(value) {
@@ -1653,7 +1735,7 @@ function exportToCSV(data, filename = 'registros.csv') {
         inst.id,
         inst.client_name || 'N/A',
         inst.driver_brand || 'N/A',
-        buildRecordAttentionBadge(inst).text,
+        buildRecordAttentionBadge(inst).label,
         formatDuration(inst.installation_time_seconds || 0),
         extractInstallationRecordNote(inst.notes),
         inst.timestamp
@@ -1699,7 +1781,7 @@ function exportToExcel(data, filename = 'registros.xls') {
         html += `<td>${toExcelCell(inst.id)}</td>`;
         html += `<td>${toExcelCell(inst.client_name || 'N/A')}</td>`;
         html += `<td>${toExcelCell(inst.driver_brand || 'N/A')}</td>`;
-        html += `<td>${toExcelCell(buildRecordAttentionBadge(inst).text)}</td>`;
+        html += `<td>${toExcelCell(buildRecordAttentionBadge(inst).label)}</td>`;
         html += `<td>${toExcelCell(formatDuration(inst.installation_time_seconds || 0))}</td>`;
         html += `<td>${toExcelCell(extractInstallationRecordNote(inst.notes).substring(0, 120))}</td>`;
         html += `<td>${toExcelCell(inst.timestamp)}</td>`;
@@ -1865,7 +1947,7 @@ function setupAdvancedFilters() {
         const createRecordBtn = document.createElement('button');
         createRecordBtn.id = 'createManualRecordBtn';
         createRecordBtn.className = 'btn-secondary';
-        createRecordBtn.textContent = 'Y" Nuevo registro manual';
+        setElementTextWithMaterialIcon(createRecordBtn, 'edit_note', 'Nuevo registro manual');
         createRecordBtn.addEventListener('click', () => {
             void createManualRecordFromWeb();
         });
@@ -1876,7 +1958,7 @@ function setupAdvancedFilters() {
         qrButton.id = 'openQrGeneratorBtn';
         qrButton.type = 'button';
         qrButton.className = 'btn-secondary';
-        qrButton.textContent = 'QR equipo';
+        setElementTextWithMaterialIcon(qrButton, 'qr_code_2', 'QR equipo');
         qrButton.addEventListener('click', () => {
             showQrModal({ type: 'asset', value: '' });
         });
@@ -1887,7 +1969,7 @@ function setupAdvancedFilters() {
         associateButton.id = 'associateAssetBtn';
         associateButton.type = 'button';
         associateButton.className = 'btn-secondary';
-        associateButton.textContent = 'Asociar equipo';
+        setElementTextWithMaterialIcon(associateButton, 'link', 'Asociar equipo');
         associateButton.addEventListener('click', () => {
             void associateAssetFromWeb();
         });
@@ -1898,7 +1980,7 @@ function setupAdvancedFilters() {
         lookupButton.id = 'lookupAssetBtn';
         lookupButton.type = 'button';
         lookupButton.className = 'btn-secondary';
-        lookupButton.textContent = 'Buscar equipo';
+        setElementTextWithMaterialIcon(lookupButton, 'manage_search', 'Buscar equipo');
         lookupButton.addEventListener('click', () => {
             void openAssetLookupFromWeb();
         });
@@ -1968,6 +2050,20 @@ async function loadInstallations() {
 }
 
 
+function makeTableRowKeyboardAccessible(row, ariaLabel) {
+    if (!(row instanceof HTMLElement)) return;
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    if (ariaLabel) {
+        row.setAttribute('aria-label', ariaLabel);
+    }
+    row.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        row.click();
+    });
+}
+
 function renderInstallationsTable(installations) {
     const container = document.getElementById('installationsTable');
     container.replaceChildren();
@@ -2017,7 +2113,7 @@ function renderInstallationsTable(installations) {
         const attentionBadge = document.createElement('span');
         const attentionMeta = buildRecordAttentionBadge(inst);
         attentionBadge.className = `badge ${attentionMeta.stateClass}`;
-        attentionBadge.textContent = attentionMeta.text;
+        setElementTextWithMaterialIcon(attentionBadge, attentionMeta.iconName, attentionMeta.label);
         attentionCell.appendChild(attentionBadge);
 
         const timeCell = document.createElement('td');
@@ -2049,6 +2145,12 @@ function renderInstallationsTable(installations) {
     container.appendChild(table);
 
     container.querySelectorAll('tr[data-id]').forEach(row => {
+        const rowId = String(row.dataset.id || '').trim();
+        const clientName = String(row.cells?.[1]?.textContent || '').trim();
+        const readableLabel = clientName
+            ? `Abrir incidencias del registro ${rowId} de ${clientName}`
+            : `Abrir incidencias del registro ${rowId}`;
+        makeTableRowKeyboardAccessible(row, readableLabel);
         row.addEventListener('click', () => {
             const id = row.dataset.id;
             showIncidentsForInstallation(id);
@@ -2077,11 +2179,12 @@ function normalizeAssetStatusLabel(status) {
     return normalized;
 }
 
-function getSeverityIcon(severity) {
-    if (severity === 'critical') return 'Y"';
-    if (severity === 'high') return 'YY';
-    if (severity === 'medium') return 'YY';
-    return 'Y"';
+function getSeverityIconName(severity) {
+    const normalized = normalizeSeverity(severity);
+    if (normalized === 'critical') return 'emergency_home';
+    if (normalized === 'high') return 'warning';
+    if (normalized === 'medium') return 'priority_high';
+    return 'info';
 }
 
 function normalizeIncidentStatus(value) {
@@ -2101,13 +2204,14 @@ function incidentStatusLabel(value) {
 function incidentStatusIcon(value) {
     const normalized = normalizeIncidentStatus(value);
     if (normalized === 'resolved') return 'OK';
-    if (normalized === 'in_progress') return 'YY';
-    return 'YY';
+    return '';
 }
 
 function buildIncidentStatusText(incident) {
     const status = normalizeIncidentStatus(incident?.incident_status);
-    let text = `${incidentStatusIcon(status)} ${incidentStatusLabel(status)}`;
+    let text = [incidentStatusIcon(status), incidentStatusLabel(status)]
+        .filter((part) => part)
+        .join(' ');
     if (status === 'resolved' && incident?.resolved_at) {
         text += ` · ${new Date(incident.resolved_at).toLocaleString('es-ES')}`;
     } else if (incident?.status_updated_at) {
@@ -2216,8 +2320,19 @@ function appendIncidentStatusActions(parent, incident, options = {}) {
 
 function appendIncidentUploadPhotoAction(parent, incident, installationId, options = {}) {
     const uploadPhotoBtn = document.createElement('button');
+    uploadPhotoBtn.type = 'button';
     uploadPhotoBtn.className = 'btn-secondary';
-    uploadPhotoBtn.textContent = String(options.label || 'Subir foto');
+    const iconName = String(options.icon || '').trim();
+    const buttonLabel = String(options.label || 'Subir foto');
+    if (iconName) {
+        const icon = document.createElement('span');
+        icon.className = 'material-symbols-outlined icon-inline-sm';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = iconName;
+        uploadPhotoBtn.replaceChildren(icon, document.createTextNode(` ${buttonLabel}`));
+    } else {
+        uploadPhotoBtn.textContent = buttonLabel;
+    }
     uploadPhotoBtn.classList.add('incident-upload-btn');
     uploadPhotoBtn.addEventListener('click', () => {
         void selectAndUploadIncidentPhoto(incident.id, installationId);
@@ -2665,6 +2780,10 @@ function renderAssetsTable(assets) {
         row.addEventListener('click', () => {
             void loadAssetDetail(asset.id);
         });
+        makeTableRowKeyboardAccessible(
+            row,
+            `Abrir detalle del equipo ${asset.external_code || `#${asset.id}`}`,
+        );
         tbody.appendChild(row);
     }
 
@@ -2870,13 +2989,17 @@ async function renderAssetDetail(data) {
         const left = document.createElement('div');
         const badge = document.createElement('span');
         badge.className = `badge ${incident.severity || 'low'}`;
-        badge.textContent = `${getSeverityIcon(incident.severity)} ${incident.severity || 'low'}`;
+        setElementTextWithMaterialIcon(
+            badge,
+            getSeverityIconName(incident.severity),
+            String(incident.severity || 'low').toUpperCase(),
+        );
         const meta = document.createElement('small');
-        meta.textContent = `inst #${incident.installation_id} · ${incident.reporter_username || 'desconocido'}`;
+        meta.textContent = `inst #${incident.installation_id} | ${incident.reporter_username || 'desconocido'}`;
         left.append(badge, document.createTextNode(' '), meta);
 
         const created = document.createElement('small');
-        created.textContent = `Y. ${new Date(incident.created_at).toLocaleString('es-ES')}`;
+        created.textContent = `Creada: ${new Date(incident.created_at).toLocaleString('es-ES')}`;
         header.append(left, created);
 
         const note = document.createElement('p');
@@ -2886,7 +3009,7 @@ async function renderAssetDetail(data) {
         const sub = document.createElement('small');
         sub.className = 'asset-muted';
         sub.textContent =
-            `Cliente: ${incident.installation_client_name || '-'} · ` +
+            `Cliente: ${incident.installation_client_name || '-'} | ` +
             `${incident.installation_brand || '-'} ${incident.installation_version || ''}`.trim();
 
         card.append(header, note);
@@ -2938,18 +3061,32 @@ async function renderIncidents(incidents, installationId) {
     header.classList.add('incidents-header');
 
     const heading = document.createElement('h3');
-    heading.textContent = `s️ Incidencias de Registro #${installationId}`;
+    const headingIcon = document.createElement('span');
+    headingIcon.className = 'material-symbols-outlined icon-inline-sm';
+    headingIcon.setAttribute('aria-hidden', 'true');
+    headingIcon.textContent = 'warning';
+    heading.replaceChildren(headingIcon, document.createTextNode(` Incidencias de Registro #${installationId}`));
 
     const backButton = document.createElement('button');
+    backButton.type = 'button';
     backButton.className = 'btn-secondary';
-    backButton.textContent = '? Volver';
+    const backIcon = document.createElement('span');
+    backIcon.className = 'material-symbols-outlined icon-inline-sm';
+    backIcon.setAttribute('aria-hidden', 'true');
+    backIcon.textContent = 'arrow_back';
+    backButton.replaceChildren(backIcon, document.createTextNode(' Volver'));
     backButton.addEventListener('click', () => {
         document.querySelector('[data-section="installations"]')?.click();
     });
 
     const createIncidentBtn = document.createElement('button');
+    createIncidentBtn.type = 'button';
     createIncidentBtn.className = 'btn-primary';
-    createIncidentBtn.textContent = 's️ Crear incidencia';
+    const createIcon = document.createElement('span');
+    createIcon.className = 'material-symbols-outlined icon-inline-sm';
+    createIcon.setAttribute('aria-hidden', 'true');
+    createIcon.textContent = 'add_circle';
+    createIncidentBtn.replaceChildren(createIcon, document.createTextNode(' Crear incidencia'));
     createIncidentBtn.addEventListener('click', () => {
         void createIncidentFromWeb(installationId);
     });
@@ -2973,7 +3110,7 @@ async function renderIncidents(incidents, installationId) {
     }
 
     for (const inc of incidents) {
-        const severityIcon = getSeverityIcon(inc.severity);
+        const severityIcon = getSeverityIconName(inc.severity);
 
         const incidentCard = document.createElement('div');
         incidentCard.className = 'incident-card';
@@ -2984,7 +3121,11 @@ async function renderIncidents(incidents, installationId) {
         const leftMeta = document.createElement('div');
         const severityBadge = document.createElement('span');
         severityBadge.className = `badge ${inc.severity || 'low'}`;
-        severityBadge.textContent = `${severityIcon} ${inc.severity || 'low'}`;
+        setElementTextWithMaterialIcon(
+            severityBadge,
+            severityIcon,
+            String(inc.severity || 'low').toUpperCase(),
+        );
         const reporter = document.createElement('small');
         reporter.textContent = 'por ';
         const reporterStrong = document.createElement('strong');
@@ -2993,7 +3134,7 @@ async function renderIncidents(incidents, installationId) {
         leftMeta.append(severityBadge, document.createTextNode(' '), reporter);
 
         const createdAt = document.createElement('small');
-        createdAt.textContent = `Y. ${new Date(inc.created_at).toLocaleString('es-ES')}`;
+        createdAt.textContent = `Creada: ${new Date(inc.created_at).toLocaleString('es-ES')}`;
 
         incidentHeader.append(leftMeta, createdAt);
 
@@ -3006,7 +3147,10 @@ async function renderIncidents(incidents, installationId) {
         appendIncidentStatusActions(incidentCard, inc, {
             installationId: Number.parseInt(String(installationId), 10),
         });
-        appendIncidentUploadPhotoAction(incidentCard, inc, installationId, { label: 'Y" Subir foto' });
+        appendIncidentUploadPhotoAction(incidentCard, inc, installationId, {
+            label: 'Subir foto',
+            icon: 'add_a_photo',
+        });
         await appendIncidentPhotosGrid(incidentCard, inc.photos, { attachPhotoIdDataset: true });
 
         container.appendChild(incidentCard);
@@ -3014,13 +3158,21 @@ async function renderIncidents(incidents, installationId) {
 }
 
 async function viewPhoto(photoId) {
-    const modal = document.getElementById('photoModal');
     const img = document.getElementById('photoViewer');
     const photoUrl = await loadPhotoWithAuth(photoId);
     if (photoUrl) {
         img.src = photoUrl;
-        modal.classList.add('active');
+        const closeButton = document.querySelector('#photoModal .close');
+        openAccessibleModal('photoModal', { preferredElement: closeButton });
     }
+}
+
+function closePhotoModal() {
+    const image = document.getElementById('photoViewer');
+    if (image instanceof HTMLImageElement) {
+        image.removeAttribute('src');
+    }
+    closeAccessibleModal('photoModal');
 }
 
 function normalizeAssetCodeForQr(rawValue) {
@@ -3155,17 +3307,11 @@ function openQrPasswordModal() {
     setQrPasswordModalBusy(false);
     setQrPasswordModalError('');
     input.value = '';
-    modal.classList.add('active');
-    setTimeout(() => {
-        input.focus();
-        input.select();
-    }, 0);
+    openAccessibleModal('qrPasswordModal', { preferredElement: input, selectText: true });
 }
 
-function closeQrPasswordModal() {
-    const modal = document.getElementById('qrPasswordModal');
-    if (!modal) return;
-    modal.classList.remove('active');
+function closeQrPasswordModal(options = {}) {
+    closeAccessibleModal('qrPasswordModal', { restoreFocus: options.restoreFocus !== false });
     setQrPasswordModalBusy(false);
     setQrPasswordModalError('');
 }
@@ -3368,24 +3514,15 @@ function showQrModal(options = {}) {
     applyQrModalAccessState();
     resetQrPreview();
     setQrError('');
-    modal.classList.add('active');
-    if (type === 'installation') {
-        valueInput.focus();
-        valueInput.select();
-    } else {
-        const serial = document.getElementById('qrAssetSerialInput');
-        if (serial) {
-            serial.focus();
-            serial.select();
-        }
-    }
+    const preferredElement = type === 'installation'
+        ? valueInput
+        : (document.getElementById('qrAssetSerialInput') || valueInput);
+    openAccessibleModal('qrModal', { preferredElement, selectText: true });
 }
 
 function closeQrModal() {
-    const modal = document.getElementById('qrModal');
-    if (!modal) return;
-    modal.classList.remove('active');
-    closeQrPasswordModal();
+    closeQrPasswordModal({ restoreFocus: false });
+    closeAccessibleModal('qrModal');
     qrModalReadOnly = false;
     qrModalEditUnlocked = false;
     setQrError('');
@@ -4120,13 +4257,13 @@ document.getElementById('auditActionFilter').addEventListener('change', () => {
 });
 
 document.querySelector('#photoModal .close').addEventListener('click', () => {
-    document.getElementById('photoModal').classList.remove('active');
+    closePhotoModal();
 });
 
 // Close modal on outside click
 document.getElementById('photoModal').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) {
-        document.getElementById('photoModal').classList.remove('active');
+        closePhotoModal();
     }
 });
 
@@ -4230,16 +4367,10 @@ bindActionModalEvents();
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
-    if (handleLoginModalKeydown(e)) {
+    if (handleModalKeyboardInteraction(e)) {
         return;
     }
 
-    if (e.key === 'Escape') {
-        document.getElementById('photoModal').classList.remove('active');
-        closeQrPasswordModal();
-        closeQrModal();
-        closeActionModal();
-    }
     const normalizedKey = String(e.key || '').toLowerCase();
     if (e.altKey && !e.ctrlKey && !e.metaKey && normalizedKey === 'r') {
         e.preventDefault();
@@ -4775,4 +4906,3 @@ function setupThemeToggle() {
 }
 
 init();
-

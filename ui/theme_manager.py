@@ -35,8 +35,8 @@ class ThemeManager:
                     
                     # Estados
                     "success": "#0d9f6e",
-                    "warning": "#d97706",
-                    "error": "#dc2626",
+                    "warning": "#8a4600",
+                    "error": "#b42318",
                     "info": "#2563eb",
                     
                     # Bordes y separadores
@@ -51,10 +51,10 @@ class ThemeManager:
                     "button_secondary_hover": "#dbe2ea",
                     "button_success": "#0d9f6e",
                     "button_success_hover": "#10b981",
-                    "button_warning": "#d97706",
-                    "button_warning_hover": "#f59e0b",
-                    "button_danger": "#dc2626",
-                    "button_danger_hover": "#ef4444",
+                    "button_warning": "#8a4600",
+                    "button_warning_hover": "#a85700",
+                    "button_danger": "#b42318",
+                    "button_danger_hover": "#c7392d",
                     
                     # Inputs
                     "input_background": "#ffffff",
@@ -72,8 +72,8 @@ class ThemeManager:
                     # Paneles especiales (con alpha blends sugeridos)
                     "panel_info": "rgba(37, 99, 235, 0.12)",
                     "panel_success": "rgba(13, 159, 110, 0.12)",
-                    "panel_warning": "rgba(217, 119, 6, 0.12)",
-                    "panel_error": "rgba(220, 38, 38, 0.12)",
+                    "panel_warning": "rgba(138, 70, 0, 0.16)",
+                    "panel_error": "rgba(180, 35, 24, 0.14)",
                     
                     # Estadísticas (contraste mejorado)
                     "stats_background": "#ffffff",
@@ -100,8 +100,8 @@ class ThemeManager:
                     
                     # Estados
                     "success": "#10b981",
-                    "warning": "#f59e0b",
-                    "error": "#ef4444",
+                    "warning": "#fbbf24",
+                    "error": "#f87171",
                     "info": "#3b82f6",
                     
                     # Bordes y separadores
@@ -116,10 +116,10 @@ class ThemeManager:
                     "button_secondary_hover": "#333a48",
                     "button_success": "#10b981",
                     "button_success_hover": "#34d399",
-                    "button_warning": "#f59e0b",
-                    "button_warning_hover": "#fbbf24",
-                    "button_danger": "#ef4444",
-                    "button_danger_hover": "#f87171",
+                    "button_warning": "#fbbf24",
+                    "button_warning_hover": "#fcd34d",
+                    "button_danger": "#f87171",
+                    "button_danger_hover": "#fca5a5",
                     
                     # Inputs
                     "input_background": "#1a1d27",
@@ -137,8 +137,8 @@ class ThemeManager:
                     # Paneles especiales
                     "panel_info": "rgba(59, 130, 246, 0.15)",
                     "panel_success": "rgba(16, 185, 129, 0.15)",
-                    "panel_warning": "rgba(245, 158, 11, 0.15)",
-                    "panel_error": "rgba(239, 68, 68, 0.15)",
+                    "panel_warning": "rgba(251, 191, 36, 0.2)",
+                    "panel_error": "rgba(248, 113, 113, 0.18)",
                     
                     # Estadísticas (contraste mejorado)
                     "stats_background": "#1a1d27",
@@ -197,6 +197,7 @@ class ThemeManager:
             background-color: {colors['surface']};
             color: {colors['text_secondary']};
             padding: 9px 18px;
+            min-height: 44px;
             margin-right: 2px;
             border: 1px solid {colors['border']};
             border-bottom: none;
@@ -225,7 +226,7 @@ class ThemeManager:
             padding: 9px 16px;
             border-radius: 10px;
             font-weight: 600;
-            min-height: 38px;
+            min-height: 44px;
         }}
         
         QPushButton:hover {{
@@ -312,6 +313,7 @@ class ThemeManager:
             border: 1px solid {colors['input_border']};
             border-radius: 8px;
             padding: 8px 12px;
+            min-height: 44px;
         }}
         
         QLineEdit:focus, QTextEdit:focus, QComboBox:focus {{

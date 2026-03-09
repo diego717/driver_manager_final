@@ -15,6 +15,7 @@ const sources = {
   pwa: path.join(rootDir, "dashboard-pwa.js"),
   manifest: path.join(rootDir, "manifest.json"),
   sw: path.join(rootDir, "sw.js"),
+  materialSymbolsFont: path.join(rootDir, "assets", "fonts", "material-symbols-outlined.ttf"),
 };
 
 function readFile(filePath) {
@@ -54,6 +55,7 @@ function rewriteServiceWorker(content, versions) {
     `/dashboard.js?v=${versions.js}`,
     `/dashboard-pwa.js?v=${versions.pwa}`,
     `/manifest.json?v=${versions.manifest}`,
+    "/assets/fonts/material-symbols-outlined.ttf",
   ];
   const staticAssetPaths = Array.from(
     new Set(staticAssets.map((asset) => new URL(asset, "https://dashboard.local").pathname)),
@@ -79,6 +81,12 @@ function writeFile(fileName, content) {
   fs.writeFileSync(path.join(publicDir, fileName), content, "utf8");
 }
 
+function copyFileToPublic(sourcePath, targetPath) {
+  const destination = path.join(publicDir, targetPath);
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.copyFileSync(sourcePath, destination);
+}
+
 function main() {
   const html = readFile(sources.html);
   const css = readFile(sources.css);
@@ -89,6 +97,7 @@ function main() {
   const pwa = readFile(sources.pwa);
   const manifest = readFile(sources.manifest);
   const sw = readFile(sources.sw);
+  const materialSymbolsFont = fs.readFileSync(sources.materialSymbolsFont);
 
   const versions = {
     css: hashOf(css),
@@ -99,6 +108,7 @@ function main() {
     pwa: hashOf(pwa),
     manifest: hashOf(manifest),
     sw: hashOf(sw),
+    materialSymbolsFont: hashOf(materialSymbolsFont),
   };
   versions.build = hashOf(
     [
@@ -123,6 +133,7 @@ function main() {
   writeFile("dashboard.html", rewriteDashboardHtml(html, versions));
   writeFile("dashboard-pwa.js", rewriteDashboardPwa(pwa, versions));
   writeFile("sw.js", rewriteServiceWorker(sw, versions));
+  copyFileToPublic(sources.materialSymbolsFont, path.join("assets", "fonts", "material-symbols-outlined.ttf"));
   writeFile("dashboard-build.json", `${JSON.stringify({ versions }, null, 2)}\n`);
 
   console.log(`Dashboard assets sincronizados en public/ (build=${versions.build})`);

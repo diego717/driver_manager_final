@@ -6,14 +6,13 @@
     <meta name="theme-color" content="#0f756d">
     <meta name="description" content="Dashboard de gestión de registros de drivers">
     <title>SiteOps Dashboard</title>
-    <link rel="stylesheet" href="/dashboard.css?v=9e1890bd3d">
+    <link rel="stylesheet" href="/dashboard.css?v=8936e814ab">
     <link rel="manifest" href="/manifest.json?v=9130a5f920">
     <link rel="icon" href="/icons/icon-192x192.png">
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet">
     <script src="/chart.umd.js?v=74401d738d" defer></script>
 </head>
 
@@ -257,11 +256,11 @@
         </main>
     </div>
     
-    <div id="loginModal" class="modal">
+    <div id="loginModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="loginModalTitle" aria-describedby="loginModalDescription">
         <div class="modal-content">
             <div class="login-header">
-                <h2><span class="material-symbols-outlined icon-inline-lg icon-middle">lock</span> SiteOps</h2>
-                <p>Iniciar Sesión</p>
+                <h2 id="loginModalTitle"><span class="material-symbols-outlined icon-inline-lg icon-middle">lock</span> SiteOps</h2>
+                <p id="loginModalDescription">Iniciar sesión</p>
             </div>
             <form id="loginForm">
                 <div class="input-group">
@@ -278,18 +277,20 @@
         </div>
     </div>
     
-    <div id="photoModal" class="modal">
+    <div id="photoModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="photoModalTitle" aria-describedby="photoModalDescription">
         <div class="modal-content photo-modal">
             <button type="button" class="close" aria-label="Cerrar visor de foto">&times;</button>
+            <h3 id="photoModalTitle" class="sr-only">Visor de foto</h3>
+            <p id="photoModalDescription" class="sr-only">Muestra la evidencia fotográfica ampliada.</p>
             <img id="photoViewer" src="" alt="Foto de incidencia">
         </div>
     </div>
 
-    <div id="qrModal" class="modal">
+    <div id="qrModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="qrModalTitle" aria-describedby="qrModalDescription">
         <div class="modal-content qr-modal">
             <button type="button" class="close" aria-label="Cerrar generador QR">&times;</button>
-            <h3>Alta de equipo y QR</h3>
-            <p class="qr-modal-subtitle">Genera códigos compatibles con mobile y guarda el equipo (marca/modelo/serie/cliente) para asociarlo luego a registros o incidencias.</p>
+            <h3 id="qrModalTitle">Alta de equipo y QR</h3>
+            <p id="qrModalDescription" class="qr-modal-subtitle">Genera códigos compatibles con mobile y guarda el equipo (marca/modelo/serie/cliente) para asociarlo luego a registros o incidencias.</p>
 
             <div class="qr-type-selector">
                 <label>
@@ -368,11 +369,11 @@
         </div>
     </div>
 
-    <div id="qrPasswordModal" class="modal">
+    <div id="qrPasswordModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="qrPasswordModalTitle" aria-describedby="qrPasswordModalDescription">
         <div class="modal-content qr-password-modal">
             <button type="button" class="close" aria-label="Cerrar confirmación de contraseña">&times;</button>
-            <h3>Confirmar edición</h3>
-            <p class="qr-modal-subtitle">Ingresa tu contraseña para habilitar edición de este equipo.</p>
+            <h3 id="qrPasswordModalTitle">Confirmar edición</h3>
+            <p id="qrPasswordModalDescription" class="qr-modal-subtitle">Ingresa tu contraseña para habilitar edición de este equipo.</p>
             <div class="input-group">
                 <label for="qrPasswordInput">Contraseña</label>
                 <input type="password" id="qrPasswordInput" autocomplete="current-password" placeholder="********">
@@ -385,10 +386,11 @@
         </div>
     </div>
 
-    <div id="actionModal" class="modal">
+    <div id="actionModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="actionModalTitle" aria-describedby="actionModalDescription actionModalSubtitle">
         <div class="modal-content action-modal">
             <button type="button" class="close" aria-label="Cerrar formulario">&times;</button>
             <h3 id="actionModalTitle">Acción</h3>
+            <p id="actionModalDescription" class="sr-only">Completa y confirma el formulario para guardar la acción.</p>
             <p id="actionModalSubtitle" class="qr-modal-subtitle is-hidden"></p>
             <form id="actionModalForm" novalidate>
                 <div id="actionModalFields"></div>
@@ -403,7 +405,7 @@
     
     <script src="/dashboard-qr.js?v=d8de215faf" defer></script>
     <script src="/dashboard-api.js?v=da9fe280e7" defer></script>
-    <script src="/dashboard.js?v=1f239bc6fe" defer></script>
+    <script src="/dashboard.js?v=5ba5a236fe" defer></script>
     <script src="/dashboard-pwa.js?v=55b84aa40e" defer></script>
 </body>
 </html>

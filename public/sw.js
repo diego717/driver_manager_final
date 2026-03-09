@@ -1,14 +1,15 @@
 // Service Worker for SiteOps Dashboard PWA
-const CACHE_NAME = 'driver-manager-a56735a651';
+const CACHE_NAME = 'driver-manager-f93e86894a';
 const STATIC_ASSETS = [
   '/web/dashboard',
-  '/dashboard.css?v=9e1890bd3d',
+  '/dashboard.css?v=8936e814ab',
   '/chart.umd.js?v=74401d738d',
   '/dashboard-qr.js?v=d8de215faf',
   '/dashboard-api.js?v=da9fe280e7',
-  '/dashboard.js?v=1f239bc6fe',
+  '/dashboard.js?v=5ba5a236fe',
   '/dashboard-pwa.js?v=55b84aa40e',
-  '/manifest.json?v=9130a5f920'
+  '/manifest.json?v=9130a5f920',
+  '/assets/fonts/material-symbols-outlined.ttf'
 ];
 
 const STATIC_ASSET_PATHS = new Set([
@@ -19,7 +20,8 @@ const STATIC_ASSET_PATHS = new Set([
   '/dashboard-api.js',
   '/dashboard.js',
   '/dashboard-pwa.js',
-  '/manifest.json'
+  '/manifest.json',
+  '/assets/fonts/material-symbols-outlined.ttf'
 ]);
 
 function getAssetPath(input) {

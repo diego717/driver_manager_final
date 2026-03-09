@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import {
@@ -309,6 +309,7 @@ export default function DriversScreen() {
             void onPickFile();
           }}
           accessibilityRole="button"
+          accessibilityLabel="Seleccionar archivo de driver"
           activeOpacity={0.88}
         >
           <Text style={[styles.secondaryButtonText, { color: palette.refreshText }]}>Seleccionar archivo</Text>
@@ -327,6 +328,7 @@ export default function DriversScreen() {
           }}
           disabled={uploading || !pickedFile}
           accessibilityRole="button"
+          accessibilityLabel="Subir driver"
           activeOpacity={0.86}
         >
           {uploading ? (
@@ -346,6 +348,8 @@ export default function DriversScreen() {
               void loadDrivers();
             }}
             disabled={loadingDrivers}
+            accessibilityRole="button"
+            accessibilityLabel="Actualizar lista de drivers"
             activeOpacity={0.88}
           >
             {loadingDrivers ? (
@@ -377,6 +381,8 @@ export default function DriversScreen() {
               onPress={() => {
                 void loadDrivers();
               }}
+              accessibilityRole="button"
+              accessibilityLabel="Actualizar lista de drivers vacia"
               activeOpacity={0.88}
             >
               <Text style={[styles.secondaryButtonText, { color: palette.refreshText }]}>Actualizar lista</Text>
@@ -402,17 +408,19 @@ export default function DriversScreen() {
                 </View>
 
                 <TouchableOpacity
-                  style={[styles.deleteButton, { backgroundColor: palette.warningBg }]}
+                  style={[styles.deleteButton, { backgroundColor: palette.errorBg }]}
                   onPress={() => {
                     void onDelete(driver);
                   }}
                   disabled={deletingKey === driver.key}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Eliminar driver ${driver.brand} ${driver.version}`}
                   activeOpacity={0.86}
                 >
                   {deletingKey === driver.key ? (
-                    <ActivityIndicator size="small" color={palette.warningText} />
+                    <ActivityIndicator size="small" color={palette.errorText} />
                   ) : (
-                    <Text style={[styles.deleteButtonText, { color: palette.warningText }]}>Eliminar</Text>
+                    <Text style={[styles.deleteButtonText, { color: palette.errorText }]}>Eliminar</Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -476,6 +484,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 11,
+    minHeight: 44,
   },
   fileLabel: {
     fontSize: 12.5,
@@ -509,7 +518,7 @@ const styles = StyleSheet.create({
   secondaryButtonCompact: {
     borderWidth: 1,
     borderRadius: 11,
-    minHeight: 38,
+    minHeight: 44,
     paddingHorizontal: 12,
     alignItems: "center",
     justifyContent: "center",
@@ -568,7 +577,8 @@ const styles = StyleSheet.create({
   deleteButton: {
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
+    minHeight: 44,
     minWidth: 82,
     alignItems: "center",
     justifyContent: "center",
