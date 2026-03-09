@@ -90,6 +90,9 @@ let currentAssetsData = [];
 let currentSelectedAssetId = null;
 let currentDriversData = [];
 let selectedDriverFile = null;
+let currentTrendRangeDays = 7;
+const TREND_RANGE_ALLOWED_DAYS = new Set([1, 7]);
+let lastCriticalIncidentsCount = null;
 
 // WebSocket/SSE State
 let eventSource = null;
@@ -169,6 +172,7 @@ const SECTION_TITLES = {
     drivers: 'Drivers',
     incidents: 'Incidencias',
     audit: 'Auditoría',
+    settings: 'Configuración',
 };
 const SECTION_SUBTITLES = {
     dashboard: 'Panorama general en tiempo real',
@@ -177,6 +181,7 @@ const SECTION_SUBTITLES = {
     drivers: 'Versionado centralizado de controladores',
     incidents: 'Atención de eventos con prioridad visible',
     audit: 'Trazas críticas y cumplimiento',
+    settings: 'Preferencias operativas y atajos de gestión',
 };
 const TOAST_TYPE_ICONS = {
     success: '✓',
@@ -441,6 +446,8 @@ function resetProtectedViews() {
     currentAssetsData = [];
     currentSelectedAssetId = null;
     syncRoleBasedNavigationAccess();
+    updateSettingsSummary();
+    setNotificationBadgeCount(0);
 }
 
 function hasActiveSession() {
@@ -468,6 +475,47 @@ function syncRoleBasedNavigationAccess() {
     }
 }
 
+function setNotificationBadgeCount(count) {
+    const badge = document.getElementById('notifBadge');
+    if (!badge) return;
+    const normalizedCount = Number.parseInt(String(count ?? 0), 10);
+    const safeCount = Number.isInteger(normalizedCount) && normalizedCount > 0 ? normalizedCount : 0;
+    badge.classList.toggle('is-hidden', safeCount <= 0);
+    badge.textContent = safeCount > 99 ? '99+' : String(safeCount);
+    badge.setAttribute(
+        'aria-label',
+        safeCount > 0 ? `${safeCount} alertas pendientes` : 'Sin alertas pendientes',
+    );
+}
+
+function updateSettingsSyncLabel(status = 'paused') {
+    const labelEl = document.getElementById('settingsSyncStatus');
+    if (!labelEl) return;
+    const normalized = ['connected', 'disconnected', 'reconnecting', 'paused', 'failed'].includes(status)
+        ? status
+        : 'paused';
+    const labels = {
+        connected: 'Conectado en tiempo real',
+        disconnected: 'Conexión interrumpida',
+        reconnecting: 'Reconectando',
+        paused: 'Sincronización en pausa',
+        failed: 'Sin enlace en tiempo real',
+    };
+    labelEl.textContent = labels[normalized] || labels.paused;
+}
+
+function updateSettingsSummary() {
+    const usernameEl = document.getElementById('settingsUsername');
+    const roleEl = document.getElementById('settingsRole');
+    if (usernameEl) {
+        usernameEl.textContent = String(currentUser?.username || '-');
+    }
+    if (roleEl) {
+        roleEl.textContent = String(currentUser?.role || '-');
+    }
+    updateSettingsSyncLabel(connectionStatusLastRendered?.status || 'paused');
+}
+
 function applyAuthenticatedUser(user) {
     currentUser = user;
     document.getElementById('username').textContent = user.username || 'Usuario';
@@ -476,6 +524,7 @@ function applyAuthenticatedUser(user) {
     const avatarEl = document.getElementById('userInitial');
     if (avatarEl) avatarEl.textContent = initial;
     syncRoleBasedNavigationAccess();
+    updateSettingsSummary();
 }
 
 function normalizeSeverity(input) {
@@ -1031,10 +1080,58 @@ async function selectAndUploadIncidentPhoto(incidentId, installationId) {
 }
 
 function updateStats(stats) {
-    animateNumber('totalInstallations', stats.total_installations || 0);
-    animateNumber('successRate', (stats.success_rate || 0) + '%');
-    animateNumber('avgTime', (stats.average_time_minutes || 0) + ' min');
-    animateNumber('uniqueClients', stats.unique_clients || 0);
+    const criticalCount = Number(stats?.incident_critical_active_count) || 0;
+    const inProgressCount = Number(stats?.incident_in_progress_count) || 0;
+    const outsideSlaCount = Number(stats?.incident_outside_sla_count) || 0;
+    const slaMinutes = Number(stats?.incident_sla_minutes) || 30;
+
+    animateNumber('totalInstallations', criticalCount);
+    animateNumber('successRate', inProgressCount);
+    animateNumber('avgTime', outsideSlaCount);
+
+    const syncClockEl = document.getElementById('uniqueClients');
+    if (syncClockEl) {
+        syncClockEl.textContent = new Date().toLocaleTimeString('es-ES', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+        });
+    }
+
+    const criticalMetaEl = document.getElementById('kpiCriticalMeta');
+    if (criticalMetaEl) {
+        if (lastCriticalIncidentsCount === null) {
+            criticalMetaEl.textContent = 'Sin cambios';
+        } else {
+            const delta = criticalCount - lastCriticalIncidentsCount;
+            criticalMetaEl.textContent = delta > 0
+                ? `↑ +${delta}`
+                : delta < 0
+                    ? `↓ ${delta}`
+                    : 'Sin cambios';
+        }
+    }
+    lastCriticalIncidentsCount = criticalCount;
+
+    const inProgressMetaEl = document.getElementById('kpiInProgressMeta');
+    if (inProgressMetaEl) {
+        inProgressMetaEl.textContent = inProgressCount > 10 ? 'Revisar' : 'Normal';
+    }
+
+    const slaMetaEl = document.getElementById('kpiSlaMeta');
+    if (slaMetaEl) {
+        slaMetaEl.textContent = outsideSlaCount > 0
+            ? `Revisar (${slaMinutes} min)`
+            : `OK (${slaMinutes} min)`;
+    }
+
+    const syncMetaEl = document.getElementById('kpiSyncMeta');
+    if (syncMetaEl) {
+        const syncStatus = connectionStatusLastRendered?.status || 'paused';
+        syncMetaEl.textContent = syncStatus === 'connected' ? 'OK' : 'Sincronizando';
+    }
+
+    setNotificationBadgeCount(criticalCount + outsideSlaCount);
 }
 
 function prefersReducedMotion() {
@@ -1292,16 +1389,57 @@ function renderBrandChart(stats) {
     });
 }
 
-async function renderTrendChart() {
+function normalizeTrendRangeDays(daysCandidate) {
+    const parsed = Number.parseInt(String(daysCandidate ?? ''), 10);
+    if (!Number.isInteger(parsed) || !TREND_RANGE_ALLOWED_DAYS.has(parsed)) {
+        return 7;
+    }
+    return parsed;
+}
+
+function syncTrendRangeToggleUI() {
+    const buttons = document.querySelectorAll('.chart-toggle button[data-trend-range]');
+    buttons.forEach((button) => {
+        const range = normalizeTrendRangeDays(button.dataset.trendRange);
+        const isActive = range === currentTrendRangeDays;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+}
+
+function setupTrendRangeToggle() {
+    const buttons = document.querySelectorAll('.chart-toggle button[data-trend-range]');
+    if (!buttons.length) return;
+    syncTrendRangeToggleUI();
+    buttons.forEach((button) => {
+        if (button.dataset.boundTrendToggle === '1') return;
+        button.dataset.boundTrendToggle = '1';
+        button.addEventListener('click', async () => {
+            if (!requireActiveSession()) return;
+            const selectedDays = normalizeTrendRangeDays(button.dataset.trendRange);
+            if (selectedDays === currentTrendRangeDays) return;
+            currentTrendRangeDays = selectedDays;
+            syncTrendRangeToggleUI();
+            await renderTrendChart(currentTrendRangeDays);
+        });
+    });
+}
+
+async function renderTrendChart(days = currentTrendRangeDays) {
     if (!isChartAvailable()) return;
-    const ctx = document.getElementById('trendChart').getContext('2d');
-    
+    const canvas = document.getElementById('trendChart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const normalizedDays = normalizeTrendRangeDays(days);
+    currentTrendRangeDays = normalizedDays;
+    syncTrendRangeToggleUI();
+
     if (charts.trend) {
         charts.trend.destroy();
     }
     
     try {
-        const trendResponse = await api.getTrendData();
+        const trendResponse = await api.getTrendData({ days: normalizedDays });
         const trendPoints = Array.isArray(trendResponse?.points) ? trendResponse.points : [];
 
         const labels = [];
@@ -1311,19 +1449,27 @@ async function renderTrendChart() {
             for (const point of trendPoints) {
                 const rawDate = typeof point?.date === 'string' ? point.date : '';
                 const date = rawDate ? new Date(rawDate + 'T00:00:00Z') : null;
-                labels.push(
-                    date && !Number.isNaN(date.getTime())
-                        ? date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' })
-                        : rawDate || 'N/A'
-                );
+                if (normalizedDays === 1) {
+                    labels.push('Últimas 24h');
+                } else {
+                    labels.push(
+                        date && !Number.isNaN(date.getTime())
+                            ? date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' })
+                            : rawDate || 'N/A'
+                    );
+                }
                 data.push(Number(point?.total_installations) || 0);
             }
         } else {
             const today = new Date();
-            for (let i = 6; i >= 0; i--) {
+            for (let i = normalizedDays - 1; i >= 0; i--) {
                 const date = new Date(today);
                 date.setDate(date.getDate() - i);
-                labels.push(date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' }));
+                labels.push(
+                    normalizedDays === 1
+                        ? 'Últimas 24h'
+                        : date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' })
+                );
                 data.push(0);
             }
         }
@@ -1333,7 +1479,7 @@ async function renderTrendChart() {
             data: {
                 labels: labels,
                 datasets: [{
-                    label: 'Registros',
+                    label: normalizedDays === 1 ? 'Registros (24h)' : 'Registros (7d)',
                     data: data,
                     borderColor: 'rgba(6, 182, 212, 1)',
                     backgroundColor: 'rgba(6, 182, 212, 0.1)',
@@ -1391,7 +1537,7 @@ async function loadDashboard() {
         // Render charts
         renderSuccessChart(stats);
         renderBrandChart(stats);
-        await renderTrendChart();
+        await renderTrendChart(currentTrendRangeDays);
         
         const installations = await api.getInstallations({ limit: 5 });
         renderRecentInstallations(installations);
@@ -4026,9 +4172,21 @@ function renderAuditLogs(logs) {
 
 function getCurrentShiftLabel(now = new Date()) {
     const hour = now.getHours();
-    if (hour >= 6 && hour < 12) return 'Turno manana';
+    if (hour >= 6 && hour < 12) return 'Turno mañana';
     if (hour >= 12 && hour < 18) return 'Turno tarde';
     return 'Turno noche';
+}
+
+function updateDashboardDateLabel(now = new Date()) {
+    const dateEl = document.getElementById('dashboardDate');
+    if (!dateEl) return;
+    const rawLabel = now.toLocaleDateString('es-ES', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+    });
+    const label = rawLabel.charAt(0).toUpperCase() + rawLabel.slice(1);
+    dateEl.textContent = label;
 }
 
 function updatePageSubtitleForSection(section) {
@@ -4049,13 +4207,14 @@ function buildOpsPulseText(status, section) {
     if (normalizedStatus === 'reconnecting') return `Reconectando ${sectionLabel}`;
     if (normalizedStatus === 'disconnected') return 'Conexión interrumpida';
     if (normalizedStatus === 'failed') return 'Sin enlace en tiempo real';
-    return 'Sincronizacion en pausa';
+    return 'Sincronización en pausa';
 }
 
 function syncHeaderDelight(section, explicitStatus = null) {
     const normalizedSection = SECTION_TITLES[section] ? section : 'dashboard';
     document.body.dataset.activeSection = normalizedSection;
     updatePageSubtitleForSection(normalizedSection);
+    updateDashboardDateLabel();
 
     const pulse = document.getElementById('opsPulse');
     const pulseText = document.getElementById('opsPulseText');
@@ -4065,6 +4224,7 @@ function syncHeaderDelight(section, explicitStatus = null) {
     const status = explicitStatus ?? fallbackStatus;
     pulse.dataset.state = status;
     pulseText.textContent = buildOpsPulseText(status, normalizedSection);
+    updateSettingsSyncLabel(status);
 }
 
 function updatePageTitleForSection(section) {
@@ -4080,6 +4240,15 @@ function runSectionLoaders(section) {
     if (section === 'assets') loadAssets();
     if (section === 'drivers') loadDrivers();
     if (section === 'audit') loadAuditLogs();
+}
+
+function navigateToSectionByKey(section) {
+    const link = document.querySelector(`.nav-links a[data-section="${section}"]`);
+    if (link instanceof HTMLElement) {
+        link.click();
+        return true;
+    }
+    return false;
 }
 
 async function activateSection(section) {
@@ -4176,6 +4345,34 @@ document.getElementById('refreshBtn').addEventListener('click', () => {
     showNotification('Dashboard actualizado', 'info');
 });
 
+document.getElementById('headerCreateRecordBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    createManualRecordFromWeb();
+});
+
+document.getElementById('headerCreateIncidentBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    openIncidentModal({
+        installationId: Number.isInteger(currentSelectedInstallationId) ? currentSelectedInstallationId : '',
+    });
+});
+
+document.getElementById('notifBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    navigateToSectionByKey('dashboard');
+    const attentionPanel = document.getElementById('attentionPanel');
+    if (attentionPanel) {
+        attentionPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    const badge = document.getElementById('notifBadge');
+    const badgeCount = Number.parseInt(String(badge?.textContent || '0'), 10) || 0;
+    if (badgeCount > 0) {
+        showNotification(`Tienes ${badgeCount} alertas para revisar en "Atención ahora".`, 'warning');
+    } else {
+        showNotification('No hay alertas pendientes.', 'info');
+    }
+});
+
 document.querySelectorAll('.nav-links a').forEach(link => {
     link.addEventListener('click', (e) => {
         e.preventDefault();
@@ -4183,7 +4380,7 @@ document.querySelectorAll('.nav-links a').forEach(link => {
         const section = link.dataset.section;
         if (!section) return;
         if (section === 'audit' && !canCurrentUserAccessAudit()) {
-            showNotification('No tienes permisos para acceder a Auditoria.', 'error');
+            showNotification('No tienes permisos para acceder a Auditoría.', 'error');
             return;
         }
         
@@ -4192,6 +4389,40 @@ document.querySelectorAll('.nav-links a').forEach(link => {
         
         void activateSection(section);
     });
+});
+
+document.getElementById('settingsThemeBtn')?.addEventListener('click', () => {
+    document.getElementById('themeToggle')?.click();
+});
+
+document.getElementById('settingsRefreshBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    document.getElementById('refreshBtn')?.click();
+});
+
+document.getElementById('settingsNewRecordBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    createManualRecordFromWeb();
+});
+
+document.getElementById('settingsNewIncidentBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    openIncidentModal({
+        installationId: Number.isInteger(currentSelectedInstallationId) ? currentSelectedInstallationId : '',
+    });
+});
+
+document.getElementById('settingsOpenAuditBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    if (!canCurrentUserAccessAudit()) {
+        showNotification('No tienes permisos para acceder a Auditoría.', 'error');
+        return;
+    }
+    navigateToSectionByKey('audit');
+});
+
+document.getElementById('settingsLogoutBtn')?.addEventListener('click', () => {
+    document.getElementById('logoutBtn')?.click();
 });
 
 document.getElementById('applyFilters').addEventListener('click', () => {
@@ -4672,6 +4903,7 @@ function handleRealtimeStatsUpdate(stats) {
         // Refresh charts with animation
         renderSuccessChart(stats);
         renderBrandChart(stats);
+        void renderTrendChart(currentTrendRangeDays);
     }
 }
 
@@ -4810,6 +5042,7 @@ async function init() {
     
     // Setup theme toggle
     setupThemeToggle();
+    setupTrendRangeToggle();
     syncHeaderDelight(getActiveSectionName() || 'dashboard', 'paused');
     
     // Handle page visibility changes to suspend/reconnect SSE.

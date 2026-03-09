@@ -150,3 +150,48 @@ Entrega:
 - estado pass/fail por suite
 - release notes UX breve
 ```
+
+## Día 12 — Prototipo en Stitch (antes de implementar)
+```text
+[$frontend-design] [$adapt] [$normalize]
+
+Genera en Stitch una propuesta de rediseño del dashboard operativo de SiteOps.
+
+Objetivo:
+- validar UX/UI antes de tocar código
+- priorizar operación del turno y acciones inmediatas
+- simplificar visualización y navegación
+
+Contexto:
+- mantener consistencia con el sistema visual actual
+- accesibilidad AA en contraste de warning/error
+- targets mínimos de 44x44
+
+Requerimientos:
+1. Sidebar agrupada por intención:
+   - Operación: Hoy, Registros, Incidencias
+   - Activos: Equipos, Drivers
+   - Control: Auditoría, Configuración
+2. Header compacto con estado de sincronización y acciones rápidas.
+3. Reemplazar dashboard actual por:
+   - 4 KPIs operativos:
+     - incidencias críticas abiertas
+     - registros en curso
+     - registros fuera de SLA
+     - última sincronización
+   - 1 único visual principal:
+     - tendencia de registros (barras) + línea objetivo/SLA
+     - toggle 24h/7d
+   - 1 bloque “Atención ahora” con top 5 casos accionables
+4. Variante mobile:
+   - bottom nav: Hoy, Registros, Incidencias, Más
+   - layout de una columna sin perder funcionalidades clave
+
+Entrega:
+- propuesta desktop + mobile
+- breve rationale de jerarquía visual
+- lista de decisiones para implementar luego en:
+  - dashboard.html
+  - dashboard.css
+  - dashboard.js
+```

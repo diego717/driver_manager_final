@@ -245,8 +245,14 @@
                 });
             },
             uploadIncidentPhoto,
-            getTrendData() {
-                return request('/web/statistics/trend');
+            getTrendData(params = {}) {
+                const query = new URLSearchParams();
+                Object.entries(params || {}).forEach(([key, value]) => {
+                    if (value === undefined || value === null || value === '') return;
+                    query.set(key, String(value));
+                });
+                const suffix = query.toString();
+                return request(suffix ? `/web/statistics/trend?${suffix}` : '/web/statistics/trend');
             },
             login(username, password) {
                 return request('/web/auth/login', {

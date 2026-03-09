@@ -1793,7 +1793,49 @@ async function getSseStatisticsSnapshot(env, tenantId = DEFAULT_REALTIME_TENANT_
   `)
     .bind(normalizedTenantId)
     .all();
-  return computeStatistics(installations || []);
+  const baseStats = computeStatistics(installations || []);
+
+  const rawSlaMinutes = Number.parseInt(String(env?.INCIDENT_SLA_MINUTES || ""), 10);
+  const incidentSlaMinutes = Number.isInteger(rawSlaMinutes) && rawSlaMinutes > 0
+    ? Math.min(rawSlaMinutes, 24 * 60)
+    : 30;
+  const outsideSlaCutoffIso = new Date(Date.now() - incidentSlaMinutes * 60 * 1000).toISOString();
+
+  let incidentSummary = {
+    incident_in_progress_count: 0,
+    incident_critical_active_count: 0,
+    incident_outside_sla_count: 0,
+  };
+  try {
+    const { results: incidentSummaryRows } = await env.DB.prepare(`
+      SELECT
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress')
+          AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count,
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress')
+          AND COALESCE(created_at, '') < ? THEN 1 ELSE 0 END) AS incident_outside_sla_count
+      FROM incidents
+      WHERE tenant_id = ?
+    `)
+      .bind(outsideSlaCutoffIso, normalizedTenantId)
+      .all();
+    const row = incidentSummaryRows?.[0] || {};
+    incidentSummary = {
+      incident_in_progress_count: Number(row?.incident_in_progress_count) || 0,
+      incident_critical_active_count: Number(row?.incident_critical_active_count) || 0,
+      incident_outside_sla_count: Number(row?.incident_outside_sla_count) || 0,
+    };
+  } catch (error) {
+    if (!isMissingIncidentsTableError(error)) {
+      throw error;
+    }
+  }
+
+  return {
+    ...baseStats,
+    ...incidentSummary,
+    incident_sla_minutes: incidentSlaMinutes,
+  };
 }
 
 function getRealtimeBrokerStub(env) {
@@ -7168,6 +7210,41 @@ async function handleStatisticsRoute(
       .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
       .all();
 
+    const rawSlaMinutes = Number.parseInt(String(env?.INCIDENT_SLA_MINUTES || ""), 10);
+    const incidentSlaMinutes = Number.isInteger(rawSlaMinutes) && rawSlaMinutes > 0
+      ? Math.min(rawSlaMinutes, 24 * 60)
+      : 30;
+    const outsideSlaCutoffIso = new Date(Date.now() - incidentSlaMinutes * 60 * 1000).toISOString();
+    let incidentSummary = {
+      incident_in_progress_count: 0,
+      incident_critical_active_count: 0,
+      incident_outside_sla_count: 0,
+    };
+    try {
+      const { results: incidentSummaryRows } = await env.DB.prepare(`
+        SELECT
+          SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
+          SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress')
+            AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count,
+          SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress')
+            AND COALESCE(created_at, '') < ? THEN 1 ELSE 0 END) AS incident_outside_sla_count
+        FROM incidents
+        WHERE tenant_id = ?
+      `)
+        .bind(outsideSlaCutoffIso, statsTenantId)
+        .all();
+      const row = incidentSummaryRows?.[0] || {};
+      incidentSummary = {
+        incident_in_progress_count: Number(row?.incident_in_progress_count) || 0,
+        incident_critical_active_count: Number(row?.incident_critical_active_count) || 0,
+        incident_outside_sla_count: Number(row?.incident_outside_sla_count) || 0,
+      };
+    } catch (error) {
+      if (!isMissingIncidentsTableError(error)) {
+        throw error;
+      }
+    }
+
     const totals = totalsRows?.[0] || {};
     const byBrand = {};
     for (const row of byBrandRows || []) {
@@ -7196,6 +7273,10 @@ async function handleStatisticsRoute(
       success_rate: Number(totals.success_rate) || 0,
       average_time_minutes: Number(totals.average_time_minutes) || 0,
       unique_clients: Number(totals.unique_clients) || 0,
+      incident_in_progress_count: incidentSummary.incident_in_progress_count,
+      incident_critical_active_count: incidentSummary.incident_critical_active_count,
+      incident_outside_sla_count: incidentSummary.incident_outside_sla_count,
+      incident_sla_minutes: incidentSlaMinutes,
       top_drivers: topDrivers,
       by_brand: byBrand,
     });

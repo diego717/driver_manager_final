@@ -1,12 +1,12 @@
 // Service Worker for SiteOps Dashboard PWA
-const CACHE_NAME = 'driver-manager-f93e86894a';
+const CACHE_NAME = 'driver-manager-5950482284';
 const STATIC_ASSETS = [
   '/web/dashboard',
-  '/dashboard.css?v=8936e814ab',
+  '/dashboard.css?v=1c7b780b76',
   '/chart.umd.js?v=74401d738d',
   '/dashboard-qr.js?v=d8de215faf',
-  '/dashboard-api.js?v=da9fe280e7',
-  '/dashboard.js?v=5ba5a236fe',
+  '/dashboard-api.js?v=c4aa18ac12',
+  '/dashboard.js?v=3548e1431d',
   '/dashboard-pwa.js?v=55b84aa40e',
   '/manifest.json?v=9130a5f920',
   '/assets/fonts/material-symbols-outlined.ttf'

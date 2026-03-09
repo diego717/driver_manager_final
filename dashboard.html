@@ -22,14 +22,30 @@
             <div class="logo">
                 <h1><span class="material-symbols-outlined">speed</span> SiteOps</h1>
             </div>
-            <ul class="nav-links">
-                <li><a href="#" class="active" data-section="dashboard"><span class="material-symbols-outlined">dashboard</span> Dashboard</a></li>
-                <li><a href="#" data-section="installations"><span class="material-symbols-outlined">dns</span> Registros</a></li>
-                <li><a href="#" data-section="assets"><span class="material-symbols-outlined">inventory_2</span> Equipos</a></li>
-                <li><a href="#" data-section="drivers"><span class="material-symbols-outlined">upload_file</span> Drivers</a></li>
-                <li><a href="#" data-section="incidents"><span class="material-symbols-outlined">warning</span> Incidencias</a></li>
-                <li><a href="#" data-section="audit"><span class="material-symbols-outlined">description</span> Auditoría</a></li>
-            </ul>
+            <div class="nav-links">
+                <div class="nav-group">
+                    <span class="nav-group-label">Operación</span>
+                    <ul class="nav-group-list">
+                        <li><a href="#" class="active" data-section="dashboard"><span class="material-symbols-outlined">today</span> Hoy</a></li>
+                        <li><a href="#" data-section="installations"><span class="material-symbols-outlined">dns</span> Registros</a></li>
+                        <li><a href="#" data-section="incidents"><span class="material-symbols-outlined">warning</span> Incidencias</a></li>
+                    </ul>
+                </div>
+                <div class="nav-group">
+                    <span class="nav-group-label">Activos</span>
+                    <ul class="nav-group-list">
+                        <li><a href="#" data-section="assets"><span class="material-symbols-outlined">inventory_2</span> Equipos</a></li>
+                        <li><a href="#" data-section="drivers"><span class="material-symbols-outlined">upload_file</span> Drivers</a></li>
+                    </ul>
+                </div>
+                <div class="nav-group">
+                    <span class="nav-group-label">Control</span>
+                    <ul class="nav-group-list">
+                        <li><a href="#" data-section="audit"><span class="material-symbols-outlined">description</span> Auditoría</a></li>
+                        <li><a href="#" data-section="settings"><span class="material-symbols-outlined">tune</span> Configuración</a></li>
+                    </ul>
+                </div>
+            </div>
             <div class="user-info">
                 <div class="user-avatar">
                     <div class="avatar-circle" id="userInitial">U</div>
@@ -46,13 +62,36 @@
             <header class="header">
                 <div class="page-heading">
                     <h2 id="pageTitle">Dashboard</h2>
-                    <p id="pageSubtitle" class="page-subtitle">Estado general de la operaci?n</p>
+                    <p id="pageSubtitle" class="page-subtitle">Estado general de la operación</p>
+                    <p id="dashboardDate" class="page-subtitle dashboard-date">
+                        Hoy
+                    </p>
                 </div>
                 <div class="header-actions">
-                    <div id="opsPulse" class="ops-pulse" role="status" aria-live="polite">
+                    <div id="opsPulse" class="ops-pulse sync-chip" role="status" aria-live="polite">
                         <span class="ops-pulse-dot" aria-hidden="true"></span>
                         <span id="opsPulseText">Listo para operar</span>
                     </div>
+                    <button
+                        id="headerCreateRecordBtn"
+                        class="btn-primary btn-cta"
+                        type="button"
+                    >
+                        <span class="material-symbols-outlined icon-inline-sm">add_circle</span>
+                        Nuevo Registro
+                    </button>
+                    <button
+                        id="headerCreateIncidentBtn"
+                        class="btn-secondary btn-outline-sm"
+                        type="button"
+                    >
+                        <span class="material-symbols-outlined icon-inline-sm">warning</span>
+                        Nueva Incidencia
+                    </button>
+                    <button id="notifBtn" class="btn-icon" type="button" title="Notificaciones" aria-label="Notificaciones">
+                        <span class="material-symbols-outlined">notifications</span>
+                        <span id="notifBadge" class="severity-badge critical" aria-label="2 notificaciones">2</span>
+                    </button>
                     <button id="themeToggle" class="theme-toggle" type="button" title="Cambiar tema" aria-label="Cambiar tema" aria-pressed="false">
                         <span class="icon-sun" aria-hidden="true"><span class="material-symbols-outlined">light_mode</span></span>
                         <span class="icon-moon" aria-hidden="true"><span class="material-symbols-outlined">dark_mode</span></span>
@@ -63,59 +102,55 @@
 
             
             <div id="dashboardSection" class="section active">
-                <!-- Stats Cards -->
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon total"><span class="material-symbols-outlined">inventory_2</span></div>
-                        <div class="stat-info">
-                            <h3>Total Registros</h3>
-                            <p id="totalInstallations">-</p>
+                <div class="dashboard-layout">
+                    <div class="kpi-grid">
+                        <div class="kpi-card critical">
+                            <p class="kpi-title">Incidencias críticas</p>
+                            <p id="kpiCriticalCount" class="kpi-value"><span id="totalInstallations">-</span></p>
+                            <p id="kpiCriticalMeta" class="kpi-sub">Sin cambios</p>
+                        </div>
+                        <div class="kpi-card active">
+                            <p class="kpi-title">Registros en curso</p>
+                            <p id="kpiActiveCount" class="kpi-value"><span id="successRate">-</span></p>
+                            <p id="kpiInProgressMeta" class="kpi-sub">Normal</p>
+                        </div>
+                        <div class="kpi-card warning">
+                            <p class="kpi-title">Atrasados</p>
+                            <p id="kpiSlaCount" class="kpi-value"><span id="avgTime">-</span></p>
+                            <p id="kpiSlaMeta" class="kpi-sub">Fuera del objetivo de tiempo</p>
+                        </div>
+                        <div class="kpi-card info">
+                            <p class="kpi-title">Última sincronización</p>
+                            <p id="kpiLastSync" class="kpi-value"><span id="uniqueClients">-</span></p>
+                            <p id="kpiSyncMeta" class="kpi-sub">OK</p>
                         </div>
                     </div>
-                    <div class="stat-card">
-                        <div class="stat-icon success"><span class="material-symbols-outlined">check_circle</span></div>
-                        <div class="stat-info">
-                            <h3>Tasa de Éxito</h3>
-                            <p id="successRate">-</p>
+
+                    <div id="actividadChart" class="chart-card dashboard-chart-focus">
+                        <div class="dashboard-chart-head">
+                            <h3><span class="material-symbols-outlined">trending_up</span> Tendencia de registros</h3>
+                            <div class="chart-toggle" role="group" aria-label="Rango del gráfico">
+                                <button type="button" data-trend-range="1" aria-pressed="false">24h</button>
+                                <button type="button" data-trend-range="7" class="active" aria-pressed="true">7d</button>
+                            </div>
                         </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon time"><span class="material-symbols-outlined">timer</span></div>
-                        <div class="stat-info">
-                            <h3>Tiempo Promedio</h3>
-                            <p id="avgTime">-</p>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon clients"><span class="material-symbols-outlined">group</span></div>
-                        <div class="stat-info">
-                            <h3>Clientes Únicos</h3>
-                            <p id="uniqueClients">-</p>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Charts Grid -->
-                <div class="charts-grid">
-                    <div class="chart-card">
-                        <h3><span class="material-symbols-outlined">pie_chart</span> Tasa de Éxito</h3>
-                        <canvas id="successChart"></canvas>
-                    </div>
-                    <div class="chart-card">
-                        <h3><span class="material-symbols-outlined">sell</span> Registros por Marca</h3>
-                        <canvas id="brandChart"></canvas>
-                    </div>
-                    <div class="chart-card wide">
-                        <h3><span class="material-symbols-outlined">trending_up</span> Tendencia de Registros (Últimos 7 días)</h3>
                         <canvas id="trendChart"></canvas>
+                        <div class="dashboard-hidden-canvases" aria-hidden="true">
+                            <canvas id="successChart"></canvas>
+                            <canvas id="brandChart"></canvas>
+                        </div>
                     </div>
-                </div>
-                
-                <!-- Recent Activity -->
-                <div class="recent-section">
-                    <h3><span class="material-symbols-outlined">schedule</span> Registros Recientes</h3>
-                    <div id="recentInstallations" class="table-container">
-                        <p class="loading">Cargando...</p>
+
+                    <div id="attentionPanel" class="recent-section">
+                        <h3><span class="material-symbols-outlined">priority_high</span> Atención ahora</h3>
+                        <div id="attentionList" class="attention-list">
+                            <div class="attention-item">
+                                <span class="severity-badge critical">Crítico</span>
+                                <div id="recentInstallations" class="table-container">
+                                    <p class="loading">Cargando...</p>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -135,9 +170,9 @@
                         </select>
                         <select id="statusFilter">
                             <option value="">Todos los estados</option>
-                            <option value="success">✅ Éxito</option>
-                            <option value="failed">❌ Fallido</option>
-                            <option value="unknown">❓ Desconocido</option>
+                            <option value="success">Éxito</option>
+                            <option value="failed">Fallido</option>
+                            <option value="unknown">Desconocido</option>
                         </select>
                         <input type="date" id="startDate" placeholder="Fecha inicio">
                         <input type="date" id="endDate" placeholder="Fecha fin">
@@ -206,7 +241,7 @@
                 <div class="filters">
                     <div class="filter-row">
                         <input type="text" id="driverBrandInput" placeholder="Marca (ej: Zebra)">
-                        <input type="text" id="driverVersiónInput" placeholder="Versión (ej: v1.2.3)">
+                        <input type="text" id="driverVersionInput" placeholder="Versión (ej: v1.2.3)">
                         <input type="text" id="driverDescriptionInput" placeholder="Descripción (opcional)">
                     </div>
                     <div class="filter-actions">
@@ -240,17 +275,59 @@
                 <div class="filters">
                     <select id="auditActionFilter">
                         <option value="">Todas las acciones</option>
-                        <option value="web_login_success">✅ Login exitoso</option>
-                        <option value="web_login_failed">❌ Login fallido</option>
-                        <option value="create_web_user">👤 Crear usuario</option>
-                        <option value="update_web_user">✏️ Actualizar usuario</option>
-                        <option value="create_incident">⚠️ Crear incidencia</option>
-                        <option value="create_installation">💻 Crear registro</option>
+                        <option value="web_login_success">Login exitoso</option>
+                        <option value="web_login_failed">Login fallido</option>
+                        <option value="create_web_user">Crear usuario</option>
+                        <option value="update_web_user">Actualizar usuario</option>
+                        <option value="create_incident">Crear incidencia</option>
+                        <option value="create_installation">Crear registro</option>
                     </select>
                     <button id="refreshAudit" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">refresh</span> Actualizar</button>
                 </div>
                 <div id="auditLogs" class="table-container">
                     <p class="loading">Cargando logs...</p>
+                </div>
+            </div>
+
+            <div id="settingsSection" class="section">
+                <div class="recent-section">
+                    <h3><span class="material-symbols-outlined">tune</span> Configuración</h3>
+                    <div class="table-container">
+                        <div class="asset-meta-grid">
+                            <div class="asset-meta-item">
+                                <small>Usuario activo</small>
+                                <strong id="settingsUsername">-</strong>
+                            </div>
+                            <div class="asset-meta-item">
+                                <small>Rol</small>
+                                <strong id="settingsRole">-</strong>
+                            </div>
+                            <div class="asset-meta-item">
+                                <small>Sincronización</small>
+                                <strong id="settingsSyncStatus">En pausa</strong>
+                            </div>
+                        </div>
+                        <div class="incident-actions">
+                            <button id="settingsThemeBtn" class="btn-secondary" type="button">
+                                <span class="material-symbols-outlined icon-inline-sm">contrast</span> Cambiar tema
+                            </button>
+                            <button id="settingsRefreshBtn" class="btn-secondary" type="button">
+                                <span class="material-symbols-outlined icon-inline-sm">refresh</span> Actualizar dashboard
+                            </button>
+                            <button id="settingsNewRecordBtn" class="btn-primary" type="button">
+                                <span class="material-symbols-outlined icon-inline-sm">edit_note</span> Nuevo registro manual
+                            </button>
+                            <button id="settingsNewIncidentBtn" class="btn-secondary" type="button">
+                                <span class="material-symbols-outlined icon-inline-sm">warning</span> Nueva incidencia
+                            </button>
+                            <button id="settingsOpenAuditBtn" class="btn-secondary" type="button">
+                                <span class="material-symbols-outlined icon-inline-sm">description</span> Ir a auditoría
+                            </button>
+                            <button id="settingsLogoutBtn" class="btn-secondary" type="button">
+                                <span class="material-symbols-outlined icon-inline-sm">logout</span> Cerrar sesión
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </main>
