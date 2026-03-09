@@ -388,12 +388,23 @@ class MainWindow(QMainWindow):
         self.admin_tab_index = self.tabs.addTab(self.admin_tab, "🔐 Administración")
         
         # Status bar
-        self.statusBar().showMessage("Listo")
+        self.statusBar().showMessage("Listo para operar")
         
         # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         main_layout.addWidget(self.progress_bar)
+
+    def _show_status_hint(self, message, level="info", timeout_ms=4200):
+        """Mostrar feedback breve en la barra de estado con tono contextual."""
+        tone = str(level or "info").strip().lower()
+        prefix = {
+            "success": "✅",
+            "warning": "⚠️",
+            "error": "❌",
+            "info": "ℹ️",
+        }.get(tone, "ℹ️")
+        self.statusBar().showMessage(f"{prefix} {message}", timeout_ms)
     
     def _init_handlers(self):
         """Inicializar manejadores"""
@@ -1471,6 +1482,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Acceso denegado", "Debes iniciar sesión como administrador.")
             return
 
+        self._show_status_hint(
+            "Completá los datos del registro manual. Puedes dejar cliente/marca/versión como opcional.",
+            "info",
+            5200,
+        )
+
         default_client = ""
         if self.user_manager and self.user_manager.current_user:
             default_client = self.user_manager.current_user.get("username", "")
@@ -1537,6 +1554,11 @@ class MainWindow(QMainWindow):
             if record_id:
                 message += f"\nID: {record_id}"
             QMessageBox.information(self, "Éxito", message)
+            self._show_status_hint(
+                "Registro manual creado. Ya puedes asociar equipo o cargar una incidencia.",
+                "success",
+                5200,
+            )
 
             if self.user_manager and self.user_manager.current_user:
                 self.user_manager._log_access(
@@ -1557,6 +1579,11 @@ class MainWindow(QMainWindow):
                 self,
                 "Error",
                 "No se pudo crear el registro manual (problema de conexión o API).",
+            )
+            self._show_status_hint(
+                "No se pudo crear el registro manual. Verifica conexión/API e intenta nuevamente.",
+                "error",
+                5200,
             )
 
             if self.user_manager and self.user_manager.current_user:
@@ -1588,6 +1615,12 @@ class MainWindow(QMainWindow):
         if not self.is_admin:
             QMessageBox.warning(self, "Acceso denegado", "Debes iniciar sesión como administrador.")
             return
+
+        self._show_status_hint(
+            f"Creando incidencia para el registro #{record_id}.",
+            "info",
+            4200,
+        )
 
         note, ok = QInputDialog.getMultiLineText(
             self,
@@ -1662,11 +1695,21 @@ class MainWindow(QMainWindow):
             if incident_id:
                 msg += f"\nID: {incident_id}"
             QMessageBox.information(self, "Éxito", msg)
+            self._show_status_hint(
+                "Incidencia registrada y listas actualizadas.",
+                "success",
+                5000,
+            )
             self.refresh_history_view()
             if hasattr(self.history_tab, "incidents_installations_list"):
                 self.refresh_incidents_view(preferred_record_id=record_id)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"No se pudo crear la incidencia:\n{e}")
+            self._show_status_hint(
+                "No se pudo crear la incidencia. Revisa los datos e intenta nuevamente.",
+                "error",
+                5000,
+            )
 
     def _show_incident_details(self, incident):
         """Mostrar detalle de incidencia en una ventana simple."""

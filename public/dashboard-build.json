@@ -1,13 +1,13 @@
 {
   "versions": {
-    "css": "809d58ec98",
+    "css": "9e1890bd3d",
     "chart": "74401d738d",
     "qr": "d8de215faf",
     "api": "da9fe280e7",
-    "js": "946760113e",
+    "js": "1f239bc6fe",
     "pwa": "55b84aa40e",
     "manifest": "9130a5f920",
     "sw": "4c87568cf6",
-    "build": "1677b20a90"
+    "build": "a56735a651"
   }
 }

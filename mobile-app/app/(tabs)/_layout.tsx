@@ -1,9 +1,10 @@
 import React from "react";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { Link, Tabs } from "expo-router";
-import { Image, Pressable, StyleSheet, View } from "react-native";
+import { Image, Platform, Pressable, StyleSheet, View } from "react-native";
 
 import { useClientOnlyValue } from "@/components/useClientOnlyValue";
+import AppHeaderTitle from "@/src/components/AppHeaderTitle";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -11,7 +12,7 @@ function TabBarIcon(props: {
   name: React.ComponentProps<typeof FontAwesome>["name"];
   color: string;
 }) {
-  return <FontAwesome size={28} style={{ marginBottom: -3 }} {...props} />;
+  return <FontAwesome size={24} style={{ marginBottom: -2 }} {...props} />;
 }
 
 export default function TabLayout() {
@@ -26,16 +27,28 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: palette.surface,
           borderTopColor: palette.border,
+          borderTopWidth: 1,
+          height: 62,
+          paddingTop: 6,
+          paddingBottom: 6,
+          shadowColor: "#0f1720",
+          shadowOpacity: 0.08,
+          shadowOffset: { width: 0, height: -3 },
+          shadowRadius: 8,
+          elevation: 8,
         },
         tabBarLabelStyle: {
-          fontFamily: fontFamilies.medium,
-          fontSize: 12,
+          fontFamily: fontFamilies.semibold,
+          fontSize: 12.5,
         },
         headerStyle: {
           backgroundColor: palette.surface,
           height: 88,
+          borderBottomColor: palette.border,
+          borderBottomWidth: 1,
         },
         headerTitleAlign: "left",
+        headerTitle: () => <AppHeaderTitle title="SiteOps" />,
         headerTitleContainerStyle: {
           left: 12,
           right: 12,
@@ -65,13 +78,25 @@ export default function TabLayout() {
             <View style={styles.headerActions}>
               <Image source={logoSource} style={styles.headerLogo} resizeMode="contain" />
               <Link href="/modal" asChild>
-                <Pressable>
+                <Pressable
+                  hitSlop={8}
+                  android_ripple={{ color: palette.hoverBg, borderless: true }}
+                  style={({ pressed }) => [
+                    styles.settingsButton,
+                    {
+                      borderColor: palette.border,
+                      backgroundColor: pressed ? palette.hoverBg : palette.subtleBg,
+                      transform: [{ scale: pressed ? 0.95 : 1 }],
+                      opacity: pressed ? 0.9 : 1,
+                    },
+                  ]}
+                >
                   {({ pressed }) => (
                     <FontAwesome
                       name="cog"
-                      size={25}
-                      color={palette.textPrimary}
-                      style={{ marginRight: 12, opacity: pressed ? 0.5 : 1 }}
+                      size={21}
+                      color={palette.accent}
+                      style={{ opacity: pressed ? 0.66 : 1 }}
                     />
                   )}
                 </Pressable>
@@ -121,5 +146,14 @@ const styles = StyleSheet.create({
   headerLogo: {
     width: 132,
     height: 48,
+  },
+  settingsButton: {
+    width: Platform.select({ ios: 42, default: 40 }),
+    height: Platform.select({ ios: 42, default: 40 }),
+    borderRadius: 999,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
   },
 });

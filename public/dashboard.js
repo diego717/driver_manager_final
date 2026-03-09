@@ -168,8 +168,8 @@ const SECTION_SUBTITLES = {
     installations: 'Seguimiento fino de registros operativos',
     assets: 'Inventario vivo con trazabilidad',
     drivers: 'Versionado centralizado de controladores',
-    incidents: 'Atencion de eventos con prioridad visible',
-    audit: 'Trazas criticas y cumplimiento',
+    incidents: 'Atención de eventos con prioridad visible',
+    audit: 'Trazas críticas y cumplimiento',
 };
 const TOAST_TYPE_ICONS = {
     success: '✓',
@@ -179,6 +179,44 @@ const TOAST_TYPE_ICONS = {
 };
 const ACTIVE_KPI_ANIMATIONS = new WeakMap();
 let sectionTransitionVersion = 0;
+
+function renderContextualEmptyState(container, options = {}) {
+    if (!container) return;
+    const title = String(options.title || 'Sin resultados').trim() || 'Sin resultados';
+    const description = String(options.description || '').trim();
+    const actionLabel = String(options.actionLabel || '').trim();
+    const actionHandler = typeof options.onAction === 'function' ? options.onAction : null;
+    const tone = String(options.tone || 'neutral').trim().toLowerCase();
+    const toneClass = ['neutral', 'warning', 'success', 'info'].includes(tone) ? tone : 'neutral';
+
+    const wrapper = document.createElement('div');
+    wrapper.className = `empty-state empty-state-${toneClass}`;
+
+    const titleNode = document.createElement('p');
+    titleNode.className = 'empty-state-title';
+    titleNode.textContent = title;
+    wrapper.appendChild(titleNode);
+
+    if (description) {
+        const descriptionNode = document.createElement('p');
+        descriptionNode.className = 'empty-state-description';
+        descriptionNode.textContent = description;
+        wrapper.appendChild(descriptionNode);
+    }
+
+    if (actionLabel && actionHandler) {
+        const actionBtn = document.createElement('button');
+        actionBtn.type = 'button';
+        actionBtn.className = 'btn-secondary empty-state-action';
+        actionBtn.textContent = actionLabel;
+        actionBtn.addEventListener('click', () => {
+            void actionHandler();
+        });
+        wrapper.appendChild(actionBtn);
+    }
+
+    container.appendChild(wrapper);
+}
 
 
 // Chart.js default configuration
@@ -321,7 +359,7 @@ function resetProtectedViews() {
     ids.forEach((id) => {
         const el = document.getElementById(id);
         if (!el) return;
-        el.innerHTML = '<p class="loading">Inicia sesi?n para ver informaci?n.</p>';
+        el.innerHTML = '<p class="loading">Inicia sesión para ver información.</p>';
     });
     currentInstallationsData = [];
     currentSelectedInstallationId = null;
@@ -425,7 +463,7 @@ function openActionModal(config = {}) {
     const submitBtn = document.getElementById('actionModalSubmitBtn');
     if (!modal || !titleEl || !subtitleEl || !fieldsEl || !submitBtn) return false;
 
-    titleEl.textContent = String(config.title || 'Acci?n');
+    titleEl.textContent = String(config.title || 'Acción');
 
     const subtitle = String(config.subtitle || '').trim();
     subtitleEl.textContent = subtitle;
@@ -467,14 +505,14 @@ function openActionModal(config = {}) {
 
 function openActionConfirmModal(config = {}) {
     const confirmCheckboxId = 'actionModalConfirmCheckbox';
-    const title = String(config.title || 'Confirmar acci?n').trim() || 'Confirmar acci?n';
+    const title = String(config.title || 'Confirmar acción').trim() || 'Confirmar acción';
     const subtitle = String(config.subtitle || '').trim();
     const submitLabel = String(config.submitLabel || 'Confirmar').trim() || 'Confirmar';
-    const acknowledgementText = String(config.acknowledgementText || 'Confirmo esta acci?n.').trim()
-        || 'Confirmo esta acci?n.';
+    const acknowledgementText = String(config.acknowledgementText || 'Confirmo esta acción.').trim()
+        || 'Confirmo esta acción.';
     const missingConfirmationMessage = String(
-        config.missingConfirmationMessage || 'Debes confirmar la acci?n para continuar.',
-    ).trim() || 'Debes confirmar la acci?n para continuar.';
+        config.missingConfirmationMessage || 'Debes confirmar la acción para continuar.',
+    ).trim() || 'Debes confirmar la acción para continuar.';
     const focusId = String(config.focusId || confirmCheckboxId).trim() || confirmCheckboxId;
     const onSubmit = typeof config.onSubmit === 'function' ? config.onSubmit : async () => {};
 
@@ -526,7 +564,7 @@ function bindActionModalEvents() {
             setActionModalBusy(true);
             await actionModalSubmitHandler();
         } catch (error) {
-            setActionModalError(error?.message || 'No se pudo completar la acci?n.');
+            setActionModalError(error?.message || 'No se pudo completar la acción.');
         } finally {
             setActionModalBusy(false);
         }
@@ -541,7 +579,7 @@ function createManualRecordFromWeb() {
     const defaultClient = String(currentUser?.username || '').trim();
     openActionModal({
         title: 'Nuevo registro manual',
-        subtitle: 'Crea un registro sin depender de una instalaci?n previa.',
+        subtitle: 'Crea un registro sin depender de una instalación previa.',
         submitLabel: 'Crear registro',
         focusId: 'actionRecordClient',
         fieldsHtml: `
@@ -564,7 +602,7 @@ function createManualRecordFromWeb() {
                     <input type="text" id="actionRecordBrand" value="N/A" autocomplete="off">
                 </div>
                 <div class="input-group">
-                    <label for="actionRecordVersion">Version/Referencia (opcional)</label>
+                    <label for="actionRecordVersion">Versión/Referencia (opcional)</label>
                     <input type="text" id="actionRecordVersion" value="N/A" autocomplete="off">
                 </div>
                 <div class="input-group full-width">
@@ -669,7 +707,7 @@ function openIncidentModal(options = {}) {
             </div>
             <label class="action-checkbox" for="actionIncidentApplyToRecord">
                 <input type="checkbox" id="actionIncidentApplyToRecord" ${defaultApply ? 'checked' : ''}>
-                <span>Aplicar nota y ajuste al registro de instalaci?n.</span>
+                <span>Aplicar nota y ajuste al registro de instalación.</span>
             </label>
         `,
         onSubmit: async () => {
@@ -691,7 +729,7 @@ function openIncidentModal(options = {}) {
                 document.getElementById('actionIncidentAdjustment')?.value,
             );
             if (!Number.isInteger(timeAdjustment)) {
-                setActionModalError('El ajuste de tiempo debe ser un n?mero entero.');
+                setActionModalError('El ajuste de tiempo debe ser un número entero.');
                 return;
             }
 
@@ -750,7 +788,7 @@ function createIncidentFromWeb(installationId, options = {}) {
         (!Number.isInteger(targetId) || targetId <= 0)
         && (!Number.isInteger(numericAssetId) || numericAssetId <= 0)
     ) {
-        showNotification('installation_id inv?lido para crear incidencia.', 'error');
+        showNotification('installation_id invalido para crear incidencia.', 'error');
         return;
     }
 
@@ -773,13 +811,13 @@ function openAssetLinkModal(options = {}) {
     const needsExternalCode = !Number.isInteger(knownAssetId) || knownAssetId <= 0;
     const title = needsExternalCode ? 'Asociar equipo a registro' : `Vincular equipo #${knownAssetId}`;
     const subtitle = needsExternalCode
-        ? 'Ingresa el c?digo del equipo y el registro destino.'
+        ? 'Ingresa el código del equipo y el registro destino.'
         : 'Asocia el equipo seleccionado a un registro destino.';
 
     const codeField = needsExternalCode
         ? `
             <div class="input-group">
-                <label for="actionAssetCode">Codigo externo del equipo (QR/serie)</label>
+                <label for="actionAssetCode">Código externo del equipo (QR/serie)</label>
                 <input type="text" id="actionAssetCode" value="${escapeHtml(defaultCode)}" autocomplete="off">
             </div>
         `
@@ -819,7 +857,7 @@ function openAssetLinkModal(options = {}) {
             if (!Number.isInteger(resolvedAssetId) || resolvedAssetId <= 0) {
                 const externalCode = String(document.getElementById('actionAssetCode')?.value || '').trim();
                 if (!externalCode) {
-                    setActionModalError('Debes ingresar un c?digo de equipo v?lido.');
+                    setActionModalError('Debes ingresar un código de equipo válido.');
                     return;
                 }
                 const resolved = await api.resolveAsset({
@@ -867,12 +905,12 @@ async function openAssetLookupFromWeb() {
     if (!requireActiveSession()) return;
     openActionModal({
         title: 'Buscar equipo',
-        subtitle: 'Ingresa el c?digo externo para abrir el detalle en modo lectura.',
+        subtitle: 'Ingresa el código externo para abrir el detalle en modo lectura.',
         submitLabel: 'Buscar',
         focusId: 'actionLookupAssetCode',
         fieldsHtml: `
             <div class="input-group">
-                <label for="actionLookupAssetCode">Codigo externo del equipo</label>
+                <label for="actionLookupAssetCode">Código externo del equipo</label>
                 <input type="text" id="actionLookupAssetCode" autocomplete="off" placeholder="Ej: EQ-SL3-001">
             </div>
         `,
@@ -881,7 +919,7 @@ async function openAssetLookupFromWeb() {
                 document.getElementById('actionLookupAssetCode')?.value || '',
             );
             if (!code) {
-                setActionModalError('Debes ingresar un c?digo de equipo v?lido.');
+                setActionModalError('Debes ingresar un código de equipo válido.');
                 return;
             }
 
@@ -891,7 +929,7 @@ async function openAssetLookupFromWeb() {
             });
             const asset = Array.isArray(response?.items) ? response.items[0] : null;
             if (!asset) {
-                setActionModalError(`No existe equipo con c?digo ${code}.`);
+                setActionModalError(`No existe equipo con código ${code}.`);
                 return;
             }
 
@@ -915,7 +953,7 @@ async function openAssetLookupFromWeb() {
 async function selectAndUploadIncidentPhoto(incidentId, installationId) {
     const targetIncidentId = Number.parseInt(String(incidentId), 10);
     if (!Number.isInteger(targetIncidentId) || targetIncidentId <= 0) {
-        showNotification('incident_id inv?lido para subir foto.', 'error');
+        showNotification('incident_id invalido para subir foto.', 'error');
         return;
     }
 
@@ -1092,7 +1130,7 @@ function renderSuccessChart(stats) {
     charts.success = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Éxito', 'Fallido', 'Otro'],
+            labels: ['?xito', 'Fallido', 'Otro'],
             datasets: [{
                 data: [success, failed, Math.max(0, other)],
                 backgroundColor: [
@@ -1317,10 +1355,13 @@ function renderRecentInstallations(installations) {
     container.replaceChildren();
 
     if (!installations || !installations.length) {
-        const emptyMessage = document.createElement('p');
-        emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No hay registros recientes';
-        container.appendChild(emptyMessage);
+        renderContextualEmptyState(container, {
+            title: 'Aún no hay registros recientes',
+            description: 'Cuando se genere actividad operativa, aparecerá aquí.',
+            actionLabel: currentUser && currentUser.role !== 'viewer' ? 'Crear registro manual' : '',
+            onAction: () => createManualRecordFromWeb(),
+            tone: 'info',
+        });
         return;
     }
 
@@ -1338,7 +1379,7 @@ function renderRecentInstallations(installations) {
 
     installations.forEach(inst => {
         const statusClass = inst.status || 'unknown';
-        const statusIcon = inst.status === 'success' ? '✅' : inst.status === 'failed' ? '❌' : '❓';
+        const statusIcon = inst.status === 'success' ? 'OK' : inst.status === 'failed' ? 'X' : '?';
 
         const row = document.createElement('tr');
 
@@ -1421,31 +1462,31 @@ function updateFilterChips() {
         const removeSpan = document.createElement('span');
         removeSpan.className = 'chip-remove';
         removeSpan.dataset.filter = filterType;
-        removeSpan.textContent = '×';
+        removeSpan.textContent = '-';
 
         chip.append(labelSpan, valueSpan, removeSpan);
         chipsContainer.appendChild(chip);
     };
 
     if (filters.search) {
-        appendChip('🔍', `"${filters.search}"`, 'search');
+        appendChip('Buscar:', `"${filters.search}"`, 'search');
     }
 
     if (filters.brand) {
-        appendChip('🏷️ Marca:', filters.brand, 'brand');
+        appendChip('Marca:', filters.brand, 'brand');
     }
 
     if (filters.status) {
-        const statusLabel = filters.status === 'success' ? '✅ Éxito' : 
-                           filters.status === 'failed' ? '❌ Fallido' : '❓ Desconocido';
-        appendChip('📊 Estado:', statusLabel, 'status');
+        const statusLabel = filters.status === 'success' ? '? ?xito' :
+                           filters.status === 'failed' ? '? Fallido' : '? Desconocido';
+        appendChip('Estado:', statusLabel, 'status');
     }
 
     if (filters.startDate || filters.endDate) {
         const dateLabel = filters.startDate && filters.endDate ? 
             `${filters.startDate} - ${filters.endDate}` :
             filters.startDate ? `Desde: ${filters.startDate}` : `Hasta: ${filters.endDate}`;
-        appendChip('📅', dateLabel, 'date');
+        appendChip('Fecha:', dateLabel, 'date');
     }
     
     // Add click handlers to remove buttons
@@ -1533,11 +1574,11 @@ function recordAttentionStateLabel(value) {
 
 function recordAttentionStateIcon(value) {
     const normalized = normalizeRecordAttentionState(value);
-    if (normalized === 'critical') return '🚨';
-    if (normalized === 'in_progress') return '🟠';
-    if (normalized === 'open') return '🟡';
-    if (normalized === 'resolved') return '✅';
-    return '🟢';
+    if (normalized === 'critical') return 'Ys';
+    if (normalized === 'in_progress') return 'YY';
+    if (normalized === 'open') return 'YY';
+    if (normalized === 'resolved') return 'OK';
+    return 'YY';
 }
 
 function buildRecordAttentionBadge(record) {
@@ -1606,7 +1647,7 @@ function exportToCSV(data, filename = 'registros.csv') {
         return;
     }
 
-    const headers = ['ID', 'Cliente', 'Marca', 'Atencion', 'Tiempo', 'Notas', 'Fecha'];
+    const headers = ['ID', 'Cliente', 'Marca', 'Atención', 'Tiempo', 'Notas', 'Fecha'];
 
     const rows = data.map(inst => [
         inst.id,
@@ -1648,7 +1689,7 @@ function exportToExcel(data, filename = 'registros.xls') {
     html += '<body><table border="1">';
 
     html += '<tr>';
-    ['ID', 'Cliente', 'Marca', 'Atencion', 'Tiempo', 'Notas', 'Fecha'].forEach(header => {
+    ['ID', 'Cliente', 'Marca', 'Atención', 'Tiempo', 'Notas', 'Fecha'].forEach(header => {
         html += `<th>${escapeHtml(header)}</th>`;
     });
     html += '</tr>';
@@ -1824,7 +1865,7 @@ function setupAdvancedFilters() {
         const createRecordBtn = document.createElement('button');
         createRecordBtn.id = 'createManualRecordBtn';
         createRecordBtn.className = 'btn-secondary';
-        createRecordBtn.textContent = '📝 Nuevo registro manual';
+        createRecordBtn.textContent = 'Y" Nuevo registro manual';
         createRecordBtn.addEventListener('click', () => {
             void createManualRecordFromWeb();
         });
@@ -1912,7 +1953,14 @@ async function loadInstallations() {
         // Update filter chips (in case they were cleared externally)
         updateFilterChips();
     } catch (err) {
-        container.innerHTML = '<p class="error">❌ Error cargando registros</p>';
+        container.replaceChildren();
+        renderContextualEmptyState(container, {
+            title: 'No se pudieron cargar los registros',
+            description: 'Verifica tu conexión y vuelve a intentar.',
+            actionLabel: 'Reintentar',
+            onAction: () => loadInstallations(),
+            tone: 'warning',
+        });
         if (resultsCount) {
             resultsCount.textContent = 'Error al cargar';
         }
@@ -1925,17 +1973,23 @@ function renderInstallationsTable(installations) {
     container.replaceChildren();
 
     if (!installations || !installations.length) {
-        const emptyMessage = document.createElement('p');
-        emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No se encontraron registros';
-        container.appendChild(emptyMessage);
+        renderContextualEmptyState(container, {
+            title: 'No encontramos registros con esos filtros',
+            description: 'Puedes limpiar filtros o crear un registro manual.',
+            actionLabel: 'Limpiar filtros',
+            onAction: () => {
+                clearAllFilters();
+                void loadInstallations();
+            },
+            tone: 'neutral',
+        });
         return;
     }
 
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'Atencion', 'Tiempo', 'Notas', 'Fecha', 'QR'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'Atención', 'Tiempo', 'Notas', 'Fecha', 'QR'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -2013,7 +2067,7 @@ async function showIncidentsForInstallation(installationId) {
         const data = await api.getIncidents(installationId);
         renderIncidents(data.incidents || [], installationId);
     } catch (err) {
-        container.innerHTML = '<p class="error">❌ Error cargando incidencias</p>';
+        container.innerHTML = '<p class="error">Error cargando incidencias</p>';
     }
 }
 
@@ -2024,10 +2078,10 @@ function normalizeAssetStatusLabel(status) {
 }
 
 function getSeverityIcon(severity) {
-    if (severity === 'critical') return '🔴';
-    if (severity === 'high') return '🟠';
-    if (severity === 'medium') return '🟡';
-    return '🔵';
+    if (severity === 'critical') return 'Y"';
+    if (severity === 'high') return 'YY';
+    if (severity === 'medium') return 'YY';
+    return 'Y"';
 }
 
 function normalizeIncidentStatus(value) {
@@ -2046,9 +2100,9 @@ function incidentStatusLabel(value) {
 
 function incidentStatusIcon(value) {
     const normalized = normalizeIncidentStatus(value);
-    if (normalized === 'resolved') return '✅';
-    if (normalized === 'in_progress') return '🟠';
-    return '🟢';
+    if (normalized === 'resolved') return 'OK';
+    if (normalized === 'in_progress') return 'YY';
+    return 'YY';
 }
 
 function buildIncidentStatusText(incident) {
@@ -2202,7 +2256,7 @@ async function updateIncidentStatusFromWeb(incident, targetStatus, options = {})
     if (!requireActiveSession()) return;
     const incidentId = Number.parseInt(String(incident?.id), 10);
     if (!Number.isInteger(incidentId) || incidentId <= 0) {
-        showNotification('Incidencia inválida para actualizar estado.', 'error');
+        showNotification('Incidencia invalida para actualizar estado.', 'error');
         return;
     }
 
@@ -2239,12 +2293,12 @@ async function updateIncidentStatusFromWeb(incident, targetStatus, options = {})
         const defaultNote = String(incident?.resolution_note || '').trim();
         openActionModal({
             title: `Resolver incidencia #${incidentId}`,
-            subtitle: 'Agrega una nota de resoluci?n opcional antes de cerrar la incidencia.',
+            subtitle: 'Agrega una nota de resolución opcional antes de cerrar la incidencia.',
             submitLabel: 'Resolver incidencia',
             focusId: 'actionIncidentResolutionNote',
             fieldsHtml: `
                 <div class="input-group">
-                    <label for="actionIncidentResolutionNote">Nota de resoluci?n (opcional)</label>
+                    <label for="actionIncidentResolutionNote">Nota de resolución (opcional)</label>
                     <textarea id="actionIncidentResolutionNote" rows="4" placeholder="Resumen de la solucion aplicada">${escapeHtml(defaultNote)}</textarea>
                 </div>
             `,
@@ -2298,7 +2352,7 @@ async function loadAssets() {
             }
         }
     } catch (err) {
-        tableContainer.innerHTML = '<p class="error">❌ Error cargando equipos</p>';
+        tableContainer.innerHTML = '<p class="error">Error cargando equipos</p>';
         if (resultsCount) {
             resultsCount.textContent = 'Error al cargar';
         }
@@ -2352,7 +2406,14 @@ async function loadDrivers() {
             resultsCount.innerHTML = `Mostrando <span class="count">${count}</span> driver${count !== 1 ? 's' : ''}`;
         }
     } catch (err) {
-        tableContainer.innerHTML = '<p class="error">Error cargando drivers</p>';
+        tableContainer.replaceChildren();
+        renderContextualEmptyState(tableContainer, {
+            title: 'No se pudieron cargar los drivers',
+            description: 'Intenta nuevamente en unos segundos.',
+            actionLabel: 'Reintentar',
+            onAction: () => loadDrivers(),
+            tone: 'warning',
+        });
         if (resultsCount) {
             resultsCount.textContent = 'Error al cargar';
         }
@@ -2365,17 +2426,20 @@ function renderDriversTable(drivers) {
     container.replaceChildren();
 
     if (!drivers || !drivers.length) {
-        const emptyMessage = document.createElement('p');
-        emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No hay drivers cargados.';
-        container.appendChild(emptyMessage);
+        renderContextualEmptyState(container, {
+            title: 'Todavía no hay drivers cargados',
+            description: 'Sube el primer paquete para habilitar instalaciónes por marca y versión.',
+            actionLabel: 'Subir primer driver',
+            onAction: () => document.getElementById('driverPickFileBtn')?.click(),
+            tone: 'info',
+        });
         return;
     }
 
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['Marca', 'Version', 'Archivo', 'Tamano', 'Subido', 'Acci?nes'].forEach((label) => {
+    ['Marca', 'Versión', 'Archivo', 'Tamaño', 'Subido', 'Acciónes'].forEach((label) => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -2429,10 +2493,10 @@ function renderDriversTable(drivers) {
             const driverLabel = String(`${driver.brand || ''} ${driver.version || ''}`).trim() || 'sin nombre';
             openActionConfirmModal({
                 title: 'Eliminar driver',
-                subtitle: `Confirma la eliminaci?n de ${driverLabel}. Esta acci?n no se puede deshacer.`,
+                subtitle: `Confirma la eliminación de ${driverLabel}. Esta acción no se puede deshacer.`,
                 submitLabel: 'Eliminar driver',
                 acknowledgementText: 'Entiendo que este driver sera eliminado permanentemente.',
-                missingConfirmationMessage: 'Debes confirmar la eliminaci?n para continuar.',
+                missingConfirmationMessage: 'Debes confirmar la eliminación para continuar.',
                 onSubmit: async () => {
                     await api.deleteDriver(key);
                     closeActionModal(true);
@@ -2467,7 +2531,7 @@ async function uploadDriverFromWeb() {
         return;
     }
     if (!version) {
-        showNotification('La versi?n es obligatoria.', 'error');
+        showNotification('La versión es obligatoria.', 'error');
         return;
     }
     if (!selectedDriverFile) {
@@ -2510,17 +2574,20 @@ function renderAssetsTable(assets) {
     container.replaceChildren();
 
     if (!assets || !assets.length) {
-        const emptyMessage = document.createElement('p');
-        emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No se encontraron equipos';
-        container.appendChild(emptyMessage);
+        renderContextualEmptyState(container, {
+            title: 'No hay equipos registrados',
+            description: 'Crea un equipo con QR para asociarlo a registros o incidencias.',
+            actionLabel: 'Nuevo equipo + QR',
+            onAction: () => document.getElementById('assetsCreateQrBtn')?.click(),
+            tone: 'info',
+        });
         return;
     }
 
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Codigo', 'Marca', 'Modelo', 'Serie', 'Cliente', 'Estado', 'Actualizado', 'Acci?nes'].forEach((label) => {
+    ['ID', 'Código', 'Marca', 'Modelo', 'Serie', 'Cliente', 'Estado', 'Actualizado', 'Acciónes'].forEach((label) => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -2609,7 +2676,7 @@ async function createIncidentForAsset(assetId) {
     if (!requireActiveSession()) return;
     const numericAssetId = Number.parseInt(String(assetId), 10);
     if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
-        showNotification('asset_id inv?lido.', 'error');
+        showNotification('asset_id invalido.', 'error');
         return;
     }
 
@@ -2629,7 +2696,7 @@ async function linkAssetFromDetail(assetId) {
     if (!requireActiveSession()) return;
     const numericAssetId = Number.parseInt(String(assetId), 10);
     if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
-        showNotification('asset_id inv?lido.', 'error');
+        showNotification('asset_id invalido.', 'error');
         return;
     }
     openAssetLinkModal({
@@ -2656,7 +2723,7 @@ async function loadAssetDetail(assetId, options = {}) {
         await renderAssetDetail(data);
     } catch (err) {
         if (detailContainer) {
-            detailContainer.innerHTML = `<p class="error">❌ ${escapeHtml(err.message || String(err))}</p>`;
+            detailContainer.innerHTML = `<p class="error">${escapeHtml(err.message || String(err))}</p>`;
         }
     }
 }
@@ -2689,7 +2756,7 @@ async function renderAssetDetail(data) {
     const linkBtn = document.createElement('button');
     linkBtn.type = 'button';
     linkBtn.className = 'btn-secondary';
-    linkBtn.textContent = 'Vincular instalaci?n';
+    linkBtn.textContent = 'Vincular instalación';
     linkBtn.addEventListener('click', () => {
         void linkAssetFromDetail(asset.id);
     });
@@ -2719,7 +2786,7 @@ async function renderAssetDetail(data) {
     metaGrid.className = 'asset-meta-grid';
     const metaEntries = [
         ['ID', `#${asset.id || '-'}`],
-        ['Codigo', asset.external_code || '-'],
+        ['Código', asset.external_code || '-'],
         ['Marca', asset.brand || '-'],
         ['Modelo', asset.model || '-'],
         ['Serie', asset.serial_number || '-'],
@@ -2744,10 +2811,10 @@ async function renderAssetDetail(data) {
     activeInfo.className = 'asset-muted';
     if (activeLink?.installation_id) {
         activeInfo.textContent =
-            `Instalacion activa: #${activeLink.installation_id}` +
+            `Instalación activa: #${activeLink.installation_id}` +
             (activeLink.installation_client_name ? ` (${activeLink.installation_client_name})` : '');
     } else {
-        activeInfo.textContent = 'Sin instalaci?n activa vinculada.';
+        activeInfo.textContent = 'Sin instalación activa vinculada.';
     }
     container.appendChild(activeInfo);
 
@@ -2769,7 +2836,7 @@ async function renderAssetDetail(data) {
             pill.className = 'asset-link-item';
             const state = link.unlinked_at ? 'historial' : 'activa';
             const text =
-                `Instalacion #${link.installation_id} (${state})` +
+                `Instalación #${link.installation_id} (${state})` +
                 (link.installation_client_name ? ` - ${link.installation_client_name}` : '') +
                 (link.linked_at ? ` - vinculada: ${new Date(link.linked_at).toLocaleString('es-ES')}` : '');
             pill.textContent = text;
@@ -2809,7 +2876,7 @@ async function renderAssetDetail(data) {
         left.append(badge, document.createTextNode(' '), meta);
 
         const created = document.createElement('small');
-        created.textContent = `🕐 ${new Date(incident.created_at).toLocaleString('es-ES')}`;
+        created.textContent = `Y. ${new Date(incident.created_at).toLocaleString('es-ES')}`;
         header.append(left, created);
 
         const note = document.createElement('p');
@@ -2871,18 +2938,18 @@ async function renderIncidents(incidents, installationId) {
     header.classList.add('incidents-header');
 
     const heading = document.createElement('h3');
-    heading.textContent = `⚠️ Incidencias de Registro #${installationId}`;
+    heading.textContent = `s️ Incidencias de Registro #${installationId}`;
 
     const backButton = document.createElement('button');
     backButton.className = 'btn-secondary';
-    backButton.textContent = '← Volver';
+    backButton.textContent = '? Volver';
     backButton.addEventListener('click', () => {
         document.querySelector('[data-section="installations"]')?.click();
     });
 
     const createIncidentBtn = document.createElement('button');
     createIncidentBtn.className = 'btn-primary';
-    createIncidentBtn.textContent = '⚠️ Crear incidencia';
+    createIncidentBtn.textContent = 's️ Crear incidencia';
     createIncidentBtn.addEventListener('click', () => {
         void createIncidentFromWeb(installationId);
     });
@@ -2895,10 +2962,13 @@ async function renderIncidents(incidents, installationId) {
     container.appendChild(header);
 
     if (!incidents || !incidents.length) {
-        const emptyMessage = document.createElement('p');
-        emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No hay incidencias para este registro';
-        container.appendChild(emptyMessage);
+        renderContextualEmptyState(container, {
+            title: 'Sin incidencias para este registro',
+            description: 'Si detectas un problema, crea la primera incidencia desde aquí.',
+            actionLabel: 'Crear incidencia',
+            onAction: () => createIncidentBtn.click(),
+            tone: 'neutral',
+        });
         return;
     }
 
@@ -2923,7 +2993,7 @@ async function renderIncidents(incidents, installationId) {
         leftMeta.append(severityBadge, document.createTextNode(' '), reporter);
 
         const createdAt = document.createElement('small');
-        createdAt.textContent = `🕐 ${new Date(inc.created_at).toLocaleString('es-ES')}`;
+        createdAt.textContent = `Y. ${new Date(inc.created_at).toLocaleString('es-ES')}`;
 
         incidentHeader.append(leftMeta, createdAt);
 
@@ -2936,7 +3006,7 @@ async function renderIncidents(incidents, installationId) {
         appendIncidentStatusActions(incidentCard, inc, {
             installationId: Number.parseInt(String(installationId), 10),
         });
-        appendIncidentUploadPhotoAction(incidentCard, inc, installationId, { label: '📤 Subir foto' });
+        appendIncidentUploadPhotoAction(incidentCard, inc, installationId, { label: 'Y" Subir foto' });
         await appendIncidentPhotosGrid(incidentCard, inc.photos, { attachPhotoIdDataset: true });
 
         container.appendChild(incidentCard);
@@ -3036,14 +3106,14 @@ function applyQrModalAccessState() {
     const helper = document.getElementById('qrAssetHelper');
     if (helper) {
         if (isReadOnlyAssetView && canEdit) {
-            helper.textContent = 'Modo solo lectura. Para editar, usa "Habilitar edici?n" y confirma tu contrase?a.';
+            helper.textContent = 'Modo solo lectura. Para editar, usa "Habilitar edición" y confirma tu contraseña.';
         } else if (isReadOnlyAssetView && !canEdit) {
             helper.textContent = 'Modo solo lectura. Solo admin/super_admin pueden editar este equipo.';
         } else if (qrModalReadOnly && qrModalEditUnlocked && hasTimedUnlock) {
             const minutesLeft = Math.max(1, Math.ceil(getQrEditSessionRemainingMs() / 60000));
             helper.textContent = `Edicion habilitada temporalmente (${minutesLeft} min restantes).`;
         } else {
-            helper.textContent = 'Requisitos: marca o modelo, y n?mero de serie. El c?digo externo se genera autom?ticamente desde serie si queda vac?o.';
+            helper.textContent = 'Requisitos: marca o modelo, y número de serie. El código externo se genera automáticamente desde serie si queda vacío.';
         }
     }
 }
@@ -3051,7 +3121,7 @@ function applyQrModalAccessState() {
 async function verifyCurrentUserPassword(password) {
     const candidate = String(password || '');
     if (!candidate.trim()) {
-        throw new Error('Debes ingresar tu contrase?a.');
+        throw new Error('Debes ingresar tu contraseña.');
     }
 
     await api.request('/web/auth/verify-password', {
@@ -3115,7 +3185,7 @@ async function confirmQrEditUnlockFromModal() {
         showNotification('Edicion habilitada por 10 minutos.', 'success');
     } catch (error) {
         setQrPasswordModalBusy(false);
-        setQrPasswordModalError(error?.message || 'No se pudo validar la contrase?a.');
+        setQrPasswordModalError(error?.message || 'No se pudo validar la contraseña.');
     }
 }
 
@@ -3127,7 +3197,7 @@ function readAssetFormData() {
     const clientInput = document.getElementById('qrAssetClientInput');
     const notesInput = document.getElementById('qrAssetNotesInput');
     if (!codeInput || !brandInput || !modelInput || !serialInput || !clientInput || !notesInput) {
-        throw new Error('Formulario QR incompleto. Recarga la pagina.');
+        throw new Error('Formulario QR incompleto. Recarga la página.');
     }
 
     const brand = normalizeAssetFormText(brandInput.value, QR_MAX_BRAND_LENGTH);
@@ -3140,14 +3210,14 @@ function readAssetFormData() {
         throw new Error('Debes ingresar al menos marca o modelo.');
     }
     if (!serialNumber) {
-        throw new Error('El n?mero de serie es obligatorio para la etiqueta.');
+        throw new Error('El número de serie es obligatorio para la etiqueta.');
     }
 
     const explicitCode = normalizeAssetCodeForQr(codeInput.value);
     const fallbackCode = normalizeAssetCodeForQr(serialNumber);
     const externalCode = explicitCode || fallbackCode;
     if (!externalCode) {
-        throw new Error('No se pudo construir un c?digo externo de equipo.');
+        throw new Error('No se pudo construir un código externo de equipo.');
     }
 
     return {
@@ -3228,7 +3298,7 @@ function buildQrPayload(qrType, rawValue, assetData = null) {
 
     const assetCode = normalizeAssetCodeForQr(assetData?.external_code || rawValue);
     if (!assetCode) {
-        throw new Error('El c?digo de equipo es obligatorio.');
+        throw new Error('El código de equipo es obligatorio.');
     }
     return `dm://asset/${encodeURIComponent(assetCode)}`;
 }
@@ -3236,7 +3306,7 @@ function buildQrPayload(qrType, rawValue, assetData = null) {
 function buildQrImageUrl(payload) {
     const qrGenerator = window.DMQR;
     if (!qrGenerator || typeof qrGenerator.createPngDataUrl !== 'function') {
-        throw new Error('Generador QR no disponible. Recarga la pagina e intenta de nuevo.');
+        throw new Error('Generador QR no disponible. Recarga la página e intenta de nuevo.');
     }
 
     return qrGenerator.createPngDataUrl(payload, {
@@ -3324,12 +3394,12 @@ function closeQrModal() {
 
 function formatQrDetailsText(qrType, rawValue, assetData = null) {
     if (qrType === 'installation') {
-        return `Tipo: Instalacion\nID: ${String(rawValue || '').trim()}`;
+        return `Tipo: Instalación\nID: ${String(rawValue || '').trim()}`;
     }
     const details = assetData || {};
     return [
         'Tipo: Equipo',
-        `Codigo externo: ${details.external_code || '-'}`,
+        `Código externo: ${details.external_code || '-'}`,
         `Marca: ${details.brand || '-'}`,
         `Modelo: ${details.model || '-'}`,
         `Serie: ${details.serial_number || '-'}`,
@@ -3418,7 +3488,7 @@ function generateQrPreview(options = {}) {
 async function saveAssetFromQrModal(options = {}) {
     if (!requireActiveSession()) return;
     if (qrModalReadOnly && !qrModalEditUnlocked) {
-        setQrError('Modo solo lectura. Habilita edici?n y confirma tu contrase?a para guardar cambios.');
+        setQrError('Modo solo lectura. Habilita edición y confirma tu contraseña para guardar cambios.');
         return;
     }
     const generateAfterSave = Boolean(options.generateAfterSave);
@@ -3704,7 +3774,14 @@ async function loadAuditLogs() {
         const logs = await api.getAuditLogs();
         renderAuditLogs(logs);
     } catch (err) {
-        container.innerHTML = '<p class="error">❌ Error cargando logs</p>';
+        container.replaceChildren();
+        renderContextualEmptyState(container, {
+            title: 'No se pudieron cargar los logs',
+            description: 'Reintenta para validar el estado de auditoría.',
+            actionLabel: 'Reintentar',
+            onAction: () => loadAuditLogs(),
+            tone: 'warning',
+        });
     }
 }
 
@@ -3714,10 +3791,13 @@ function renderAuditLogs(logs) {
     container.replaceChildren();
     
     if (!logs || !logs.length) {
-        const emptyMessage = document.createElement('p');
-        emptyMessage.className = 'loading';
-        emptyMessage.textContent = 'No hay logs de auditoría';
-        container.appendChild(emptyMessage);
+        renderContextualEmptyState(container, {
+            title: 'Aún no hay logs de auditoría',
+            description: 'Cuando se registren eventos de acceso u operaciones, aparecerán aquí.',
+            actionLabel: 'Actualizar',
+            onAction: () => loadAuditLogs(),
+            tone: 'neutral',
+        });
         return;
     }
     
@@ -3727,17 +3807,26 @@ function renderAuditLogs(logs) {
     }
     
     if (filteredLogs.length === 0) {
-        const emptyFilteredMessage = document.createElement('p');
-        emptyFilteredMessage.className = 'loading';
-        emptyFilteredMessage.textContent = 'No hay logs para el filtro seleccionado';
-        container.appendChild(emptyFilteredMessage);
+        renderContextualEmptyState(container, {
+            title: 'No hay eventos para ese filtro',
+            description: 'Prueba otro tipo de acción o limpia el filtro actual.',
+            actionLabel: 'Quitar filtro',
+            onAction: () => {
+                const actionFilterSelect = document.getElementById('auditActionFilter');
+                if (actionFilterSelect) {
+                    actionFilterSelect.value = '';
+                }
+                renderAuditLogs(logs);
+            },
+            tone: 'neutral',
+        });
         return;
     }
 
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['🕐 Fecha', '📝 Acción', '👤 Usuario', '✅ Estado', '💻 Detalles'].forEach(label => {
+    ['Fecha', 'Acción', 'Usuario', 'Estado', 'Detalles'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -3747,7 +3836,7 @@ function renderAuditLogs(logs) {
     const tbody = document.createElement('tbody');
 
     filteredLogs.forEach(log => {
-        const successIcon = log.success ? '✅' : '❌';
+        const successIcon = log.success ? 'OK' : 'X';
         const successClass = log.success ? 'success' : 'failed';
         
         let details = '-';
@@ -3821,7 +3910,7 @@ function buildOpsPulseText(status, section) {
 
     if (normalizedStatus === 'connected') return `${sectionLabel} en vivo`;
     if (normalizedStatus === 'reconnecting') return `Reconectando ${sectionLabel}`;
-    if (normalizedStatus === 'disconnected') return 'Conexion interrumpida';
+    if (normalizedStatus === 'disconnected') return 'Conexión interrumpida';
     if (normalizedStatus === 'failed') return 'Sin enlace en tiempo real';
     return 'Sincronizacion en pausa';
 }
@@ -3917,9 +4006,9 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         syncSSEForCurrentContext(true);
         
         // Show success notification
-        showNotification('✅ Bienvenido, ' + result.user.username + '!', 'success');
+        showNotification('Bienvenido, ' + result.user.username + '!', 'success');
     } catch (err) {
-        document.getElementById('loginError').textContent = '❌ Credenciales inválidas';
+        document.getElementById('loginError').textContent = 'Credenciales inválidas';
         document.getElementById('loginPassword').value = '';
     }
 });
@@ -3935,7 +4024,7 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     closeSSE();
     resetProtectedViews();
     showLogin();
-    showNotification('👋 Sesión cerrada', 'info');
+    showNotification('Sesión cerrada', 'info');
 });
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
@@ -3947,7 +4036,7 @@ document.getElementById('refreshBtn').addEventListener('click', () => {
     }, 520);
     
     loadDashboard();
-    showNotification('🔄 Dashboard actualizado', 'info');
+    showNotification('Dashboard actualizado', 'info');
 });
 
 document.querySelectorAll('.nav-links a').forEach(link => {
@@ -4071,7 +4160,7 @@ document.getElementById('qrEnableEditBtn')?.addEventListener('click', () => {
     if (isQrEditSessionActive() && qrModalEditUnlocked) {
         applyQrModalAccessState();
         setQrError('');
-        showNotification('La edici?n ya est? habilitada temporalmente.', 'info');
+        showNotification('La edición ya está habilitada temporalmente.', 'info');
         return;
     }
     openQrPasswordModal();
@@ -4225,7 +4314,7 @@ function scheduleSSEReconnect(preferredDelayMs = null) {
     if (sseReconnectAttempts >= MAX_SSE_RECONNECT_ATTEMPTS) {
         console.error('[SSE] Max reconnection attempts reached');
         updateConnectionStatus('failed');
-        showNotification('⚠️ Conexión en tiempo real perdida. Recarga la página para reconectar.', 'error');
+        showNotification('Conexión en tiempo real perdida. Recarga la página para reconectar.', 'error');
         return;
     }
 
@@ -4329,7 +4418,7 @@ function handleSSEMessage(data) {
     switch (data.type) {
         case 'connected':
             console.log('[SSE]', data.message);
-            showNotification('🔌 Conectado en tiempo real', 'success');
+            showNotification('Conectado en tiempo real', 'success');
             break;
 
         case 'installation_created':
@@ -4388,7 +4477,7 @@ function handleRealtimeInstallation(installation) {
     }
     
     // Show notification
-    const statusIcon = installation.status === 'success' ? '✅' : installation.status === 'failed' ? '❌' : '💻';
+    const statusIcon = installation.status === 'success' ? 'OK' : installation.status === 'failed' ? 'X' : 'DEV';
     showNotification(`${statusIcon} Nuevo registro: ${installation.client_name || 'Sin cliente'}`, 'info');
     
     // Refresh dashboard stats if on dashboard
@@ -4420,18 +4509,18 @@ function handleRealtimeInstallationDeleted(installation) {
             renderInstallationsTable(currentInstallationsData);
         }
     }
-    showNotification(`🗑️ Registro #${installation.id} eliminado`, 'info');
+    showNotification(`Registro #${installation.id} eliminado`, 'info');
 }
 
 function handleRealtimeIncident(incident) {
-    const severityIcon = incident.severity === 'critical' ? '🔴' : incident.severity === 'high' ? '🟠' : '⚠️';
+    const severityIcon = incident.severity === 'critical' ? 'CRIT' : incident.severity === 'high' ? 'ALTA' : 'WARN';
     showNotification(`${severityIcon} Nueva incidencia en registro #${incident.installation_id}`, 'warning');
 }
 
 function handleRealtimeIncidentStatusUpdate(incident) {
     if (!incident || !incident.id) return;
     showNotification(
-        `ℹ️ Incidencia #${incident.id} ahora está "${incidentStatusLabel(incident.incident_status)}".`,
+        `Incidencia #${incident.id} ahora est? "${incidentStatusLabel(incident.incident_status)}".`,
         'info',
     );
 
@@ -4560,7 +4649,7 @@ async function init() {
             try {
                 await api.logout();
             } catch (_err) {
-                // Ignorar si no hab?a sesi?n activa.
+                // Ignorar si no había sesión activa.
             }
             currentUser = null;
             webAccessToken = '';
@@ -4647,7 +4736,7 @@ function toggleTheme() {
     
     // Show notification
     const themeLabel = newTheme === 'light' ? 'claro' : 'oscuro';
-    showNotification(`🎨 Tema ${themeLabel} activado`, 'info');
+    showNotification(`Tema ${themeLabel} activado`, 'info');
 }
 
 function updateChartTheme(theme) {

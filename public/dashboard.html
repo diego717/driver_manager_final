@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0f756d">
     <meta name="description" content="Dashboard de gestión de registros de drivers">
     <title>SiteOps Dashboard</title>
-    <link rel="stylesheet" href="/dashboard.css?v=809d58ec98">
+    <link rel="stylesheet" href="/dashboard.css?v=9e1890bd3d">
     <link rel="manifest" href="/manifest.json?v=9130a5f920">
     <link rel="icon" href="/icons/icon-192x192.png">
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
@@ -125,7 +125,7 @@
                 <div class="filters">
                     <!-- Real-time search -->
                     <div class="search-wrapper">
-                        <input type="text" id="searchInput" class="search-input" placeholder="Búsqueda en tiempo real..." autocomplete="off">
+                        <input type="search" id="searchInput" name="records_search" class="search-input" placeholder="Búsqueda en tiempo real..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
                         <span class="search-icon"><span class="material-symbols-outlined icon-inline-md">search</span></span>
                     </div>
                     
@@ -176,7 +176,7 @@
             <div id="assetsSection" class="section">
                 <div class="filters">
                     <div class="search-wrapper">
-                        <input type="text" id="assetsSearchInput" class="search-input" placeholder="Buscar equipo por c?digo, marca, modelo, serie o cliente..." autocomplete="off">
+                        <input type="search" id="assetsSearchInput" name="assets_search" class="search-input" placeholder="Buscar equipo por código, marca, modelo, serie o cliente..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
                         <span class="search-icon"><span class="material-symbols-outlined icon-inline-md">search</span></span>
                     </div>
 
@@ -207,8 +207,8 @@
                 <div class="filters">
                     <div class="filter-row">
                         <input type="text" id="driverBrandInput" placeholder="Marca (ej: Zebra)">
-                        <input type="text" id="driverVersionInput" placeholder="Version (ej: v1.2.3)">
-                        <input type="text" id="driverDescriptionInput" placeholder="Descripcion (opcional)">
+                        <input type="text" id="driverVersiónInput" placeholder="Versión (ej: v1.2.3)">
+                        <input type="text" id="driverDescriptionInput" placeholder="Descripción (opcional)">
                     </div>
                     <div class="filter-actions">
                         <input type="file" id="driverFileInput">
@@ -266,11 +266,11 @@
             <form id="loginForm">
                 <div class="input-group">
                     <label for="loginUsername">Usuario</label>
-                    <input type="text" id="loginUsername" placeholder="nombre_usuario" required>
+                    <input type="text" id="loginUsername" placeholder="nombre_usuario" autocomplete="username" required>
                 </div>
                 <div class="input-group">
-                    <label for="loginPassword">Contrasena</label>
-                    <input type="password" id="loginPassword" placeholder="********" required>
+                    <label for="loginPassword">Contraseña</label>
+                    <input type="password" id="loginPassword" placeholder="********" autocomplete="current-password" required>
                 </div>
                 <button type="submit" class="btn-primary btn-full">Ingresar</button>
             </form>
@@ -289,7 +289,7 @@
         <div class="modal-content qr-modal">
             <button type="button" class="close" aria-label="Cerrar generador QR">&times;</button>
             <h3>Alta de equipo y QR</h3>
-            <p class="qr-modal-subtitle">Genera c?digos compatibles con mobile y guarda el equipo (marca/modelo/serie/cliente) para asociarlo luego a registros o incidencias.</p>
+            <p class="qr-modal-subtitle">Genera códigos compatibles con mobile y guarda el equipo (marca/modelo/serie/cliente) para asociarlo luego a registros o incidencias.</p>
 
             <div class="qr-type-selector">
                 <label>
@@ -298,13 +298,13 @@
                 </label>
                 <label>
                     <input type="radio" name="qrType" value="installation">
-                    Instalacion
+                    Instalación
                 </label>
             </div>
 
             <div id="qrInstallationFields" class="qr-section-fields is-hidden">
                 <div class="input-group">
-                    <label for="qrValueInput" id="qrValueLabel">ID de instalaci?n</label>
+                    <label for="qrValueInput" id="qrValueLabel">ID de instalación</label>
                     <input type="text" id="qrValueInput" placeholder="Ej: 245" autocomplete="off">
                     <small id="qrHelperText" class="qr-helper">Formato recomendado para mobile: dm://installation/{id}.</small>
                 </div>
@@ -313,7 +313,7 @@
             <div id="qrAssetFields" class="qr-section-fields">
                 <div class="qr-asset-grid">
                     <div class="input-group">
-                        <label for="qrAssetCodeInput">Codigo externo (opcional)</label>
+                        <label for="qrAssetCodeInput">Código externo (opcional)</label>
                         <input type="text" id="qrAssetCodeInput" placeholder="Ej: EQ-SL3-001" autocomplete="off">
                     </div>
                     <div class="input-group">
@@ -337,7 +337,7 @@
                         <textarea id="qrAssetNotesInput" rows="3" placeholder="Observaciones para este equipo"></textarea>
                     </div>
                 </div>
-                <small id="qrAssetHelper" class="qr-helper">Requisitos: marca o modelo, y n?mero de serie. El c?digo externo se genera autom?ticamente desde serie si queda vac?o.</small>
+                <small id="qrAssetHelper" class="qr-helper">Requisitos: marca o modelo, y número de serie. El código externo se genera automáticamente desde serie si queda vacío.</small>
             </div>
 
             <div id="qrLabelPresetContainer" class="input-group">
@@ -352,7 +352,7 @@
             <div class="qr-actions">
                 <button type="button" id="qrGenerateBtn" class="btn-primary">Generar QR</button>
                 <button type="button" id="qrSaveAssetBtn" class="btn-secondary">Guardar equipo</button>
-                <button type="button" id="qrEnableEditBtn" class="btn-secondary is-hidden">Habilitar edici?n</button>
+                <button type="button" id="qrEnableEditBtn" class="btn-secondary is-hidden">Habilitar edición</button>
                 <button type="button" id="qrCopyBtn" class="btn-secondary" disabled>Copiar payload</button>
                 <button type="button" id="qrDownloadBtn" class="btn-secondary" disabled>Descargar imagen</button>
                 <button type="button" id="qrPrintBtn" class="btn-secondary" disabled>Imprimir etiqueta</button>
@@ -370,11 +370,11 @@
 
     <div id="qrPasswordModal" class="modal">
         <div class="modal-content qr-password-modal">
-            <button type="button" class="close" aria-label="Cerrar confirmaci?n de contrase?a">&times;</button>
-            <h3>Confirmar edici?n</h3>
-            <p class="qr-modal-subtitle">Ingresa tu contrase?a para habilitar edici?n de este equipo.</p>
+            <button type="button" class="close" aria-label="Cerrar confirmación de contraseña">&times;</button>
+            <h3>Confirmar edición</h3>
+            <p class="qr-modal-subtitle">Ingresa tu contraseña para habilitar edición de este equipo.</p>
             <div class="input-group">
-                <label for="qrPasswordInput">Contrasena</label>
+                <label for="qrPasswordInput">Contraseña</label>
                 <input type="password" id="qrPasswordInput" autocomplete="current-password" placeholder="********">
             </div>
             <p id="qrPasswordError" class="error"></p>
@@ -388,7 +388,7 @@
     <div id="actionModal" class="modal">
         <div class="modal-content action-modal">
             <button type="button" class="close" aria-label="Cerrar formulario">&times;</button>
-            <h3 id="actionModalTitle">Acci?n</h3>
+            <h3 id="actionModalTitle">Acción</h3>
             <p id="actionModalSubtitle" class="qr-modal-subtitle is-hidden"></p>
             <form id="actionModalForm" novalidate>
                 <div id="actionModalFields"></div>
@@ -403,7 +403,7 @@
     
     <script src="/dashboard-qr.js?v=d8de215faf" defer></script>
     <script src="/dashboard-api.js?v=da9fe280e7" defer></script>
-    <script src="/dashboard.js?v=946760113e" defer></script>
+    <script src="/dashboard.js?v=1f239bc6fe" defer></script>
     <script src="/dashboard-pwa.js?v=55b84aa40e" defer></script>
 </body>
 </html>

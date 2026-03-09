@@ -193,7 +193,7 @@ export default function AssetsTabScreen() {
 
   const onLinkAsset = useCallback(async () => {
     if (!(await refreshSessionState())) {
-      Alert.alert("Sesion requerida", "Inicia sesion web en Configuracion y acceso.");
+      Alert.alert("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
       router.push("/modal");
       return;
     }
@@ -269,7 +269,7 @@ export default function AssetsTabScreen() {
         >
           <Text style={[styles.authTitle, { color: palette.textPrimary }]}>Sesion requerida</Text>
           <Text style={[styles.hintText, { color: palette.textSecondary }]}>
-            Inicia sesion web para ver y asociar equipos.
+            Inicia sesión web para ver y asociar equipos.
           </Text>
           <TouchableOpacity
             style={[styles.button, { backgroundColor: palette.primaryButtonBg }]}
@@ -447,7 +447,7 @@ export default function AssetsTabScreen() {
               onPress={() => setShowLinkForm((current) => !current)}
               accessibilityRole="button"
             >
-              <Text style={[styles.actionBtnText, { color: palette.refreshText }]}>Vincular instalacion</Text>
+              <Text style={[styles.actionBtnText, { color: palette.refreshText }]}>Vincular instalación</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionBtn, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}

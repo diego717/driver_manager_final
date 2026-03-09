@@ -24,13 +24,13 @@ class ThemeManager:
                     "background": "#f5f7fa",  # --bg-primary
                     "surface": "#ffffff",     # --bg-secondary
                     "primary": "#1a1d23",     # --text-primary
-                    "secondary": "#5f6b7a",   # --text-secondary
-                    "accent": "#0f756d",      # --accent-primary
+                    "secondary": "#445264",   # --text-secondary
+                    "accent": "#0b6d66",      # --accent-primary
                     
                     # Texto
                     "text_primary": "#1a1d23",
-                    "text_secondary": "#5f6b7a",
-                    "text_muted": "#8b93a5",
+                    "text_secondary": "#445264",
+                    "text_muted": "#6d7890",
                     "text_inverse": "#ffffff",
                     
                     # Estados
@@ -40,15 +40,15 @@ class ThemeManager:
                     "info": "#2563eb",
                     
                     # Bordes y separadores
-                    "border": "#dce1e8",
-                    "border_light": "#f0f2f5", # --bg-card
-                    "separator": "#e4e7ec",    # --bg-hover
+                    "border": "#cfd6df",
+                    "border_light": "#eceff4", # --bg-card
+                    "separator": "#dbe2ea",    # --bg-hover
                     
                     # Botones
-                    "button_primary": "#0f756d",
-                    "button_primary_hover": "#14a89e", # --accent-secondary
-                    "button_secondary": "#e4e7ec",
-                    "button_secondary_hover": "#dce1e8",
+                    "button_primary": "#0b6d66",
+                    "button_primary_hover": "#16a39a", # --accent-secondary
+                    "button_secondary": "#eceff4",
+                    "button_secondary_hover": "#dbe2ea",
                     "button_success": "#0d9f6e",
                     "button_success_hover": "#10b981",
                     "button_warning": "#d97706",
@@ -58,8 +58,8 @@ class ThemeManager:
                     
                     # Inputs
                     "input_background": "#ffffff",
-                    "input_border": "#dce1e8",
-                    "input_border_focus": "#0f756d",
+                    "input_border": "#cfd6df",
+                    "input_border_focus": "#0b6d66",
                     "input_text": "#1a1d23",
                     
                     # Tablas y listas
@@ -67,18 +67,18 @@ class ThemeManager:
                     "table_row_even": "#ffffff",
                     "table_row_odd": "#f5f7fa",
                     "table_row_hover": "#e4e7ec",
-                    "table_selected": "rgba(15, 117, 109, 0.08)", # --sidebar-active-bg
+                    "table_selected": "rgba(11, 109, 102, 0.14)", # --sidebar-active-bg
                     
                     # Paneles especiales (con alpha blends sugeridos)
-                    "panel_info": "rgba(37, 99, 235, 0.1)",
-                    "panel_success": "rgba(13, 159, 110, 0.1)",
-                    "panel_warning": "rgba(217, 119, 6, 0.1)",
-                    "panel_error": "rgba(220, 38, 38, 0.1)",
+                    "panel_info": "rgba(37, 99, 235, 0.12)",
+                    "panel_success": "rgba(13, 159, 110, 0.12)",
+                    "panel_warning": "rgba(217, 119, 6, 0.12)",
+                    "panel_error": "rgba(220, 38, 38, 0.12)",
                     
                     # Estadísticas (contraste mejorado)
                     "stats_background": "#ffffff",
                     "stats_text": "#1a1d23",
-                    "stats_border": "#dce1e8"
+                    "stats_border": "#cfd6df"
                 }
             },
             
@@ -89,13 +89,13 @@ class ThemeManager:
                     "background": "#0f1117",  # --bg-primary
                     "surface": "#1a1d27",     # --bg-secondary
                     "primary": "#eef0f4",     # --text-primary
-                    "secondary": "#8b93a5",   # --text-secondary
-                    "accent": "#14a89e",      # --accent-primary
+                    "secondary": "#a4afc1",   # --text-secondary
+                    "accent": "#1ab3a7",      # --accent-primary
                     
                     # Texto
                     "text_primary": "#eef0f4",
-                    "text_secondary": "#8b93a5",
-                    "text_muted": "#5f6b7a",
+                    "text_secondary": "#a4afc1",
+                    "text_muted": "#778199",
                     "text_inverse": "#0f1117",
                     
                     # Estados
@@ -105,15 +105,15 @@ class ThemeManager:
                     "info": "#3b82f6",
                     
                     # Bordes y separadores
-                    "border": "#2e3240",
-                    "border_light": "#242833", # --bg-card
-                    "separator": "#2e3240",    # --bg-hover
+                    "border": "#3b4353",
+                    "border_light": "#262c38", # --bg-card
+                    "separator": "#333a48",    # --bg-hover
                     
                     # Botones
-                    "button_primary": "#14a89e",
-                    "button_primary_hover": "#2dd4c0", # equivalent --accent-secondary/gradient
-                    "button_secondary": "#242833",
-                    "button_secondary_hover": "#2e3240",
+                    "button_primary": "#1ab3a7",
+                    "button_primary_hover": "#35d9c8", # equivalent --accent-secondary/gradient
+                    "button_secondary": "#262c38",
+                    "button_secondary_hover": "#333a48",
                     "button_success": "#10b981",
                     "button_success_hover": "#34d399",
                     "button_warning": "#f59e0b",
@@ -123,16 +123,16 @@ class ThemeManager:
                     
                     # Inputs
                     "input_background": "#1a1d27",
-                    "input_border": "#2e3240",
-                    "input_border_focus": "#14a89e",
+                    "input_border": "#3b4353",
+                    "input_border_focus": "#1ab3a7",
                     "input_text": "#eef0f4",
                     
                     # Tablas y listas
                     "table_header": "#0f1117",
                     "table_row_even": "#1a1d27",
                     "table_row_odd": "#0f1117",
-                    "table_row_hover": "#2e3240",
-                    "table_selected": "rgba(20, 168, 158, 0.12)", # --sidebar-active-bg
+                    "table_row_hover": "#333a48",
+                    "table_selected": "rgba(26, 179, 167, 0.22)", # --sidebar-active-bg
                     
                     # Paneles especiales
                     "panel_info": "rgba(59, 130, 246, 0.15)",
@@ -143,7 +143,7 @@ class ThemeManager:
                     # Estadísticas (contraste mejorado)
                     "stats_background": "#1a1d27",
                     "stats_text": "#eef0f4",
-                    "stats_border": "#2e3240"
+                    "stats_border": "#3b4353"
                 }
             }
         }
@@ -177,67 +177,93 @@ class ThemeManager:
         QMainWindow {{
             background-color: {colors['background']};
             color: {colors['text_primary']};
-            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            font-family: 'Segoe UI Variable Text', 'Segoe UI', sans-serif;
         }}
         
         QWidget {{
             background-color: {colors['background']};
             color: {colors['text_primary']};
-            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            font-family: 'Segoe UI Variable Text', 'Segoe UI', sans-serif;
         }}
         
         /* Tabs */
         QTabWidget::pane {{
             border: 1px solid {colors['border']};
             background-color: {colors['surface']};
-            border-radius: 12px;
+            border-radius: 14px;
         }}
         
         QTabBar::tab {{
             background-color: {colors['surface']};
             color: {colors['text_secondary']};
-            padding: 8px 16px;
+            padding: 9px 18px;
             margin-right: 2px;
             border: 1px solid {colors['border']};
             border-bottom: none;
+            border-top-left-radius: 10px;
+            border-top-right-radius: 10px;
+            font-weight: 600;
         }}
         
         QTabBar::tab:selected {{
-            background-color: {colors['background']};
-            color: {colors['text_primary']};
-            font-weight: bold;
+            background-color: {colors['button_primary']};
+            color: {colors['text_inverse']};
+            font-weight: 700;
+            border-color: {colors['button_primary']};
         }}
         
         QTabBar::tab:hover {{
             background-color: {colors['panel_info']};
+            color: {colors['text_primary']};
         }}
         
         /* Botones */
         QPushButton {{
-            background-color: {colors['button_primary']};
-            color: {colors['text_inverse']};
-            border: none;
-            padding: 8px 16px;
-            border-radius: 4px;
-            font-weight: bold;
+            background-color: {colors['button_secondary']};
+            color: {colors['text_primary']};
+            border: 1px solid {colors['border']};
+            padding: 9px 16px;
+            border-radius: 10px;
+            font-weight: 600;
+            min-height: 38px;
         }}
         
         QPushButton:hover {{
-            background-color: {colors['button_primary_hover']};
+            background-color: {colors['button_secondary_hover']};
+            border-color: {colors['input_border_focus']};
         }}
         
         QPushButton:pressed {{
-            background-color: {colors['button_primary_hover']};
+            background-color: {colors['separator']};
         }}
         
         QPushButton:disabled {{
             background-color: {colors['button_secondary']};
             color: {colors['text_muted']};
+            border-color: {colors['border']};
+        }}
+
+        QPushButton:focus {{
+            border: 2px solid {colors['input_border_focus']};
+        }}
+
+        QPushButton[class="primary"] {{
+            background-color: {colors['button_primary']};
+            color: {colors['text_inverse']};
+            border: 1px solid {colors['button_primary']};
+            font-weight: 700;
+        }}
+
+        QPushButton[class="primary"]:hover {{
+            background-color: {colors['button_primary_hover']};
+            border: 1px solid {colors['button_primary_hover']};
         }}
         
         /* Botones de éxito */
         QPushButton[class="success"] {{
             background-color: {colors['button_success']};
+            color: {colors['text_inverse']};
+            border: 1px solid {colors['button_success']};
         }}
         
         QPushButton[class="success"]:hover {{
@@ -247,6 +273,8 @@ class ThemeManager:
         /* Botones de advertencia */
         QPushButton[class="warning"] {{
             background-color: {colors['button_warning']};
+            color: {colors['text_inverse']};
+            border: 1px solid {colors['button_warning']};
         }}
         
         QPushButton[class="warning"]:hover {{
@@ -256,10 +284,25 @@ class ThemeManager:
         /* Botones de peligro */
         QPushButton[class="danger"] {{
             background-color: {colors['button_danger']};
+            color: {colors['text_inverse']};
+            border: 1px solid {colors['button_danger']};
         }}
         
         QPushButton[class="danger"]:hover {{
             background-color: {colors['button_danger_hover']};
+        }}
+
+        QPushButton[class="info"] {{
+            background-color: {colors['panel_info']};
+            color: {colors['text_primary']};
+            border: 1px solid {colors['info']};
+            font-weight: 600;
+        }}
+
+        QPushButton[class="info"]:hover {{
+            background-color: {colors['info']};
+            color: {colors['text_inverse']};
+            border: 1px solid {colors['info']};
         }}
         
         /* Inputs */
@@ -273,6 +316,7 @@ class ThemeManager:
         
         QLineEdit:focus, QTextEdit:focus, QComboBox:focus {{
             border-color: {colors['input_border_focus']};
+            border-width: 2px;
         }}
         
         /* Listas y tablas */
@@ -285,7 +329,7 @@ class ThemeManager:
         }}
         
         QListWidget::item, QTableWidget::item {{
-            padding: 4px;
+            padding: 6px;
             border-bottom: 1px solid {colors['border_light']};
         }}
         
@@ -300,9 +344,9 @@ class ThemeManager:
         QHeaderView::section {{
             background-color: {colors['table_header']};
             color: {colors['text_primary']};
-            padding: 8px;
+            padding: 9px;
             border: 1px solid {colors['border']};
-            font-weight: bold;
+            font-weight: 700;
         }}
         
         /* GroupBox */

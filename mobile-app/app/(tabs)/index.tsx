@@ -27,6 +27,7 @@ import { clearWebSession, readStoredWebSession } from "@/src/api/webAuth";
 import { evaluateWebSession } from "@/src/api/webSession";
 import { consumeForceLoginOnOpenFlag } from "@/src/security/startup-session-policy";
 import { getStoredWebAccessUsername } from "@/src/storage/secure";
+import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 import { type IncidentSeverity, type InstallationRecord } from "@/src/types/api";
@@ -39,25 +40,30 @@ const SEVERITY_OPTIONS: Array<{
   {
     value: "low",
     label: "Baja",
-    criteria: "No bloquea operacion y hay workaround.",
+    criteria: "No bloquea operación y hay workaround.",
   },
   {
     value: "medium",
     label: "Media",
-    criteria: "Afecta operacion parcial, requiere atencion hoy.",
+    criteria: "Afecta operación parcial, requiere atención hoy.",
   },
   {
     value: "high",
     label: "Alta",
-    criteria: "Bloquea proceso principal o multiples usuarios.",
+    criteria: "Bloquea proceso principal o múltiples usuarios.",
   },
   {
     value: "critical",
-    label: "Critica",
-    criteria: "Caida total, riesgo de datos o cliente detenido.",
+    label: "Crítica",
+    criteria: "Caída total, riesgo de datos o cliente detenido.",
   },
 ];
 const MIN_TOUCH_TARGET_SIZE = 44;
+
+type FeedbackState = {
+  tone: InlineFeedbackTone;
+  message: string;
+} | null;
 
 function normalizeRouteParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
@@ -79,7 +85,7 @@ function normalizeRecordAttentionState(value: unknown): "clear" | "open" | "in_p
 
 function recordAttentionStateLabel(value: unknown): string {
   const normalized = normalizeRecordAttentionState(value);
-  if (normalized === "critical") return "Critica";
+  if (normalized === "critical") return "Crítica";
   if (normalized === "in_progress") return "En curso";
   if (normalized === "open") return "Abierta";
   if (normalized === "resolved") return "Resuelta";
@@ -124,7 +130,7 @@ export default function CreateIncidentScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [linkingAssetOnly, setLinkingAssetOnly] = useState(false);
   const [creatingManualRecord, setCreatingManualRecord] = useState(false);
-  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [feedbackMessage, setFeedbackMessage] = useState<FeedbackState>(null);
   const [checkingSession, setCheckingSession] = useState(true);
   const [hasActiveSession, setHasActiveSession] = useState(false);
   const [lastCreatedIncidentId, setLastCreatedIncidentId] = useState<number | null>(null);
@@ -132,14 +138,28 @@ export default function CreateIncidentScreen() {
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleInstallations = useMemo(() => installations.slice(0, 30), [installations]);
 
+  const resolveFeedbackTone = (title: string): InlineFeedbackTone => {
+    const normalized = String(title || "").trim().toLowerCase();
+    if (normalized.includes("error")) return "error";
+    if (normalized.includes("invalido")) return "warning";
+    if (normalized.includes("sesion")) return "warning";
+    if (normalized.includes("creado") || normalized.includes("asociado") || normalized.includes("exito")) {
+      return "success";
+    }
+    return "info";
+  };
+
   const notify = (title: string, message: string) => {
-    setFeedbackMessage(`${title}: ${message}`);
+    setFeedbackMessage({
+      tone: resolveFeedbackTone(title),
+      message: `${title}: ${message}`,
+    });
     Alert.alert(title, message);
     if (feedbackTimeoutRef.current) {
       clearTimeout(feedbackTimeoutRef.current);
     }
     feedbackTimeoutRef.current = setTimeout(() => {
-      setFeedbackMessage("");
+      setFeedbackMessage(null);
       feedbackTimeoutRef.current = null;
     }, 5000);
   };
@@ -240,7 +260,7 @@ export default function CreateIncidentScreen() {
 
   const onCreateManualRecord = async () => {
     if (!(await refreshSessionState())) {
-      notify("Sesion requerida", "Inicia sesion web en Configuracion y acceso.");
+      notify("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
       router.push("/modal");
       return;
     }
@@ -252,7 +272,7 @@ export default function CreateIncidentScreen() {
         status: "manual",
         driver_brand: "N/A",
         driver_version: "N/A",
-        driver_description: "Registro manual creado desde app movil",
+        driver_description: "Registro manual creado desde app móvil",
         os_info: "mobile",
         installation_time_seconds: 0,
       });
@@ -278,7 +298,7 @@ export default function CreateIncidentScreen() {
 
   const onSubmit = async () => {
     if (!(await refreshSessionState())) {
-      notify("Sesion requerida", "Inicia sesion web en Configuracion y acceso.");
+      notify("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
       router.push("/modal");
       return;
     }
@@ -286,7 +306,7 @@ export default function CreateIncidentScreen() {
     const parsedTimeAdjustment = Number.parseInt(timeAdjustment, 10);
 
     if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) {
-      notify("Dato invalido", "El ID de registro debe ser un numero positivo.");
+      notify("Dato inválido", "El ID de registro debe ser un número positivo.");
       return;
     }
     if (
@@ -300,11 +320,11 @@ export default function CreateIncidentScreen() {
       return;
     }
     if (!note.trim()) {
-      notify("Dato invalido", "La nota es obligatoria.");
+      notify("Dato inválido", "La nota es obligatoria.");
       return;
     }
     if (!Number.isInteger(parsedTimeAdjustment)) {
-      notify("Dato invalido", "time_adjustment_seconds debe ser entero.");
+      notify("Dato inválido", "time_adjustment_seconds debe ser entero.");
       return;
     }
 
@@ -377,20 +397,20 @@ export default function CreateIncidentScreen() {
 
   const onLinkAssetWithoutIncident = async () => {
     if (!(await refreshSessionState())) {
-      notify("Sesion requerida", "Inicia sesion web en Configuracion y acceso.");
+      notify("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
       router.push("/modal");
       return;
     }
 
     const normalizedAssetCode = assetExternalCode.trim();
     if (!normalizedAssetCode) {
-      notify("Dato invalido", "No hay un equipo QR para asociar.");
+      notify("Dato inválido", "No hay un equipo QR para asociar.");
       return;
     }
 
     const parsedInstallationId = Number.parseInt(installationId, 10);
     if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) {
-      notify("Dato invalido", "El ID de registro debe ser un numero positivo.");
+      notify("Dato inválido", "El ID de registro debe ser un número positivo.");
       return;
     }
 
@@ -516,7 +536,7 @@ export default function CreateIncidentScreen() {
       <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
         <ActivityIndicator size="large" color={palette.loadingSpinner} />
         <Text style={[styles.authHintText, { color: palette.textSecondary }]}>
-          Verificando sesion web...
+          Verificando sesión web...
         </Text>
       </View>
     );
@@ -532,19 +552,19 @@ export default function CreateIncidentScreen() {
           ]}
         >
           <Text style={[styles.authTitle, { color: palette.textPrimary }]}>
-            Sesion requerida
+            Sesión requerida
           </Text>
           <Text style={[styles.authHintText, { color: palette.textSecondary }]}>
-            Inicia sesion web para ver registros e incidencias.
+            Inicia sesión web para ver registros e incidencias.
           </Text>
           <TouchableOpacity
             style={[styles.button, { backgroundColor: palette.primaryButtonBg }]}
             onPress={() => router.push("/modal")}
             accessibilityRole="button"
-            accessibilityLabel="Ir a Configuracion y acceso"
+            accessibilityLabel="Ir a Configuración y acceso"
           >
             <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>
-              Ir a Configuracion y acceso
+              Ir a Configuración y acceso
             </Text>
           </TouchableOpacity>
         </View>
@@ -559,14 +579,7 @@ export default function CreateIncidentScreen() {
         Usa esta pantalla para crear incidencias y validar el flujo contra el Worker.
       </Text>
       {feedbackMessage ? (
-        <View
-          style={[
-            styles.feedbackBox,
-            { backgroundColor: palette.feedbackBg, borderColor: palette.feedbackBorder },
-          ]}
-        >
-          <Text style={[styles.feedbackText, { color: palette.feedbackText }]}>{feedbackMessage}</Text>
-        </View>
+        <InlineFeedback message={feedbackMessage.message} tone={feedbackMessage.tone} />
       ) : null}
 
       <View
@@ -921,43 +934,45 @@ export default function CreateIncidentScreen() {
 const styles = StyleSheet.create({
   centerContainer: {
     flex: 1,
-    padding: 20,
+    padding: 22,
     alignItems: "center",
     justifyContent: "center",
   },
   container: {
-    padding: 20,
-    gap: 10,
+    padding: 22,
+    gap: 12,
   },
   authCard: {
     width: "100%",
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 14,
-    gap: 8,
+    borderRadius: 14,
+    padding: 16,
+    gap: 10,
   },
   authTitle: {
-    fontSize: 18,
+    fontSize: 21,
     fontFamily: fontFamilies.bold,
   },
   authHintText: {
-    fontSize: 13,
+    fontSize: 14,
+    lineHeight: 20,
     fontFamily: fontFamilies.regular,
   },
   rowBetween: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 8,
+    marginTop: 10,
   },
   title: {
-    fontSize: 24,
+    fontSize: 28,
     fontFamily: fontFamilies.bold,
   },
   subtitle: {
-    fontSize: 14,
+    fontSize: 15,
+    lineHeight: 21,
     fontFamily: fontFamilies.regular,
-    marginBottom: 8,
+    marginBottom: 10,
   },
   feedbackBox: {
     borderWidth: 1,
@@ -971,138 +986,141 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.regular,
   },
   sectionTitle: {
-    marginTop: 10,
-    fontSize: 14,
+    marginTop: 12,
+    fontSize: 16,
     fontFamily: fontFamilies.bold,
   },
   optionalSectionCard: {
-    marginTop: 8,
+    marginTop: 10,
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    gap: 8,
+    borderRadius: 14,
+    padding: 14,
+    gap: 10,
   },
   optionalSectionTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontFamily: fontFamilies.bold,
   },
   optionalSectionDescription: {
-    fontSize: 12,
+    fontSize: 13,
+    lineHeight: 18,
     fontFamily: fontFamilies.regular,
   },
   optionalSectionToggle: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 11,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
   },
   optionalSectionToggleText: {
-    fontSize: 13,
+    fontSize: 14,
     fontFamily: fontFamilies.bold,
   },
   optionalSectionForm: {
-    gap: 8,
+    gap: 10,
     marginTop: 2,
   },
   sectionDivider: {
-    marginTop: 12,
+    marginTop: 14,
     borderBottomWidth: 1,
   },
   label: {
-    fontSize: 13,
+    fontSize: 13.5,
     fontFamily: fontFamilies.semibold,
   },
   input: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 11,
   },
   hint: {
-    fontSize: 12,
+    fontSize: 12.5,
+    lineHeight: 18,
   },
   chipsWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 4,
+    gap: 9,
+    marginBottom: 6,
   },
   severityWrap: {
     gap: 8,
   },
   severityChip: {
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
+    borderRadius: 12,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     justifyContent: "center",
-    gap: 2,
+    gap: 3,
   },
   severityChipLabel: {
     fontFamily: fontFamilies.bold,
-    fontSize: 12,
+    fontSize: 13,
   },
   severityChipCriteria: {
-    fontSize: 12,
+    fontSize: 12.5,
+    lineHeight: 17,
     fontFamily: fontFamilies.regular,
   },
   chip: {
     borderWidth: 1,
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     justifyContent: "center",
   },
   chipText: {
-    fontSize: 12,
+    fontSize: 12.5,
     fontFamily: fontFamilies.semibold,
   },
   refreshButton: {
     borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     justifyContent: "center",
   },
   refreshButtonText: {
     fontFamily: fontFamilies.semibold,
-    fontSize: 12,
+    fontSize: 13,
   },
   noteInput: {
-    minHeight: 110,
+    minHeight: 120,
     textAlignVertical: "top",
   },
   manualNoteInput: {
-    minHeight: 80,
+    minHeight: 90,
     textAlignVertical: "top",
   },
   secondaryButton: {
-    marginTop: 6,
-    borderRadius: 10,
+    marginTop: 8,
+    borderRadius: 12,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 14,
+    paddingVertical: 15,
   },
   button: {
-    marginTop: 10,
-    borderRadius: 10,
+    marginTop: 12,
+    borderRadius: 12,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 14,
+    paddingVertical: 15,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   buttonText: {
     fontFamily: fontFamilies.bold,
-    fontSize: 15,
+    fontSize: 16,
   },
 });

@@ -72,17 +72,18 @@ class DriversTab(QWidget):
         self.install_btn = QPushButton("🚀 Descargar e Instalar")
         self.install_btn.setEnabled(False)
         self.install_btn.setToolTip("Descargar y ejecutar el instalador del controlador seleccionado")
+        self.install_btn.setProperty("class", "primary")
         buttons_layout.addWidget(self.install_btn)
 
         self.generate_qr_btn = QPushButton("QR equipo")
-        self.generate_qr_btn.setToolTip("Generar un codigo QR local para asociar equipos o instalaciones")
+        self.generate_qr_btn.setToolTip("Generar un código QR local para asociar equipos o instalaciones")
         buttons_layout.addWidget(self.generate_qr_btn)
 
         self.associate_asset_btn = QPushButton("Asociar equipo")
         self.associate_asset_btn.setToolTip("Asociar un equipo a una instalación sin crear incidencia")
         buttons_layout.addWidget(self.associate_asset_btn)
 
-        self.manage_assets_btn = QPushButton("Gestion equipos")
+        self.manage_assets_btn = QPushButton("Gestión de equipos")
         self.manage_assets_btn.setToolTip("Abrir panel de gestion de equipos")
         buttons_layout.addWidget(self.manage_assets_btn)
         
@@ -158,6 +159,7 @@ class DriversTab(QWidget):
         file_layout.addWidget(select_btn)
         
         upload_btn = QPushButton("☁️ Subir a la Nube")
+        upload_btn.setProperty("class", "primary")
         file_layout.addWidget(upload_btn)
         layout.addLayout(file_layout)
 
@@ -273,6 +275,7 @@ class HistoryTab(QWidget):
 
         actions_layout = QHBoxLayout()
         self.create_manual_button = QPushButton("➕ Crear Registro Manual")
+        self.create_manual_button.setProperty("class", "primary")
         actions_layout.addWidget(self.create_manual_button)
 
         self.edit_button = QPushButton("📝 Editar Registro")
@@ -584,6 +587,7 @@ class AdminTab(QWidget):
         auth_layout.addStretch()
         
         self.login_btn = QPushButton("Iniciar Sesión")
+        self.login_btn.setProperty("class", "primary")
         auth_layout.addWidget(self.login_btn)
         
         self.logout_btn = QPushButton("Cerrar Sesión")
@@ -851,3 +855,5 @@ class EditInstallationDialog(QDialog):
             'notes': self.notes_edit.toPlainText(),
             'time_seconds': self.time_spinbox.value() * 60
         }
+
+
