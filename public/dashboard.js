@@ -2856,6 +2856,7 @@ function renderAssetsTable(assets) {
     thead.appendChild(headerRow);
 
     const tbody = document.createElement('tbody');
+    const canEditAssets = canCurrentUserEditAssets();
     for (const asset of assets) {
         const row = document.createElement('tr');
         row.dataset.assetId = String(asset.id || '');
@@ -2912,6 +2913,31 @@ function renderAssetsTable(assets) {
         });
 
         actionsCell.append(detailBtn, incidentBtn);
+        if (canEditAssets) {
+            const normalizedStatus = String(asset.status || '').trim().toLowerCase();
+            const isInactiveAsset = normalizedStatus === 'inactive' || normalizedStatus === 'retired';
+
+            const statusBtn = document.createElement('button');
+            statusBtn.type = 'button';
+            statusBtn.className = 'btn-secondary table-action-btn spaced-action-btn';
+            statusBtn.textContent = isInactiveAsset ? 'Reactivar' : 'Dar de baja';
+            statusBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void updateAssetStatusFromWeb(asset, isInactiveAsset ? 'active' : 'retired');
+            });
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'btn-secondary table-action-btn spaced-action-btn';
+            deleteBtn.textContent = 'Eliminar';
+            deleteBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void deleteAssetFromWeb(asset);
+            });
+            actionsCell.append(statusBtn, deleteBtn);
+        }
         row.append(
             idCell,
             codeCell,
@@ -2967,6 +2993,100 @@ async function linkAssetFromDetail(assetId) {
     openAssetLinkModal({
         assetId: numericAssetId,
         notes: 'Vinculo manual desde detalle de equipo',
+    });
+}
+
+async function updateAssetStatusFromWeb(assetOrId, nextStatus) {
+    if (!requireActiveSession()) return;
+    if (!canCurrentUserEditAssets()) {
+        showNotification('Solo admin/super_admin puede cambiar estado de equipos.', 'warning');
+        return;
+    }
+
+    const rawId = typeof assetOrId === 'object' && assetOrId !== null
+        ? assetOrId.id
+        : assetOrId;
+    const numericAssetId = Number.parseInt(String(rawId), 10);
+    if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
+        showNotification('asset_id invalido.', 'error');
+        return;
+    }
+
+    const normalizedStatus = String(nextStatus || '').trim().toLowerCase();
+    const allowedStatuses = new Set(['active', 'inactive', 'retired', 'maintenance']);
+    if (!allowedStatuses.has(normalizedStatus)) {
+        showNotification('Estado de equipo invalido.', 'error');
+        return;
+    }
+
+    const rawCode = typeof assetOrId === 'object' && assetOrId !== null
+        ? assetOrId.external_code
+        : '';
+    const assetLabel = String(rawCode || `#${numericAssetId}`).trim() || `#${numericAssetId}`;
+    const isReactivation = normalizedStatus === 'active';
+
+    openActionConfirmModal({
+        title: isReactivation ? 'Reactivar equipo' : 'Dar de baja equipo',
+        subtitle: isReactivation
+            ? `Confirma la reactivacion del equipo ${assetLabel}.`
+            : `Confirma la baja logica del equipo ${assetLabel}. Podra reactivarse luego.`,
+        submitLabel: isReactivation ? 'Reactivar equipo' : 'Dar de baja',
+        acknowledgementText: isReactivation
+            ? 'Entiendo que este equipo volvera a estado activo.'
+            : 'Entiendo que este equipo quedara fuera de operacion.',
+        missingConfirmationMessage: 'Debes confirmar la accion para continuar.',
+        onSubmit: async () => {
+            await api.updateAsset(numericAssetId, { status: normalizedStatus });
+            closeActionModal(true);
+            showNotification(
+                isReactivation ? 'Equipo reactivado correctamente.' : 'Equipo dado de baja correctamente.',
+                'success',
+            );
+            await loadAssets();
+        },
+    });
+}
+
+async function deleteAssetFromWeb(assetOrId) {
+    if (!requireActiveSession()) return;
+    if (!canCurrentUserEditAssets()) {
+        showNotification('Solo admin/super_admin puede eliminar equipos.', 'warning');
+        return;
+    }
+
+    const rawId = typeof assetOrId === 'object' && assetOrId !== null
+        ? assetOrId.id
+        : assetOrId;
+    const numericAssetId = Number.parseInt(String(rawId), 10);
+    if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
+        showNotification('asset_id invalido.', 'error');
+        return;
+    }
+
+    const rawCode = typeof assetOrId === 'object' && assetOrId !== null
+        ? assetOrId.external_code
+        : '';
+    const assetLabel = String(rawCode || `#${numericAssetId}`).trim() || `#${numericAssetId}`;
+
+    openActionConfirmModal({
+        title: 'Eliminar equipo',
+        subtitle: `Confirma la eliminacion del equipo ${assetLabel}. Esta accion no se puede deshacer.`,
+        submitLabel: 'Eliminar equipo',
+        acknowledgementText: 'Entiendo que este equipo sera eliminado permanentemente.',
+        missingConfirmationMessage: 'Debes confirmar la eliminacion para continuar.',
+        onSubmit: async () => {
+            await api.deleteAsset(numericAssetId);
+            closeActionModal(true);
+            if (Number(currentSelectedAssetId) === numericAssetId) {
+                currentSelectedAssetId = null;
+                const detailContainer = document.getElementById('assetDetail');
+                if (detailContainer) {
+                    detailContainer.innerHTML = '<p class="loading">Selecciona un equipo para ver detalle.</p>';
+                }
+            }
+            showNotification('Equipo eliminado correctamente.', 'success');
+            await loadAssets();
+        },
     });
 }
 
@@ -3045,6 +3165,27 @@ async function renderAssetDetail(data) {
     });
 
     toolbar.append(createIncidentBtn, linkBtn, qrBtn);
+    if (canCurrentUserEditAssets()) {
+        const normalizedStatus = String(asset.status || '').trim().toLowerCase();
+        const isInactiveAsset = normalizedStatus === 'inactive' || normalizedStatus === 'retired';
+
+        const statusBtn = document.createElement('button');
+        statusBtn.type = 'button';
+        statusBtn.className = 'btn-secondary';
+        statusBtn.textContent = isInactiveAsset ? 'Reactivar equipo' : 'Dar de baja equipo';
+        statusBtn.addEventListener('click', () => {
+            void updateAssetStatusFromWeb(asset, isInactiveAsset ? 'active' : 'retired');
+        });
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'btn-secondary';
+        deleteBtn.textContent = 'Eliminar equipo';
+        deleteBtn.addEventListener('click', () => {
+            void deleteAssetFromWeb(asset);
+        });
+        toolbar.append(statusBtn, deleteBtn);
+    }
     container.appendChild(toolbar);
 
     const metaGrid = document.createElement('div');

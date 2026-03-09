@@ -227,6 +227,17 @@
                 const suffix = query ? `?${query}` : '';
                 return request(`/web/assets/${assetId}/incidents${suffix}`);
             },
+            updateAsset(assetId, payload) {
+                return request(`/web/assets/${assetId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
+            deleteAsset(assetId) {
+                return request(`/web/assets/${assetId}`, {
+                    method: 'DELETE',
+                });
+            },
             linkAssetToInstallation(assetId, payload) {
                 return request(`/web/assets/${assetId}/link-installation`, {
                     method: 'POST',
