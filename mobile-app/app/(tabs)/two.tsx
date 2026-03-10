@@ -16,6 +16,7 @@ import { extractApiError } from "@/src/api/client";
 import { listIncidentsByInstallation, listInstallations } from "@/src/api/incidents";
 import { clearWebSession, readStoredWebSession } from "@/src/api/webAuth";
 import { evaluateWebSession } from "@/src/api/webSession";
+import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { consumeForceLoginOnOpenFlag } from "@/src/security/startup-session-policy";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
@@ -46,6 +47,7 @@ function recordAttentionStateLabel(value: unknown): string {
 export default function IncidentListScreen() {
   const palette = useAppPalette();
   const router = useRouter();
+  const bottomSpacing = 112;
   const [installationId, setInstallationId] = useState("1");
   const [loading, setLoading] = useState(false);
   const [loadingInstallations, setLoadingInstallations] = useState(false);
@@ -132,7 +134,7 @@ export default function IncidentListScreen() {
   const onLoad = async () => {
     if (!(await refreshSessionState())) {
       Alert.alert("Sesion requerida", "Inicia sesion web en Configuracion y acceso.");
-      router.push("/modal");
+      router.push("/modal?focus=login");
       return;
     }
     const parsedInstallationId = Number.parseInt(installationId, 10);
@@ -142,7 +144,7 @@ export default function IncidentListScreen() {
   const onSelectInstallation = async (id: number) => {
     if (!(await refreshSessionState())) {
       Alert.alert("Sesion requerida", "Inicia sesion web en Configuracion y acceso.");
-      router.push("/modal");
+      router.push("/modal?focus=login");
       return;
     }
     const next = String(id);
@@ -178,35 +180,31 @@ export default function IncidentListScreen() {
   if (!hasActiveSession) {
     return (
       <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
-        <View
-          style={[
-            styles.authCard,
-            { backgroundColor: palette.cardBg, borderColor: palette.cardBorder },
-          ]}
-        >
-          <Text style={[styles.authTitle, { color: palette.textPrimary }]}>
-            Sesion requerida
-          </Text>
-          <Text style={[styles.authHintText, { color: palette.textSecondary }]}>
-            Inicia sesion web para ver registros e incidencias.
-          </Text>
-          <TouchableOpacity
-            style={[styles.button, { backgroundColor: palette.primaryButtonBg }]}
-            onPress={() => router.push("/modal")}
-            accessibilityRole="button"
-            accessibilityLabel="Ir a Configuracion y acceso"
-          >
-            <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>
-              Ir a Configuracion y acceso
-            </Text>
-          </TouchableOpacity>
-        </View>
+        <WebInlineLoginCard
+          hint="Inicia sesion web para ver registros e incidencias."
+          onLoginSuccess={async () => {
+            await loadInstallations({ forceRefresh: true });
+            const parsedInstallationId = Number.parseInt(installationId, 10);
+            if (Number.isInteger(parsedInstallationId) && parsedInstallationId > 0) {
+              await loadIncidents(parsedInstallationId);
+            }
+          }}
+          onOpenAdvanced={() => router.push("/modal?focus=login")}
+        />
       </View>
     );
   }
 
   return (
-    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
+    <ScrollView
+      contentContainerStyle={[
+        styles.container,
+        {
+          backgroundColor: palette.screenBg,
+          paddingBottom: bottomSpacing,
+        },
+      ]}
+    >
       <Text style={[styles.title, { color: palette.textPrimary }]}>Incidencias</Text>
 
       <View style={styles.rowBetween}>

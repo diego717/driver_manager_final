@@ -17,6 +17,7 @@ import { deleteDriver, listDrivers, uploadDriver, type DriverRecord } from "@/sr
 import { extractApiError } from "@/src/api/client";
 import { clearWebSession, readStoredWebSession } from "@/src/api/webAuth";
 import { evaluateWebSession } from "@/src/api/webSession";
+import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { consumeForceLoginOnOpenFlag } from "@/src/security/startup-session-policy";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
 import { useAppPalette } from "@/src/theme/palette";
@@ -138,7 +139,7 @@ export default function DriversScreen() {
   const onUpload = useCallback(async () => {
     if (!(await refreshSessionState())) {
       pushFeedback("Sesión requerida. Inicia sesión web en Configuración y acceso.", "warning");
-      router.push("/modal");
+      router.push("/modal?focus=login");
       return;
     }
 
@@ -227,27 +228,13 @@ export default function DriversScreen() {
   if (!hasActiveSession) {
     return (
       <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
-        <View
-          style={[
-            styles.authCard,
-            { backgroundColor: palette.cardBg, borderColor: palette.cardBorder },
-          ]}
-        >
-          <Text style={[styles.authTitle, { color: palette.textPrimary }]}>Sesión requerida</Text>
-          <Text style={[styles.hintText, { color: palette.textSecondary }]}>
-            Inicia sesión web para gestionar drivers en R2.
-          </Text>
-          <TouchableOpacity
-            style={[styles.button, { backgroundColor: palette.primaryButtonBg }]}
-            onPress={() => router.push("/modal")}
-            accessibilityRole="button"
-            activeOpacity={0.86}
-          >
-            <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>
-              Ir a configuración
-            </Text>
-          </TouchableOpacity>
-        </View>
+        <WebInlineLoginCard
+          hint="Inicia sesion web para gestionar drivers en R2."
+          onLoginSuccess={async () => {
+            await loadDrivers();
+          }}
+          onOpenAdvanced={() => router.push("/modal?focus=login")}
+        />
       </View>
     );
   }

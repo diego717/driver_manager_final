@@ -18,19 +18,22 @@ function TabBarIcon(props: {
 export default function TabLayout() {
   const palette = useAppPalette();
   const logoSource = require("../../assets/images/Logotipo.png");
+  const tabBarBottomInset = Platform.OS === "android" ? 14 : 6;
+  const tabBarHeight = Platform.OS === "android" ? 70 : 62;
 
   return (
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: palette.accent,
         tabBarInactiveTintColor: palette.textMuted,
+        tabBarHideOnKeyboard: true,
         tabBarStyle: {
           backgroundColor: palette.surface,
           borderTopColor: palette.border,
           borderTopWidth: 1,
-          height: 62,
+          height: tabBarHeight,
           paddingTop: 6,
-          paddingBottom: 6,
+          paddingBottom: tabBarBottomInset,
           shadowColor: "#0f1720",
           shadowOpacity: 0.08,
           shadowOffset: { width: 0, height: -3 },
@@ -65,8 +68,34 @@ export default function TabLayout() {
           fontFamily: fontFamilies.semibold,
         },
         headerRight: () => (
-          <View style={styles.headerLogoWrap}>
+          <View style={styles.headerActions}>
             <Image source={logoSource} style={styles.headerLogo} resizeMode="contain" />
+            <Link href="/modal?focus=login" asChild>
+              <Pressable
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Abrir acceso y configuracion"
+                android_ripple={{ color: palette.hoverBg, borderless: true }}
+                style={({ pressed }) => [
+                  styles.settingsButton,
+                  {
+                    borderColor: palette.border,
+                    backgroundColor: pressed ? palette.hoverBg : palette.subtleBg,
+                    transform: [{ scale: pressed ? 0.95 : 1 }],
+                    opacity: pressed ? 0.9 : 1,
+                  },
+                ]}
+              >
+                {({ pressed }) => (
+                  <FontAwesome
+                    name="cog"
+                    size={21}
+                    color={palette.accent}
+                    style={{ opacity: pressed ? 0.66 : 1 }}
+                  />
+                )}
+              </Pressable>
+            </Link>
           </View>
         ),
         headerTintColor: palette.textPrimary,
@@ -78,37 +107,6 @@ export default function TabLayout() {
         options={{
           title: "Crear",
           tabBarIcon: ({ color }) => <TabBarIcon name="plus-circle" color={color} />,
-          headerRight: () => (
-            <View style={styles.headerActions}>
-              <Image source={logoSource} style={styles.headerLogo} resizeMode="contain" />
-              <Link href="/modal" asChild>
-                <Pressable
-                  hitSlop={8}
-                  accessibilityRole="button"
-                  accessibilityLabel="Abrir configuracion"
-                  android_ripple={{ color: palette.hoverBg, borderless: true }}
-                  style={({ pressed }) => [
-                    styles.settingsButton,
-                    {
-                      borderColor: palette.border,
-                      backgroundColor: pressed ? palette.hoverBg : palette.subtleBg,
-                      transform: [{ scale: pressed ? 0.95 : 1 }],
-                      opacity: pressed ? 0.9 : 1,
-                    },
-                  ]}
-                >
-                  {({ pressed }) => (
-                    <FontAwesome
-                      name="cog"
-                      size={21}
-                      color={palette.accent}
-                      style={{ opacity: pressed ? 0.66 : 1 }}
-                    />
-                  )}
-                </Pressable>
-              </Link>
-            </View>
-          ),
         }}
       />
       <Tabs.Screen
@@ -143,11 +141,6 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     width: 184,
     gap: 10,
-  },
-  headerLogoWrap: {
-    marginRight: 10,
-    justifyContent: "center",
-    alignItems: "center",
   },
   headerLogo: {
     width: 132,

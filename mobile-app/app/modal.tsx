@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
+import { useLocalSearchParams } from "expo-router";
 import {
   ActivityIndicator,
   Alert,
@@ -83,10 +84,17 @@ function formatRelativeTimeUntil(value: string | null): string {
   return `vence en ${hours}h ${minutes}m`;
 }
 
+function normalizeRouteParam(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return value ?? "";
+}
+
 export default function ApiSettingsScreen() {
+  const params = useLocalSearchParams<{ focus?: string | string[] }>();
   const { mode, resolvedScheme, setMode } = useThemePreference();
   const palette = useAppPalette();
   const scrollViewRef = useRef<ScrollView | null>(null);
+  const loginFocusHandledRef = useRef(false);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -107,6 +115,14 @@ export default function ApiSettingsScreen() {
   const [loginSectionY, setLoginSectionY] = useState(0);
 
   const [baseUrlFromStorage, setBaseUrlFromStorage] = useState(false);
+  const requestedFocus = useMemo(
+    () => normalizeRouteParam(params.focus).trim().toLowerCase(),
+    [params.focus],
+  );
+  const shouldAutoFocusLogin = useMemo(
+    () => requestedFocus === "login" || requestedFocus === "web-login" || requestedFocus === "auth",
+    [requestedFocus],
+  );
   const hasWebSession = useMemo(
     () => Boolean(webSessionExpiresAt && Date.parse(webSessionExpiresAt) > Date.now()),
     [webSessionExpiresAt],
@@ -155,17 +171,31 @@ export default function ApiSettingsScreen() {
     };
   }, []);
 
-  const focusLoginSection = () => {
+  const focusLoginSection = useCallback(() => {
     if (!scrollViewRef.current) return;
     const target = Math.max(0, loginSectionY - 24);
     requestAnimationFrame(() => {
       scrollViewRef.current?.scrollTo({ y: target, animated: true });
     });
-  };
+  }, [loginSectionY]);
 
-  const onLoginSectionLayout = (event: LayoutChangeEvent) => {
+  const onLoginSectionLayout = useCallback((event: LayoutChangeEvent) => {
     setLoginSectionY(event.nativeEvent.layout.y);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!shouldAutoFocusLogin) {
+      loginFocusHandledRef.current = false;
+      return;
+    }
+    if (loading || loginSectionY <= 0 || loginFocusHandledRef.current) return;
+
+    loginFocusHandledRef.current = true;
+    const timer = setTimeout(() => {
+      focusLoginSection();
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [focusLoginSection, loading, loginSectionY, shouldAutoFocusLogin]);
 
   const loadConfig = useCallback(async () => {
     try {
@@ -191,6 +221,14 @@ export default function ApiSettingsScreen() {
     useCallback(() => {
       void loadConfig();
     }, [loadConfig]),
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (shouldAutoFocusLogin) {
+        loginFocusHandledRef.current = false;
+      }
+    }, [shouldAutoFocusLogin]),
   );
 
   const onSave = async () => {

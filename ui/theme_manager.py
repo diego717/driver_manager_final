@@ -4,6 +4,7 @@ Proporciona temas claro y oscuro con contrastes optimizados
 """
 
 import json
+import sys
 from pathlib import Path
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QSettings
@@ -14,6 +15,7 @@ class ThemeManager:
     def __init__(self):
         self.settings = QSettings("DriverManager", "Themes")
         self.current_theme = self.settings.value("current_theme", "light")
+        self.is_windows = sys.platform.startswith("win")
         
         # Definir paletas de colores
         self.themes = {
@@ -171,6 +173,15 @@ class ThemeManager:
     def generate_stylesheet(self):
         """Generar stylesheet completo para la aplicación"""
         colors = self.themes[self.current_theme]["colors"]
+        button_padding_v = 7 if self.is_windows else 9
+        button_padding_h = 14 if self.is_windows else 16
+        button_min_height = 38 if self.is_windows else 44
+        input_padding_v = 4 if self.is_windows else 8
+        input_padding_h = 10 if self.is_windows else 12
+        input_min_height = 36 if self.is_windows else 44
+        tab_padding_v = 8 if self.is_windows else 9
+        tab_padding_h = 16 if self.is_windows else 18
+        tab_min_height = 40 if self.is_windows else 44
         
         return f"""
         /* Estilo general de la aplicación */
@@ -196,8 +207,8 @@ class ThemeManager:
         QTabBar::tab {{
             background-color: {colors['surface']};
             color: {colors['text_secondary']};
-            padding: 9px 18px;
-            min-height: 44px;
+            padding: {tab_padding_v}px {tab_padding_h}px;
+            min-height: {tab_min_height}px;
             margin-right: 2px;
             border: 1px solid {colors['border']};
             border-bottom: none;
@@ -223,10 +234,10 @@ class ThemeManager:
             background-color: {colors['button_secondary']};
             color: {colors['text_primary']};
             border: 1px solid {colors['border']};
-            padding: 9px 16px;
+            padding: {button_padding_v}px {button_padding_h}px;
             border-radius: 10px;
             font-weight: 600;
-            min-height: 44px;
+            min-height: {button_min_height}px;
         }}
         
         QPushButton:hover {{
@@ -312,8 +323,12 @@ class ThemeManager:
             color: {colors['input_text']};
             border: 1px solid {colors['input_border']};
             border-radius: 8px;
-            padding: 8px 12px;
-            min-height: 44px;
+            padding: {input_padding_v}px {input_padding_h}px;
+            min-height: {input_min_height}px;
+        }}
+
+        QLineEdit::placeholder {{
+            color: {colors['text_muted']};
         }}
         
         QLineEdit:focus, QTextEdit:focus, QComboBox:focus {{

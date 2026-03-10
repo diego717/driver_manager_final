@@ -795,20 +795,13 @@ class MainWindow(QMainWindow):
             for inst in installations:
                 timestamp = datetime.fromisoformat(inst['timestamp'])
                 date_str = timestamp.strftime('%d/%m/%Y %H:%M')
-                status = (inst.get('status') or '').lower()
-                if status == 'success':
-                    status_icon = "✓"
-                elif status == 'failed':
-                    status_icon = "✗"
-                else:
-                    status_icon = "•"
                 
                 brand = inst.get('driver_brand') or "N/A"
                 version = inst.get('driver_version') or "N/A"
                 attention_label = self._record_attention_label(inst.get("attention_state"))
                 attention_icon = self._record_attention_icon(inst.get("attention_state"))
                 active_incidents = self._coerce_seconds(inst.get("incident_active_count"), allow_negative=False)
-                text = f"{status_icon} {date_str} - {brand} v{version}"
+                text = f"{date_str} - {brand} v{version}"
                 if inst['client_name']:
                     text += f" ({inst['client_name']})"
                 if active_incidents > 0:
@@ -1078,19 +1071,11 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-            status = (inst.get("status") or "").lower()
-            if status == "success":
-                status_icon = "✓"
-            elif status == "failed":
-                status_icon = "✗"
-            else:
-                status_icon = "•"
-
             record_id = inst.get("id")
             brand = inst.get("driver_brand") or "N/A"
             version = inst.get("driver_version") or "N/A"
             client = inst.get("client_name") or "Sin cliente"
-            text = f"#{record_id} {status_icon} {date_str} - {brand} v{version} ({client})"
+            text = f"#{record_id} {date_str} - {brand} v{version} ({client})"
             attention_label = self._record_attention_label(inst.get("attention_state"))
             attention_icon = self._record_attention_icon(inst.get("attention_state"))
             active_incidents = self._coerce_seconds(inst.get("incident_active_count"), allow_negative=False)
@@ -1399,17 +1384,10 @@ class MainWindow(QMainWindow):
             for inst in installations_for_list:
                 timestamp = datetime.fromisoformat(inst['timestamp'])
                 date_str = timestamp.strftime('%d/%m/%Y %H:%M')
-                status = (inst.get('status') or '').lower()
-                if status == 'success':
-                    status_icon = "✓"
-                elif status == 'failed':
-                    status_icon = "✗"
-                else:
-                    status_icon = "•"
                 
                 brand = inst.get('driver_brand') or "N/A"
                 version = inst.get('driver_version') or "N/A"
-                text = f"{status_icon} {date_str} - {brand} v{version}"
+                text = f"{date_str} - {brand} v{version}"
                 if inst.get('client_name'):
                     text += f" ({inst['client_name']})"
                 
@@ -1519,17 +1497,6 @@ class MainWindow(QMainWindow):
         if not ok:
             return
 
-        status, ok = QInputDialog.getItem(
-            self,
-            "Nuevo Registro Manual",
-            "Estado del registro:",
-            ["manual", "success", "failed", "unknown"],
-            0,
-            False,
-        )
-        if not ok:
-            return
-
         notes, ok = QInputDialog.getMultiLineText(
             self,
             "Nuevo Registro Manual",
@@ -1543,7 +1510,7 @@ class MainWindow(QMainWindow):
             client_name=(client_name or "").strip() or "Sin cliente",
             driver_brand=(brand or "").strip() or "N/A",
             driver_version=(version or "").strip() or "N/A",
-            status=status,
+            status="manual",
             notes=(notes or "").strip(),
             driver_description="Registro manual desde .exe",
         )
@@ -1567,7 +1534,7 @@ class MainWindow(QMainWindow):
                     success=True,
                     details={
                         "record_id": record_id,
-                        "status": status,
+                        "status": "manual",
                         "client_name": (client_name or "").strip() or "Sin cliente",
                     },
                 )
@@ -1591,7 +1558,7 @@ class MainWindow(QMainWindow):
                     action="create_manual_record_failed",
                     username=self.user_manager.current_user.get('username'),
                     success=False,
-                    details={"status": status},
+                    details={"status": "manual"},
                 )
 
     def show_incidents_for_selected_record(self):

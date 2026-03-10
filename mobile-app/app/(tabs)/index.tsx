@@ -28,6 +28,7 @@ import { evaluateWebSession } from "@/src/api/webSession";
 import { consumeForceLoginOnOpenFlag } from "@/src/security/startup-session-policy";
 import { getStoredWebAccessUsername } from "@/src/storage/secure";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
+import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 import { type IncidentSeverity, type InstallationRecord } from "@/src/types/api";
@@ -94,6 +95,7 @@ function recordAttentionStateLabel(value: unknown): string {
 
 export default function CreateIncidentScreen() {
   const router = useRouter();
+  const bottomSpacing = 112;
   const queryParams = useLocalSearchParams<{
     installationId?: string | string[];
     assetExternalCode?: string | string[];
@@ -261,7 +263,7 @@ export default function CreateIncidentScreen() {
   const onCreateManualRecord = async () => {
     if (!(await refreshSessionState())) {
       notify("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
-      router.push("/modal");
+      router.push("/modal?focus=login");
       return;
     }
     try {
@@ -299,7 +301,7 @@ export default function CreateIncidentScreen() {
   const onSubmit = async () => {
     if (!(await refreshSessionState())) {
       notify("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
-      router.push("/modal");
+      router.push("/modal?focus=login");
       return;
     }
     const parsedInstallationId = Number.parseInt(installationId, 10);
@@ -398,7 +400,7 @@ export default function CreateIncidentScreen() {
   const onLinkAssetWithoutIncident = async () => {
     if (!(await refreshSessionState())) {
       notify("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
-      router.push("/modal");
+      router.push("/modal?focus=login");
       return;
     }
 
@@ -545,35 +547,27 @@ export default function CreateIncidentScreen() {
   if (!hasActiveSession) {
     return (
       <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
-        <View
-          style={[
-            styles.authCard,
-            { backgroundColor: palette.cardBg, borderColor: palette.cardBorder },
-          ]}
-        >
-          <Text style={[styles.authTitle, { color: palette.textPrimary }]}>
-            Sesión requerida
-          </Text>
-          <Text style={[styles.authHintText, { color: palette.textSecondary }]}>
-            Inicia sesión web para ver registros e incidencias.
-          </Text>
-          <TouchableOpacity
-            style={[styles.button, { backgroundColor: palette.primaryButtonBg }]}
-            onPress={() => router.push("/modal")}
-            accessibilityRole="button"
-            accessibilityLabel="Ir a Configuración y acceso"
-          >
-            <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>
-              Ir a Configuración y acceso
-            </Text>
-          </TouchableOpacity>
-        </View>
+        <WebInlineLoginCard
+          hint="Inicia sesion web para ver registros e incidencias."
+          onLoginSuccess={async () => {
+            await loadInstallations({ forceRefresh: true });
+          }}
+          onOpenAdvanced={() => router.push("/modal?focus=login")}
+        />
       </View>
     );
   }
 
   return (
-    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
+    <ScrollView
+      contentContainerStyle={[
+        styles.container,
+        {
+          backgroundColor: palette.screenBg,
+          paddingBottom: bottomSpacing,
+        },
+      ]}
+    >
       <Text style={[styles.title, { color: palette.textPrimary }]}>Crear incidencia</Text>
       <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
         Usa esta pantalla para crear incidencias y validar el flujo contra el Worker.

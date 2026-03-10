@@ -268,6 +268,8 @@ Las migraciones incluidas crean:
 - `0007_multi_tenant_foundation.sql`: base multi-tenant (tenants, roles por tenant, auditoria tenant y limites de plan).
 - `0008_assets_registry.sql`: registro de equipos (assets), asociaciones e historial.
 - `0009_assets_brand_and_metadata.sql`: metadata extendida para equipos (marca/modelo/serie/cliente/notas).
+- `0012_incidents_asset_link.sql`: enlace opcional `asset_id` en incidencias para flujo asset-first.
+- `0013_incident_duration_fields.sql`: duracion estimada/real y marcas de inicio-fin por incidencia.
 
 ## Mobile app (Expo)
 

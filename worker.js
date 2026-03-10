@@ -63,6 +63,7 @@ const DRIVER_VERSION_MAX_LENGTH = 120;
 const DRIVER_DESCRIPTION_MAX_LENGTH = 500;
 const DRIVER_MANIFEST_KEY = "manifest.json";
 const MAX_DRIVER_UPLOAD_BYTES = 300 * 1024 * 1024;
+const MAX_INCIDENT_ESTIMATED_DURATION_SECONDS = 7 * 24 * 60 * 60;
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -1093,6 +1094,27 @@ function isMissingIncidentsTableError(error) {
   return message.includes("no such table") && message.includes("incidents");
 }
 
+function isMissingIncidentAssetColumnError(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  return (
+    (message.includes("no such column") || message.includes("has no column named")) &&
+    message.includes("asset_id")
+  );
+}
+
+function isMissingIncidentTimingColumnsError(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  if (!(message.includes("no such column") || message.includes("has no column named"))) {
+    return false;
+  }
+  return (
+    message.includes("estimated_duration_seconds") ||
+    message.includes("work_started_at") ||
+    message.includes("work_ended_at") ||
+    message.includes("actual_duration_seconds")
+  );
+}
+
 async function loadInstallationOperationalSummaries(env, installationIds, tenantId) {
   const ids = [...new Set(
     (installationIds || [])
@@ -1748,34 +1770,71 @@ async function getIncidentsAfterId(
   tenantId = DEFAULT_REALTIME_TENANT_ID,
 ) {
   const normalizedTenantId = normalizeRealtimeTenantId(tenantId);
-  const { results } = await env.DB.prepare(`
-    SELECT
-      id,
-      installation_id,
-      reporter_username,
-      note,
-      time_adjustment_seconds,
-      severity,
-      source,
-      created_at,
-      incident_status,
-      status_updated_at,
-      status_updated_by,
-      resolved_at,
-      resolved_by,
-      resolution_note,
-      checklist_json,
-      evidence_note
-    FROM incidents
-    WHERE tenant_id = ?
-      AND id > ?
-    ORDER BY id ASC
-    LIMIT ?
-  `)
-    .bind(normalizedTenantId, lastId, limit)
-    .all();
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT
+        id,
+        installation_id,
+        asset_id,
+        reporter_username,
+        note,
+        time_adjustment_seconds,
+        severity,
+        source,
+        created_at,
+        incident_status,
+        status_updated_at,
+        status_updated_by,
+        resolved_at,
+        resolved_by,
+        resolution_note,
+        checklist_json,
+        evidence_note
+      FROM incidents
+      WHERE tenant_id = ?
+        AND id > ?
+      ORDER BY id ASC
+      LIMIT ?
+    `)
+      .bind(normalizedTenantId, lastId, limit)
+      .all();
+    return (results || []).map((incident) => mapIncidentRow(incident));
+  } catch (error) {
+    if (!isMissingIncidentAssetColumnError(error)) {
+      throw error;
+    }
+    const { results } = await env.DB.prepare(`
+      SELECT
+        id,
+        installation_id,
+        reporter_username,
+        note,
+        time_adjustment_seconds,
+        severity,
+        source,
+        created_at,
+        incident_status,
+        status_updated_at,
+        status_updated_by,
+        resolved_at,
+        resolved_by,
+        resolution_note,
+        checklist_json,
+        evidence_note
+      FROM incidents
+      WHERE tenant_id = ?
+        AND id > ?
+      ORDER BY id ASC
+      LIMIT ?
+    `)
+      .bind(normalizedTenantId, lastId, limit)
+      .all();
 
-  return (results || []).map((incident) => mapIncidentRow(incident));
+    return (results || []).map((incident) => mapIncidentRow({
+      ...incident,
+      asset_id: null,
+    }));
+  }
 }
 
 async function getSseStatisticsSnapshot(env, tenantId = DEFAULT_REALTIME_TENANT_ID) {
@@ -4608,11 +4667,65 @@ function normalizeIncidentEvidencePayload(data) {
 function mapIncidentRow(incident, photos = undefined) {
   const safeIncident = incident && typeof incident === "object" ? incident : {};
   const { checklist_json: _ignoredChecklistJson, ...rest } = safeIncident;
+  const normalizedStatus = normalizeOptionalString(safeIncident.incident_status, "open")
+    .toLowerCase();
+  const estimatedDurationSeconds = normalizeNonNegativeInteger(
+    safeIncident.estimated_duration_seconds,
+    Math.max(0, Number(safeIncident.time_adjustment_seconds) || 0),
+  );
+
+  const parseIsoMillis = (isoValue) => {
+    if (!isoValue) return null;
+    const parsed = Date.parse(String(isoValue));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const createdAtIso = normalizeOptionalString(safeIncident.created_at, "").trim() || null;
+  const statusUpdatedAtIso = normalizeOptionalString(safeIncident.status_updated_at, "").trim() || null;
+  const resolvedAtIso = normalizeOptionalString(safeIncident.resolved_at, "").trim() || null;
+  const workStartedAtIso = normalizeOptionalString(safeIncident.work_started_at, "").trim() || null;
+  const workEndedAtIso = normalizeOptionalString(safeIncident.work_ended_at, "").trim() || null;
+
+  const createdAtMs = parseIsoMillis(createdAtIso);
+  const statusUpdatedAtMs = parseIsoMillis(statusUpdatedAtIso);
+  const resolvedAtMs = parseIsoMillis(resolvedAtIso);
+  const workStartedAtMs = parseIsoMillis(workStartedAtIso);
+  const workEndedAtMs = parseIsoMillis(workEndedAtIso);
+
+  const runtimeStartMs =
+    workStartedAtMs ??
+    (normalizedStatus === "in_progress" ? statusUpdatedAtMs : null) ??
+    createdAtMs;
+  const runtimeEndMs =
+    workEndedAtMs ??
+    resolvedAtMs ??
+    (normalizedStatus === "in_progress" ? Date.now() : null);
+
+  const persistedActualDuration = Number.parseInt(
+    String(safeIncident.actual_duration_seconds ?? ""),
+    10,
+  );
+  let derivedRuntimeDuration = null;
+  if (
+    Number.isFinite(runtimeStartMs) &&
+    Number.isFinite(runtimeEndMs) &&
+    runtimeEndMs >= runtimeStartMs
+  ) {
+    derivedRuntimeDuration = Math.floor((runtimeEndMs - runtimeStartMs) / 1000);
+  }
+  const actualDurationSeconds =
+    Number.isInteger(persistedActualDuration) && persistedActualDuration >= 0
+      ? persistedActualDuration
+      : derivedRuntimeDuration;
 
   const mapped = {
     ...rest,
     checklist_items: parseIncidentChecklistItems(safeIncident.checklist_json),
     evidence_note: normalizeOptionalString(safeIncident.evidence_note, "").trim() || null,
+    estimated_duration_seconds: estimatedDurationSeconds,
+    work_started_at: workStartedAtIso,
+    work_ended_at: workEndedAtIso,
+    actual_duration_seconds: actualDurationSeconds,
   };
 
   if (photos !== undefined) {
@@ -4641,6 +4754,18 @@ function validateIncidentPayload(data, options = {}) {
     throw new HttpError(400, "Campo 'time_adjustment_seconds' inválido.");
   }
 
+  const estimatedDurationSeconds =
+    data.estimated_duration_seconds === undefined
+      ? Math.max(0, timeAdjustment)
+      : Number(data.estimated_duration_seconds);
+  if (
+    !Number.isInteger(estimatedDurationSeconds) ||
+    estimatedDurationSeconds < 0 ||
+    estimatedDurationSeconds > MAX_INCIDENT_ESTIMATED_DURATION_SECONDS
+  ) {
+    throw new HttpError(400, "Campo 'estimated_duration_seconds' invalido.");
+  }
+
   const severity = data.severity || "medium";
   if (!["low", "medium", "high", "critical"].includes(severity)) {
     throw new HttpError(400, "Campo 'severity' inválido.");
@@ -4654,6 +4779,7 @@ function validateIncidentPayload(data, options = {}) {
   return {
     note,
     timeAdjustment,
+    estimatedDurationSeconds,
     severity,
     source,
     incidentStatus: "open",
@@ -5584,7 +5710,7 @@ async function handleAssetsRoute(
           routeParts[2] === "incidents"
         ) {
           const assetId = parsePositiveInt(routeParts[1], "asset_id");
-          if (request.method !== "GET") {
+          if (request.method !== "GET" && request.method !== "POST") {
             throw new HttpError(405, "Metodo no permitido para /assets/:id/incidents.");
           }
 
@@ -5617,6 +5743,418 @@ async function handleAssetsRoute(
               throw new HttpError(404, "Equipo no encontrado.");
             }
 
+            if (request.method === "POST") {
+              if (isWebRoute) {
+                requireWebWriteRole(webSession?.role);
+              }
+
+              const data = await readJsonOrThrowBadRequest(request);
+              const payload = validateIncidentPayload(data, {
+                defaultSource: isWebRoute ? "web" : "mobile",
+                defaultReporterUsername: webSession?.sub || "unknown",
+              });
+              const requestedInstallationId = parseOptionalPositiveInt(
+                data?.installation_id,
+                "installation_id",
+              );
+              const createdAt = nowIso();
+              const actorUsername = normalizeWebUsername(
+                webSession?.sub || payload.reporterUsername || "unknown",
+              );
+
+              let resolvedInstallationId = requestedInstallationId;
+              let installation = null;
+              let contextRecordCreated = false;
+
+              const loadInstallationById = async (installationId) => {
+                const { results: installationRows } = await env.DB.prepare(`
+                  SELECT id, notes, installation_time_seconds
+                  FROM installations
+                  WHERE id = ?
+                    AND tenant_id = ?
+                  LIMIT 1
+                `)
+                  .bind(installationId, assetsTenantId)
+                  .all();
+                return installationRows?.[0] || null;
+              };
+
+              if (resolvedInstallationId !== null) {
+                installation = await loadInstallationById(resolvedInstallationId);
+                if (!installation) {
+                  throw new HttpError(404, "Instalacion no encontrada.");
+                }
+              } else {
+                const { results: activeLinkRows } = await env.DB.prepare(`
+                  SELECT installation_id
+                  FROM asset_installation_links
+                  WHERE tenant_id = ?
+                    AND asset_id = ?
+                    AND unlinked_at IS NULL
+                  ORDER BY linked_at DESC, id DESC
+                  LIMIT 1
+                `)
+                  .bind(assetsTenantId, assetId)
+                  .all();
+                const activeInstallationId = Number(activeLinkRows?.[0]?.installation_id);
+                if (Number.isInteger(activeInstallationId) && activeInstallationId > 0) {
+                  resolvedInstallationId = activeInstallationId;
+                  installation = await loadInstallationById(activeInstallationId);
+                }
+              }
+
+              if (!installation) {
+                const normalizedAssetCode = normalizeOptionalString(asset.external_code, `#${assetId}`);
+                const autoClientName =
+                  normalizeOptionalString(asset.client_name, "").trim() ||
+                  `Equipo ${normalizedAssetCode}`;
+                const autoBrand = normalizeOptionalString(asset.brand, "").trim() || "ASSET";
+                const autoVersion = normalizeOptionalString(asset.model, "").trim() || "N/A";
+                const autoDescription = `Contexto automatico para incidencias del equipo ${normalizedAssetCode}`;
+                const autoNotes = `Registro automatico generado desde incidencia de equipo ${normalizedAssetCode}.`;
+
+                const insertRecordResult = await env.DB.prepare(`
+                  INSERT INTO installations (
+                    timestamp,
+                    driver_brand,
+                    driver_version,
+                    status,
+                    client_name,
+                    driver_description,
+                    installation_time_seconds,
+                    os_info,
+                    notes,
+                    tenant_id
+                  )
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `)
+                  .bind(
+                    createdAt,
+                    autoBrand,
+                    autoVersion,
+                    "asset_context",
+                    autoClientName,
+                    autoDescription,
+                    0,
+                    "asset",
+                    autoNotes,
+                    assetsTenantId,
+                  )
+                  .run();
+
+                resolvedInstallationId = Number(insertRecordResult?.meta?.last_row_id || 0);
+                if (!Number.isInteger(resolvedInstallationId) || resolvedInstallationId <= 0) {
+                  throw new HttpError(500, "No se pudo crear contexto de instalacion para la incidencia.");
+                }
+                installation = {
+                  id: resolvedInstallationId,
+                  notes: autoNotes,
+                  installation_time_seconds: 0,
+                };
+                contextRecordCreated = true;
+
+                await publishRealtimeEvent(env, {
+                  type: "installation_created",
+                  installation: {
+                    id: resolvedInstallationId,
+                    tenant_id: assetsTenantId,
+                    timestamp: createdAt,
+                    driver_brand: autoBrand,
+                    driver_version: autoVersion,
+                    status: "asset_context",
+                    client_name: autoClientName,
+                    driver_description: autoDescription,
+                    installation_time_seconds: 0,
+                    os_info: "asset",
+                    notes: autoNotes,
+                    ...buildDefaultInstallationOperationalSummary(),
+                  },
+                }, realtimeTenantId);
+              }
+
+              await env.DB.prepare(`
+                UPDATE asset_installation_links
+                SET unlinked_at = ?
+                WHERE tenant_id = ?
+                  AND asset_id = ?
+                  AND unlinked_at IS NULL
+                  AND installation_id <> ?
+              `)
+                .bind(createdAt, assetsTenantId, assetId, resolvedInstallationId)
+                .run();
+
+              const { results: activeRows } = await env.DB.prepare(`
+                SELECT id
+                FROM asset_installation_links
+                WHERE tenant_id = ?
+                  AND asset_id = ?
+                  AND installation_id = ?
+                  AND unlinked_at IS NULL
+                LIMIT 1
+              `)
+                .bind(assetsTenantId, assetId, resolvedInstallationId)
+                .all();
+
+              if (!activeRows?.[0]?.id) {
+                await env.DB.prepare(`
+                  INSERT INTO asset_installation_links (
+                    tenant_id,
+                    asset_id,
+                    installation_id,
+                    linked_at,
+                    linked_by_username,
+                    notes
+                  )
+                  VALUES (?, ?, ?, ?, ?, ?)
+                `)
+                  .bind(
+                    assetsTenantId,
+                    assetId,
+                    resolvedInstallationId,
+                    createdAt,
+                    actorUsername,
+                    normalizeOptionalString(
+                      data?.asset_link_note,
+                      "Vinculo automatico desde incidencia de equipo",
+                    ).slice(0, 500),
+                  )
+                  .run();
+              }
+
+              let persistedAssetId = assetId;
+              let insertResult;
+              try {
+                insertResult = await env.DB.prepare(`
+                  INSERT INTO incidents (
+                    installation_id,
+                    asset_id,
+                    tenant_id,
+                    reporter_username,
+                    note,
+                    time_adjustment_seconds,
+                    estimated_duration_seconds,
+                    severity,
+                    source,
+                    created_at,
+                    incident_status,
+                    status_updated_at,
+                    status_updated_by,
+                    work_started_at,
+                    work_ended_at,
+                    actual_duration_seconds
+                  )
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `)
+                  .bind(
+                    resolvedInstallationId,
+                    assetId,
+                    assetsTenantId,
+                    payload.reporterUsername,
+                    payload.note,
+                    payload.timeAdjustment,
+                    payload.estimatedDurationSeconds,
+                    payload.severity,
+                    payload.source,
+                    createdAt,
+                    payload.incidentStatus,
+                    createdAt,
+                    payload.reporterUsername,
+                    null,
+                    null,
+                    null,
+                  )
+                  .run();
+              } catch (error) {
+                if (!isMissingIncidentAssetColumnError(error) && !isMissingIncidentTimingColumnsError(error)) {
+                  throw error;
+                }
+                try {
+                  insertResult = await env.DB.prepare(`
+                    INSERT INTO incidents (
+                      installation_id,
+                      asset_id,
+                      tenant_id,
+                      reporter_username,
+                      note,
+                      time_adjustment_seconds,
+                      severity,
+                      source,
+                      created_at,
+                      incident_status,
+                      status_updated_at,
+                      status_updated_by
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  `)
+                    .bind(
+                      resolvedInstallationId,
+                      assetId,
+                      assetsTenantId,
+                      payload.reporterUsername,
+                      payload.note,
+                      payload.timeAdjustment,
+                      payload.severity,
+                      payload.source,
+                      createdAt,
+                      payload.incidentStatus,
+                      createdAt,
+                      payload.reporterUsername,
+                    )
+                    .run();
+                } catch (legacyError) {
+                  if (!isMissingIncidentAssetColumnError(legacyError)) {
+                    throw legacyError;
+                  }
+                  insertResult = await env.DB.prepare(`
+                    INSERT INTO incidents (
+                      installation_id,
+                      tenant_id,
+                      reporter_username,
+                      note,
+                      time_adjustment_seconds,
+                      severity,
+                      source,
+                      created_at,
+                      incident_status,
+                      status_updated_at,
+                      status_updated_by
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  `)
+                    .bind(
+                      resolvedInstallationId,
+                      assetsTenantId,
+                      payload.reporterUsername,
+                      payload.note,
+                      payload.timeAdjustment,
+                      payload.severity,
+                      payload.source,
+                      createdAt,
+                      payload.incidentStatus,
+                      createdAt,
+                      payload.reporterUsername,
+                    )
+                    .run();
+                  persistedAssetId = null;
+                }
+              }
+
+              const incidentId = insertResult?.meta?.last_row_id || null;
+
+              if (payload.applyToInstallation) {
+                const currentNotes = normalizeOptionalString(installation.notes, "");
+                const composedNotes = currentNotes
+                  ? `${currentNotes}\n[INCIDENT] ${payload.note}`
+                  : payload.note;
+                const currentTime = Number(installation.installation_time_seconds || 0);
+                const nextTime = Math.max(0, currentTime + payload.timeAdjustment);
+
+                await env.DB.prepare(`
+                  UPDATE installations
+                  SET notes = ?, installation_time_seconds = ?
+                  WHERE id = ?
+                    AND tenant_id = ?
+                `)
+                  .bind(composedNotes, nextTime, resolvedInstallationId, assetsTenantId)
+                  .run();
+              }
+
+              if (payload.severity === "critical") {
+                try {
+                  const fcmTokens = await listDeviceTokensForWebRoles(
+                    env,
+                    CRITICAL_INCIDENT_PUSH_ROLES,
+                    assetsTenantId,
+                  );
+                  if (fcmTokens.length > 0) {
+                    await sendPushNotification(env, fcmTokens, {
+                      title: "Incidencia critica",
+                      body: `Nueva incidencia critica en instalacion #${resolvedInstallationId}`,
+                      data: {
+                        installation_id: String(resolvedInstallationId),
+                        incident_id: String(incidentId || ""),
+                        asset_id: persistedAssetId !== null ? String(persistedAssetId) : "",
+                        severity: payload.severity,
+                        source: payload.source,
+                      },
+                    });
+                  }
+                } catch {
+                  // Best effort: una falla de push no debe impedir registrar la incidencia.
+                }
+              }
+
+              await logAuditEvent(env, {
+                action: "create_incident",
+                username: payload.reporterUsername,
+                success: true,
+                tenantId: assetsTenantId,
+                  details: {
+                    incident_id: incidentId,
+                    installation_id: resolvedInstallationId,
+                    asset_id: persistedAssetId,
+                    estimated_duration_seconds: payload.estimatedDurationSeconds,
+                    severity: payload.severity,
+                    source: payload.source,
+                  note_preview: payload.note.substring(0, 100),
+                  tenant_id: assetsTenantId,
+                },
+                computerName: "",
+                ipAddress: getClientIpForRateLimit(request),
+                platform: payload.source,
+              });
+
+              const incidentEventPayload = mapIncidentRow({
+                id: incidentId,
+                installation_id: resolvedInstallationId,
+                asset_id: persistedAssetId,
+                reporter_username: payload.reporterUsername,
+                note: payload.note,
+                time_adjustment_seconds: payload.timeAdjustment,
+                estimated_duration_seconds: payload.estimatedDurationSeconds,
+                severity: payload.severity,
+                source: payload.source,
+                created_at: createdAt,
+                incident_status: payload.incidentStatus,
+                status_updated_at: createdAt,
+                status_updated_by: payload.reporterUsername,
+                resolved_at: null,
+                resolved_by: null,
+                resolution_note: null,
+                checklist_json: null,
+                evidence_note: null,
+              });
+
+              await publishRealtimeEvent(env, {
+                type: "incident_created",
+                incident: incidentEventPayload,
+              }, realtimeTenantId);
+              if (payload.applyToInstallation) {
+                await publishRealtimeEvent(env, {
+                  type: "installation_updated",
+                  installation: {
+                    id: resolvedInstallationId,
+                    notes: normalizeOptionalString(installation.notes, "")
+                      ? `${normalizeOptionalString(installation.notes, "")}\n[INCIDENT] ${payload.note}`
+                      : payload.note,
+                    installation_time_seconds: Math.max(
+                      0,
+                      Number(installation.installation_time_seconds || 0) + payload.timeAdjustment,
+                    ),
+                  },
+                }, realtimeTenantId);
+              }
+              await publishRealtimeStatsUpdate(env, realtimeTenantId);
+
+              return jsonResponse(request, env, corsPolicy, {
+                success: true,
+                incident: incidentEventPayload,
+                installation_id: resolvedInstallationId,
+                context_record_created: contextRecordCreated,
+                asset,
+              }, 201);
+            }
+
             const { results: linkRows } = await env.DB.prepare(`
               SELECT
                 l.id,
@@ -5645,47 +6183,99 @@ async function handleAssetsRoute(
             const links = linkRows || [];
             const activeLink = links.find((link) => !link.unlinked_at) || null;
 
-          const { results: incidentRows } = await env.DB.prepare(`
-              SELECT
-                i.id,
-                i.installation_id,
-                i.reporter_username,
-                i.note,
-                i.time_adjustment_seconds,
-                i.severity,
-                i.source,
-                i.created_at,
-                i.incident_status,
-                i.status_updated_at,
-                i.status_updated_by,
-                i.resolved_at,
-                i.resolved_by,
-                i.resolution_note,
-                i.checklist_json,
-                i.evidence_note,
-                inst.client_name AS installation_client_name,
-                inst.driver_brand AS installation_brand,
-                inst.driver_version AS installation_version
-              FROM incidents i
-              INNER JOIN installations inst
-                ON inst.id = i.installation_id
-              WHERE inst.tenant_id = ?
-                AND EXISTS (
-                  SELECT 1
-                  FROM asset_installation_links l
-                  WHERE l.tenant_id = ?
-                    AND l.asset_id = ?
-                    AND l.installation_id = i.installation_id
-                    AND i.created_at >= l.linked_at
-                    AND (l.unlinked_at IS NULL OR i.created_at <= l.unlinked_at)
-                )
-              ORDER BY i.created_at DESC, i.id DESC
-              LIMIT ?
-            `)
-              .bind(assetsTenantId, assetsTenantId, assetId, incidentLimit)
-              .all();
-
-            const incidents = incidentRows || [];
+            let incidents = [];
+            try {
+              const { results: incidentRows } = await env.DB.prepare(`
+                SELECT
+                  i.id,
+                  i.installation_id,
+                  i.asset_id,
+                  i.reporter_username,
+                  i.note,
+                  i.time_adjustment_seconds,
+                  i.severity,
+                  i.source,
+                  i.created_at,
+                  i.incident_status,
+                  i.status_updated_at,
+                  i.status_updated_by,
+                  i.resolved_at,
+                  i.resolved_by,
+                  i.resolution_note,
+                  i.checklist_json,
+                  i.evidence_note,
+                  inst.client_name AS installation_client_name,
+                  inst.driver_brand AS installation_brand,
+                  inst.driver_version AS installation_version
+                FROM incidents i
+                LEFT JOIN installations inst
+                  ON inst.id = i.installation_id
+                 AND inst.tenant_id = i.tenant_id
+                WHERE i.tenant_id = ?
+                  AND (
+                    i.asset_id = ?
+                    OR EXISTS (
+                      SELECT 1
+                      FROM asset_installation_links l
+                      WHERE l.tenant_id = ?
+                        AND l.asset_id = ?
+                        AND l.installation_id = i.installation_id
+                        AND i.created_at >= l.linked_at
+                        AND (l.unlinked_at IS NULL OR i.created_at <= l.unlinked_at)
+                    )
+                  )
+                ORDER BY i.created_at DESC, i.id DESC
+                LIMIT ?
+              `)
+                .bind(assetsTenantId, assetId, assetsTenantId, assetId, incidentLimit)
+                .all();
+              incidents = incidentRows || [];
+            } catch (error) {
+              if (!isMissingIncidentAssetColumnError(error)) {
+                throw error;
+              }
+              const { results: legacyIncidentRows } = await env.DB.prepare(`
+                SELECT
+                  i.id,
+                  i.installation_id,
+                  i.reporter_username,
+                  i.note,
+                  i.time_adjustment_seconds,
+                  i.severity,
+                  i.source,
+                  i.created_at,
+                  i.incident_status,
+                  i.status_updated_at,
+                  i.status_updated_by,
+                  i.resolved_at,
+                  i.resolved_by,
+                  i.resolution_note,
+                  i.checklist_json,
+                  i.evidence_note,
+                  inst.client_name AS installation_client_name,
+                  inst.driver_brand AS installation_brand,
+                  inst.driver_version AS installation_version
+                FROM incidents i
+                LEFT JOIN installations inst
+                  ON inst.id = i.installation_id
+                 AND inst.tenant_id = i.tenant_id
+                WHERE i.tenant_id = ?
+                  AND EXISTS (
+                    SELECT 1
+                    FROM asset_installation_links l
+                    WHERE l.tenant_id = ?
+                      AND l.asset_id = ?
+                      AND l.installation_id = i.installation_id
+                      AND i.created_at >= l.linked_at
+                      AND (l.unlinked_at IS NULL OR i.created_at <= l.unlinked_at)
+                  )
+                ORDER BY i.created_at DESC, i.id DESC
+                LIMIT ?
+              `)
+                .bind(assetsTenantId, assetsTenantId, assetId, incidentLimit)
+                .all();
+              incidents = (legacyIncidentRows || []).map((row) => ({ ...row, asset_id: null }));
+            }
             const incidentIds = incidents
               .map((incident) => Number(incident.id))
               .filter((incidentId) => Number.isInteger(incidentId) && incidentId > 0);
@@ -5737,6 +6327,12 @@ async function handleAssetsRoute(
               throw new HttpError(
                 503,
                 "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
+              );
+            }
+            if (isMissingIncidentAssetColumnError(error)) {
+              throw new HttpError(
+                503,
+                "La columna incidents.asset_id no existe. Ejecuta migraciones para habilitar incidencias por equipo.",
               );
             }
             throw error;
@@ -6660,7 +7256,23 @@ async function handleInstallationIncidentsRoute(
             defaultSource: isWebRoute ? "web" : "mobile",
             defaultReporterUsername: webSession?.sub || "unknown",
           });
+          const requestedAssetId = parseOptionalPositiveInt(data?.asset_id, "asset_id");
           const createdAt = nowIso();
+
+          if (requestedAssetId !== null) {
+            const { results: assetRows } = await env.DB.prepare(`
+              SELECT id
+              FROM assets
+              WHERE id = ?
+                AND tenant_id = ?
+              LIMIT 1
+            `)
+              .bind(requestedAssetId, incidentsTenantId)
+              .all();
+            if (!assetRows?.[0]) {
+              throw new HttpError(404, "Equipo no encontrado.");
+            }
+          }
 
           const { results: installationRows } = await env.DB.prepare(`
             SELECT id, notes, installation_time_seconds
@@ -6676,36 +7288,123 @@ async function handleInstallationIncidentsRoute(
             throw new HttpError(404, "Instalación no encontrada.");
           }
 
-          const insertResult = await env.DB.prepare(`
-            INSERT INTO incidents (
-              installation_id,
-              tenant_id,
-              reporter_username,
-              note,
-              time_adjustment_seconds,
-              severity,
-              source,
-              created_at,
-              incident_status,
-              status_updated_at,
-              status_updated_by
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `)
-            .bind(
-              installationId,
-              incidentsTenantId,
-              payload.reporterUsername,
-              payload.note,
-              payload.timeAdjustment,
-              payload.severity,
-              payload.source,
-              createdAt,
-              payload.incidentStatus,
-              createdAt,
-              payload.reporterUsername,
-            )
-            .run();
+          let persistedAssetId = requestedAssetId;
+          let insertResult;
+          try {
+            insertResult = await env.DB.prepare(`
+              INSERT INTO incidents (
+                installation_id,
+                asset_id,
+                tenant_id,
+                reporter_username,
+                note,
+                time_adjustment_seconds,
+                estimated_duration_seconds,
+                severity,
+                source,
+                created_at,
+                incident_status,
+                status_updated_at,
+                status_updated_by,
+                work_started_at,
+                work_ended_at,
+                actual_duration_seconds
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `)
+              .bind(
+                installationId,
+                requestedAssetId,
+                incidentsTenantId,
+                payload.reporterUsername,
+                payload.note,
+                payload.timeAdjustment,
+                payload.estimatedDurationSeconds,
+                payload.severity,
+                payload.source,
+                createdAt,
+                payload.incidentStatus,
+                createdAt,
+                payload.reporterUsername,
+                null,
+                null,
+                null,
+              )
+              .run();
+          } catch (error) {
+            if (!isMissingIncidentAssetColumnError(error) && !isMissingIncidentTimingColumnsError(error)) {
+              throw error;
+            }
+            try {
+              insertResult = await env.DB.prepare(`
+                INSERT INTO incidents (
+                  installation_id,
+                  asset_id,
+                  tenant_id,
+                  reporter_username,
+                  note,
+                  time_adjustment_seconds,
+                  severity,
+                  source,
+                  created_at,
+                  incident_status,
+                  status_updated_at,
+                  status_updated_by
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `)
+                .bind(
+                  installationId,
+                  requestedAssetId,
+                  incidentsTenantId,
+                  payload.reporterUsername,
+                  payload.note,
+                  payload.timeAdjustment,
+                  payload.severity,
+                  payload.source,
+                  createdAt,
+                  payload.incidentStatus,
+                  createdAt,
+                  payload.reporterUsername,
+                )
+                .run();
+            } catch (legacyError) {
+              if (!isMissingIncidentAssetColumnError(legacyError)) {
+                throw legacyError;
+              }
+              insertResult = await env.DB.prepare(`
+                INSERT INTO incidents (
+                  installation_id,
+                  tenant_id,
+                  reporter_username,
+                  note,
+                  time_adjustment_seconds,
+                  severity,
+                  source,
+                  created_at,
+                  incident_status,
+                  status_updated_at,
+                  status_updated_by
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `)
+                .bind(
+                  installationId,
+                  incidentsTenantId,
+                  payload.reporterUsername,
+                  payload.note,
+                  payload.timeAdjustment,
+                  payload.severity,
+                  payload.source,
+                  createdAt,
+                  payload.incidentStatus,
+                  createdAt,
+                  payload.reporterUsername,
+                )
+                .run();
+              persistedAssetId = null;
+            }
+          }
 
           const incidentId = insertResult?.meta?.last_row_id || null;
 
@@ -6741,6 +7440,7 @@ async function handleInstallationIncidentsRoute(
                   data: {
                     installation_id: String(installationId),
                     incident_id: String(incidentId || ""),
+                    asset_id: persistedAssetId !== null ? String(persistedAssetId) : "",
                     severity: payload.severity,
                     source: payload.source,
                   },
@@ -6760,6 +7460,8 @@ async function handleInstallationIncidentsRoute(
             details: {
               incident_id: incidentId,
               installation_id: installationId,
+              asset_id: persistedAssetId,
+              estimated_duration_seconds: payload.estimatedDurationSeconds,
               severity: payload.severity,
               source: payload.source,
               note_preview: payload.note.substring(0, 100),
@@ -6773,9 +7475,11 @@ async function handleInstallationIncidentsRoute(
           const incidentEventPayload = mapIncidentRow({
             id: incidentId,
             installation_id: installationId,
+            asset_id: persistedAssetId,
             reporter_username: payload.reporterUsername,
             note: payload.note,
             time_adjustment_seconds: payload.timeAdjustment,
+            estimated_duration_seconds: payload.estimatedDurationSeconds,
             severity: payload.severity,
             source: payload.source,
             created_at: createdAt,
@@ -6888,6 +7592,27 @@ async function loadIncidentForTenant(
 
   const { results } = await env.DB.prepare(query).bind(...bindings).all();
   return results?.[0] || null;
+}
+
+async function loadIncidentTimingFieldsForTenant(env, incidentId, incidentsTenantId) {
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT
+        estimated_duration_seconds,
+        work_started_at,
+        work_ended_at,
+        actual_duration_seconds
+      FROM incidents
+      WHERE id = ?
+        AND tenant_id = ?
+      LIMIT 1
+    `)
+      .bind(incidentId, incidentsTenantId)
+      .all();
+    return results?.[0] || {};
+  } catch {
+    return {};
+  }
 }
 
 function requireIncidentsBucketOperation(env, operation) {
@@ -7241,7 +7966,7 @@ async function handleStatisticsRoute(
       };
     } catch (error) {
       if (!isMissingIncidentsTableError(error)) {
-        throw error;
+        console.warn("[statistics] incident summary unavailable", { error: String(error) });
       }
     }
 
@@ -7592,33 +8317,114 @@ export default {
           throw new HttpError(404, "Incidencia no encontrada.");
         }
 
+        const timingFields = await loadIncidentTimingFieldsForTenant(
+          env,
+          incidentId,
+          incidentsTenantId,
+        );
+        const previousStatus = normalizeOptionalString(existingIncident.incident_status, "open")
+          .toLowerCase();
+        let workStartedAt =
+          normalizeOptionalString(timingFields.work_started_at, "").trim() || null;
+        let workEndedAt =
+          normalizeOptionalString(timingFields.work_ended_at, "").trim() || null;
+        let actualDurationSeconds = Number.parseInt(
+          String(timingFields.actual_duration_seconds ?? ""),
+          10,
+        );
+        if (!Number.isInteger(actualDurationSeconds) || actualDurationSeconds < 0) {
+          actualDurationSeconds = null;
+        }
+        if (!workStartedAt && previousStatus === "in_progress") {
+          workStartedAt = normalizeOptionalString(existingIncident.status_updated_at, "").trim() || null;
+        }
+
+        if (payload.incidentStatus === "open") {
+          workStartedAt = null;
+          workEndedAt = null;
+          actualDurationSeconds = null;
+        } else if (payload.incidentStatus === "in_progress") {
+          if (!workStartedAt || previousStatus !== "in_progress") {
+            workStartedAt = statusUpdatedAt;
+          }
+          workEndedAt = null;
+          actualDurationSeconds = null;
+        } else if (payload.incidentStatus === "resolved") {
+          if (!workStartedAt) {
+            workStartedAt = normalizeOptionalString(existingIncident.created_at, "").trim() || statusUpdatedAt;
+          }
+          workEndedAt = statusUpdatedAt;
+          const startMs = Date.parse(workStartedAt);
+          const endMs = Date.parse(workEndedAt);
+          if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs) {
+            actualDurationSeconds = Math.floor((endMs - startMs) / 1000);
+          } else {
+            actualDurationSeconds = null;
+          }
+        }
+
         const resolvedAt = payload.incidentStatus === "resolved" ? statusUpdatedAt : null;
         const resolvedBy = payload.incidentStatus === "resolved" ? actorUsername : null;
         const resolutionNote = payload.resolutionNote;
 
-        await env.DB.prepare(`
-          UPDATE incidents
-          SET
-            incident_status = ?,
-            status_updated_at = ?,
-            status_updated_by = ?,
-            resolved_at = ?,
-            resolved_by = ?,
-            resolution_note = ?
-          WHERE id = ?
-            AND tenant_id = ?
-        `)
-          .bind(
-            payload.incidentStatus,
-            statusUpdatedAt,
-            actorUsername,
-            resolvedAt,
-            resolvedBy,
-            resolutionNote,
-            incidentId,
-            incidentsTenantId,
-          )
-          .run();
+        try {
+          await env.DB.prepare(`
+            UPDATE incidents
+            SET
+              incident_status = ?,
+              status_updated_at = ?,
+              status_updated_by = ?,
+              resolved_at = ?,
+              resolved_by = ?,
+              resolution_note = ?,
+              work_started_at = ?,
+              work_ended_at = ?,
+              actual_duration_seconds = ?
+            WHERE id = ?
+              AND tenant_id = ?
+          `)
+            .bind(
+              payload.incidentStatus,
+              statusUpdatedAt,
+              actorUsername,
+              resolvedAt,
+              resolvedBy,
+              resolutionNote,
+              workStartedAt,
+              workEndedAt,
+              actualDurationSeconds,
+              incidentId,
+              incidentsTenantId,
+            )
+            .run();
+        } catch (error) {
+          if (!isMissingIncidentTimingColumnsError(error)) {
+            throw error;
+          }
+          await env.DB.prepare(`
+            UPDATE incidents
+            SET
+              incident_status = ?,
+              status_updated_at = ?,
+              status_updated_by = ?,
+              resolved_at = ?,
+              resolved_by = ?,
+              resolution_note = ?
+            WHERE id = ?
+              AND tenant_id = ?
+          `)
+            .bind(
+              payload.incidentStatus,
+              statusUpdatedAt,
+              actorUsername,
+              resolvedAt,
+              resolvedBy,
+              resolutionNote,
+              incidentId,
+              incidentsTenantId,
+            )
+            .run();
+        }
 
         const incidentEventPayload = mapIncidentRow({
           ...existingIncident,
@@ -7628,7 +8434,11 @@ export default {
           resolved_at: resolvedAt,
           resolved_by: resolvedBy,
           resolution_note: resolutionNote,
+          work_started_at: workStartedAt,
+          work_ended_at: workEndedAt,
+          actual_duration_seconds: actualDurationSeconds,
         });
+        incidentEventPayload.incident_status = payload.incidentStatus;
 
         await logAuditEvent(env, {
           action: "update_incident_status",
@@ -7641,6 +8451,7 @@ export default {
             previous_status: existingIncident.incident_status || "open",
             new_status: payload.incidentStatus,
             has_resolution_note: Boolean(resolutionNote),
+            actual_duration_seconds: actualDurationSeconds,
           },
           ipAddress: getClientIpForRateLimit(request),
           platform: isWebRoute ? "web" : "api",

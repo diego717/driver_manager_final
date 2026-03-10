@@ -83,12 +83,6 @@ PLACEHOLDER_CSS
                     <select id="brandFilter">
                         <option value="">Todas las marcas</option>
                     </select>
-                    <select id="statusFilter">
-                        <option value="">Todos los estados</option>
-                        <option value="success">Éxito</option>
-                        <option value="failed">Fallido</option>
-                        <option value="unknown">Desconocido</option>
-                    </select>
                     <input type="date" id="startDate">
                     <input type="date" id="endDate">
                     <button id="applyFilters" class="btn-primary">Aplicar</button>
@@ -614,14 +608,14 @@ function renderRecentInstallations(installations) {
         return;
     }
     
-    let html = '<table><thead><tr><th>ID</th><th>Cliente</th><th>Marca</th><th>Estado</th><th>Fecha</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>ID</th><th>Cliente</th><th>Marca</th><th>Atencion</th><th>Fecha</th></tr></thead><tbody>';
     
     installations.forEach(inst => {
         html += '<tr>';
         html += '<td>#' + inst.id + '</td>';
         html += '<td>' + (inst.client_name || 'N/A') + '</td>';
         html += '<td>' + (inst.driver_brand || 'N/A') + '</td>';
-        html += '<td><span class="badge ' + inst.status + '">' + inst.status + '</span></td>';
+        html += '<td><span class="badge">' + (inst.attention_state || 'clear') + '</span></td>';
         html += '<td>' + new Date(inst.timestamp).toLocaleString() + '</td>';
         html += '</tr>';
     });
@@ -637,8 +631,7 @@ async function loadInstallations() {
     try {
         const params = {
             client_name: document.getElementById('clientFilter').value,
-            brand: document.getElementById('brandFilter').value,
-            status: document.getElementById('statusFilter').value,
+            brand: document.getElementById('brandFilter').value,
             start_date: document.getElementById('startDate').value,
             end_date: document.getElementById('endDate').value,
             limit: 50
@@ -658,7 +651,7 @@ function renderInstallationsTable(installations) {
         return;
     }
     
-    let html = '<table><thead><tr><th>ID</th><th>Cliente</th><th>Marca</th><th>Versión</th><th>Estado</th><th>Tiempo</th><th>Notas</th><th>Fecha</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>ID</th><th>Cliente</th><th>Marca</th><th>Version</th><th>Atencion</th><th>Tiempo</th><th>Notas</th><th>Fecha</th></tr></thead><tbody>';
     
     installations.forEach(inst => {
         html += '<tr data-id="' + inst.id + '">';
@@ -666,7 +659,7 @@ function renderInstallationsTable(installations) {
         html += '<td>' + (inst.client_name || 'N/A') + '</td>';
         html += '<td>' + (inst.driver_brand || 'N/A') + '</td>';
         html += '<td>' + (inst.driver_version || 'N/A') + '</td>';
-        html += '<td><span class="badge ' + inst.status + '">' + inst.status + '</span></td>';
+        html += '<td><span class="badge">' + (inst.attention_state || 'clear') + '</span></td>';
         html += '<td>' + inst.installation_time_seconds + 's</td>';
         html += '<td>' + (inst.notes || '-') + '</td>';
         html += '<td>' + new Date(inst.timestamp).toLocaleString() + '</td>';

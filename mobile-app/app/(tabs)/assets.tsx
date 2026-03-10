@@ -19,6 +19,7 @@ import {
   type AssetRecord,
 } from "@/src/api/assets";
 import { extractApiError } from "@/src/api/client";
+import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { clearWebSession, readStoredWebSession } from "@/src/api/webAuth";
 import { evaluateWebSession } from "@/src/api/webSession";
 import { consumeForceLoginOnOpenFlag } from "@/src/security/startup-session-policy";
@@ -44,6 +45,7 @@ function incidentStatusLabel(value: string | null | undefined): string {
 export default function AssetsTabScreen() {
   const palette = useAppPalette();
   const router = useRouter();
+  const bottomSpacing = 112;
 
   const [search, setSearch] = useState("");
   const [assets, setAssets] = useState<AssetRecord[]>([]);
@@ -194,7 +196,7 @@ export default function AssetsTabScreen() {
   const onLinkAsset = useCallback(async () => {
     if (!(await refreshSessionState())) {
       Alert.alert("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
-      router.push("/modal");
+      router.push("/modal?focus=login");
       return;
     }
 
@@ -261,33 +263,26 @@ export default function AssetsTabScreen() {
   if (!hasActiveSession) {
     return (
       <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
-        <View
-          style={[
-            styles.authCard,
-            { backgroundColor: palette.cardBg, borderColor: palette.cardBorder },
-          ]}
-        >
-          <Text style={[styles.authTitle, { color: palette.textPrimary }]}>Sesion requerida</Text>
-          <Text style={[styles.hintText, { color: palette.textSecondary }]}>
-            Inicia sesión web para ver y asociar equipos.
-          </Text>
-          <TouchableOpacity
-            style={[styles.button, { backgroundColor: palette.primaryButtonBg }]}
-            onPress={() => router.push("/modal")}
-            accessibilityRole="button"
-          >
-            <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>
-              Ir a configuracion
-            </Text>
-          </TouchableOpacity>
-        </View>
+        <WebInlineLoginCard
+          hint="Inicia sesion web para ver y asociar equipos."
+          onLoginSuccess={async () => {
+            await loadAssets({ keepSelection: true });
+          }}
+          onOpenAdvanced={() => router.push("/modal?focus=login")}
+        />
       </View>
     );
   }
 
   return (
     <ScrollView
-      contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}
+      contentContainerStyle={[
+        styles.container,
+        {
+          backgroundColor: palette.screenBg,
+          paddingBottom: bottomSpacing,
+        },
+      ]}
       keyboardShouldPersistTaps="handled"
     >
       <Text style={[styles.title, { color: palette.textPrimary }]}>Equipos</Text>

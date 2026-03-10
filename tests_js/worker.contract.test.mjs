@@ -498,6 +498,46 @@ function createMockDB({
 
           if (
             normalized.startsWith(
+              "SELECT SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count",
+            ) &&
+            normalized.includes("FROM incidents") &&
+            normalized.includes("WHERE tenant_id = ?")
+          ) {
+            const [outsideSlaCutoffIso, tenantId] = call.bound || [];
+            const tenant = String(tenantId ?? "default");
+            const cutoffIso = String(outsideSlaCutoffIso || "");
+            let inProgressCount = 0;
+            let criticalActiveCount = 0;
+            let outsideSlaCount = 0;
+
+            for (const incident of state.incidents) {
+              if (String(incident.tenant_id ?? "default") !== tenant) continue;
+              const status = String(incident.incident_status ?? "open").toLowerCase();
+              const active = status === "open" || status === "in_progress";
+              if (status === "in_progress") {
+                inProgressCount += 1;
+              }
+              if (active && String(incident.severity ?? "").toLowerCase() === "critical") {
+                criticalActiveCount += 1;
+              }
+              if (active && cutoffIso && String(incident.created_at ?? "") < cutoffIso) {
+                outsideSlaCount += 1;
+              }
+            }
+
+            return {
+              results: [
+                {
+                  incident_in_progress_count: inProgressCount,
+                  incident_critical_active_count: criticalActiveCount,
+                  incident_outside_sla_count: outsideSlaCount,
+                },
+              ],
+            };
+          }
+
+          if (
+            normalized.startsWith(
               "SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at FROM incident_photos p INNER JOIN incidents i ON i.id = p.incident_id WHERE i.installation_id = ?",
             )
           ) {
@@ -1009,6 +1049,43 @@ function createMockDB({
             if (row) {
               row.checklist_json = checklistJson;
               row.evidence_note = evidenceNote;
+            }
+            return { success: true, meta: { changes: row ? 1 : 0 } };
+          }
+
+          if (
+            normalized.startsWith(
+              "UPDATE incidents SET incident_status = ?, status_updated_at = ?, status_updated_by = ?, resolved_at = ?, resolved_by = ?, resolution_note = ?, work_started_at = ?, work_ended_at = ?, actual_duration_seconds = ? WHERE id = ? AND tenant_id = ?",
+            )
+          ) {
+            const [
+              incidentStatus,
+              statusUpdatedAt,
+              statusUpdatedBy,
+              resolvedAt,
+              resolvedBy,
+              resolutionNote,
+              workStartedAt,
+              workEndedAt,
+              actualDurationSeconds,
+              incidentId,
+              tenantId,
+            ] = call.bound;
+            const row = state.incidents.find(
+              (item) =>
+                String(item.id) === String(incidentId) &&
+                String(item.tenant_id ?? "default") === String(tenantId ?? "default"),
+            );
+            if (row) {
+              row.incident_status = incidentStatus;
+              row.status_updated_at = statusUpdatedAt;
+              row.status_updated_by = statusUpdatedBy;
+              row.resolved_at = resolvedAt;
+              row.resolved_by = resolvedBy;
+              row.resolution_note = resolutionNote;
+              row.work_started_at = workStartedAt ?? null;
+              row.work_ended_at = workEndedAt ?? null;
+              row.actual_duration_seconds = actualDurationSeconds ?? null;
             }
             return { success: true, meta: { changes: row ? 1 : 0 } };
           }

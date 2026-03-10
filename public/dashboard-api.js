@@ -206,8 +206,20 @@
                     body: JSON.stringify(payload),
                 });
             },
+            createAssetIncident(assetId, payload) {
+                return request(`/web/assets/${assetId}/incidents`, {
+                    method: 'POST',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
             updateIncidentStatus(incidentId, payload) {
                 return request(`/web/incidents/${incidentId}/status`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
+            updateIncidentEvidence(incidentId, payload) {
+                return request(`/web/incidents/${incidentId}/evidence`, {
                     method: 'PATCH',
                     body: JSON.stringify(payload || {}),
                 });

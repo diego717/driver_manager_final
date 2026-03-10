@@ -24,6 +24,7 @@ import {
   type ResolveAssetPayload,
 } from "@/src/api/assets";
 import { extractApiError } from "@/src/api/client";
+import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { clearWebSession, readStoredWebSession } from "@/src/api/webAuth";
 import { evaluateWebSession } from "@/src/api/webSession";
 import { consumeForceLoginOnOpenFlag } from "@/src/security/startup-session-policy";
@@ -164,6 +165,7 @@ export default function QrGeneratorScreen() {
     autoGenerate?: string | string[];
   }>();
   const router = useRouter();
+  const bottomSpacing = 112;
   const palette = useAppPalette();
   const lastAppliedPrefillSignatureRef = useRef("");
   const [checkingSession, setCheckingSession] = useState(false);
@@ -757,27 +759,13 @@ export default function QrGeneratorScreen() {
   if (!hasActiveSession) {
     return (
       <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
-        <View
-          style={[
-            styles.authCard,
-            { backgroundColor: palette.cardBg, borderColor: palette.cardBorder },
-          ]}
-        >
-          <Text style={[styles.authTitle, { color: palette.textPrimary }]}>Sesion requerida</Text>
-          <Text style={[styles.authHintText, { color: palette.textSecondary }]}>
-            Inicia sesion web para generar y guardar QR de equipos.
-          </Text>
-          <TouchableOpacity
-            style={[styles.button, { backgroundColor: palette.primaryButtonBg }]}
-            onPress={() => router.push("/modal")}
-            accessibilityRole="button"
-            accessibilityLabel="Ir a configuracion y acceso"
-          >
-            <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>
-              Ir a configuracion y acceso
-            </Text>
-          </TouchableOpacity>
-        </View>
+        <WebInlineLoginCard
+          hint="Inicia sesion web para generar y guardar QR de equipos."
+          onLoginSuccess={async () => {
+            await refreshSessionState({ showLoader: true });
+          }}
+          onOpenAdvanced={() => router.push("/modal?focus=login")}
+        />
       </View>
     );
   }
@@ -785,7 +773,10 @@ export default function QrGeneratorScreen() {
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: palette.screenBg }]}
-      contentContainerStyle={styles.contentContainer}
+      contentContainerStyle={[
+        styles.contentContainer,
+        { paddingBottom: bottomSpacing },
+      ]}
       keyboardShouldPersistTaps="handled"
     >
       <Text style={[styles.title, { color: palette.textPrimary }]}>Generar QR de equipo</Text>

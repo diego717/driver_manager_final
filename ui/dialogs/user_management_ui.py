@@ -476,14 +476,14 @@ class CreateUserDialog(QDialog):
 
 
 class LoginDialog(QDialog):
-    """Diálogo de login multi-usuario."""
+    """Di\u00e1logo de login multi-usuario."""
 
     def __init__(self, user_manager, parent=None):
         super().__init__(parent)
         self.user_manager = user_manager
-        self.setWindowTitle("Iniciar Sesión - SiteOps")
+        self.setWindowTitle("Iniciar Sesi\u00f3n - SiteOps")
         self.setModal(True)
-        self.setFixedSize(420, 240)
+        self.setFixedSize(430, 252)
 
         if parent and hasattr(parent, "theme_manager"):
             try:
@@ -496,25 +496,53 @@ class LoginDialog(QDialog):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 16)
+        layout.setSpacing(10)
 
-        title = QLabel("Iniciar Sesión")
-        title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        title = QLabel("Iniciar Sesi\u00f3n")
+        title.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
         form_layout = QFormLayout()
+        form_layout.setHorizontalSpacing(10)
+        form_layout.setVerticalSpacing(8)
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
 
         self.username_input = QLineEdit()
         self.username_input.setPlaceholderText("Nombre de usuario")
+        self.username_input.setFixedHeight(36)
+        self.username_input.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.username_input.setStyleSheet(
+            "QLineEdit { padding: 0px 12px; }"
+            "QLineEdit:focus { padding: 0px 12px; }"
+        )
         self.username_input.textChanged.connect(self._clear_error)
-        form_layout.addRow("Usuario:", self.username_input)
+
+        username_label = QLabel("Usuario:")
+        username_label.setMinimumWidth(88)
+        username_label.setFixedHeight(36)
+        username_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form_layout.addRow(username_label, self.username_input)
 
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setPlaceholderText("Contraseña")
+        self.password_input.setPlaceholderText("Contrase\u00f1a")
+        self.password_input.setFixedHeight(36)
+        self.password_input.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.password_input.setStyleSheet(
+            "QLineEdit { padding: 0px 12px; }"
+            "QLineEdit:focus { padding: 0px 12px; }"
+        )
         self.password_input.returnPressed.connect(self.login)
         self.password_input.textChanged.connect(self._clear_error)
-        form_layout.addRow("Contraseña:", self.password_input)
+
+        password_label = QLabel("Contrase\u00f1a:")
+        password_label.setMinimumWidth(88)
+        password_label.setFixedHeight(36)
+        password_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form_layout.addRow(password_label, self.password_input)
 
         layout.addLayout(form_layout)
 
@@ -529,22 +557,16 @@ class LoginDialog(QDialog):
 
         buttons_layout = QHBoxLayout()
 
-        self.login_btn = QPushButton("Iniciar Sesión")
+        self.login_btn = QPushButton("Iniciar Sesi\u00f3n")
         self.login_btn.clicked.connect(self.login)
-        self.login_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #5CB85C;
-                color: white;
-                padding: 10px 20px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            """
-        )
+        self.login_btn.setProperty("class", "primary")
+        self.login_btn.setMinimumHeight(36)
+        self.login_btn.setMinimumWidth(150)
         buttons_layout.addWidget(self.login_btn)
 
         cancel_btn = QPushButton("Cancelar")
+        cancel_btn.setMinimumHeight(36)
+        cancel_btn.setMinimumWidth(150)
         cancel_btn.clicked.connect(self.reject)
         buttons_layout.addWidget(cancel_btn)
 
@@ -582,7 +604,7 @@ class LoginDialog(QDialog):
         password = self.password_input.text()
 
         if not username or not password:
-            self._set_error("Ingresa usuario y contraseña")
+            self._set_error("Ingresa usuario y contrase\u00f1a")
             return
 
         success, message = self.user_manager.authenticate(username, password)

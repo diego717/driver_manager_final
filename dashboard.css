@@ -915,6 +915,45 @@ tr[data-id]:focus-visible {
     background: color-mix(in oklab, var(--bg-hover) 78%, var(--accent-primary) 22%);
 }
 
+tr[data-asset-id] {
+    cursor: pointer;
+}
+
+tr[data-asset-id]:focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--accent-primary) 78%, white 22%);
+    outline-offset: -2px;
+    background: color-mix(in oklab, var(--bg-hover) 78%, var(--accent-primary) 22%);
+}
+
+.asset-table-equipment,
+.asset-table-client,
+.asset-table-updated {
+    display: grid;
+    gap: 0.16rem;
+    min-width: 0;
+}
+
+.asset-table-title {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.25;
+    letter-spacing: 0.01em;
+}
+
+.asset-table-meta {
+    color: var(--text-secondary);
+    font-size: 0.73rem;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.asset-table-actions {
+    white-space: nowrap;
+}
+
 /* ===== BADGES ===== */
 .badge {
     display: inline-flex;
@@ -948,6 +987,10 @@ tr[data-id]:focus-visible {
 .badge.attention-in_progress { background: rgba(29, 78, 216, 0.12); color: #1d4ed8; }
 .badge.attention-resolved { background: rgba(13, 159, 110, 0.16); color: var(--success); }
 .badge.attention-critical { background: rgba(220, 38, 38, 0.18); color: var(--error); animation: pulse 2s infinite; }
+.badge.asset-active { background: rgba(13, 159, 110, 0.12); color: var(--success); }
+.badge.asset-maintenance { background: rgba(217, 119, 6, 0.12); color: var(--warning); }
+.badge.asset-inactive { background: rgba(95, 107, 122, 0.14); color: var(--text-secondary); }
+.badge.asset-retired { background: rgba(220, 38, 38, 0.14); color: var(--error); }
 .badge.low { background: rgba(15, 117, 109, 0.1); color: var(--accent-primary); }
 .badge.medium { background: rgba(217, 119, 6, 0.1); color: var(--warning); }
 .badge.high { background: rgba(220, 38, 38, 0.1); color: var(--error); }
@@ -1004,6 +1047,8 @@ tr[data-id]:focus-visible {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 0.875rem;
+    gap: 0.6rem;
+    flex-wrap: wrap;
 }
 
 .incident-header small {
@@ -1564,10 +1609,85 @@ tr[data-id]:focus-visible {
 .incident-note-text {
     color: var(--text-secondary);
     line-height: 1.6;
+    margin-top: 0.55rem;
+    margin-bottom: 0.55rem;
+    font-weight: 500;
 }
 
 .incident-upload-btn {
     margin-top: 0.5rem;
+}
+
+.incident-highlights {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.42rem;
+    margin-bottom: 0.58rem;
+}
+
+.incident-highlight-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 0.18rem 0.56rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: color-mix(in oklab, var(--bg-card) 90%, var(--accent-primary) 10%);
+    color: var(--text-primary);
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+
+.incident-highlight-chip[data-tone="neutral"] {
+    background: color-mix(in oklab, var(--bg-card) 93%, var(--text-secondary) 7%);
+}
+
+.incident-highlight-chip[data-tone="info"] {
+    background: color-mix(in oklab, var(--bg-card) 86%, var(--info) 14%);
+    border-color: color-mix(in oklab, var(--border) 70%, var(--info) 30%);
+}
+
+.incident-highlight-chip[data-tone="accent"] {
+    background: color-mix(in oklab, var(--bg-card) 86%, var(--accent-primary) 14%);
+    border-color: color-mix(in oklab, var(--border) 70%, var(--accent-primary) 30%);
+}
+
+.incident-highlight-chip[data-tone="open"] {
+    background: color-mix(in oklab, var(--bg-card) 86%, var(--warning) 14%);
+    border-color: color-mix(in oklab, var(--border) 68%, var(--warning) 32%);
+}
+
+.incident-highlight-chip[data-tone="in_progress"] {
+    background: color-mix(in oklab, var(--bg-card) 86%, var(--info) 14%);
+    border-color: color-mix(in oklab, var(--border) 68%, var(--info) 32%);
+}
+
+.incident-highlight-chip[data-tone="resolved"] {
+    background: color-mix(in oklab, var(--bg-card) 84%, var(--success) 16%);
+    border-color: color-mix(in oklab, var(--border) 64%, var(--success) 36%);
+}
+
+.incident-highlight-chip[data-tone="low"] {
+    background: color-mix(in oklab, var(--bg-card) 86%, var(--accent-primary) 14%);
+    border-color: color-mix(in oklab, var(--border) 70%, var(--accent-primary) 30%);
+}
+
+.incident-highlight-chip[data-tone="medium"] {
+    background: color-mix(in oklab, var(--bg-card) 84%, var(--warning) 16%);
+    border-color: color-mix(in oklab, var(--border) 64%, var(--warning) 36%);
+}
+
+.incident-highlight-chip[data-tone="high"],
+.incident-highlight-chip[data-tone="critical"] {
+    background: color-mix(in oklab, var(--bg-card) 82%, var(--error) 18%);
+    border-color: color-mix(in oklab, var(--border) 58%, var(--error) 42%);
+}
+
+.incident-checklist-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.45rem;
 }
 
 .incidents-header {
@@ -1886,24 +2006,72 @@ tr[data-id]:focus-visible {
 }
 
 #assetDetail h4 {
-    margin-top: 1rem;
+    margin-top: 0;
     margin-bottom: 0.5rem;
     font-size: 0.95rem;
     color: var(--text-primary);
+}
+
+.asset-detail-summary {
+    border: 1px solid color-mix(in oklab, var(--border) 72%, var(--accent-primary) 28%);
+    border-radius: var(--radius);
+    background: color-mix(in oklab, var(--bg-card) 86%, var(--accent-primary) 14%);
+    padding: 0.78rem;
+    margin-bottom: 0.7rem;
+    display: grid;
+    gap: 0.62rem;
+}
+
+.asset-detail-summary-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.65rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+
+.asset-detail-identity {
+    min-width: 0;
+}
+
+.asset-detail-code {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: var(--text-primary);
+    line-height: 1.15;
+}
+
+.asset-detail-badges {
+    display: flex;
+    gap: 0.38rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.asset-active-link-banner {
+    border: 1px dashed color-mix(in oklab, var(--border) 62%, var(--info) 38%);
+    background: color-mix(in oklab, var(--bg-secondary) 82%, var(--info) 18%);
+    color: color-mix(in oklab, var(--text-primary) 86%, var(--info) 14%);
+    font-size: 0.78rem;
+    font-weight: 700;
+    line-height: 1.35;
+    border-radius: var(--radius-sm);
+    padding: 0.52rem 0.64rem;
+    margin-bottom: 0.65rem;
 }
 
 .asset-detail-toolbar {
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
-    margin-bottom: 0.875rem;
+    margin-bottom: 0.72rem;
 }
 
 .asset-meta-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
     gap: 0.5rem;
-    margin-bottom: 0.75rem;
 }
 
 .asset-meta-item {
@@ -1932,6 +2100,34 @@ tr[data-id]:focus-visible {
     font-size: 0.8125rem;
 }
 
+.asset-incident-header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.38rem;
+    flex-wrap: wrap;
+}
+
+.asset-incident-card {
+    padding-top: 0.9rem;
+}
+
+.asset-incident-evidence {
+    margin-top: 0.48rem;
+    margin-bottom: 0.42rem;
+    padding: 0.5rem;
+    border: 1px solid color-mix(in oklab, var(--border) 72%, var(--info) 28%);
+    border-radius: var(--radius-sm);
+    background: color-mix(in oklab, var(--bg-secondary) 88%, var(--info) 12%);
+    display: grid;
+    gap: 0.36rem;
+}
+
+.asset-incident-checklist {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+}
+
 .incident-meta-line {
     display: block;
     line-height: 1.45;
@@ -1947,9 +2143,34 @@ tr[data-id]:focus-visible {
     align-items: center;
 }
 
+.asset-links-history,
+.asset-incidents-history {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in oklab, var(--bg-secondary) 94%, var(--bg-card) 6%);
+    margin-bottom: 0.72rem;
+}
+
+.asset-links-history summary,
+.asset-incidents-history summary {
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    padding: 0.62rem 0.72rem;
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.asset-links-history summary::-webkit-details-marker,
+.asset-incidents-history summary::-webkit-details-marker {
+    display: none;
+}
+
 .asset-links-list {
     display: grid;
-    gap: 0.5rem;
+    gap: 0.45rem;
+    padding: 0 0.72rem 0.72rem;
 }
 
 .asset-link-item {
@@ -1959,6 +2180,14 @@ tr[data-id]:focus-visible {
     padding: 0.55rem 0.65rem;
     font-size: 0.8125rem;
     color: var(--text-secondary);
+}
+
+.asset-incidents-section {
+    margin-bottom: 0.7rem;
+}
+
+.asset-incidents-history-grid {
+    padding: 0 0.72rem 0.72rem;
 }
 
 /* ===== RESPONSIVE ===== */

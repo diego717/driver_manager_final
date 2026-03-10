@@ -262,11 +262,6 @@ class HistoryTab(QWidget):
         self.history_limit_combo.addItems(["Últimas 10", "Últimas 25", "Últimas 50", "Todas"])
         filter_layout.addWidget(self.history_limit_combo)
         
-        filter_layout.addWidget(QLabel("Estado:"))
-        self.history_status_filter = QComboBox()
-        self.history_status_filter.addItems(["Todos", "Exitosas", "Fallidas"])
-        filter_layout.addWidget(self.history_status_filter)
-        
         filter_layout.addStretch()
         inst_layout.addLayout(filter_layout)
         

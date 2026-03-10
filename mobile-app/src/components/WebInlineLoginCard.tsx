@@ -1,0 +1,399 @@
+import React, { useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from "react-native";
+
+import { extractApiError } from "@/src/api/client";
+import { loginWebSession } from "@/src/api/webAuth";
+import { getStoredWebAccessUsername } from "@/src/storage/secure";
+import { useAppPalette } from "@/src/theme/palette";
+import { fontFamilies } from "@/src/theme/typography";
+
+type WebInlineLoginCardProps = {
+  hint: string;
+  onLoginSuccess: () => void | Promise<void>;
+  onOpenAdvanced?: () => void;
+};
+
+export default function WebInlineLoginCard(props: WebInlineLoginCardProps) {
+  const { hint, onLoginSuccess, onOpenAdvanced } = props;
+  const palette = useAppPalette();
+  const { width } = useWindowDimensions();
+  const isCompact = width <= 390;
+  const isVeryCompact = width <= 340;
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const [focusedField, setFocusedField] = useState<"username" | "password" | null>(null);
+  const successFeedback = feedback.toLowerCase().includes("sesion iniciada");
+  const focusRingColor = palette.accent === "#1ab3a7" ? "rgba(26, 179, 167, 0.22)" : "rgba(11, 109, 102, 0.18)";
+
+  useEffect(() => {
+    let mounted = true;
+    void getStoredWebAccessUsername().then((storedUsername) => {
+      if (!mounted || !storedUsername) return;
+      setUsername((current) => current.trim() || storedUsername);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const onSignIn = async () => {
+    if (submitting) return;
+    const normalizedUsername = username.trim().toLowerCase();
+    if (!normalizedUsername) {
+      setFeedback("Ingresa usuario web.");
+      return;
+    }
+    if (!password.trim()) {
+      setFeedback("Ingresa contrasena web.");
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      setFeedback("");
+      const login = await loginWebSession(normalizedUsername, password);
+      setPassword("");
+      setFeedback(`Sesion iniciada: ${login.user.username}`);
+      await onLoginSuccess();
+    } catch (error) {
+      setFeedback(extractApiError(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <View
+      style={[
+        styles.card,
+        isCompact && styles.cardCompact,
+        {
+          backgroundColor: palette.cardBg,
+          borderColor: palette.cardBorder,
+        },
+      ]}
+    >
+      <View style={[styles.header, isCompact && styles.headerCompact]}>
+        <Text style={[styles.brand, isCompact && styles.brandCompact, { color: palette.accent }]}>
+          SiteOps
+        </Text>
+        <Text style={[styles.title, isCompact && styles.titleCompact, { color: palette.textPrimary }]}>
+          Iniciar sesion
+        </Text>
+        <Text style={[styles.hint, isCompact && styles.hintCompact, { color: palette.textSecondary }]}>
+          {hint}
+        </Text>
+      </View>
+
+      <View style={styles.inputGroup}>
+        <Text style={[styles.label, isCompact && styles.labelCompact, { color: palette.textSecondary }]}>
+          Usuario
+        </Text>
+        <TextInput
+          value={username}
+          onChangeText={setUsername}
+          autoCapitalize="none"
+          autoCorrect={false}
+          textContentType="username"
+          autoComplete="username"
+          style={[
+            styles.input,
+            isCompact && styles.inputCompact,
+            {
+              backgroundColor: palette.inputBg,
+              borderColor: focusedField === "username" ? palette.accent : palette.inputBorder,
+              color: palette.textPrimary,
+              shadowColor: focusRingColor,
+              shadowOpacity: focusedField === "username" ? 1 : 0,
+              shadowRadius: focusedField === "username" ? 10 : 0,
+              shadowOffset: { width: 0, height: 0 },
+              elevation: focusedField === "username" ? 1 : 0,
+            },
+          ]}
+          placeholder="nombre_usuario"
+          placeholderTextColor={palette.placeholder}
+          accessibilityLabel="Usuario web para iniciar sesion"
+          onFocus={() => setFocusedField("username")}
+          onBlur={() => setFocusedField((current) => (current === "username" ? null : current))}
+        />
+      </View>
+
+      <View style={styles.inputGroup}>
+        <Text style={[styles.label, isCompact && styles.labelCompact, { color: palette.textSecondary }]}>
+          Contrasena
+        </Text>
+        <TextInput
+          value={password}
+          onChangeText={setPassword}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry
+          textContentType="password"
+          autoComplete="password"
+          returnKeyType="go"
+          onSubmitEditing={() => {
+            void onSignIn();
+          }}
+          style={[
+            styles.input,
+            isCompact && styles.inputCompact,
+            {
+              backgroundColor: palette.inputBg,
+              borderColor: focusedField === "password" ? palette.accent : palette.inputBorder,
+              color: palette.textPrimary,
+              shadowColor: focusRingColor,
+              shadowOpacity: focusedField === "password" ? 1 : 0,
+              shadowRadius: focusedField === "password" ? 10 : 0,
+              shadowOffset: { width: 0, height: 0 },
+              elevation: focusedField === "password" ? 1 : 0,
+            },
+          ]}
+          placeholder="********"
+          placeholderTextColor={palette.placeholder}
+          accessibilityLabel="Contrasena web para iniciar sesion"
+          onFocus={() => setFocusedField("password")}
+          onBlur={() => setFocusedField((current) => (current === "password" ? null : current))}
+        />
+      </View>
+
+      {feedback ? (
+        <View
+          style={[
+            styles.feedbackBox,
+            {
+              backgroundColor: successFeedback ? palette.successBg : palette.errorBg,
+              borderColor: successFeedback ? palette.successBorder : palette.errorBorder,
+            },
+          ]}
+        >
+          <Text
+          style={[
+            styles.feedback,
+            isCompact && styles.feedbackCompact,
+            { color: successFeedback ? palette.successText : palette.errorText },
+          ]}
+        >
+            {feedback}
+          </Text>
+        </View>
+      ) : null}
+
+      <View style={[styles.actionsRow, isVeryCompact && styles.actionsRowCompact]}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.primaryButton,
+            isCompact && styles.buttonCompact,
+            {
+              backgroundColor: palette.primaryButtonBg,
+              transform: [{ translateY: pressed ? 0 : -1 }],
+              opacity: submitting ? 0.76 : pressed ? 0.9 : 1,
+              shadowColor: focusRingColor,
+              shadowOpacity: pressed ? 0.1 : 0.2,
+              shadowRadius: pressed ? 6 : 12,
+              shadowOffset: { width: 0, height: pressed ? 2 : 6 },
+              elevation: pressed ? 2 : 4,
+            },
+          ]}
+          onPress={() => {
+            void onSignIn();
+          }}
+          disabled={submitting}
+          accessibilityRole="button"
+          accessibilityLabel="Iniciar sesion web"
+          accessibilityState={{ disabled: submitting, busy: submitting }}
+        >
+          {submitting ? (
+            <ActivityIndicator color={palette.primaryButtonText} />
+          ) : (
+            <Text
+              style={[
+                styles.primaryButtonText,
+                isCompact && styles.buttonTextCompact,
+                { color: palette.primaryButtonText },
+              ]}
+            >
+              Iniciar sesion
+            </Text>
+          )}
+        </Pressable>
+        {onOpenAdvanced ? (
+          <Pressable
+            style={({ pressed }) => [
+              styles.secondaryButton,
+              isCompact && styles.buttonCompact,
+              {
+                backgroundColor: pressed ? palette.hoverBg : palette.secondaryButtonBg,
+                borderColor: pressed ? palette.accent : palette.inputBorder,
+                transform: [{ translateY: pressed ? 0 : -1 }],
+              },
+            ]}
+            onPress={onOpenAdvanced}
+            accessibilityRole="button"
+            accessibilityLabel="Abrir configuracion avanzada"
+          >
+            <Text
+              style={[
+                styles.secondaryButtonText,
+                isCompact && styles.buttonTextCompact,
+                { color: palette.secondaryButtonText },
+              ]}
+            >
+              Configuracion
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: {
+    width: "100%",
+    maxWidth: 420,
+    alignSelf: "center",
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    gap: 12,
+  },
+  cardCompact: {
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 10,
+  },
+  header: {
+    alignItems: "center",
+    gap: 4,
+    marginBottom: 2,
+  },
+  headerCompact: {
+    gap: 3,
+    marginBottom: 0,
+  },
+  brand: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 13.5,
+    letterSpacing: 0.7,
+    textTransform: "uppercase",
+  },
+  brandCompact: {
+    fontSize: 12,
+    letterSpacing: 0.55,
+  },
+  title: {
+    fontSize: 31,
+    fontFamily: fontFamilies.bold,
+    textAlign: "center",
+    lineHeight: 35,
+  },
+  titleCompact: {
+    fontSize: 27,
+    lineHeight: 31,
+  },
+  hint: {
+    fontSize: 13,
+    lineHeight: 18.5,
+    fontFamily: fontFamilies.regular,
+    textAlign: "center",
+  },
+  hintCompact: {
+    fontSize: 12,
+    lineHeight: 16.5,
+  },
+  inputGroup: {
+    gap: 6,
+  },
+  label: {
+    fontSize: 12.5,
+    fontFamily: fontFamilies.semibold,
+  },
+  labelCompact: {
+    fontSize: 12,
+  },
+  input: {
+    minHeight: 46,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: fontFamilies.regular,
+  },
+  inputCompact: {
+    minHeight: 44,
+    borderRadius: 11,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    fontSize: 13.5,
+  },
+  feedbackBox: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  feedback: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: fontFamilies.regular,
+  },
+  feedbackCompact: {
+    fontSize: 11.5,
+    lineHeight: 16,
+  },
+  actionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 2,
+  },
+  actionsRowCompact: {
+    flexDirection: "column",
+    gap: 8,
+  },
+  primaryButton: {
+    flex: 1,
+    borderRadius: 12,
+    minHeight: 46,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+  },
+  buttonCompact: {
+    minHeight: 44,
+    borderRadius: 11,
+    paddingVertical: 10,
+  },
+  primaryButtonText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 14.5,
+  },
+  buttonTextCompact: {
+    fontSize: 13.5,
+  },
+  secondaryButton: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    minHeight: 46,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+  },
+  secondaryButtonText: {
+    fontFamily: fontFamilies.semibold,
+    fontSize: 14,
+  },
+});
