@@ -55,7 +55,26 @@
             return `${apiBase}${endpoint}`;
         }
 
+        function isLocalhost(hostname) {
+            return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+        }
+
+        function assertSecureAuthTransport(endpoint) {
+            if (!String(endpoint || '').startsWith('/web/auth/')) {
+                return;
+            }
+
+            const protocol = globalScope?.location?.protocol || '';
+            const hostname = globalScope?.location?.hostname || '';
+            if (protocol === 'https:' || isLocalhost(hostname)) {
+                return;
+            }
+
+            throw new Error('El inicio de sesión solo está permitido sobre HTTPS.');
+        }
+
         async function request(endpoint, options = {}) {
+            assertSecureAuthTransport(endpoint);
             const baseHeaders = {
                 'Content-Type': 'application/json',
                 ...(options.headers || {}),

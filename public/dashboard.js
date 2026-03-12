@@ -202,6 +202,74 @@ const SECTION_SUBTITLES = {
     audit: 'Trazas críticas y cumplimiento',
     settings: 'Preferencias operativas y atajos de gestión',
 };
+const SECTION_REQUIRED_BINDINGS = Object.freeze({
+    dashboard: [
+        'kpiCriticalIncidentsValue',
+        'kpiCriticalMeta',
+        'kpiInProgressIncidentsValue',
+        'kpiInProgressMeta',
+        'kpiOutsideSlaIncidentsValue',
+        'kpiSlaMeta',
+        'kpiLastSyncTimeValue',
+        'kpiSyncMeta',
+        'trendChart',
+        'recentInstallations',
+        'attentionPanel',
+    ],
+    installations: [
+        'searchInput',
+        'brandFilter',
+        'startDate',
+        'endDate',
+        'applyFilters',
+        'resultsCount',
+        'installationsTable',
+    ],
+    incidents: [
+        'incidentsList',
+    ],
+    assets: [
+        'assetsSearchInput',
+        'assetsSearchBtn',
+        'assetsRefreshBtn',
+        'assetsCreateQrBtn',
+        'assetsResultsCount',
+        'assetsTable',
+        'assetDetail',
+    ],
+    drivers: [
+        'driverBrandInput',
+        'driverVersionInput',
+        'driverDescriptionInput',
+        'driverFileInput',
+        'driverUploadBtn',
+        'driversRefreshBtn',
+        'driversResultsCount',
+        'driversTable',
+    ],
+    audit: [
+        'auditActionFilter',
+        'refreshAudit',
+        'auditLogs',
+    ],
+    settings: [
+        'settingsUsername',
+        'settingsRole',
+        'settingsSyncStatus',
+        'settingsOpenAuditBtn',
+        'settingsLogoutBtn',
+    ],
+});
+const MOBILE_NAV_OVERFLOW_SECTIONS = new Set(['drivers', 'audit', 'settings']);
+const HEADER_PRIMARY_ACTIONS = {
+    dashboard: { icon: 'add_circle', label: 'Nuevo registro', action: 'createRecord' },
+    installations: { icon: 'add_circle', label: 'Nuevo registro', action: 'createRecord' },
+    assets: { icon: 'qr_code_2', label: 'Nuevo equipo + QR', action: 'createAsset' },
+    drivers: { icon: 'cloud_upload', label: 'Subir driver', action: 'pickDriverFile' },
+    incidents: { icon: 'warning', label: 'Nueva incidencia', action: 'createIncident' },
+    audit: { icon: 'refresh', label: 'Actualizar auditoría', action: 'refreshAudit' },
+    settings: { icon: 'description', label: 'Abrir auditoría', action: 'openAudit' },
+};
 const TOAST_TYPE_ICONS = {
     success: '✓',
     error: '!',
@@ -210,6 +278,8 @@ const TOAST_TYPE_ICONS = {
 };
 const ACTIVE_KPI_ANIMATIONS = new WeakMap();
 const MODAL_LAST_FOCUSED = new Map();
+const REPORTED_SECTION_BINDING_WARNINGS = new Set();
+const NOTIFIED_SECTION_BINDING_ERRORS = new Set();
 let sectionTransitionVersion = 0;
 
 function isElementFocusable(node) {
@@ -464,8 +534,12 @@ function resetProtectedViews() {
     currentSelectedInstallationId = null;
     currentAssetsData = [];
     currentSelectedAssetId = null;
+    closeHeaderOverflowMenu();
+    closeMobileNavPanel();
     syncRoleBasedNavigationAccess();
     updateSettingsSummary();
+    syncMobileNavMoreState(getActiveSectionName() || 'dashboard');
+    syncHeaderPrimaryAction(getActiveSectionName() || 'dashboard');
     setNotificationBadgeCount(0);
 }
 
@@ -486,12 +560,104 @@ function canCurrentUserAccessAudit() {
 
 function syncRoleBasedNavigationAccess() {
     const auditLink = document.querySelector('.nav-links a[data-section="audit"]');
-    if (!auditLink) return;
     const shouldShowAudit = canCurrentUserAccessAudit();
-    const parent = auditLink.closest('li');
-    if (parent) {
-        parent.classList.toggle('is-hidden', !shouldShowAudit);
+    if (auditLink) {
+        const parent = auditLink.closest('li');
+        if (parent) {
+            parent.classList.toggle('is-hidden', !shouldShowAudit);
+        }
     }
+    const mobileAuditBtn = document.getElementById('mobileNavAuditBtn');
+    if (mobileAuditBtn) {
+        mobileAuditBtn.classList.toggle('is-hidden', !shouldShowAudit);
+    }
+}
+
+function syncMobileNavContext() {
+    const username = String(currentUser?.username || 'Usuario');
+    const role = String(currentUser?.role || 'admin');
+    const initial = (username || 'U').charAt(0).toUpperCase();
+
+    const mobileUsernameEl = document.getElementById('mobileNavUsername');
+    const mobileRoleEl = document.getElementById('mobileNavRole');
+    const mobileInitialEl = document.getElementById('mobileNavInitial');
+
+    if (mobileUsernameEl) mobileUsernameEl.textContent = username;
+    if (mobileRoleEl) mobileRoleEl.textContent = role;
+    if (mobileInitialEl) mobileInitialEl.textContent = initial;
+}
+
+function syncMobileNavMoreState(section) {
+    const moreBtn = document.getElementById('mobileNavMoreBtn');
+    if (!moreBtn) return;
+    const normalizedSection = SECTION_TITLES[section] ? section : 'dashboard';
+    moreBtn.classList.toggle('active', MOBILE_NAV_OVERFLOW_SECTIONS.has(normalizedSection));
+}
+
+function closeMobileNavPanel(options = {}) {
+    const shouldRestoreFocus = options.restoreFocus === true;
+    const panel = document.getElementById('mobileNavPanel');
+    const toggleBtn = document.getElementById('mobileNavMoreBtn');
+    if (!panel || !toggleBtn) return false;
+    const wasOpen = panel.classList.contains('is-open');
+    panel.classList.remove('is-open');
+    panel.setAttribute('aria-hidden', 'true');
+    toggleBtn.setAttribute('aria-expanded', 'false');
+    if (wasOpen && shouldRestoreFocus) {
+        toggleBtn.focus();
+    }
+    return wasOpen;
+}
+
+function setupMobileNavPanel() {
+    const panel = document.getElementById('mobileNavPanel');
+    const toggleBtn = document.getElementById('mobileNavMoreBtn');
+    const closeBtn = document.getElementById('mobileNavCloseBtn');
+    if (!panel || !toggleBtn) return;
+
+    const setOpen = (isOpen) => {
+        panel.classList.toggle('is-open', isOpen);
+        panel.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+        toggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        if (isOpen) {
+            toggleBtn.classList.add('active');
+            return;
+        }
+        syncMobileNavMoreState(getActiveSectionName() || 'dashboard');
+    };
+
+    const handleToggle = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(!panel.classList.contains('is-open'));
+    };
+
+    toggleBtn.addEventListener('click', handleToggle);
+    toggleBtn.addEventListener('touchend', handleToggle, { passive: false });
+
+    closeBtn?.addEventListener('click', () => {
+        closeMobileNavPanel({ restoreFocus: true });
+    });
+
+    panel.querySelectorAll('[data-mobile-section]').forEach((button) => {
+        button.addEventListener('click', () => {
+            if (!requireActiveSession()) return;
+            const section = String(button.dataset.mobileSection || '').trim();
+            if (!section) return;
+            if (section === 'audit' && !canCurrentUserAccessAudit()) {
+                showNotification('No tienes permisos para acceder a Auditoría.', 'error');
+                return;
+            }
+            closeMobileNavPanel();
+            navigateToSectionByKey(section);
+        });
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!panel.classList.contains('is-open')) return;
+        if (panel.contains(event.target) || toggleBtn.contains(event.target)) return;
+        closeMobileNavPanel();
+    });
 }
 
 function setNotificationBadgeCount(count) {
@@ -532,6 +698,7 @@ function updateSettingsSummary() {
     if (roleEl) {
         roleEl.textContent = String(currentUser?.role || '-');
     }
+    syncMobileNavContext();
     updateSettingsSyncLabel(connectionStatusLastRendered?.status || 'paused');
 }
 
@@ -544,6 +711,8 @@ function applyAuthenticatedUser(user) {
     if (avatarEl) avatarEl.textContent = initial;
     syncRoleBasedNavigationAccess();
     updateSettingsSummary();
+    syncMobileNavMoreState(getActiveSectionName() || 'dashboard');
+    syncHeaderPrimaryAction(getActiveSectionName() || 'dashboard');
 }
 
 function normalizeSeverity(input) {
@@ -1153,11 +1322,11 @@ function updateStats(stats) {
     const outsideSlaCount = Number(stats?.incident_outside_sla_count) || 0;
     const slaMinutes = Number(stats?.incident_sla_minutes) || 30;
 
-    animateNumber('totalInstallations', criticalCount);
-    animateNumber('successRate', inProgressCount);
-    animateNumber('avgTime', outsideSlaCount);
+    animateNumber('kpiCriticalIncidentsValue', criticalCount);
+    animateNumber('kpiInProgressIncidentsValue', inProgressCount);
+    animateNumber('kpiOutsideSlaIncidentsValue', outsideSlaCount);
 
-    const syncClockEl = document.getElementById('uniqueClients');
+    const syncClockEl = document.getElementById('kpiLastSyncTimeValue');
     if (syncClockEl) {
         syncClockEl.textContent = new Date().toLocaleTimeString('es-ES', {
             hour: '2-digit',
@@ -1598,6 +1767,7 @@ async function renderTrendChart(days = currentTrendRangeDays) {
 
 async function loadDashboard() {
     if (!requireActiveSession()) return;
+    validateSectionBindings('dashboard', { notify: true });
     try {
         const stats = await api.getStatistics();
         updateStats(stats);
@@ -4997,9 +5167,176 @@ function updatePageTitleForSection(section) {
     const normalizedSection = SECTION_TITLES[section] ? section : 'dashboard';
     pageTitle.textContent = SECTION_TITLES[normalizedSection];
     syncHeaderDelight(normalizedSection);
+    syncHeaderPrimaryAction(normalizedSection);
+    syncMobileNavMoreState(normalizedSection);
+}
+
+function resolveHeaderPrimaryActionConfig(section) {
+    const normalizedSection = SECTION_TITLES[section] ? section : 'dashboard';
+    if (normalizedSection === 'settings' && !canCurrentUserAccessAudit()) {
+        return { icon: 'logout', label: 'Cerrar sesión', action: 'logout' };
+    }
+    return HEADER_PRIMARY_ACTIONS[normalizedSection] || HEADER_PRIMARY_ACTIONS.dashboard;
+}
+
+function executeHeaderPrimaryAction(actionKey) {
+    if (!requireActiveSession()) return;
+
+    switch (actionKey) {
+    case 'createIncident':
+        openIncidentModal({
+            installationId: Number.isInteger(currentSelectedInstallationId) ? currentSelectedInstallationId : '',
+        });
+        return;
+    case 'createAsset':
+        navigateToSectionByKey('assets');
+        showQrModal({ type: 'asset', value: '' });
+        return;
+    case 'pickDriverFile':
+        navigateToSectionByKey('drivers');
+        document.getElementById('driverPickFileBtn')?.click();
+        return;
+    case 'refreshAudit':
+        if (!canCurrentUserAccessAudit()) {
+            showNotification('No tienes permisos para acceder a Auditoría.', 'error');
+            return;
+        }
+        navigateToSectionByKey('audit');
+        document.getElementById('refreshAudit')?.click();
+        return;
+    case 'openAudit':
+        if (!canCurrentUserAccessAudit()) {
+            showNotification('No tienes permisos para acceder a Auditoría.', 'error');
+            return;
+        }
+        navigateToSectionByKey('audit');
+        return;
+    case 'logout':
+        document.getElementById('logoutBtn')?.click();
+        return;
+    case 'createRecord':
+    default:
+        createManualRecordFromWeb();
+    }
+}
+
+function syncHeaderPrimaryAction(section) {
+    const actionBtn = document.getElementById('headerPrimaryActionBtn');
+    const iconEl = document.getElementById('headerPrimaryActionIcon');
+    const labelEl = document.getElementById('headerPrimaryActionLabel');
+    if (!actionBtn || !iconEl || !labelEl) return;
+
+    const actionConfig = resolveHeaderPrimaryActionConfig(section);
+    actionBtn.dataset.action = actionConfig.action;
+    iconEl.textContent = actionConfig.icon;
+    labelEl.textContent = actionConfig.label;
+    actionBtn.setAttribute('aria-label', actionConfig.label);
+}
+
+function closeHeaderOverflowMenu(options = {}) {
+    const shouldRestoreFocus = options.restoreFocus === true;
+    const overflowMenu = document.getElementById('headerOverflowMenu');
+    const overflowToggle = document.getElementById('headerOverflowBtn');
+    if (!overflowMenu || !overflowToggle) return false;
+    const wasOpen = overflowMenu.classList.contains('is-open');
+    overflowMenu.classList.remove('is-open');
+    overflowToggle.setAttribute('aria-expanded', 'false');
+    if (wasOpen && shouldRestoreFocus) {
+        overflowToggle.focus();
+    }
+    return wasOpen;
+}
+
+function setupHeaderOverflowMenu() {
+    const overflowMenu = document.getElementById('headerOverflowMenu');
+    const overflowToggle = document.getElementById('headerOverflowBtn');
+    if (!overflowMenu || !overflowToggle) return;
+
+    const setOverflowOpen = (isOpen) => {
+        overflowMenu.classList.toggle('is-open', isOpen);
+        overflowToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    };
+
+    overflowToggle.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setOverflowOpen(!overflowMenu.classList.contains('is-open'));
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!overflowMenu.classList.contains('is-open')) return;
+        if (overflowMenu.contains(event.target) || overflowToggle.contains(event.target)) return;
+        closeHeaderOverflowMenu();
+    });
+
+    overflowMenu.querySelectorAll('button').forEach((button) => {
+        button.addEventListener('click', () => {
+            closeHeaderOverflowMenu();
+        });
+    });
+}
+
+function validateSectionBindings(section, options = {}) {
+    const sectionKey = String(section || '').trim();
+    const requiredBindings = SECTION_REQUIRED_BINDINGS[sectionKey];
+    if (!Array.isArray(requiredBindings) || requiredBindings.length === 0) return true;
+
+    const sectionNode = document.getElementById(`${sectionKey}Section`);
+    if (!(sectionNode instanceof HTMLElement)) {
+        const missingSectionSignature = `${sectionKey}|missing-section-node`;
+        if (!REPORTED_SECTION_BINDING_WARNINGS.has(missingSectionSignature)) {
+            console.warn(`[UI bindings][${sectionKey}] Missing section container: ${sectionKey}Section`);
+            REPORTED_SECTION_BINDING_WARNINGS.add(missingSectionSignature);
+        }
+        return false;
+    }
+
+    const missingIds = [];
+    const misplacedIds = [];
+    requiredBindings.forEach((bindingId) => {
+        const node = document.getElementById(bindingId);
+        if (!(node instanceof HTMLElement)) {
+            missingIds.push(bindingId);
+            return;
+        }
+        if (!sectionNode.contains(node)) {
+            misplacedIds.push(bindingId);
+        }
+    });
+
+    if (!missingIds.length && !misplacedIds.length) {
+        return true;
+    }
+
+    const warningParts = [];
+    if (missingIds.length) warningParts.push(`missing: ${missingIds.join(', ')}`);
+    if (misplacedIds.length) warningParts.push(`outside section: ${misplacedIds.join(', ')}`);
+    const warningSignature = `${sectionKey}|${warningParts.join('|')}`;
+    if (!REPORTED_SECTION_BINDING_WARNINGS.has(warningSignature)) {
+        console.warn(`[UI bindings][${sectionKey}] ${warningParts.join(' | ')}`);
+        REPORTED_SECTION_BINDING_WARNINGS.add(warningSignature);
+    }
+
+    if (options.notify === true && !NOTIFIED_SECTION_BINDING_ERRORS.has(sectionKey)) {
+        const sectionLabel = SECTION_TITLES[sectionKey] || sectionKey;
+        showNotification(
+            `Detectamos un desajuste visual en ${sectionLabel}. Recarga la página si falta información.`,
+            'warning',
+        );
+        NOTIFIED_SECTION_BINDING_ERRORS.add(sectionKey);
+    }
+
+    return false;
+}
+
+function validateAllSectionBindings() {
+    Object.keys(SECTION_REQUIRED_BINDINGS).forEach((sectionKey) => {
+        validateSectionBindings(sectionKey);
+    });
 }
 
 function runSectionLoaders(section) {
+    validateSectionBindings(section, { notify: true });
     if (section === 'installations') loadInstallations();
     if (section === 'assets') loadAssets();
     if (section === 'drivers') loadDrivers();
@@ -5064,11 +5401,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     
     try {
         const result = await api.login(username, password);
-        if (typeof result?.access_token === 'string' && result.access_token.trim()) {
-            webAccessToken = result.access_token.trim();
-        } else {
-            webAccessToken = '';
-        }
+        webAccessToken = '';
         applyAuthenticatedUser(result.user);
         
         hideLogin();
@@ -5100,21 +5433,25 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 document.getElementById('refreshBtn').addEventListener('click', () => {
     if (!requireActiveSession()) return;
     const btn = document.getElementById('refreshBtn');
-    btn.classList.add('btn-spin-once');
-    setTimeout(() => {
-        btn.classList.remove('btn-spin-once');
-    }, 520);
+    if (btn) {
+        const spinTarget = btn.querySelector('.material-symbols-outlined') || btn;
+        spinTarget.classList.add('btn-spin-once');
+        setTimeout(() => {
+            spinTarget.classList.remove('btn-spin-once');
+        }, 520);
+    }
     
     loadDashboard();
     showNotification('Dashboard actualizado', 'info');
 });
 
-document.getElementById('headerCreateRecordBtn')?.addEventListener('click', () => {
-    if (!requireActiveSession()) return;
-    createManualRecordFromWeb();
+document.getElementById('headerPrimaryActionBtn')?.addEventListener('click', () => {
+    const btn = document.getElementById('headerPrimaryActionBtn');
+    const actionKey = String(btn?.dataset?.action || 'createRecord').trim();
+    executeHeaderPrimaryAction(actionKey);
 });
 
-document.getElementById('headerCreateIncidentBtn')?.addEventListener('click', () => {
+document.getElementById('overflowCreateIncidentBtn')?.addEventListener('click', () => {
     if (!requireActiveSession()) return;
     openIncidentModal({
         installationId: Number.isInteger(currentSelectedInstallationId) ? currentSelectedInstallationId : '',
@@ -5147,32 +5484,13 @@ document.querySelectorAll('.nav-links a').forEach(link => {
             showNotification('No tienes permisos para acceder a Auditoría.', 'error');
             return;
         }
+        closeHeaderOverflowMenu();
+        closeMobileNavPanel();
         
         document.querySelectorAll('.nav-links a').forEach(l => l.classList.remove('active'));
         link.classList.add('active');
         
         void activateSection(section);
-    });
-});
-
-document.getElementById('settingsThemeBtn')?.addEventListener('click', () => {
-    document.getElementById('themeToggle')?.click();
-});
-
-document.getElementById('settingsRefreshBtn')?.addEventListener('click', () => {
-    if (!requireActiveSession()) return;
-    document.getElementById('refreshBtn')?.click();
-});
-
-document.getElementById('settingsNewRecordBtn')?.addEventListener('click', () => {
-    if (!requireActiveSession()) return;
-    createManualRecordFromWeb();
-});
-
-document.getElementById('settingsNewIncidentBtn')?.addEventListener('click', () => {
-    if (!requireActiveSession()) return;
-    openIncidentModal({
-        installationId: Number.isInteger(currentSelectedInstallationId) ? currentSelectedInstallationId : '',
     });
 });
 
@@ -5363,6 +5681,13 @@ bindActionModalEvents();
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
     if (handleModalKeyboardInteraction(e)) {
+        return;
+    }
+
+    if (e.key === 'Escape' && closeHeaderOverflowMenu({ restoreFocus: true })) {
+        return;
+    }
+    if (e.key === 'Escape' && closeMobileNavPanel({ restoreFocus: true })) {
         return;
     }
 
@@ -5778,6 +6103,20 @@ function closeSSE() {
 
 // Initialize
 async function init() {
+    // Bind UI interactions first so controls work even if session bootstrap is slow.
+    setupAdvancedFilters();
+    setupExportButtons();
+    setupThemeToggle();
+    setupHeaderOverflowMenu();
+    setupMobileNavPanel();
+    setupTrendRangeToggle();
+    const initialSection = getActiveSectionName() || 'dashboard';
+    syncHeaderDelight(initialSection, 'paused');
+    syncMobileNavContext();
+    syncMobileNavMoreState(initialSection);
+    syncHeaderPrimaryAction(initialSection);
+    validateAllSectionBindings();
+
     try {
         if (FORCE_LOGIN_ON_OPEN) {
             try {
@@ -5804,17 +6143,6 @@ async function init() {
         resetProtectedViews();
         showLogin();
     }
-    
-    // Setup advanced filters
-    setupAdvancedFilters();
-    
-    // Setup export buttons
-    setupExportButtons();
-    
-    // Setup theme toggle
-    setupThemeToggle();
-    setupTrendRangeToggle();
-    syncHeaderDelight(getActiveSectionName() || 'dashboard', 'paused');
     
     // Handle page visibility changes to suspend/reconnect SSE.
     document.addEventListener('visibilitychange', () => {
@@ -5887,15 +6215,17 @@ function updateChartTheme(theme) {
 }
 
 function setupThemeToggle() {
-    const themeToggle = document.getElementById('themeToggle');
-    if (themeToggle) {
-        // Set initial theme
-        const currentTheme = getCurrentTheme();
-        setTheme(currentTheme);
-        
-        // Add click handler
-        themeToggle.addEventListener('click', toggleTheme);
-    }
+    // Set initial theme
+    const currentTheme = getCurrentTheme();
+    setTheme(currentTheme);
+
+    const themeToggleTargets = [
+        document.getElementById('overflowThemeBtn'),
+        document.getElementById('themeToggle'),
+    ].filter(Boolean);
+    themeToggleTargets.forEach((button) => {
+        button.addEventListener('click', toggleTheme);
+    });
     
     // Listen for system theme changes
     if (window.matchMedia) {

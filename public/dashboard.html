@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0f756d">
     <meta name="description" content="Dashboard de gestión de registros de drivers">
     <title>SiteOps Dashboard</title>
-    <link rel="stylesheet" href="/dashboard.css?v=c979d059d4">
+    <link rel="stylesheet" href="/dashboard.css?v=c479e4cf59">
     <link rel="manifest" href="/manifest.json?v=9130a5f920">
     <link rel="icon" href="/icons/icon-192x192.png">
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
@@ -35,15 +35,60 @@
                     <span class="nav-group-label">Activos</span>
                     <ul class="nav-group-list">
                         <li><a href="#" data-section="assets"><span class="material-symbols-outlined">inventory_2</span> Equipos</a></li>
-                        <li><a href="#" data-section="drivers"><span class="material-symbols-outlined">upload_file</span> Drivers</a></li>
+                        <li class="mobile-overflow-item"><a href="#" data-section="drivers"><span class="material-symbols-outlined">upload_file</span> Drivers</a></li>
                     </ul>
                 </div>
                 <div class="nav-group">
                     <span class="nav-group-label">Control</span>
                     <ul class="nav-group-list">
-                        <li><a href="#" data-section="audit"><span class="material-symbols-outlined">description</span> Auditoría</a></li>
-                        <li><a href="#" data-section="settings"><span class="material-symbols-outlined">tune</span> Configuración</a></li>
+                        <li class="mobile-overflow-item"><a href="#" data-section="audit"><span class="material-symbols-outlined">description</span> Auditoría</a></li>
+                        <li class="mobile-overflow-item"><a href="#" data-section="settings"><span class="material-symbols-outlined">tune</span> Configuración</a></li>
                     </ul>
+                </div>
+                <div class="nav-group nav-group-mobile-more">
+                    <ul class="nav-group-list">
+                        <li class="mobile-more-item">
+                            <button
+                                id="mobileNavMoreBtn"
+                                class="nav-mobile-more-btn"
+                                type="button"
+                                aria-haspopup="dialog"
+                                aria-expanded="false"
+                                aria-controls="mobileNavPanel"
+                            >
+                                <span class="material-symbols-outlined">more_horiz</span>
+                                Más
+                            </button>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <div id="mobileNavPanel" class="mobile-nav-panel" role="dialog" aria-modal="false" aria-label="Más secciones" aria-hidden="true">
+                <div class="mobile-nav-panel-head">
+                    <div class="mobile-nav-user">
+                        <span id="mobileNavInitial" class="avatar-circle mobile-nav-avatar">U</span>
+                        <div class="mobile-nav-user-meta">
+                            <span id="mobileNavUsername">Usuario</span>
+                            <span id="mobileNavRole" class="role-badge">admin</span>
+                        </div>
+                    </div>
+                    <button id="mobileNavCloseBtn" class="btn-icon mobile-nav-close-btn" type="button" aria-label="Cerrar más secciones">
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+                <div class="mobile-nav-panel-links">
+                    <button type="button" class="mobile-nav-menu-item" data-mobile-section="drivers">
+                        <span class="material-symbols-outlined">upload_file</span>
+                        <span>Drivers</span>
+                    </button>
+                    <button id="mobileNavAuditBtn" type="button" class="mobile-nav-menu-item" data-mobile-section="audit">
+                        <span class="material-symbols-outlined">description</span>
+                        <span>Auditoría</span>
+                    </button>
+                    <button type="button" class="mobile-nav-menu-item" data-mobile-section="settings">
+                        <span class="material-symbols-outlined">tune</span>
+                        <span>Configuración</span>
+                    </button>
                 </div>
             </div>
             <div class="user-info">
@@ -73,58 +118,76 @@
                         <span id="opsPulseText">Listo para operar</span>
                     </div>
                     <button
-                        id="headerCreateRecordBtn"
+                        id="headerPrimaryActionBtn"
                         class="btn-primary btn-cta"
                         type="button"
                     >
-                        <span class="material-symbols-outlined icon-inline-sm">add_circle</span>
-                        Nuevo Registro
+                        <span id="headerPrimaryActionIcon" class="material-symbols-outlined icon-inline-sm" aria-hidden="true">add_circle</span>
+                        <span id="headerPrimaryActionLabel">Nuevo registro</span>
                     </button>
-                    <button
-                        id="headerCreateIncidentBtn"
-                        class="btn-secondary btn-outline-sm"
-                        type="button"
-                    >
-                        <span class="material-symbols-outlined icon-inline-sm">warning</span>
-                        Nueva Incidencia
-                    </button>
-                    <button id="notifBtn" class="btn-icon" type="button" title="Notificaciones" aria-label="Notificaciones">
-                        <span class="material-symbols-outlined">notifications</span>
-                        <span id="notifBadge" class="severity-badge critical" aria-label="2 notificaciones">2</span>
-                    </button>
-                    <button id="themeToggle" class="theme-toggle" type="button" title="Cambiar tema" aria-label="Cambiar tema" aria-pressed="false">
-                        <span class="icon-sun" aria-hidden="true"><span class="material-symbols-outlined">light_mode</span></span>
-                        <span class="icon-moon" aria-hidden="true"><span class="material-symbols-outlined">dark_mode</span></span>
-                    </button>
-                    <button id="refreshBtn" class="btn-icon" type="button" title="Actualizar" aria-label="Actualizar dashboard"><span class="material-symbols-outlined">refresh</span></button>
+                    <div class="header-overflow">
+                        <button
+                            id="headerOverflowBtn"
+                            class="btn-icon header-overflow-toggle"
+                            type="button"
+                            aria-haspopup="menu"
+                            aria-expanded="false"
+                            aria-controls="headerOverflowMenu"
+                            title="Más acciones"
+                            aria-label="Más acciones"
+                        >
+                            <span class="material-symbols-outlined">more_vert</span>
+                        </button>
+                        <div id="headerOverflowMenu" class="header-overflow-menu" role="menu" aria-label="Acciones rápidas">
+                            <button id="overflowCreateIncidentBtn" class="header-overflow-item" type="button" role="menuitem">
+                                <span class="material-symbols-outlined icon-inline-sm" aria-hidden="true">warning</span>
+                                <span>Nueva incidencia</span>
+                            </button>
+                            <button id="notifBtn" class="header-overflow-item header-overflow-item-with-badge" type="button" role="menuitem" aria-label="Notificaciones">
+                                <span class="material-symbols-outlined icon-inline-sm" aria-hidden="true">notifications</span>
+                                <span>Notificaciones</span>
+                                <span id="notifBadge" class="severity-badge critical" aria-label="2 notificaciones">2</span>
+                            </button>
+                            <button id="refreshBtn" class="header-overflow-item" type="button" role="menuitem" aria-label="Actualizar dashboard">
+                                <span class="material-symbols-outlined icon-inline-sm" aria-hidden="true">refresh</span>
+                                <span>Actualizar dashboard</span>
+                            </button>
+                            <button id="overflowThemeBtn" class="header-overflow-item" type="button" role="menuitem" aria-label="Cambiar tema">
+                                <span class="material-symbols-outlined icon-inline-sm" aria-hidden="true">contrast</span>
+                                <span>Cambiar tema</span>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </header>
 
             
             <div id="dashboardSection" class="section active">
                 <div class="dashboard-layout">
-                    <div class="kpi-grid">
-                        <div class="kpi-card critical">
-                            <p class="kpi-title">Incidencias críticas</p>
-                            <p id="kpiCriticalCount" class="kpi-value"><span id="totalInstallations">-</span></p>
+                    <div class="kpi-band">
+                        <div class="kpi-primary critical">
+                            <p class="kpi-title">Incidencias críticas activas</p>
+                            <p id="kpiCriticalIncidentsValue" class="kpi-value">-</p>
                             <p id="kpiCriticalMeta" class="kpi-sub">Sin cambios</p>
                         </div>
-                        <div class="kpi-card active">
-                            <p class="kpi-title">Registros en curso</p>
-                            <p id="kpiActiveCount" class="kpi-value"><span id="successRate">-</span></p>
-                            <p id="kpiInProgressMeta" class="kpi-sub">Normal</p>
-                        </div>
-                        <div class="kpi-card warning">
-                            <p class="kpi-title">Atrasados</p>
-                            <p id="kpiSlaCount" class="kpi-value"><span id="avgTime">-</span></p>
-                            <p id="kpiSlaMeta" class="kpi-sub">Fuera del objetivo de tiempo</p>
-                        </div>
-                        <div class="kpi-card info">
-                            <p class="kpi-title">Última sincronización</p>
-                            <p id="kpiLastSync" class="kpi-value"><span id="uniqueClients">-</span></p>
-                            <p id="kpiSyncMeta" class="kpi-sub">OK</p>
+                        <div class="kpi-secondary-stack">
+                            <div class="kpi-secondary active">
+                                <p class="kpi-title">Incidencias en curso</p>
+                                <p id="kpiInProgressIncidentsValue" class="kpi-value">-</p>
+                                <p id="kpiInProgressMeta" class="kpi-sub">Normal</p>
+                            </div>
+                            <div class="kpi-secondary warning">
+                                <p class="kpi-title">Incidencias fuera de SLA</p>
+                                <p id="kpiOutsideSlaIncidentsValue" class="kpi-value">-</p>
+                                <p id="kpiSlaMeta" class="kpi-sub">Fuera del objetivo de tiempo</p>
+                            </div>
                         </div>
                     </div>
+                    <p class="kpi-sync-inline">
+                        <span class="kpi-sync-label">Última sincronización</span>
+                        <strong id="kpiLastSyncTimeValue">-</strong>
+                        <span id="kpiSyncMeta">OK</span>
+                    </p>
 
                     <div id="actividadChart" class="chart-card dashboard-chart-focus">
                         <div class="dashboard-chart-head">
@@ -301,21 +364,10 @@
                                 <strong id="settingsSyncStatus">En pausa</strong>
                             </div>
                         </div>
-                        <div class="incident-actions">
-                            <button id="settingsThemeBtn" class="btn-secondary" type="button">
-                                <span class="material-symbols-outlined icon-inline-sm">contrast</span> Cambiar tema
-                            </button>
-                            <button id="settingsRefreshBtn" class="btn-secondary" type="button">
-                                <span class="material-symbols-outlined icon-inline-sm">refresh</span> Actualizar dashboard
-                            </button>
-                            <button id="settingsNewRecordBtn" class="btn-primary" type="button">
-                                <span class="material-symbols-outlined icon-inline-sm">edit_note</span> Nuevo registro manual
-                            </button>
-                            <button id="settingsNewIncidentBtn" class="btn-secondary" type="button">
-                                <span class="material-symbols-outlined icon-inline-sm">warning</span> Nueva incidencia
-                            </button>
+                        <p class="settings-actions-note">Atajos de cuenta. Las acciones operativas están en el botón <strong>Más acciones</strong> del encabezado.</p>
+                        <div class="incident-actions settings-actions">
                             <button id="settingsOpenAuditBtn" class="btn-secondary" type="button">
-                                <span class="material-symbols-outlined icon-inline-sm">description</span> Ir a auditoría
+                                <span class="material-symbols-outlined icon-inline-sm">description</span> Abrir auditoría
                             </button>
                             <button id="settingsLogoutBtn" class="btn-secondary" type="button">
                                 <span class="material-symbols-outlined icon-inline-sm">logout</span> Cerrar sesión
@@ -357,11 +409,15 @@
         </div>
     </div>
 
-    <div id="qrModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="qrModalTitle" aria-describedby="qrModalDescription">
-        <div class="modal-content qr-modal">
+    <div id="qrModal" class="modal flow-panel" role="dialog" aria-modal="false" aria-labelledby="qrModalTitle" aria-describedby="qrModalDescription">
+        <div class="modal-content qr-modal flow-panel-content">
             <button type="button" class="close" aria-label="Cerrar generador QR">&times;</button>
             <h3 id="qrModalTitle">Alta de equipo y QR</h3>
             <p id="qrModalDescription" class="qr-modal-subtitle">Genera códigos compatibles con mobile y guarda el equipo (marca/modelo/serie/cliente) para asociarlo luego a registros o incidencias.</p>
+            <div class="flow-panel-onboard">
+                <p class="flow-panel-onboard-title">Inicio rápido</p>
+                <p class="flow-panel-onboard-text">Completa datos clave, genera el QR y luego guarda o comparte.</p>
+            </div>
 
             <div class="qr-type-selector">
                 <label>
@@ -421,14 +477,19 @@
                 <small class="qr-helper">Aplica a "Descargar imagen" e "Imprimir etiqueta".</small>
             </div>
 
-            <div class="qr-actions">
+            <div class="qr-actions qr-actions-primary">
                 <button type="button" id="qrGenerateBtn" class="btn-primary">Generar QR</button>
                 <button type="button" id="qrSaveAssetBtn" class="btn-secondary">Guardar equipo</button>
                 <button type="button" id="qrEnableEditBtn" class="btn-secondary is-hidden">Habilitar edición</button>
+            </div>
+            <details class="qr-advanced-tools">
+                <summary>Herramientas avanzadas</summary>
+                <div class="qr-actions">
                 <button type="button" id="qrCopyBtn" class="btn-secondary" disabled>Copiar payload</button>
                 <button type="button" id="qrDownloadBtn" class="btn-secondary" disabled>Descargar imagen</button>
                 <button type="button" id="qrPrintBtn" class="btn-secondary" disabled>Imprimir etiqueta</button>
-            </div>
+                </div>
+            </details>
 
             <p id="qrError" class="error"></p>
 
@@ -457,12 +518,16 @@
         </div>
     </div>
 
-    <div id="actionModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="actionModalTitle" aria-describedby="actionModalDescription actionModalSubtitle">
-        <div class="modal-content action-modal">
+    <div id="actionModal" class="modal flow-panel" role="dialog" aria-modal="false" aria-labelledby="actionModalTitle" aria-describedby="actionModalDescription actionModalSubtitle">
+        <div class="modal-content action-modal flow-panel-content">
             <button type="button" class="close" aria-label="Cerrar formulario">&times;</button>
             <h3 id="actionModalTitle">Acción</h3>
             <p id="actionModalDescription" class="sr-only">Completa y confirma el formulario para guardar la acción.</p>
             <p id="actionModalSubtitle" class="qr-modal-subtitle is-hidden"></p>
+            <div class="flow-panel-onboard">
+                <p class="flow-panel-onboard-title">Guía rápida</p>
+                <p class="flow-panel-onboard-text">Completa los campos esenciales y guarda. Las confirmaciones sensibles siguen en modal breve.</p>
+            </div>
             <form id="actionModalForm" novalidate>
                 <div id="actionModalFields"></div>
                 <p id="actionModalError" class="error"></p>
@@ -475,8 +540,8 @@
     </div>
     
     <script src="/dashboard-qr.js?v=d8de215faf" defer></script>
-    <script src="/dashboard-api.js?v=e3e9fd61d1" defer></script>
-    <script src="/dashboard.js?v=ddee91877c" defer></script>
+    <script src="/dashboard-api.js?v=79074def03" defer></script>
+    <script src="/dashboard.js?v=40c0f025a6" defer></script>
     <script src="/dashboard-pwa.js?v=55b84aa40e" defer></script>
 </body>
 </html>

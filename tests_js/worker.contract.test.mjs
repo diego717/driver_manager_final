@@ -1,4 +1,4 @@
-import test from "node:test";
+﻿import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
@@ -8,6 +8,7 @@ import { createAssetsBinding } from "./helpers/assets.mock.mjs";
 
 const DEFAULT_API_TOKEN = "token-123";
 const DEFAULT_API_SECRET = "secret-abc";
+const WEB_SESSION_COOKIE_NAME = "__Host-web_session";
 let nonceCounter = 0;
 
 async function workerFetch(request, env = {}) {
@@ -15,6 +16,7 @@ async function workerFetch(request, env = {}) {
     API_TOKEN: DEFAULT_API_TOKEN,
     API_SECRET: DEFAULT_API_SECRET,
     ASSETS: createAssetsBinding(),
+    ALLOW_INSECURE_WEB_AUTH_FALLBACK: "true",
     ...env,
   };
 
@@ -72,6 +74,23 @@ function signRequest({ method, path, timestamp, bodyBuffer, secret, nonce = "non
   const bodyHash = sha256Hex(bodyBuffer || Buffer.alloc(0));
   const canonical = `${method.toUpperCase()}|${path}|${timestamp}|${bodyHash}|${nonce}`;
   return crypto.createHmac("sha256", secret).update(canonical).digest("hex");
+}
+
+function extractWebSessionCookieFromResponse(response) {
+  const setCookieHeader = String(response?.headers?.get("set-cookie") || "");
+  const match = setCookieHeader.match(
+    new RegExp(`${WEB_SESSION_COOKIE_NAME}=([^;]+)`),
+  );
+  if (!match) {
+    throw new Error("No se encontro cookie de sesion web en Set-Cookie.");
+  }
+  return `${WEB_SESSION_COOKIE_NAME}=${match[1]}`;
+}
+
+function webSessionHeadersFromResponse(response) {
+  return {
+    Cookie: extractWebSessionCookieFromResponse(response),
+  };
 }
 
 function createTestFcmServiceAccountJson(projectId = "driver-manager-fcm-test") {
@@ -2107,7 +2126,7 @@ test("POST /installations/:id/incidents creates incident and can apply installat
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      note: "Fallo de instalación en paso final",
+      note: "Fallo de instalaciÃ³n en paso final",
       time_adjustment_seconds: 30,
       severity: "high",
       source: "mobile",
@@ -2122,7 +2141,7 @@ test("POST /installations/:id/incidents creates incident and can apply installat
   assert.equal(response.status, 201);
   assert.equal(body.success, true);
   assert.equal(body.incident.installation_id, 45);
-  assert.equal(body.incident.note, "Fallo de instalación en paso final");
+  assert.equal(body.incident.note, "Fallo de instalaciÃ³n en paso final");
   assert.equal(body.incident.time_adjustment_seconds, 30);
 
   const incidentInsert = db.calls.find((c) => c.sql.startsWith("INSERT INTO incidents"));
@@ -2755,12 +2774,12 @@ test("GET /web/photos/:id returns binary content with web Bearer session", async
   });
   const bootstrapBody = await bootstrapResponse.json();
   assert.equal(bootstrapResponse.status, 201);
-  assert.equal(typeof bootstrapBody.access_token, "string");
+  assert.equal(bootstrapBody.access_token, undefined);
 
   const request = new Request("https://worker.example/web/photos/21", {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${bootstrapBody.access_token}`,
+      ...webSessionHeadersFromResponse(bootstrapResponse),
     },
   });
 
@@ -3476,7 +3495,7 @@ test("GET /health returns OK without DB/auth", async () => {
   assert.equal(typeof body.now, "string");
 });
 
-test("POST /web/auth/login issues access token for web routes", async () => {
+test("POST /web/auth/login creates cookie session for web routes", async () => {
   const db = createMockDB({
     installations: [{ id: 1, driver_brand: "Zebra", status: "success" }],
   });
@@ -3517,12 +3536,12 @@ test("POST /web/auth/login issues access token for web routes", async () => {
 
   assert.equal(loginResponse.status, 200);
   assert.equal(loginBody.success, true);
-  assert.equal(typeof loginBody.access_token, "string");
+  assert.equal(loginBody.access_token, undefined);
 
   const listRequest = new Request("https://worker.example/web/installations", {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${loginBody.access_token}`,
+      ...webSessionHeadersFromResponse(loginResponse),
     },
   });
 
@@ -3582,7 +3601,7 @@ test("viewer role cannot mutate records on /web routes", async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${bootstrapBody.access_token}`,
+        ...webSessionHeadersFromResponse(bootstrapResponse),
       },
       body: JSON.stringify({
         username: "viewer_1",
@@ -3613,7 +3632,7 @@ test("viewer role cannot mutate records on /web routes", async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${loginViewerBody.access_token}`,
+        ...webSessionHeadersFromResponse(loginViewerResponse),
       },
       body: JSON.stringify({
         notes: "viewer should not create records",
@@ -3658,7 +3677,7 @@ test("viewer role cannot patch incident status on /web routes", async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${bootstrapBody.access_token}`,
+        ...webSessionHeadersFromResponse(bootstrapResponse),
       },
       body: JSON.stringify({
         username: "viewer_2",
@@ -3689,7 +3708,7 @@ test("viewer role cannot patch incident status on /web routes", async () => {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${loginViewerBody.access_token}`,
+        ...webSessionHeadersFromResponse(loginViewerResponse),
       },
       body: JSON.stringify({
         incident_status: "resolved",
@@ -3855,12 +3874,12 @@ test("POST /web/auth/login accepts username/password after bootstrap", async () 
   assert.equal(loginResponse.status, 200);
   assert.equal(loginBody.success, true);
   assert.equal(loginBody.user.username, "admin_root");
-  assert.equal(typeof loginBody.access_token, "string");
+  assert.equal(loginBody.access_token, undefined);
 
   const meRequest = new Request("https://worker.example/web/auth/me", {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${loginBody.access_token}`,
+      ...webSessionHeadersFromResponse(loginResponse),
     },
   });
   const meResponse = await workerFetch(meRequest, {
@@ -3899,7 +3918,7 @@ test("POST /web/auth/verify-password validates current user password without re-
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${bootstrapBody.access_token}`,
+      ...webSessionHeadersFromResponse(bootstrapResponse),
     },
     body: JSON.stringify({
       password: "StrongPass#2026",
@@ -3942,7 +3961,7 @@ test("POST /web/auth/verify-password rejects wrong password", async () => {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${bootstrapBody.access_token}`,
+      ...webSessionHeadersFromResponse(bootstrapResponse),
     },
     body: JSON.stringify({
       password: "WrongPass#2026",
@@ -3987,7 +4006,7 @@ test("POST /web/installations/:id/incidents uses web session user as reporter by
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${bootstrapBody.access_token}`,
+      ...webSessionHeadersFromResponse(bootstrapResponse),
     },
     body: JSON.stringify({
       note: "Incidencia creada desde web",
@@ -4031,7 +4050,7 @@ test("POST /web/devices registers fcm token for authenticated web user", async (
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${bootstrapBody.access_token}`,
+      ...webSessionHeadersFromResponse(bootstrapResponse),
     },
     body: JSON.stringify({
       fcm_token: "fcm-device-token-12345",
@@ -4080,7 +4099,7 @@ test("POST /web/auth/users creates additional users when caller is admin", async
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${bootstrapBody.access_token}`,
+      ...webSessionHeadersFromResponse(bootstrapResponse),
     },
     body: JSON.stringify({
       username: "viewer_1",
@@ -4145,7 +4164,7 @@ test("web auth preserves tenant_id in bootstrap, login and me", async () => {
   const meRequest = new Request("https://worker.example/web/auth/me", {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${loginBody.access_token}`,
+      ...webSessionHeadersFromResponse(loginResponse),
     },
   });
   const meResponse = await workerFetch(meRequest, {
@@ -4183,7 +4202,7 @@ test("admin cannot create users in a different tenant", async () => {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${bootstrapBody.access_token}`,
+      ...webSessionHeadersFromResponse(bootstrapResponse),
     },
     body: JSON.stringify({
       username: "viewer_other_tenant",
@@ -4228,7 +4247,7 @@ test("GET /web/auth/users lists users with active status and last login", async 
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${bootstrapBody.access_token}`,
+      ...webSessionHeadersFromResponse(bootstrapResponse),
     },
     body: JSON.stringify({
       username: "viewer_1",
@@ -4245,7 +4264,7 @@ test("GET /web/auth/users lists users with active status and last login", async 
   const listUsersRequest = new Request("https://worker.example/web/auth/users", {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${bootstrapBody.access_token}`,
+      ...webSessionHeadersFromResponse(bootstrapResponse),
     },
   });
   const listUsersResponse = await workerFetch(listUsersRequest, {
@@ -4291,7 +4310,7 @@ test("GET /web/auth/users paginates with limit and cursor", async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${bootstrapBody.access_token}`,
+        ...webSessionHeadersFromResponse(bootstrapResponse),
       },
       body: JSON.stringify({
         username,
@@ -4310,7 +4329,7 @@ test("GET /web/auth/users paginates with limit and cursor", async () => {
     new Request("https://worker.example/web/auth/users?limit=2", {
       method: "GET",
       headers: {
-        Authorization: `Bearer ${bootstrapBody.access_token}`,
+        ...webSessionHeadersFromResponse(bootstrapResponse),
       },
     }),
     {
@@ -4330,7 +4349,7 @@ test("GET /web/auth/users paginates with limit and cursor", async () => {
       {
         method: "GET",
         headers: {
-          Authorization: `Bearer ${bootstrapBody.access_token}`,
+          ...webSessionHeadersFromResponse(bootstrapResponse),
         },
       },
     ),
@@ -4370,7 +4389,7 @@ test("PATCH /web/auth/users/:id updates role and active status", async () => {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${bootstrapBody.access_token}`,
+      ...webSessionHeadersFromResponse(bootstrapResponse),
     },
     body: JSON.stringify({
       username: "viewer_1",
@@ -4391,7 +4410,7 @@ test("PATCH /web/auth/users/:id updates role and active status", async () => {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${bootstrapBody.access_token}`,
+        ...webSessionHeadersFromResponse(bootstrapResponse),
       },
       body: JSON.stringify({
         role: "admin",
@@ -4435,7 +4454,7 @@ test("POST /web/auth/users/:id/force-password resets password and allows login",
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${bootstrapBody.access_token}`,
+      ...webSessionHeadersFromResponse(bootstrapResponse),
     },
     body: JSON.stringify({
       username: "viewer_1",
@@ -4456,7 +4475,7 @@ test("POST /web/auth/users/:id/force-password resets password and allows login",
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${bootstrapBody.access_token}`,
+        ...webSessionHeadersFromResponse(bootstrapResponse),
       },
       body: JSON.stringify({
         new_password: "ViewerPass#2027",
@@ -4528,7 +4547,7 @@ test("POST /web/auth/import-users imports bcrypt users and login works", async (
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${bootstrapBody.access_token}`,
+      ...webSessionHeadersFromResponse(bootstrapResponse),
     },
     body: JSON.stringify({
       users: [
@@ -5027,3 +5046,4 @@ test("rejects signed auth for mobile platform header", async () => {
   assert.equal(response.status, 410);
   assert.match(body.error.message, /HMAC deshabilitada para clientes moviles/i);
 });
+

@@ -185,6 +185,11 @@ npm run dev:remote
 npm run deploy
 ```
 
+`npm run deploy` ahora ejecuta una verificacion de seguridad previa (`security:verify-deploy`) que:
+- valida bindings KV criticos (`RATE_LIMIT_KV` y `WEB_SESSION_KV`) en `wrangler.toml`
+- valida que exista `WEB_SESSION_SECRET` en el Worker remoto
+- bloquea deploy si detecta `ALLOW_INSECURE_WEB_AUTH_FALLBACK` en remoto
+
 Comandos utiles:
 
 ```powershell
@@ -200,18 +205,23 @@ npm run users:tenant         # script de gestion de usuarios por tenant (CLI Pyt
 - D1 binding: `DB`
 - R2 binding para fotos de incidencias: `INCIDENTS_BUCKET`
 - KV binding para rate limit de login web: `RATE_LIMIT_KV`
+- KV binding para versionado/revocacion de sesion web: `WEB_SESSION_KV`
 
 Si aun no tienes el KV namespace creado:
 
 ```powershell
 wrangler kv namespace create RATE_LIMIT_KV
 wrangler kv namespace create RATE_LIMIT_KV --preview
+wrangler kv namespace create WEB_SESSION_KV
+wrangler kv namespace create WEB_SESSION_KV --preview
 ```
 
 Luego reemplaza en `wrangler.toml`:
 
 - `REPLACE_WITH_RATE_LIMIT_KV_ID`
 - `REPLACE_WITH_RATE_LIMIT_KV_PREVIEW_ID`
+- `REPLACE_WITH_WEB_SESSION_KV_ID`
+- `REPLACE_WITH_WEB_SESSION_KV_PREVIEW_ID`
 
 Para compatibilidad con clientes legacy firmados (no recomendado en mobile distribuida), puedes configurar:
 
@@ -241,9 +251,17 @@ Get-Content .\firebase-service-account.json -Raw | npx wrangler secret put FCM_S
 ```
 
 Con eso:
-- `WEB_SESSION_SECRET` firma y valida el Bearer web.
+- `WEB_SESSION_SECRET` firma y valida la sesion web (cookie HttpOnly).
 - `WEB_LOGIN_PASSWORD` se usa para bootstrap inicial de usuarios web.
 - `FCM_SERVICE_ACCOUNT_JSON` habilita envio de push FCM HTTP v1 desde el Worker.
+
+Importante para produccion:
+- No habilites `ALLOW_INSECURE_WEB_AUTH_FALLBACK`.
+- Si existe por pruebas locales, eliminalo antes de deploy:
+
+```powershell
+wrangler secret delete ALLOW_INSECURE_WEB_AUTH_FALLBACK
+```
 
 ### Migraciones D1
 

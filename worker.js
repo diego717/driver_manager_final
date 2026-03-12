@@ -39,6 +39,7 @@ const WEB_ALLOWED_HASH_TYPES = new Set([
   WEB_HASH_TYPE_BCRYPT,
   WEB_HASH_TYPE_LEGACY_PBKDF2,
 ]);
+let warnedInsecureWebAuthFallback = false;
 
 let fcmAccessTokenCache = null;
 let fcmAccessTokenRefreshState = null;
@@ -64,6 +65,7 @@ const DRIVER_DESCRIPTION_MAX_LENGTH = 500;
 const DRIVER_MANIFEST_KEY = "manifest.json";
 const MAX_DRIVER_UPLOAD_BYTES = 300 * 1024 * 1024;
 const MAX_INCIDENT_ESTIMATED_DURATION_SECONDS = 7 * 24 * 60 * 60;
+const WEB_AUTH_ALLOW_INSECURE_FALLBACK_ENV = "ALLOW_INSECURE_WEB_AUTH_FALLBACK";
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -793,6 +795,45 @@ function getRateLimitKv(env) {
   return kv;
 }
 
+function shouldAllowInsecureWebAuthFallback(env) {
+  return parseBooleanEnvFlag(env?.[WEB_AUTH_ALLOW_INSECURE_FALLBACK_ENV], false);
+}
+
+function warnInsecureWebAuthFallback(capability) {
+  if (warnedInsecureWebAuthFallback) return;
+  warnedInsecureWebAuthFallback = true;
+  console.warn(
+    `[web-auth][security] ${capability} sin store persistente. ` +
+    `Permitido solo por ${WEB_AUTH_ALLOW_INSECURE_FALLBACK_ENV}=true.`,
+  );
+}
+
+function requireRateLimitStoreForWebAuth(env, capability = "rate limiting") {
+  const kv = getRateLimitKv(env);
+  if (kv) return kv;
+  if (shouldAllowInsecureWebAuthFallback(env)) {
+    warnInsecureWebAuthFallback(capability);
+    return null;
+  }
+  throw new HttpError(
+    503,
+    `Seguridad web no configurada: falta RATE_LIMIT_KV para ${capability}.`,
+  );
+}
+
+function requireWebSessionStoreForWebAuth(env, capability = "validar sesiones") {
+  const store = getWebSessionStore(env);
+  if (store) return store;
+  if (shouldAllowInsecureWebAuthFallback(env)) {
+    warnInsecureWebAuthFallback(capability);
+    return null;
+  }
+  throw new HttpError(
+    503,
+    `Seguridad web no configurada: falta WEB_SESSION_KV o RATE_LIMIT_KV para ${capability}.`,
+  );
+}
+
 function getClientIpForRateLimit(request) {
   const cfIp = normalizeOptionalString(request.headers.get("CF-Connecting-IP"), "");
   if (cfIp) return cfIp;
@@ -912,7 +953,7 @@ async function consumeAuthReplayNonce(env, { token, timestamp, nonce }) {
 }
 
 async function checkWebLoginRateLimit(env, identifier) {
-  const kv = getRateLimitKv(env);
+  const kv = requireRateLimitStoreForWebAuth(env, "rate limiting de login");
   if (!kv) return;
 
   const key = buildWebLoginRateLimitKey(identifier);
@@ -923,7 +964,7 @@ async function checkWebLoginRateLimit(env, identifier) {
 }
 
 async function recordFailedWebLoginAttempt(env, identifier) {
-  const kv = getRateLimitKv(env);
+  const kv = requireRateLimitStoreForWebAuth(env, "registro de intentos de login");
   if (!kv) return;
 
   const key = buildWebLoginRateLimitKey(identifier);
@@ -934,7 +975,7 @@ async function recordFailedWebLoginAttempt(env, identifier) {
 }
 
 async function clearWebLoginRateLimit(env, identifier) {
-  const kv = getRateLimitKv(env);
+  const kv = requireRateLimitStoreForWebAuth(env, "limpieza de rate limiting de login");
   if (!kv) return;
 
   const key = buildWebLoginRateLimitKey(identifier);
@@ -942,7 +983,7 @@ async function clearWebLoginRateLimit(env, identifier) {
 }
 
 async function checkWebPasswordVerifyRateLimit(env, identifier) {
-  const kv = getRateLimitKv(env);
+  const kv = requireRateLimitStoreForWebAuth(env, "rate limiting de verificacion de contrasena");
   if (!kv) return;
 
   const key = buildWebPasswordVerifyRateLimitKey(identifier);
@@ -953,7 +994,7 @@ async function checkWebPasswordVerifyRateLimit(env, identifier) {
 }
 
 async function recordFailedWebPasswordVerifyAttempt(env, identifier) {
-  const kv = getRateLimitKv(env);
+  const kv = requireRateLimitStoreForWebAuth(env, "registro de intentos de verificacion");
   if (!kv) return;
 
   const key = buildWebPasswordVerifyRateLimitKey(identifier);
@@ -964,7 +1005,7 @@ async function recordFailedWebPasswordVerifyAttempt(env, identifier) {
 }
 
 async function clearWebPasswordVerifyRateLimit(env, identifier) {
-  const kv = getRateLimitKv(env);
+  const kv = requireRateLimitStoreForWebAuth(env, "limpieza de rate limiting de verificacion");
   if (!kv) return;
 
   const key = buildWebPasswordVerifyRateLimitKey(identifier);
@@ -2563,7 +2604,11 @@ function parseCookies(request) {
     const [rawName, ...rawValue] = pair.split("=");
     const name = normalizeOptionalString(rawName, "");
     if (!name) return acc;
-    acc[name] = decodeURIComponent(rawValue.join("=") || "");
+    try {
+      acc[name] = decodeURIComponent(rawValue.join("=") || "");
+    } catch {
+      // Ignore malformed cookie pairs instead of failing the full request.
+    }
     return acc;
   }, {});
 }
@@ -3586,8 +3631,9 @@ async function verifyWebAccessToken(request, env) {
 
   const userId = Number.isInteger(payload.user_id) ? payload.user_id : null;
   const tokenSessionVersion = Number(payload.sv || 0);
+  const sessionStore = requireWebSessionStoreForWebAuth(env, "validar sesiones web");
   if (
-    getWebSessionStore(env) &&
+    sessionStore &&
     userId &&
     Number.isInteger(tokenSessionVersion) &&
     tokenSessionVersion > 0
@@ -3890,6 +3936,13 @@ function requireWebAuthStringField(body, fieldName) {
   return value;
 }
 
+function sanitizeWebAuthFailure(error, fallbackMessage = "Credenciales web invalidas.") {
+  if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
+    return new HttpError(401, fallbackMessage);
+  }
+  return error;
+}
+
 async function handleWebAuthLoginRoute(request, env, corsPolicy) {
   ensureWebSessionSecret(env);
 
@@ -3925,7 +3978,7 @@ async function handleWebAuthLoginRoute(request, env, corsPolicy) {
         details: buildWebAuthFailureAuditDetails(error),
       });
     }
-    throw error;
+    throw sanitizeWebAuthFailure(error, "Credenciales web invalidas.");
   }
 
   await clearWebLoginRateLimit(env, rateLimitIdentifier);
@@ -3949,23 +4002,23 @@ async function handleWebAuthLoginRoute(request, env, corsPolicy) {
     tenant_id: user.tenant_id,
   });
 
+  const authPayload = {
+    success: true,
+    expires_in: token.expires_in,
+    expires_at: token.expires_at,
+    user: {
+      id: Number(user.id),
+      username: user.username,
+      role: user.role,
+      tenant_id: normalizeRealtimeTenantId(user.tenant_id),
+    },
+  };
+
   const response = jsonResponse(
     request,
     env,
     corsPolicy,
-    {
-      success: true,
-      access_token: token.token,
-      token_type: "Bearer",
-      expires_in: token.expires_in,
-      expires_at: token.expires_at,
-      user: {
-        id: Number(user.id),
-        username: user.username,
-        role: user.role,
-        tenant_id: normalizeRealtimeTenantId(user.tenant_id),
-      },
-    },
+    authPayload,
     200,
   );
   response.headers.append("Set-Cookie", buildWebSessionCookie(token.token, token.expires_in));
@@ -4010,7 +4063,7 @@ async function handleWebAuthVerifyPasswordRoute(request, env, corsPolicy) {
         details: buildWebAuthFailureAuditDetails(error),
       });
     }
-    throw error;
+    throw sanitizeWebAuthFailure(error, "No se pudo validar la contrasena.");
   }
 }
 
@@ -4055,24 +4108,24 @@ async function handleWebAuthBootstrapRoute(request, env, corsPolicy) {
     tenant_id: createdUser.tenant_id,
   });
 
+  const bootstrapPayload = {
+    success: true,
+    bootstrapped: true,
+    user: {
+      id: createdUser.id,
+      username: createdUser.username,
+      role: createdUser.role,
+      tenant_id: createdUser.tenant_id,
+    },
+    expires_in: token.expires_in,
+    expires_at: token.expires_at,
+  };
+
   const response = jsonResponse(
     request,
     env,
     corsPolicy,
-    {
-      success: true,
-      bootstrapped: true,
-      user: {
-        id: createdUser.id,
-        username: createdUser.username,
-        role: createdUser.role,
-        tenant_id: createdUser.tenant_id,
-      },
-      access_token: token.token,
-      token_type: "Bearer",
-      expires_in: token.expires_in,
-      expires_at: token.expires_at,
-    },
+    bootstrapPayload,
     201,
   );
   response.headers.append("Set-Cookie", buildWebSessionCookie(token.token, token.expires_in));
