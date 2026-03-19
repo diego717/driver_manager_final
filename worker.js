@@ -24,6 +24,20 @@ import {
   parseTimestampIdCursor,
   parseUsernameIdCursor,
 } from "./worker/lib/pagination.js";
+import {
+  applyNoStoreHeaders,
+  appendVaryHeader,
+  buildCorsPolicy,
+  corsHeaders,
+  errorCodeFromHttpStatus,
+  jsonResponse,
+  setHeaderWithVaryMerge,
+  textResponse,
+} from "./worker/lib/http.js";
+import { createAuthSecurityHelpers } from "./worker/auth/security.js";
+import { createLegacyAuthHelpers } from "./worker/auth/legacy.js";
+import { createWebAuthRouteHandlers } from "./worker/auth/web.js";
+import { createWebSessionHelpers } from "./worker/auth/web-session.js";
 import { createAuditLogsRouteHandlers } from "./worker/routes/audit-logs.js";
 import { createDevicesRouteHandlers } from "./worker/routes/devices.js";
 import { createIncidentsRouteHandlers } from "./worker/routes/incidents.js";
@@ -85,11 +99,9 @@ const WEB_ALLOWED_HASH_TYPES = new Set([
   WEB_HASH_TYPE_BCRYPT,
   WEB_HASH_TYPE_LEGACY_PBKDF2,
 ]);
-let warnedInsecureWebAuthFallback = false;
 
 let fcmAccessTokenCache = null;
 let fcmAccessTokenRefreshState = null;
-const authNonceMemoryStore = new Map();
 const SSE_POLL_INTERVAL_MS = 10000;
 const SSE_KEEP_ALIVE_INTERVAL_MS = 30000;
 const SSE_MAX_CONNECTION_MS = 2 * 60 * 1000;
@@ -112,308 +124,6 @@ const MAX_DRIVER_UPLOAD_BYTES = 300 * 1024 * 1024;
 const MAX_INCIDENT_ESTIMATED_DURATION_SECONDS = 7 * 24 * 60 * 60;
 const WEB_AUTH_ALLOW_INSECURE_FALLBACK_ENV = "ALLOW_INSECURE_WEB_AUTH_FALLBACK";
 const LEGACY_API_TENANT_ENV_NAME = "DRIVER_MANAGER_API_TENANT_ID";
-
-function errorCodeFromHttpStatus(status) {
-  const normalizedStatus = Number.isInteger(status) ? status : Number.parseInt(String(status || ""), 10);
-  switch (normalizedStatus) {
-    case 400:
-      return "INVALID_REQUEST";
-    case 401:
-      return "UNAUTHORIZED";
-    case 403:
-      return "FORBIDDEN";
-    case 404:
-      return "NOT_FOUND";
-    case 405:
-      return "METHOD_NOT_ALLOWED";
-    case 409:
-      return "CONFLICT";
-    case 413:
-      return "PAYLOAD_TOO_LARGE";
-    case 422:
-      return "UNPROCESSABLE_ENTITY";
-    case 429:
-      return "TOO_MANY_REQUESTS";
-    default:
-      if (Number.isInteger(normalizedStatus) && normalizedStatus >= 400 && normalizedStatus <= 499) {
-        return "INVALID_REQUEST";
-      }
-      if (Number.isInteger(normalizedStatus) && normalizedStatus >= 500) {
-        return "INTERNAL_ERROR";
-      }
-      return "INVALID_REQUEST";
-  }
-}
-
-const CONTROLLED_DASHBOARD_ORIGINS = [
-  "https://dashboard.driver-manager.app",
-  "https://dashboard.drivermanager.app",
-];
-const CONTROLLED_MOBILE_ORIGINS = [
-  "https://mobile.driver-manager.app",
-  "https://app.driver-manager.app",
-  "capacitor://localhost",
-];
-
-function isLocalhostOrigin(origin) {
-  if (!origin) return false;
-  try {
-    const parsed = new URL(origin);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return false;
-    }
-    const host = normalizeOptionalString(parsed.hostname, "").toLowerCase();
-    return host === "localhost" || host === "127.0.0.1" || host === "::1";
-  } catch {
-    return false;
-  }
-}
-
-function parseBooleanEnvFlag(value, fallback = false) {
-  if (value === null || value === undefined || value === "") return fallback;
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  const normalized = normalizeOptionalString(value, "").toLowerCase();
-  if (!normalized) return fallback;
-  if (["1", "true", "yes", "on", "enabled"].includes(normalized)) return true;
-  if (["0", "false", "no", "off", "disabled"].includes(normalized)) return false;
-  return fallback;
-}
-
-function shouldAllowLocalhostCors(env) {
-  return (
-    parseBooleanEnvFlag(env?.ALLOW_LOCALHOST_CORS, false) ||
-    parseBooleanEnvFlag(env?.ALLOW_LOCALHOST_ORIGINS, false)
-  );
-}
-
-function getAllowedCorsOrigins(request, env) {
-  void request;
-  const allowed = new Set([...CONTROLLED_DASHBOARD_ORIGINS, ...CONTROLLED_MOBILE_ORIGINS]);
-
-  const extraOrigins = normalizeOptionalString(env?.CORS_ALLOWED_ORIGINS, "");
-  if (extraOrigins) {
-    for (const origin of extraOrigins.split(",")) {
-      const normalized = origin.trim();
-      if (normalized) {
-        allowed.add(normalized);
-      }
-    }
-  }
-
-  return allowed;
-}
-
-function buildCorsPolicy(isWebRoute, routeParts) {
-  const headers = new Set();
-  const methods = new Set(["OPTIONS"]);
-
-  if (routeParts.length === 0 || (routeParts.length === 1 && routeParts[0] === "health")) {
-    methods.add("GET");
-    return { methods: [...methods], headers: [] };
-  }
-
-  const first = routeParts[0] || "";
-  const isPhotoUpload = routeParts.length === 3 && first === "incidents" && routeParts[2] === "photos";
-  const isRecordById = routeParts.length === 2 && first === "installations";
-  const isIncidentStatusByIdRoute =
-    routeParts.length === 3 &&
-    first === "incidents" &&
-    routeParts[2] === "status";
-  const isInstallationIncidentStatusRoute =
-    routeParts.length === 5 &&
-    first === "installations" &&
-    routeParts[2] === "incidents" &&
-    routeParts[4] === "status";
-
-  if (isWebRoute) {
-    headers.add("Authorization");
-    headers.add("X-Client-Platform");
-  } else {
-    headers.add("X-API-Token");
-    headers.add("X-Request-Timestamp");
-    headers.add("X-Request-Signature");
-    headers.add("X-Request-Nonce");
-    headers.add("X-Body-SHA256");
-  }
-
-  if (
-    isPhotoUpload ||
-    isIncidentStatusByIdRoute ||
-    isInstallationIncidentStatusRoute ||
-    first === "records" ||
-    first === "assets" ||
-    first === "drivers" ||
-    first === "devices" ||
-    first === "audit-logs" ||
-    first === "auth" ||
-    first === "installations" ||
-    first === "maintenance"
-  ) {
-    headers.add("Content-Type");
-  }
-  if (isPhotoUpload) {
-    headers.add("X-File-Name");
-    headers.add("X-Client-Name");
-    headers.add("X-Asset-Code");
-  }
-
-  if (
-    [
-      "dashboard",
-      "dashboard.css",
-      "chart.umd.js",
-      "dashboard-qr.js",
-      "dashboard.js",
-      "dashboard-pwa.js",
-      "manifest.json",
-      "events",
-      "sw.js",
-    ].includes(
-      first,
-    )
-  ) {
-    methods.add("GET");
-  } else if (isInstallationIncidentStatusRoute) {
-    methods.add("PATCH");
-  } else if (first === "installations" && !isRecordById) {
-    methods.add("GET");
-    methods.add("POST");
-  } else if (isRecordById) {
-    methods.add("GET");
-    methods.add("PUT");
-    methods.add("DELETE");
-  } else if (first === "assets") {
-    methods.add("GET");
-    methods.add("POST");
-    methods.add("PATCH");
-    methods.add("DELETE");
-  } else if (first === "drivers") {
-    methods.add("GET");
-    methods.add("POST");
-    methods.add("DELETE");
-  } else if (["records", "devices", "audit-logs"].includes(first)) {
-    methods.add(first === "audit-logs" ? "GET" : "POST");
-    methods.add("POST");
-  } else if (first === "statistics" || first === "photos" || first === "lookup") {
-    methods.add("GET");
-  } else if (first === "incidents") {
-    methods.add("GET");
-    methods.add("POST");
-    methods.add("PATCH");
-  } else if (first === "auth") {
-    methods.add("GET");
-    methods.add("POST");
-    methods.add("PATCH");
-  } else if (first === "maintenance") {
-    methods.add("POST");
-  }
-
-  return {
-    methods: [...methods],
-    headers: [...headers],
-  };
-}
-
-function corsHeaders(request, env, corsPolicy = { methods: ["OPTIONS"], headers: [] }) {
-  const origin = normalizeOptionalString(request?.headers?.get("Origin"), "");
-  if (!origin) return {};
-
-  const allowedOrigins = getAllowedCorsOrigins(request, env);
-  const isAllowedLocalhostOrigin = shouldAllowLocalhostCors(env) && isLocalhostOrigin(origin);
-  if (!allowedOrigins.has(origin) && !isAllowedLocalhostOrigin) {
-    return {};
-  }
-
-  return {
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": corsPolicy.methods.join(", "),
-    "Access-Control-Allow-Headers": corsPolicy.headers.join(", "),
-    Vary: "Origin",
-  };
-}
-
-function appendVaryHeader(headers, varyValue) {
-  if (!headers || !varyValue) return;
-
-  const existing = normalizeOptionalString(headers.get("Vary"), "");
-  if (!existing) {
-    headers.set("Vary", String(varyValue));
-    return;
-  }
-
-  const existingValues = new Set(
-    existing
-      .split(",")
-      .map((value) => normalizeOptionalString(value, "").toLowerCase())
-      .filter((value) => value),
-  );
-
-  for (const token of String(varyValue).split(",")) {
-    const normalized = normalizeOptionalString(token, "");
-    if (!normalized) continue;
-    const lowered = normalized.toLowerCase();
-    if (!existingValues.has(lowered)) {
-      headers.set("Vary", `${headers.get("Vary")}, ${normalized}`);
-      existingValues.add(lowered);
-    }
-  }
-}
-
-function setHeaderWithVaryMerge(headers, key, value) {
-  if (String(key).toLowerCase() === "vary") {
-    appendVaryHeader(headers, value);
-    return;
-  }
-  headers.set(key, value);
-}
-
-function shouldDisableCachingForRequest(request) {
-  if (!request?.url) return false;
-  try {
-    const pathname = new URL(request.url).pathname || "";
-    return pathname === "/web" || pathname.startsWith("/web/");
-  } catch {
-    return false;
-  }
-}
-
-function jsonResponse(request, env, corsPolicy, body, status = 200) {
-  const headers = {
-    ...corsHeaders(request, env, corsPolicy),
-    "Content-Type": "application/json",
-  };
-
-  if (shouldDisableCachingForRequest(request)) {
-    headers["Cache-Control"] = "no-store";
-    headers.Pragma = "no-cache";
-  }
-
-  return new Response(JSON.stringify(body), {
-    status,
-    headers,
-  });
-}
-
-function textResponse(request, env, corsPolicy, text, status = 200) {
-  const headers = corsHeaders(request, env, corsPolicy);
-  if (shouldDisableCachingForRequest(request)) {
-    headers["Cache-Control"] = "no-store";
-    headers.Pragma = "no-cache";
-  }
-
-  return new Response(text, {
-    status,
-    headers,
-  });
-}
-
-function applyNoStoreHeaders(response) {
-  if (!(response instanceof Response)) return response;
-  response.headers.set("Cache-Control", "no-store");
-  response.headers.set("Pragma", "no-cache");
-  return response;
-}
 
 function dashboardAssetSecurityHeaders() {
   return {
@@ -620,33 +330,6 @@ function resolveRealtimeTenantId(request, webSession = null) {
   return DEFAULT_REALTIME_TENANT_ID;
 }
 
-function resolveConfiguredLegacyTenantId(env) {
-  const configuredTenantId = normalizeOptionalString(
-    env?.[LEGACY_API_TENANT_ENV_NAME] ?? env?.API_TENANT_ID,
-    "",
-  );
-  if (!configuredTenantId) {
-    throw new HttpError(
-      503,
-      `API legacy deshabilitada: define ${LEGACY_API_TENANT_ENV_NAME} para fijar el tenant permitido.`,
-    );
-  }
-  return normalizeRealtimeTenantId(configuredTenantId);
-}
-
-function enforceLegacyTenantBinding(request, configuredTenantId) {
-  const requestedTenantId = normalizeOptionalString(request?.headers?.get("X-Tenant-Id"), "");
-  if (!requestedTenantId) return;
-
-  const normalizedRequestedTenantId = normalizeRealtimeTenantId(requestedTenantId);
-  if (normalizedRequestedTenantId !== configuredTenantId) {
-    throw new HttpError(
-      403,
-      "El tenant solicitado no coincide con el tenant permitido para credenciales legacy.",
-    );
-  }
-}
-
 function canManageAllTenants(role) {
   return normalizeOptionalString(role, "") === "super_admin";
 }
@@ -669,240 +352,6 @@ function containsAnyChar(input, allowedChars) {
     if (allowedChars.includes(input[i])) return true;
   }
   return false;
-}
-
-function normalizeRateLimitCounter(value) {
-  const parsed = Number.parseInt(String(value ?? ""), 10);
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    return 0;
-  }
-  return parsed;
-}
-
-function getRateLimitKv(env) {
-  const kv = env.RATE_LIMIT_KV;
-  if (!kv) return null;
-  if (
-    typeof kv.get !== "function" ||
-    typeof kv.put !== "function" ||
-    typeof kv.delete !== "function"
-  ) {
-    return null;
-  }
-  return kv;
-}
-
-function shouldAllowInsecureWebAuthFallback(env) {
-  return parseBooleanEnvFlag(env?.[WEB_AUTH_ALLOW_INSECURE_FALLBACK_ENV], false);
-}
-
-function warnInsecureWebAuthFallback(capability) {
-  if (warnedInsecureWebAuthFallback) return;
-  warnedInsecureWebAuthFallback = true;
-  console.warn(
-    `[web-auth][security] ${capability} sin store persistente. ` +
-    `Permitido solo por ${WEB_AUTH_ALLOW_INSECURE_FALLBACK_ENV}=true.`,
-  );
-}
-
-function requireRateLimitStoreForWebAuth(env, capability = "rate limiting") {
-  const kv = getRateLimitKv(env);
-  if (kv) return kv;
-  if (shouldAllowInsecureWebAuthFallback(env)) {
-    warnInsecureWebAuthFallback(capability);
-    return null;
-  }
-  throw new HttpError(
-    503,
-    `Seguridad web no configurada: falta RATE_LIMIT_KV para ${capability}.`,
-  );
-}
-
-function requireWebSessionStoreForWebAuth(env, capability = "validar sesiones") {
-  const store = getWebSessionStore(env);
-  if (store) return store;
-  throw new HttpError(
-    503,
-    `Seguridad web no configurada: falta WEB_SESSION_KV para ${capability}.`,
-  );
-}
-
-function getClientIpForRateLimit(request) {
-  const cfIp = normalizeOptionalString(request.headers.get("CF-Connecting-IP"), "");
-  if (cfIp) return cfIp;
-
-  const forwardedFor = normalizeOptionalString(request.headers.get("X-Forwarded-For"), "");
-  if (forwardedFor) {
-    const first = forwardedFor.split(",", 1)[0]?.trim();
-    if (first) return first;
-  }
-
-  return "unknown";
-}
-
-function buildWebLoginRateLimitKey(identifier) {
-  return `web_login_attempts:${identifier}`;
-}
-
-function buildWebLoginRateLimitIdentifier(request, username) {
-  return `${getClientIpForRateLimit(request)}:${normalizeWebUsername(username)}`;
-}
-
-function buildWebBootstrapRateLimitIdentifier(request) {
-  return `${getClientIpForRateLimit(request)}:bootstrap`;
-}
-
-function buildWebPasswordVerifyRateLimitKey(identifier) {
-  return `web_password_verify_attempts:${identifier}`;
-}
-
-function buildWebPasswordVerifyRateLimitIdentifier(request, session) {
-  const userId = Number.parseInt(String(session?.user_id ?? ""), 10);
-  const identityPart = Number.isInteger(userId) && userId > 0
-    ? String(userId)
-    : normalizeWebUsername(session?.sub || "unknown");
-  return `${getClientIpForRateLimit(request)}:${identityPart}`;
-}
-
-function buildWebAuthFailureAuditDetails(error) {
-  return {
-    reason: normalizeOptionalString(error?.message, "Error de autenticacion"),
-    status_code: Number.isInteger(Number(error?.status)) ? Number(error.status) : 0,
-  };
-}
-
-async function logWebAuditEvent(
-  env,
-  request,
-  {
-    action,
-    username,
-    success = true,
-    tenantId = DEFAULT_REALTIME_TENANT_ID,
-    details = {},
-  },
-) {
-  await logAuditEvent(env, {
-    action: normalizeOptionalString(action, "web_event"),
-    username: normalizeOptionalString(username, "unknown"),
-    success: Boolean(success),
-    tenantId: normalizeRealtimeTenantId(tenantId),
-    details: details && typeof details === "object" ? details : {},
-    ipAddress: getClientIpForRateLimit(request),
-    platform: "web",
-  });
-}
-
-function cleanupExpiredAuthNoncesInMemory(nowSeconds) {
-  if (authNonceMemoryStore.size === 0) return;
-  for (const [key, expiresAt] of authNonceMemoryStore.entries()) {
-    if (!Number.isInteger(expiresAt) || expiresAt <= nowSeconds) {
-      authNonceMemoryStore.delete(key);
-    }
-  }
-}
-
-async function buildAuthReplayNonceStorageKey(token, timestamp, nonce) {
-  const tokenDigest = await sha256Hex(new TextEncoder().encode(String(token || "")));
-  const tokenPart = tokenDigest
-    ? tokenDigest.slice(0, 32)
-    : sanitizeStorageSegment(String(token || ""), "token", 32);
-  return `auth_nonce:${tokenPart}:${timestamp}:${nonce}`;
-}
-
-async function consumeAuthReplayNonce(env, { token, timestamp, nonce }) {
-  const nonceValue = normalizeOptionalString(nonce, "");
-  if (!AUTH_NONCE_PATTERN.test(nonceValue) || nonceValue.length > AUTH_NONCE_MAX_LENGTH) {
-    throw new HttpError(401, "Nonce invalido.");
-  }
-
-  const key = await buildAuthReplayNonceStorageKey(token, timestamp, nonceValue);
-  const kv = getRateLimitKv(env);
-  if (kv) {
-    const existing = await kv.get(key);
-    if (existing) {
-      throw new HttpError(401, "Nonce ya utilizado.");
-    }
-    await kv.put(key, "1", { expirationTtl: AUTH_NONCE_TTL_SECONDS });
-    return;
-  }
-
-  const nowSeconds = nowUnixSeconds();
-  cleanupExpiredAuthNoncesInMemory(nowSeconds);
-  const existingExpiry = authNonceMemoryStore.get(key);
-  if (Number.isInteger(existingExpiry) && existingExpiry > nowSeconds) {
-    throw new HttpError(401, "Nonce ya utilizado.");
-  }
-  if (authNonceMemoryStore.size >= MAX_AUTH_INMEM_NONCE_TRACKED) {
-    cleanupExpiredAuthNoncesInMemory(nowSeconds);
-    if (authNonceMemoryStore.size >= MAX_AUTH_INMEM_NONCE_TRACKED) {
-      const oldest = authNonceMemoryStore.keys().next();
-      if (!oldest.done) {
-        authNonceMemoryStore.delete(oldest.value);
-      }
-    }
-  }
-  authNonceMemoryStore.set(key, nowSeconds + AUTH_NONCE_TTL_SECONDS);
-}
-
-async function checkWebLoginRateLimit(env, identifier) {
-  const kv = requireRateLimitStoreForWebAuth(env, "rate limiting de login");
-  if (!kv) return;
-
-  const key = buildWebLoginRateLimitKey(identifier);
-  const attempts = normalizeRateLimitCounter(await kv.get(key));
-  if (attempts >= WEB_LOGIN_RATE_LIMIT_MAX_ATTEMPTS) {
-    throw new HttpError(429, "Demasiados intentos fallidos. Intenta en 15 minutos.");
-  }
-}
-
-async function recordFailedWebLoginAttempt(env, identifier) {
-  const kv = requireRateLimitStoreForWebAuth(env, "registro de intentos de login");
-  if (!kv) return;
-
-  const key = buildWebLoginRateLimitKey(identifier);
-  const currentAttempts = normalizeRateLimitCounter(await kv.get(key));
-  await kv.put(key, String(currentAttempts + 1), {
-    expirationTtl: WEB_LOGIN_RATE_LIMIT_LOCKOUT_SECONDS,
-  });
-}
-
-async function clearWebLoginRateLimit(env, identifier) {
-  const kv = requireRateLimitStoreForWebAuth(env, "limpieza de rate limiting de login");
-  if (!kv) return;
-
-  const key = buildWebLoginRateLimitKey(identifier);
-  await kv.delete(key);
-}
-
-async function checkWebPasswordVerifyRateLimit(env, identifier) {
-  const kv = requireRateLimitStoreForWebAuth(env, "rate limiting de verificacion de contrasena");
-  if (!kv) return;
-
-  const key = buildWebPasswordVerifyRateLimitKey(identifier);
-  const attempts = normalizeRateLimitCounter(await kv.get(key));
-  if (attempts >= WEB_PASSWORD_VERIFY_RATE_LIMIT_MAX_ATTEMPTS) {
-    throw new HttpError(429, "Demasiados intentos fallidos. Intenta nuevamente en unos minutos.");
-  }
-}
-
-async function recordFailedWebPasswordVerifyAttempt(env, identifier) {
-  const kv = requireRateLimitStoreForWebAuth(env, "registro de intentos de verificacion");
-  if (!kv) return;
-
-  const key = buildWebPasswordVerifyRateLimitKey(identifier);
-  const currentAttempts = normalizeRateLimitCounter(await kv.get(key));
-  await kv.put(key, String(currentAttempts + 1), {
-    expirationTtl: WEB_PASSWORD_VERIFY_RATE_LIMIT_LOCKOUT_SECONDS,
-  });
-}
-
-async function clearWebPasswordVerifyRateLimit(env, identifier) {
-  const kv = requireRateLimitStoreForWebAuth(env, "limpieza de rate limiting de verificacion");
-  if (!kv) return;
-
-  const key = buildWebPasswordVerifyRateLimitKey(identifier);
-  await kv.delete(key);
 }
 
 function normalizeNonNegativeInteger(value, fallback = 0) {
@@ -2318,94 +1767,6 @@ function normalizeWebHashType(input, storedHashRaw = "") {
   return detectWebPasswordHashType(storedHashRaw);
 }
 
-function getBearerToken(request) {
-  const authorization = request.headers.get("Authorization") || "";
-  const [scheme, token] = authorization.trim().split(/\s+/, 2);
-  if (!scheme || !token) return "";
-  if (scheme.toLowerCase() !== "bearer") return "";
-  return token;
-}
-
-function parseCookies(request) {
-  const cookieHeader = request.headers.get("Cookie") || "";
-  if (!cookieHeader) return {};
-
-  return cookieHeader.split(";").reduce((acc, pair) => {
-    const [rawName, ...rawValue] = pair.split("=");
-    const name = normalizeOptionalString(rawName, "");
-    if (!name) return acc;
-    try {
-      acc[name] = decodeURIComponent(rawValue.join("=") || "");
-    } catch {
-      // Ignore malformed cookie pairs instead of failing the full request.
-    }
-    return acc;
-  }, {});
-}
-
-function getWebSessionTokenFromRequest(request) {
-  const bearer = getBearerToken(request);
-  if (bearer) return bearer;
-
-  const cookies = parseCookies(request);
-  return normalizeOptionalString(cookies[WEB_SESSION_COOKIE_NAME], "");
-}
-
-function buildWebSessionCookie(token, maxAgeSeconds = WEB_ACCESS_TTL_SECONDS) {
-  return `${WEB_SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAgeSeconds}`;
-}
-
-function buildWebSessionCookieClearHeader() {
-  return `${WEB_SESSION_COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
-}
-
-function getWebSessionStore(env) {
-  if (env.WEB_SESSION_KV && typeof env.WEB_SESSION_KV.get === "function") {
-    return env.WEB_SESSION_KV;
-  }
-  return null;
-}
-
-function buildWebSessionVersionKey(userId) {
-  return `web_session_active:${userId}`;
-}
-
-async function rotateWebSessionVersion(env, userId) {
-  const store = requireWebSessionStoreForWebAuth(env, "rotar sesiones web");
-  const nextVersion = nowUnixSeconds();
-  if (!Number.isInteger(userId) || userId <= 0) {
-    return nextVersion;
-  }
-
-  await store.put(buildWebSessionVersionKey(userId), String(nextVersion), {
-    expirationTtl: WEB_SESSION_STORE_TTL_SECONDS,
-  });
-  return nextVersion;
-}
-
-async function invalidateWebSessionVersion(env, userId) {
-  const store = requireWebSessionStoreForWebAuth(env, "invalidar sesiones web");
-  if (!Number.isInteger(userId) || userId <= 0) return;
-
-  await store.delete(buildWebSessionVersionKey(userId));
-}
-
-async function resolveActiveWebSessionVersion(env, userId) {
-  const store = requireWebSessionStoreForWebAuth(env, "resolver sesiones web");
-  if (!Number.isInteger(userId) || userId <= 0) return null;
-
-  const raw = await store.get(buildWebSessionVersionKey(userId));
-  const parsed = Number.parseInt(String(raw ?? ""), 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) return null;
-  return parsed;
-}
-
-function ensureWebSessionSecret(env) {
-  if (!env.WEB_SESSION_SECRET) {
-    throw new HttpError(500, "Autenticacion web no configurada. Define WEB_SESSION_SECRET.");
-  }
-}
-
 function ensureDbBinding(env) {
   if (!env.DB) {
     throw new Error("La base de datos (D1) no esta vinculada a este Worker.");
@@ -3062,33 +2423,6 @@ function serializeWebUser(rawUser) {
   };
 }
 
-// Official web auth contract: native clients persist the short-lived Bearer token
-// while the Worker mirrors the same token into an HttpOnly cookie for browsers.
-function buildWebSessionAuthPayload(token, rawUser, extra = {}) {
-  return {
-    success: true,
-    authenticated: true,
-    access_token: token.token,
-    token_type: WEB_BEARER_TOKEN_TYPE,
-    expires_in: token.expires_in,
-    expires_at: token.expires_at,
-    user: serializeWebUser(rawUser),
-    ...extra,
-  };
-}
-
-function buildWebSessionStatusPayload(session, rawUser) {
-  const expiresAt = new Date(Number(session.exp) * 1000).toISOString();
-  return {
-    success: true,
-    authenticated: true,
-    token_type: WEB_BEARER_TOKEN_TYPE,
-    expires_in: Math.max(0, Number(session.exp) - nowUnixSeconds()),
-    expires_at: expiresAt,
-    user: serializeWebUser(rawUser),
-  };
-}
-
 async function listWebUsers(env, options = {}) {
   const tenantId = normalizeOptionalString(options?.tenantId, "");
   const limit = Number.isInteger(options?.limit) ? options.limit : 100;
@@ -3314,105 +2648,6 @@ async function forceResetWebUserPassword(env, { userId, newPassword }) {
   }
 }
 
-async function buildWebAccessToken(env, sessionUser = {}) {
-  ensureWebSessionSecret(env);
-
-  const iat = nowUnixSeconds();
-  const exp = iat + WEB_ACCESS_TTL_SECONDS;
-  const sub = normalizeWebUsername(sessionUser.username || "web-user") || "web-user";
-  const role = normalizeOptionalString(sessionUser.role, WEB_DEFAULT_ROLE) || WEB_DEFAULT_ROLE;
-  const payload = {
-    scope: "web",
-    sub,
-    role,
-    iat,
-    exp,
-  };
-
-  if (Number.isInteger(sessionUser.user_id) && sessionUser.user_id > 0) {
-    payload.user_id = sessionUser.user_id;
-  }
-  if (Number.isInteger(sessionUser.session_version) && sessionUser.session_version > 0) {
-    payload.sv = sessionUser.session_version;
-  }
-  if (normalizeOptionalString(sessionUser.tenant_id, "")) {
-    payload.tenant_id = normalizeRealtimeTenantId(sessionUser.tenant_id);
-  }
-
-  const encodedPayload = base64UrlEncodeUtf8(JSON.stringify(payload));
-  const signature = await hmacSha256Hex(env.WEB_SESSION_SECRET, encodedPayload);
-
-  return {
-    token: `${encodedPayload}.${signature}`,
-    expires_in: WEB_ACCESS_TTL_SECONDS,
-    expires_at: new Date(exp * 1000).toISOString(),
-    sub,
-    role,
-    tenant_id: payload.tenant_id || DEFAULT_REALTIME_TENANT_ID,
-  };
-}
-
-async function verifyWebAccessToken(request, env) {
-  ensureWebSessionSecret(env);
-
-  const token = getWebSessionTokenFromRequest(request);
-  if (!token) {
-    throw new HttpError(401, "Falta token Bearer o cookie de sesion web.");
-  }
-
-  const [encodedPayload, signature] = token.split(".", 2);
-  if (!encodedPayload || !signature) {
-    throw new HttpError(401, "Token web invalido.");
-  }
-
-  const expectedSignature = await hmacSha256Hex(env.WEB_SESSION_SECRET, encodedPayload);
-  if (!timingSafeEqual(signature.toLowerCase(), expectedSignature.toLowerCase())) {
-    throw new HttpError(401, "Token web invalido.");
-  }
-
-  let payload = null;
-  try {
-    payload = JSON.parse(base64UrlDecodeUtf8(encodedPayload));
-  } catch {
-    throw new HttpError(401, "Token web invalido.");
-  }
-
-  if (!payload || payload.scope !== "web") {
-    throw new HttpError(401, "Token web invalido.");
-  }
-
-  const exp = Number(payload.exp);
-  if (!Number.isInteger(exp) || exp <= nowUnixSeconds()) {
-    throw new HttpError(401, "Sesion web expirada.");
-  }
-
-  const userId = Number.isInteger(payload.user_id) ? payload.user_id : null;
-  const tokenSessionVersion = Number(payload.sv || 0);
-  const sessionStore = requireWebSessionStoreForWebAuth(env, "validar sesiones web");
-  if (
-    sessionStore &&
-    userId &&
-    Number.isInteger(tokenSessionVersion) &&
-    tokenSessionVersion > 0
-  ) {
-    const activeSessionVersion = await resolveActiveWebSessionVersion(env, userId);
-    if (!activeSessionVersion || activeSessionVersion !== tokenSessionVersion) {
-      throw new HttpError(401, "Sesion web invalida o cerrada.");
-    }
-  }
-
-  return {
-    scope: "web",
-    sub: normalizeWebUsername(payload.sub || payload.username || "web-user") || "web-user",
-    role: normalizeOptionalString(payload.role, WEB_DEFAULT_ROLE) || WEB_DEFAULT_ROLE,
-    tenant_id: normalizeRealtimeTenantId(payload.tenant_id),
-    user_id: userId,
-    session_version: Number.isInteger(tokenSessionVersion) ? tokenSessionVersion : null,
-    iat: Number(payload.iat || 0),
-    exp,
-  };
-}
-
 async function authenticateWebUserByCredentials(env, { username, password }) {
   const user = await getWebUserByUsername(env, username);
   if (!user) {
@@ -3485,25 +2720,6 @@ async function verifyCurrentWebUserPassword(env, session, password) {
     user.password_hash_type = WEB_HASH_TYPE_PBKDF2;
   }
 
-  return user;
-}
-
-async function resolveCurrentWebSessionUser(env, session) {
-  ensureDbBinding(env);
-
-  let user = null;
-  if (Number.isInteger(session.user_id) && session.user_id > 0) {
-    user = await getWebUserById(env, session.user_id);
-  }
-  if (!user) {
-    user = await getWebUserByUsername(env, session.sub);
-  }
-  if (!user) {
-    throw new HttpError(401, "Sesion web invalida o usuario no encontrado.");
-  }
-  if (!normalizeActiveFlag(user.is_active, 1)) {
-    throw new HttpError(403, "Usuario web inactivo.");
-  }
   return user;
 }
 
@@ -3696,672 +2912,6 @@ async function sendPushNotification(env, fcmTokens, notification) {
     successful_requests: successfulRequests,
     token_count: tokenSubset.length,
   };
-}
-
-async function readWebAuthRequestBody(request, maxBytes = MAX_WEB_AUTH_DEFAULT_BODY_BYTES) {
-  return readJsonOrThrowBadRequest(request, "Payload invalido.", {
-    maxBytes,
-  });
-}
-
-function requireWebAuthStringField(body, fieldName) {
-  const value = normalizeOptionalString(body?.[fieldName], "");
-  if (!value) {
-    throw new HttpError(400, `Campo '${fieldName}' es obligatorio.`);
-  }
-  return value;
-}
-
-function sanitizeWebAuthFailure(error, fallbackMessage = "Credenciales web invalidas.") {
-  if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
-    return new HttpError(401, fallbackMessage);
-  }
-  return error;
-}
-
-async function handleWebAuthLoginRoute(request, env, corsPolicy) {
-  ensureWebSessionSecret(env);
-
-  const body = await readWebAuthRequestBody(request);
-  const providedPassword = requireWebAuthStringField(body, "password");
-
-  const providedUsername = normalizeWebUsername(body?.username);
-  if (!providedUsername) {
-    throw new HttpError(400, "Campo 'username' es obligatorio.");
-  }
-
-  const username = validateWebUsername(providedUsername);
-  const rateLimitIdentifier = buildWebLoginRateLimitIdentifier(request, username);
-
-  ensureDbBinding(env);
-  await checkWebLoginRateLimit(env, rateLimitIdentifier);
-
-  let user = null;
-  try {
-    user = await authenticateWebUserByCredentials(env, {
-      username,
-      password: providedPassword,
-    });
-  } catch (error) {
-    if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
-      await recordFailedWebLoginAttempt(env, rateLimitIdentifier);
-
-      await logWebAuditEvent(env, request, {
-        action: "web_login_failed",
-        username,
-        success: false,
-        tenantId: DEFAULT_REALTIME_TENANT_ID,
-        details: buildWebAuthFailureAuditDetails(error),
-      });
-    }
-    throw sanitizeWebAuthFailure(error, "Credenciales web invalidas.");
-  }
-
-  await clearWebLoginRateLimit(env, rateLimitIdentifier);
-
-  await logWebAuditEvent(env, request, {
-    action: "web_login_success",
-    username: user.username,
-    tenantId: user.tenant_id,
-    details: {
-      role: user.role,
-      user_id: Number(user.id),
-    },
-  });
-
-  const sessionVersion = await rotateWebSessionVersion(env, Number(user.id));
-  const token = await buildWebAccessToken(env, {
-    username: user.username,
-    role: user.role,
-    user_id: Number(user.id),
-    session_version: sessionVersion,
-    tenant_id: user.tenant_id,
-  });
-
-  const authPayload = buildWebSessionAuthPayload(token, user);
-
-  const response = jsonResponse(
-    request,
-    env,
-    corsPolicy,
-    authPayload,
-    200,
-  );
-  response.headers.append("Set-Cookie", buildWebSessionCookie(token.token, token.expires_in));
-  return response;
-}
-
-async function handleWebAuthVerifyPasswordRoute(request, env, corsPolicy) {
-  ensureDbBinding(env);
-  const session = await verifyWebAccessToken(request, env);
-  const rateLimitIdentifier = buildWebPasswordVerifyRateLimitIdentifier(request, session);
-  await checkWebPasswordVerifyRateLimit(env, rateLimitIdentifier);
-
-  const body = await readWebAuthRequestBody(request);
-  const providedPassword = requireWebAuthStringField(body, "password");
-
-  try {
-    const user = await verifyCurrentWebUserPassword(env, session, providedPassword);
-    await clearWebPasswordVerifyRateLimit(env, rateLimitIdentifier);
-
-    await logWebAuditEvent(env, request, {
-      action: "web_password_verified",
-      username: session.sub,
-      tenantId: user.tenant_id,
-      details: {
-        user_id: Number(user.id),
-        role: user.role,
-      },
-    });
-
-    return jsonResponse(request, env, corsPolicy, {
-      success: true,
-      verified: true,
-    });
-  } catch (error) {
-    if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
-      await recordFailedWebPasswordVerifyAttempt(env, rateLimitIdentifier);
-      await logWebAuditEvent(env, request, {
-        action: "web_password_verify_failed",
-        username: session.sub || "unknown",
-        success: false,
-        tenantId: session.tenant_id,
-        details: buildWebAuthFailureAuditDetails(error),
-      });
-    }
-    throw sanitizeWebAuthFailure(error, "No se pudo validar la contrasena.");
-  }
-}
-
-async function handleWebAuthBootstrapRoute(request, env, corsPolicy) {
-  ensureDbBinding(env);
-
-  if (!env.WEB_LOGIN_PASSWORD) {
-    throw new HttpError(
-      500,
-      "Bootstrap no configurado. Define WEB_LOGIN_PASSWORD para inicializar el primer usuario web.",
-    );
-  }
-
-  const rateLimitIdentifier = buildWebBootstrapRateLimitIdentifier(request);
-  await checkWebLoginRateLimit(env, rateLimitIdentifier);
-
-  const userCount = await countWebUsers(env);
-  if (userCount > 0) {
-    throw new HttpError(409, "Bootstrap ya ejecutado. La tabla web_users ya tiene usuarios.");
-  }
-
-  const body = await readWebAuthRequestBody(request);
-  const bootstrapPassword = requireWebAuthStringField(body, "bootstrap_password");
-  if (!timingSafeEqual(bootstrapPassword, String(env.WEB_LOGIN_PASSWORD))) {
-    await recordFailedWebLoginAttempt(env, rateLimitIdentifier);
-    throw new HttpError(401, "Bootstrap password invalido.");
-  }
-
-  const username = validateWebUsername(body?.username);
-  const password = validateWebPassword(body?.password);
-  const role = normalizeWebRole(body?.role || WEB_DEFAULT_ROLE);
-  const tenantId = normalizeRealtimeTenantId(body?.tenant_id);
-  const createdUser = await createWebUser(env, { username, password, role, tenantId });
-  await clearWebLoginRateLimit(env, rateLimitIdentifier);
-
-  const sessionVersion = await rotateWebSessionVersion(env, Number(createdUser.id));
-  const token = await buildWebAccessToken(env, {
-    username: createdUser.username,
-    role: createdUser.role,
-    user_id: Number(createdUser.id),
-    session_version: sessionVersion,
-    tenant_id: createdUser.tenant_id,
-  });
-
-  const bootstrapPayload = buildWebSessionAuthPayload(token, createdUser, {
-    bootstrapped: true,
-  });
-
-  const response = jsonResponse(
-    request,
-    env,
-    corsPolicy,
-    bootstrapPayload,
-    201,
-  );
-  response.headers.append("Set-Cookie", buildWebSessionCookie(token.token, token.expires_in));
-  return response;
-}
-
-async function handleWebAuthUsersListRoute(request, env, corsPolicy) {
-  ensureDbBinding(env);
-
-  const session = await verifyWebAccessToken(request, env);
-  requireAdminRole(session.role);
-  const searchParams = new URL(request.url).searchParams;
-
-  const requestTenantFilter = normalizeOptionalString(
-    searchParams.get("tenant_id"),
-    "",
-  );
-  const limit = parsePageLimit(searchParams, { fallback: 100, max: 500 });
-  const cursor = parseUsernameIdCursor(searchParams.get("cursor"));
-  const usersPage = await listWebUsers(env, {
-    tenantId: canManageAllTenants(session.role)
-      ? requestTenantFilter || null
-      : normalizeRealtimeTenantId(session.tenant_id),
-    limit,
-    cursor,
-  });
-  return jsonResponse(
-    request,
-    env,
-    corsPolicy,
-    {
-      success: true,
-      users: usersPage.users,
-      pagination: {
-        limit,
-        has_more: usersPage.hasMore,
-        next_cursor: usersPage.nextCursor,
-      },
-    },
-    200,
-  );
-}
-
-async function handleWebAuthUsersCreateRoute(request, env, corsPolicy) {
-  ensureDbBinding(env);
-
-  const session = await verifyWebAccessToken(request, env);
-  requireAdminRole(session.role);
-
-  const body = await readWebAuthRequestBody(request);
-
-  const username = validateWebUsername(body?.username);
-  const password = validateWebPassword(body?.password);
-  const role = normalizeWebRole(body?.role || "viewer");
-  if (role === "super_admin" && normalizeOptionalString(session.role, "") !== "super_admin") {
-    throw new HttpError(403, "Solo super_admin puede crear usuarios super_admin.");
-  }
-  const sessionTenantId = normalizeRealtimeTenantId(session.tenant_id);
-  const requestedTenantId = normalizeOptionalString(body?.tenant_id, "");
-  const targetTenantId = requestedTenantId
-    ? normalizeRealtimeTenantId(requestedTenantId)
-    : sessionTenantId;
-  assertSameTenantOrSuperAdmin(session, targetTenantId);
-
-  const createdUser = await createWebUser(env, {
-    username,
-    password,
-    role,
-    tenantId: targetTenantId,
-  });
-
-  // Log audit event for user creation.
-  await logWebAuditEvent(env, request, {
-    action: "web_user_created",
-    username: session.sub,
-    tenantId: createdUser.tenant_id,
-    details: {
-      created_user: createdUser.username,
-      created_user_id: createdUser.id,
-      created_role: createdUser.role,
-      performed_by: session.sub,
-      performed_by_role: session.role,
-    },
-  });
-
-  return jsonResponse(
-    request,
-    env,
-    corsPolicy,
-    {
-      success: true,
-      user: {
-        id: createdUser.id,
-        username: createdUser.username,
-        role: createdUser.role,
-        tenant_id: createdUser.tenant_id,
-      },
-    },
-    201,
-  );
-}
-
-async function handleWebAuthUsersPatchRoute(request, env, pathParts, corsPolicy) {
-  ensureDbBinding(env);
-
-  const session = await verifyWebAccessToken(request, env);
-  requireAdminRole(session.role);
-
-  const userId = parsePositiveInt(pathParts[2], "user_id");
-  const existingUser = await getWebUserById(env, userId);
-  if (!existingUser) {
-    throw new HttpError(404, "Usuario web no encontrado.");
-  }
-  assertSameTenantOrSuperAdmin(session, existingUser.tenant_id);
-
-  const body = await readWebAuthRequestBody(request);
-
-  const requestedRole = body?.role === undefined ? null : normalizeWebRole(body.role);
-  const requestedActive = parseBooleanOrNull(body?.is_active);
-  if (requestedRole === null && requestedActive === null) {
-    throw new HttpError(400, "Debes enviar al menos uno de: role, is_active.");
-  }
-
-  const nextRole = requestedRole === null ? existingUser.role : requestedRole;
-  const nextIsActive =
-    requestedActive === null ? normalizeActiveFlag(existingUser.is_active, 1) : requestedActive ? 1 : 0;
-  if (nextRole === "super_admin" && normalizeOptionalString(session.role, "") !== "super_admin") {
-    throw new HttpError(403, "Solo super_admin puede asignar rol super_admin.");
-  }
-  const roleChanged = normalizeOptionalString(existingUser.role, WEB_DEFAULT_ROLE) !== nextRole;
-  const activeChanged = normalizeActiveFlag(existingUser.is_active, 1) !== nextIsActive;
-
-  if (session.user_id && Number(session.user_id) === userId && nextIsActive === 0) {
-    throw new HttpError(400, "No puedes desactivar tu propio usuario.");
-  }
-  if (
-    session.user_id &&
-    Number(session.user_id) === userId &&
-    !["admin", "super_admin"].includes(nextRole)
-  ) {
-    throw new HttpError(400, "No puedes quitarte permisos de administrador.");
-  }
-
-  await updateWebUserRoleAndStatus(env, {
-    userId,
-    role: nextRole,
-    isActive: nextIsActive,
-  });
-  if (roleChanged || activeChanged) {
-    await invalidateWebSessionVersion(env, userId);
-  }
-
-  // Log audit event for user update.
-  await logWebAuditEvent(env, request, {
-    action: "web_user_updated",
-    username: session.sub,
-    tenantId: existingUser.tenant_id,
-    details: {
-      updated_user_id: userId,
-      updated_user: existingUser.username,
-      old_role: existingUser.role,
-      new_role: nextRole,
-      old_active: Boolean(existingUser.is_active),
-      new_active: Boolean(nextIsActive),
-      performed_by: session.sub,
-      performed_by_role: session.role,
-    },
-  });
-
-  const updatedUser = await getWebUserById(env, userId);
-  return jsonResponse(
-    request,
-    env,
-    corsPolicy,
-    {
-      success: true,
-      user: serializeWebUser(updatedUser),
-    },
-    200,
-  );
-}
-
-async function handleWebAuthUsersForcePasswordRoute(request, env, pathParts, corsPolicy) {
-  ensureDbBinding(env);
-
-  const session = await verifyWebAccessToken(request, env);
-  requireAdminRole(session.role);
-
-  const userId = parsePositiveInt(pathParts[2], "user_id");
-  const existingUser = await getWebUserById(env, userId);
-  if (!existingUser) {
-    throw new HttpError(404, "Usuario web no encontrado.");
-  }
-  assertSameTenantOrSuperAdmin(session, existingUser.tenant_id);
-
-  const body = await readWebAuthRequestBody(request, MAX_WEB_AUTH_IMPORT_BODY_BYTES);
-
-  const newPassword = validateWebPassword(body?.new_password, "new_password");
-  await forceResetWebUserPassword(env, { userId, newPassword });
-  await invalidateWebSessionVersion(env, userId);
-
-  // Log audit event for password reset.
-  await logWebAuditEvent(env, request, {
-    action: "web_password_reset",
-    username: session.sub,
-    tenantId: existingUser.tenant_id,
-    details: {
-      target_user_id: userId,
-      target_user: existingUser.username,
-      performed_by: session.sub,
-      performed_by_role: session.role,
-    },
-  });
-
-  const updatedUser = await getWebUserById(env, userId);
-  return jsonResponse(
-    request,
-    env,
-    corsPolicy,
-    {
-      success: true,
-      user: serializeWebUser(updatedUser),
-    },
-    200,
-  );
-}
-
-async function handleWebAuthImportUsersRoute(request, env, corsPolicy) {
-  ensureDbBinding(env);
-
-  const session = await verifyWebAccessToken(request, env);
-  if (!["admin", "super_admin"].includes(session.role)) {
-    throw new HttpError(403, "No tienes permisos para importar usuarios web.");
-  }
-
-  const body = await readWebAuthRequestBody(request, MAX_WEB_AUTH_IMPORT_BODY_BYTES);
-
-  const users = Array.isArray(body?.users) ? body.users : [];
-  if (!users.length) {
-    throw new HttpError(400, "Debes enviar al menos un usuario en 'users'.");
-  }
-  if (users.length > 1000) {
-    throw new HttpError(400, "El lote supera el maximo permitido (1000 usuarios).");
-  }
-
-  let created = 0;
-  let updated = 0;
-  const sessionTenantId = normalizeRealtimeTenantId(session.tenant_id);
-  const processedUsers = [];
-  for (const rawUser of users) {
-    const imported = normalizeImportedWebUser(rawUser);
-    const targetTenantId = imported.tenantId || sessionTenantId;
-    assertSameTenantOrSuperAdmin(session, targetTenantId);
-    imported.tenantId = normalizeRealtimeTenantId(targetTenantId);
-    const result = await upsertWebUserFromImport(env, imported);
-    if (result === "created") created += 1;
-    if (result === "updated") updated += 1;
-    processedUsers.push({
-      username: imported.username,
-      role: imported.role,
-      tenant_id: imported.tenantId,
-      is_active: imported.isActive,
-      password_hash_type: imported.passwordHashType,
-    });
-  }
-
-  // Log audit event for user import.
-  await logWebAuditEvent(env, request, {
-    action: "web_users_imported",
-    username: session.sub,
-    tenantId: sessionTenantId,
-    details: {
-      total_imported: processedUsers.length,
-      created,
-      updated,
-      performed_by: session.sub,
-      performed_by_role: session.role,
-    },
-  });
-
-  return jsonResponse(
-    request,
-    env,
-    corsPolicy,
-    {
-      success: true,
-      imported: processedUsers.length,
-      created,
-      updated,
-      users: processedUsers,
-    },
-    200,
-  );
-}
-
-async function handleWebAuthLogoutRoute(request, env, corsPolicy) {
-  const payload = await verifyWebAccessToken(request, env);
-  if (payload.user_id) {
-    await invalidateWebSessionVersion(env, Number(payload.user_id));
-  }
-
-  const response = jsonResponse(request, env, corsPolicy, {
-    success: true,
-    authenticated: false,
-    logged_out: true,
-  });
-  response.headers.append("Set-Cookie", buildWebSessionCookieClearHeader());
-  return response;
-}
-
-async function handleWebAuthMeRoute(request, env, corsPolicy) {
-  const session = await verifyWebAccessToken(request, env);
-  const user = await resolveCurrentWebSessionUser(env, session);
-  return jsonResponse(
-    request,
-    env,
-    corsPolicy,
-    buildWebSessionStatusPayload(session, user),
-  );
-}
-
-async function handleWebAuthRoute(request, env, pathParts, corsPolicy) {
-  if (pathParts.length < 2 || pathParts[0] !== "auth") {
-    return null;
-  }
-
-  if (pathParts[1] === "login" && request.method === "POST") {
-    return handleWebAuthLoginRoute(request, env, corsPolicy);
-  }
-
-  if (pathParts[1] === "verify-password" && request.method === "POST") {
-    return handleWebAuthVerifyPasswordRoute(request, env, corsPolicy);
-  }
-
-  if (pathParts[1] === "bootstrap" && request.method === "POST") {
-    return handleWebAuthBootstrapRoute(request, env, corsPolicy);
-  }
-
-  if (pathParts[1] === "users" && pathParts.length === 2 && request.method === "GET") {
-    return handleWebAuthUsersListRoute(request, env, corsPolicy);
-  }
-
-  if (pathParts[1] === "users" && pathParts.length === 2 && request.method === "POST") {
-    return handleWebAuthUsersCreateRoute(request, env, corsPolicy);
-  }
-
-  if (pathParts[1] === "users" && pathParts.length === 3 && request.method === "PATCH") {
-    return handleWebAuthUsersPatchRoute(request, env, pathParts, corsPolicy);
-  }
-
-  if (
-    pathParts[1] === "users" &&
-    pathParts.length === 4 &&
-    pathParts[3] === "force-password" &&
-    request.method === "POST"
-  ) {
-    return handleWebAuthUsersForcePasswordRoute(request, env, pathParts, corsPolicy);
-  }
-
-  if (pathParts[1] === "import-users" && request.method === "POST") {
-    return handleWebAuthImportUsersRoute(request, env, corsPolicy);
-  }
-
-  if (pathParts[1] === "logout" && request.method === "POST") {
-    return handleWebAuthLogoutRoute(request, env, corsPolicy);
-  }
-
-  if (pathParts[1] === "me" && request.method === "GET") {
-    return handleWebAuthMeRoute(request, env, corsPolicy);
-  }
-
-  return null;
-}
-
-async function verifyAuth(request, env, url) {
-  const clientPlatform = (request.headers.get("X-Client-Platform") || "").toLowerCase();
-  if (clientPlatform === "mobile") {
-    throw new HttpError(
-      410,
-      "Autenticacion HMAC deshabilitada para clientes moviles. Usa /web/* con Bearer de sesion corta.",
-    );
-  }
-
-  const configuredTenantId = resolveConfiguredLegacyTenantId(env);
-  enforceLegacyTenantBinding(request, configuredTenantId);
-
-  const expectedToken = env.DRIVER_MANAGER_API_TOKEN || env.API_TOKEN;
-  const expectedSecret = env.DRIVER_MANAGER_API_SECRET || env.API_SECRET;
-
-  // Nunca permitir acceso sin credenciales de API configuradas.
-  if (!expectedToken || !expectedSecret) {
-    throw new HttpError(
-      503,
-      "API no configurada correctamente. Define DRIVER_MANAGER_API_TOKEN y DRIVER_MANAGER_API_SECRET.",
-    );
-  }
-
-  const token = request.headers.get("X-API-Token");
-  const timestampRaw = request.headers.get("X-Request-Timestamp");
-  const signature = request.headers.get("X-Request-Signature");
-  const nonce = normalizeOptionalString(request.headers.get("X-Request-Nonce"), "");
-  const providedBodyHash = normalizeOptionalString(request.headers.get("X-Body-SHA256"), "");
-
-  if (!token || !timestampRaw || !signature || !nonce) {
-    throw new HttpError(401, "Faltan headers de autenticación.");
-  }
-
-  if (!timingSafeEqual(token, expectedToken)) {
-    throw new HttpError(401, "Token inválido.");
-  }
-
-  const timestamp = Number.parseInt(timestampRaw, 10);
-  if (!Number.isInteger(timestamp)) {
-    throw new HttpError(401, "Timestamp inválido.");
-  }
-
-  const drift = Math.abs(nowUnixSeconds() - timestamp);
-  if (drift > AUTH_WINDOW_SECONDS) {
-    throw new HttpError(401, "Timestamp fuera de ventana permitida.");
-  }
-  if (!AUTH_NONCE_PATTERN.test(nonce) || nonce.length > AUTH_NONCE_MAX_LENGTH) {
-    throw new HttpError(401, "Nonce invalido.");
-  }
-  const method = request.method.toUpperCase();
-  const isPhotoUploadRoute =
-    method === "POST" && /^\/incidents\/\d+\/photos$/i.test(url.pathname);
-
-  let bodyHash = EMPTY_BODY_SHA256_HEX;
-  if (providedBodyHash) {
-    if (!/^[a-f0-9]{64}$/i.test(providedBodyHash)) {
-      throw new HttpError(401, "Header X-Body-SHA256 invalido.");
-    }
-    bodyHash = providedBodyHash.toLowerCase();
-  } else if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
-    if (isPhotoUploadRoute) {
-      throw new HttpError(
-        401,
-        "Falta header X-Body-SHA256 para upload binario. Actualiza el cliente.",
-      );
-    }
-
-    const contentLengthRaw = normalizeOptionalString(request.headers.get("content-length"), "");
-    const parsedContentLength = Number.parseInt(contentLengthRaw, 10);
-    const contentLength = Number.isFinite(parsedContentLength) && parsedContentLength >= 0
-      ? parsedContentLength
-      : null;
-
-    if (contentLength !== null && contentLength > MAX_AUTH_INMEM_BODY_HASH_BYTES) {
-      throw new HttpError(
-        401,
-        "Body demasiado grande para autenticacion legacy sin X-Body-SHA256.",
-      );
-    }
-
-    const bodyBytes = await request.clone().arrayBuffer();
-    if (bodyBytes.byteLength > MAX_AUTH_INMEM_BODY_HASH_BYTES) {
-      throw new HttpError(
-        401,
-        "Body demasiado grande para autenticacion legacy sin X-Body-SHA256.",
-      );
-    }
-
-    bodyHash = (await sha256Hex(bodyBytes)) || EMPTY_BODY_SHA256_HEX;
-  }
-
-  const canonical = `${request.method.toUpperCase()}|${url.pathname}|${timestamp}|${bodyHash}|${nonce}`;
-  const expectedSignature = await hmacSha256Hex(expectedSecret, canonical);
-
-  if (!timingSafeEqual(signature.toLowerCase(), expectedSignature.toLowerCase())) {
-    throw new HttpError(401, "Firma inválida.");
-  }
-
-  await consumeAuthReplayNonce(env, {
-    token,
-    timestamp,
-    nonce,
-  });
-
-  return configuredTenantId;
 }
 
 function normalizeIncidentStatus(value, fallback = "open") {
@@ -6364,6 +4914,155 @@ async function handleDriversRoute(
 
   return null;
 }
+
+const authSecurityHelpers = createAuthSecurityHelpers({
+  HttpError,
+  DEFAULT_REALTIME_TENANT_ID,
+  WEB_LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
+  WEB_LOGIN_RATE_LIMIT_LOCKOUT_SECONDS,
+  WEB_PASSWORD_VERIFY_RATE_LIMIT_MAX_ATTEMPTS,
+  WEB_PASSWORD_VERIFY_RATE_LIMIT_LOCKOUT_SECONDS,
+  WEB_AUTH_ALLOW_INSECURE_FALLBACK_ENV,
+  AUTH_NONCE_TTL_SECONDS,
+  AUTH_NONCE_PATTERN,
+  AUTH_NONCE_MAX_LENGTH,
+  MAX_AUTH_INMEM_NONCE_TRACKED,
+  normalizeOptionalString,
+  normalizeRealtimeTenantId,
+  normalizeWebUsername,
+  nowUnixSeconds,
+  sha256Hex,
+  sanitizeStorageSegment,
+  logAuditEvent,
+});
+
+const {
+  getClientIpForRateLimit,
+  buildWebLoginRateLimitIdentifier,
+  buildWebBootstrapRateLimitIdentifier,
+  buildWebPasswordVerifyRateLimitIdentifier,
+  buildWebAuthFailureAuditDetails,
+  logWebAuditEvent,
+  consumeAuthReplayNonce,
+  checkWebLoginRateLimit,
+  recordFailedWebLoginAttempt,
+  clearWebLoginRateLimit,
+  checkWebPasswordVerifyRateLimit,
+  recordFailedWebPasswordVerifyAttempt,
+  clearWebPasswordVerifyRateLimit,
+} = authSecurityHelpers;
+
+const webSessionHelpers = createWebSessionHelpers({
+  HttpError,
+  DEFAULT_REALTIME_TENANT_ID,
+  WEB_DEFAULT_ROLE,
+  WEB_BEARER_TOKEN_TYPE,
+  WEB_ACCESS_TTL_SECONDS,
+  WEB_SESSION_COOKIE_NAME,
+  WEB_SESSION_STORE_TTL_SECONDS,
+  normalizeOptionalString,
+  normalizeRealtimeTenantId,
+  nowUnixSeconds,
+  normalizeWebUsername,
+  hmacSha256Hex,
+  timingSafeEqual,
+  base64UrlEncodeUtf8,
+  base64UrlDecodeUtf8,
+  serializeWebUser,
+  getWebUserById,
+  getWebUserByUsername,
+  ensureDbBinding,
+  normalizeActiveFlag,
+});
+
+const {
+  ensureWebSessionSecret,
+  buildWebSessionCookie,
+  buildWebSessionCookieClearHeader,
+  rotateWebSessionVersion,
+  invalidateWebSessionVersion,
+  buildWebSessionAuthPayload,
+  buildWebSessionStatusPayload,
+  buildWebAccessToken,
+  verifyWebAccessToken,
+  resolveCurrentWebSessionUser,
+} = webSessionHelpers;
+
+const { verifyAuth: verifyLegacyAuth } = createLegacyAuthHelpers({
+  HttpError,
+  LEGACY_API_TENANT_ENV_NAME,
+  AUTH_WINDOW_SECONDS,
+  AUTH_NONCE_PATTERN,
+  AUTH_NONCE_MAX_LENGTH,
+  MAX_AUTH_INMEM_BODY_HASH_BYTES,
+  EMPTY_BODY_SHA256_HEX,
+  normalizeOptionalString,
+  normalizeRealtimeTenantId,
+  nowUnixSeconds,
+  timingSafeEqual,
+  sha256Hex,
+  hmacSha256Hex,
+  consumeAuthReplayNonce,
+});
+
+const webAuthRouteHandlers = createWebAuthRouteHandlers({
+  HttpError,
+  DEFAULT_REALTIME_TENANT_ID,
+  WEB_DEFAULT_ROLE,
+  MAX_WEB_AUTH_DEFAULT_BODY_BYTES,
+  MAX_WEB_AUTH_IMPORT_BODY_BYTES,
+  jsonResponse,
+  normalizeOptionalString,
+  normalizeRealtimeTenantId,
+  parsePageLimit,
+  parseUsernameIdCursor,
+  readJsonOrThrowBadRequest,
+  ensureWebSessionSecret,
+  normalizeWebUsername,
+  validateWebUsername,
+  buildWebLoginRateLimitIdentifier,
+  buildWebBootstrapRateLimitIdentifier,
+  ensureDbBinding,
+  checkWebLoginRateLimit,
+  authenticateWebUserByCredentials,
+  recordFailedWebLoginAttempt,
+  logWebAuditEvent,
+  buildWebAuthFailureAuditDetails,
+  clearWebLoginRateLimit,
+  rotateWebSessionVersion,
+  buildWebAccessToken,
+  buildWebSessionAuthPayload,
+  buildWebSessionCookie,
+  verifyWebAccessToken,
+  buildWebPasswordVerifyRateLimitIdentifier,
+  checkWebPasswordVerifyRateLimit,
+  verifyCurrentWebUserPassword,
+  recordFailedWebPasswordVerifyAttempt,
+  clearWebPasswordVerifyRateLimit,
+  countWebUsers,
+  timingSafeEqual,
+  validateWebPassword,
+  normalizeWebRole,
+  createWebUser,
+  canManageAllTenants,
+  listWebUsers,
+  requireAdminRole,
+  assertSameTenantOrSuperAdmin,
+  getWebUserById,
+  parsePositiveInt,
+  parseBooleanOrNull,
+  normalizeActiveFlag,
+  updateWebUserRoleAndStatus,
+  invalidateWebSessionVersion,
+  serializeWebUser,
+  forceResetWebUserPassword,
+  normalizeImportedWebUser,
+  upsertWebUserFromImport,
+  buildWebSessionCookieClearHeader,
+  resolveCurrentWebSessionUser,
+  buildWebSessionStatusPayload,
+});
+
 const systemRouteHandlers = createSystemRouteHandlers({
   jsonResponse,
 });
@@ -6548,7 +5247,12 @@ export default {
         return sseEventsResponse;
       }
       if (isWebRoute) {
-        const webAuthResponse = await handleWebAuthRoute(request, env, routeParts, corsPolicy);
+        const webAuthResponse = await webAuthRouteHandlers.handleWebAuthRoute(
+          request,
+          env,
+          routeParts,
+          corsPolicy,
+        );
         if (webAuthResponse) {
           return applyNoStoreHeaders(webAuthResponse);
         }
@@ -6564,7 +5268,7 @@ export default {
         webSession = await verifyWebAccessToken(request, env);
         realtimeTenantId = resolveRealtimeTenantId(request, webSession);
       } else {
-        realtimeTenantId = await verifyAuth(request, env, url);
+        realtimeTenantId = await verifyLegacyAuth(request, env, url);
       }
       const incidentsTenantId = normalizeRealtimeTenantId(
         isWebRoute ? webSession?.tenant_id : realtimeTenantId,
@@ -6799,3 +5503,4 @@ export default {
     }
   },
 };
+
