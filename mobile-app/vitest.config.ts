@@ -15,6 +15,7 @@ export default defineConfig({
     ],
   },
   test: {
+    setupFiles: ["./test/setup.ts"],
     server: {
       deps: {
         inline: [/^@testing-library\/react-native/, /^react-native/],

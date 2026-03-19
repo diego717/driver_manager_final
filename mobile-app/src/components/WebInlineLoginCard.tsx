@@ -11,6 +11,7 @@ import {
 
 import { extractApiError } from "@/src/api/client";
 import { loginWebSession } from "@/src/api/webAuth";
+import { refreshSharedWebSessionState } from "@/src/session/web-session-store";
 import { getStoredWebAccessUsername } from "@/src/storage/secure";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
@@ -33,7 +34,8 @@ export default function WebInlineLoginCard(props: WebInlineLoginCardProps) {
   const [feedback, setFeedback] = useState("");
   const [focusedField, setFocusedField] = useState<"username" | "password" | null>(null);
   const successFeedback = feedback.toLowerCase().includes("sesion iniciada");
-  const focusRingColor = palette.accent === "#1ab3a7" ? "rgba(26, 179, 167, 0.22)" : "rgba(11, 109, 102, 0.18)";
+  const focusRingColor =
+    palette.accent === "#4fd2c2" ? "rgba(79, 210, 194, 0.22)" : "rgba(15, 139, 132, 0.18)";
 
   useEffect(() => {
     let mounted = true;
@@ -62,6 +64,7 @@ export default function WebInlineLoginCard(props: WebInlineLoginCardProps) {
       setSubmitting(true);
       setFeedback("");
       const login = await loginWebSession(normalizedUsername, password);
+      await refreshSharedWebSessionState();
       setPassword("");
       setFeedback(`Sesion iniciada: ${login.user.username}`);
       await onLoginSuccess();
@@ -84,11 +87,21 @@ export default function WebInlineLoginCard(props: WebInlineLoginCardProps) {
       ]}
     >
       <View style={[styles.header, isCompact && styles.headerCompact]}>
-        <Text style={[styles.brand, isCompact && styles.brandCompact, { color: palette.accent }]}>
-          SiteOps
-        </Text>
+        <View
+          style={[
+            styles.brandPill,
+            {
+              backgroundColor: palette.heroEyebrowBg,
+              borderColor: palette.heroBorder,
+            },
+          ]}
+        >
+          <Text style={[styles.brand, isCompact && styles.brandCompact, { color: palette.heroEyebrowText }]}>
+            SiteOps Mobile
+          </Text>
+        </View>
         <Text style={[styles.title, isCompact && styles.titleCompact, { color: palette.textPrimary }]}>
-          Iniciar sesion
+          Acceso seguro
         </Text>
         <Text style={[styles.hint, isCompact && styles.hintCompact, { color: palette.textSecondary }]}>
           {hint}
@@ -177,12 +190,12 @@ export default function WebInlineLoginCard(props: WebInlineLoginCardProps) {
           ]}
         >
           <Text
-          style={[
-            styles.feedback,
-            isCompact && styles.feedbackCompact,
-            { color: successFeedback ? palette.successText : palette.errorText },
-          ]}
-        >
+            style={[
+              styles.feedback,
+              isCompact && styles.feedbackCompact,
+              { color: successFeedback ? palette.successText : palette.errorText },
+            ]}
+          >
             {feedback}
           </Text>
         </View>
@@ -263,13 +276,13 @@ const styles = StyleSheet.create({
     maxWidth: 420,
     alignSelf: "center",
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 24,
     paddingHorizontal: 18,
-    paddingVertical: 16,
+    paddingVertical: 18,
     gap: 12,
   },
   cardCompact: {
-    borderRadius: 14,
+    borderRadius: 20,
     paddingHorizontal: 14,
     paddingVertical: 14,
     gap: 10,
@@ -283,25 +296,31 @@ const styles = StyleSheet.create({
     gap: 3,
     marginBottom: 0,
   },
+  brandPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
   brand: {
     fontFamily: fontFamilies.bold,
-    fontSize: 13.5,
+    fontSize: 11.5,
     letterSpacing: 0.7,
     textTransform: "uppercase",
   },
   brandCompact: {
-    fontSize: 12,
+    fontSize: 10.5,
     letterSpacing: 0.55,
   },
   title: {
-    fontSize: 31,
+    fontSize: 32,
     fontFamily: fontFamilies.bold,
     textAlign: "center",
-    lineHeight: 35,
+    lineHeight: 36,
   },
   titleCompact: {
-    fontSize: 27,
-    lineHeight: 31,
+    fontSize: 28,
+    lineHeight: 32,
   },
   hint: {
     fontSize: 13,
@@ -341,9 +360,9 @@ const styles = StyleSheet.create({
   },
   feedbackBox: {
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   feedback: {
     fontSize: 12,
@@ -365,15 +384,15 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     flex: 1,
-    borderRadius: 12,
-    minHeight: 46,
+    borderRadius: 14,
+    minHeight: 48,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
   },
   buttonCompact: {
     minHeight: 44,
-    borderRadius: 11,
+    borderRadius: 12,
     paddingVertical: 10,
   },
   primaryButtonText: {
@@ -385,9 +404,9 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     flex: 1,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
-    minHeight: 46,
+    minHeight: 48,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,

@@ -20,6 +20,9 @@ import {
   fetchIncidentPhotoDataUri,
   type IncidentPhotoPreviewTarget,
 } from "@/src/api/photos";
+import EmptyStateCard from "@/src/components/EmptyStateCard";
+import ScreenHero from "@/src/components/ScreenHero";
+import ScreenScaffold from "@/src/components/ScreenScaffold";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 import { type Incident } from "@/src/types/api";
@@ -279,10 +282,31 @@ export default function IncidentDetailScreen() {
   );
 
   return (
-    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
+    <ScreenScaffold contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: "Detalle incidencia" }} />
 
-      <Text style={[styles.title, { color: palette.textPrimary }]}>Incidencia #{incidentIdText || "N/A"}</Text>
+      <ScreenHero
+        eyebrow="Seguimiento"
+        title={`Incidencia #${incidentIdText || "N/A"}`}
+        description="Consulta el estado operativo, revisa evidencia y resuelve la incidencia sin salir del contexto de instalacion."
+        aside={
+          incident ? (
+            <View
+              style={[
+                styles.heroBadge,
+                {
+                  backgroundColor: palette.heroEyebrowBg,
+                  borderColor: palette.heroBorder,
+                },
+              ]}
+            >
+              <Text style={[styles.heroBadgeText, { color: palette.heroEyebrowText }]}>
+                {incidentStatusLabel(incident.incident_status)}
+              </Text>
+            </View>
+          ) : null
+        }
+      />
 
       <View style={styles.topRow}>
         <TouchableOpacity
@@ -401,9 +425,10 @@ export default function IncidentDetailScreen() {
                 </Text>
               ))
             ) : (
-              <Text style={[styles.hintText, { color: palette.textMuted }]}>
-                Sin checklist guardado.
-              </Text>
+              <EmptyStateCard
+                title="Sin checklist guardado."
+                body="Todavia no se registro una validacion guiada para esta incidencia."
+              />
             )}
             <Text style={[styles.cardTitle, { color: palette.textPrimary, marginTop: 10 }]}>Nota operativa</Text>
             <Text style={[styles.cardText, { color: palette.textSecondary }]}>
@@ -414,7 +439,10 @@ export default function IncidentDetailScreen() {
           <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
             <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>Fotos ({incident.photos?.length ?? 0})</Text>
             {!incident.photos?.length ? (
-              <Text style={[styles.hintText, { color: palette.textMuted }]}>Esta incidencia aun no tiene fotos adjuntas.</Text>
+              <EmptyStateCard
+                title="Esta incidencia aun no tiene fotos adjuntas."
+                body="Usa la accion principal para agregar evidencia fotografica desde el dispositivo."
+              />
             ) : (
               <FlatList
                 testID="incident-photos-list"
@@ -443,7 +471,7 @@ export default function IncidentDetailScreen() {
           </TouchableOpacity>
         </>
       ) : null}
-    </ScrollView>
+    </ScreenScaffold>
   );
 }
 
@@ -452,9 +480,16 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 10,
   },
-  title: {
-    fontSize: 24,
+  heroBadge: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  heroBadgeText: {
     fontFamily: fontFamilies.bold,
+    fontSize: 11.5,
+    letterSpacing: 0.3,
   },
   topRow: {
     flexDirection: "row",
@@ -463,7 +498,7 @@ const styles = StyleSheet.create({
   refreshButton: {
     flex: 1,
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 14,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
@@ -474,7 +509,7 @@ const styles = StyleSheet.create({
   },
   backButton: {
     flex: 1,
-    borderRadius: 10,
+    borderRadius: 14,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
@@ -490,7 +525,7 @@ const styles = StyleSheet.create({
   },
   feedbackBox: {
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: 14,
     paddingHorizontal: 10,
     paddingVertical: 8,
   },
@@ -500,9 +535,9 @@ const styles = StyleSheet.create({
   },
   card: {
     borderWidth: 1,
-    borderRadius: 10,
-    padding: 12,
-    gap: 6,
+    borderRadius: 18,
+    padding: 14,
+    gap: 8,
   },
   cardTitle: {
     fontFamily: fontFamilies.bold,
@@ -520,7 +555,7 @@ const styles = StyleSheet.create({
   statusButton: {
     flex: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 10,
+    borderRadius: 14,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
@@ -532,7 +567,7 @@ const styles = StyleSheet.create({
   },
   resolutionInput: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 14,
     minHeight: MIN_TOUCH_TARGET_SIZE * 1.4,
     marginTop: 6,
     paddingHorizontal: 10,
@@ -547,7 +582,7 @@ const styles = StyleSheet.create({
   },
   photoItem: {
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: 14,
     paddingHorizontal: 10,
     paddingVertical: 8,
     gap: 3,

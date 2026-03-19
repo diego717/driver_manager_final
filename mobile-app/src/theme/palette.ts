@@ -28,6 +28,16 @@ interface ThemeTokens {
   panelWarning: string;
   panelError: string;
   modalOverlay: string;
+  ambientPrimary: string;
+  ambientSecondary: string;
+  ambientTertiary: string;
+  heroBg: string;
+  heroBorder: string;
+  heroEyebrowBg: string;
+  heroEyebrowText: string;
+  headerSurface: string;
+  tabBarSurface: string;
+  shadowColor: string;
 }
 
 export interface AppPalette {
@@ -117,56 +127,90 @@ export interface AppPalette {
   severitySelectedLabel: string;
   severitySelectedCriteria: string;
   overlayBg: string;
+  ambientPrimary: string;
+  ambientSecondary: string;
+  ambientTertiary: string;
+  heroBg: string;
+  heroBorder: string;
+  heroEyebrowBg: string;
+  heroEyebrowText: string;
+  heroTitle: string;
+  heroText: string;
+  headerSurface: string;
+  tabBarSurface: string;
+  navActiveBg: string;
+  navActiveText: string;
+  shadowColor: string;
 }
 
 const TOKENS: Record<AppThemeScheme, ThemeTokens> = {
   light: {
-    bgPrimary: "#f5f7fa",
-    bgSecondary: "#ffffff",
-    bgCard: "#eceff4",
-    bgHover: "#dbe2ea",
-    textPrimary: "#1a1d23",
-    textSecondary: "#445264",
-    textMuted: "#6d7890",
+    bgPrimary: "#eef4f6",
+    bgSecondary: "#fbfdfe",
+    bgCard: "#e7eef1",
+    bgHover: "#d7e2e7",
+    textPrimary: "#17232d",
+    textSecondary: "#4a5f70",
+    textMuted: "#708292",
     textInverse: "#ffffff",
-    accentPrimary: "#0b6d66",
-    accentSecondary: "#16a39a",
-    success: "#0d9f6e",
-    warning: "#8a4600",
+    accentPrimary: "#0f8b84",
+    accentSecondary: "#48b89d",
+    success: "#0f9968",
+    warning: "#8f570a",
     error: "#b42318",
     info: "#2563eb",
-    border: "#cfd6df",
-    sidebarActiveBg: "rgba(11, 109, 102, 0.14)",
-    sidebarActiveText: "#0b6d66",
+    border: "#c7d6dd",
+    sidebarActiveBg: "rgba(15, 139, 132, 0.14)",
+    sidebarActiveText: "#0f7f79",
     panelInfo: "rgba(37, 99, 235, 0.12)",
-    panelSuccess: "rgba(13, 159, 110, 0.12)",
-    panelWarning: "rgba(138, 70, 0, 0.16)",
+    panelSuccess: "rgba(15, 153, 104, 0.12)",
+    panelWarning: "rgba(143, 87, 10, 0.16)",
     panelError: "rgba(180, 35, 24, 0.14)",
-    modalOverlay: "rgba(0, 0, 0, 0.45)",
+    modalOverlay: "rgba(10, 20, 28, 0.44)",
+    ambientPrimary: "rgba(15, 139, 132, 0.16)",
+    ambientSecondary: "rgba(72, 184, 157, 0.12)",
+    ambientTertiary: "rgba(37, 99, 235, 0.08)",
+    heroBg: "rgba(251, 253, 254, 0.94)",
+    heroBorder: "rgba(15, 139, 132, 0.18)",
+    heroEyebrowBg: "rgba(15, 139, 132, 0.1)",
+    heroEyebrowText: "#0f7f79",
+    headerSurface: "rgba(248, 251, 252, 0.96)",
+    tabBarSurface: "rgba(251, 253, 254, 0.94)",
+    shadowColor: "#10202d",
   },
   dark: {
-    bgPrimary: "#0f1117",
-    bgSecondary: "#1a1d27",
-    bgCard: "#262c38",
-    bgHover: "#333a48",
-    textPrimary: "#eef0f4",
-    textSecondary: "#a4afc1",
-    textMuted: "#778199",
-    textInverse: "#0f1117",
-    accentPrimary: "#1ab3a7",
-    accentSecondary: "#35d9c8",
+    bgPrimary: "#11161c",
+    bgSecondary: "#182229",
+    bgCard: "#223039",
+    bgHover: "#2a3d47",
+    textPrimary: "#ecf4f5",
+    textSecondary: "#b1c2c8",
+    textMuted: "#869aa3",
+    textInverse: "#11161c",
+    accentPrimary: "#4fd2c2",
+    accentSecondary: "#8de0be",
     success: "#10b981",
-    warning: "#fbbf24",
-    error: "#f87171",
+    warning: "#f7c45b",
+    error: "#fca5a5",
     info: "#3b82f6",
-    border: "#3b4353",
-    sidebarActiveBg: "rgba(26, 179, 167, 0.22)",
-    sidebarActiveText: "#5ce6d8",
+    border: "#34515d",
+    sidebarActiveBg: "rgba(79, 210, 194, 0.2)",
+    sidebarActiveText: "#9af0e0",
     panelInfo: "rgba(59, 130, 246, 0.15)",
     panelSuccess: "rgba(16, 185, 129, 0.15)",
-    panelWarning: "rgba(251, 191, 36, 0.2)",
+    panelWarning: "rgba(247, 196, 91, 0.18)",
     panelError: "rgba(248, 113, 113, 0.18)",
-    modalOverlay: "rgba(0, 0, 0, 0.7)",
+    modalOverlay: "rgba(4, 10, 14, 0.72)",
+    ambientPrimary: "rgba(79, 210, 194, 0.18)",
+    ambientSecondary: "rgba(141, 224, 190, 0.12)",
+    ambientTertiary: "rgba(59, 130, 246, 0.1)",
+    heroBg: "rgba(24, 34, 41, 0.96)",
+    heroBorder: "rgba(79, 210, 194, 0.2)",
+    heroEyebrowBg: "rgba(79, 210, 194, 0.14)",
+    heroEyebrowText: "#9af0e0",
+    headerSurface: "rgba(21, 29, 36, 0.98)",
+    tabBarSurface: "rgba(24, 34, 41, 0.96)",
+    shadowColor: "#020608",
   },
 };
 
@@ -258,6 +302,20 @@ function createPalette(tokens: ThemeTokens): AppPalette {
     severitySelectedLabel: tokens.sidebarActiveText,
     severitySelectedCriteria: tokens.textSecondary,
     overlayBg: tokens.modalOverlay,
+    ambientPrimary: tokens.ambientPrimary,
+    ambientSecondary: tokens.ambientSecondary,
+    ambientTertiary: tokens.ambientTertiary,
+    heroBg: tokens.heroBg,
+    heroBorder: tokens.heroBorder,
+    heroEyebrowBg: tokens.heroEyebrowBg,
+    heroEyebrowText: tokens.heroEyebrowText,
+    heroTitle: tokens.textPrimary,
+    heroText: tokens.textSecondary,
+    headerSurface: tokens.headerSurface,
+    tabBarSurface: tokens.tabBarSurface,
+    navActiveBg: tokens.sidebarActiveBg,
+    navActiveText: tokens.sidebarActiveText,
+    shadowColor: tokens.shadowColor,
   };
 }
 
@@ -305,7 +363,7 @@ export function getNavigationTheme(scheme: AppThemeScheme): Theme {
       ...baseTheme.colors,
       primary: palette.accent,
       background: palette.screenBg,
-      card: palette.surface,
+      card: palette.headerSurface,
       text: palette.textPrimary,
       border: palette.border,
       notification: palette.error,

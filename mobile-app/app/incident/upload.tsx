@@ -21,6 +21,8 @@ import {
 import { uploadIncidentPhoto } from "@/src/api/photos";
 import { updateIncidentEvidence } from "@/src/api/incidents";
 import { extractApiError } from "@/src/api/client";
+import ScreenHero from "@/src/components/ScreenHero";
+import ScreenScaffold from "@/src/components/ScreenScaffold";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -575,13 +577,33 @@ export default function UploadIncidentPhotoScreen() {
   });
 
   return (
-    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}>
+    <ScreenScaffold contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: "Evidencia guiada" }} />
 
-      <Text style={[styles.title, { color: palette.textPrimary }]}>Asistente de evidencia</Text>
-      <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
-        Paso {step + 1} de 4: {STEP_TITLES[step]}
-      </Text>
+      <ScreenHero
+        eyebrow="Wizard movil"
+        title="Asistente de evidencia"
+        description="Checklist, nota, fotos y confirmacion en un flujo corto para no perder ritmo operativo en Android."
+        aside={
+          <View
+            style={[
+              styles.heroBadge,
+              {
+                backgroundColor: palette.heroEyebrowBg,
+                borderColor: palette.heroBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.heroBadgeText, { color: palette.heroEyebrowText }]}>
+              Paso {step + 1}/4
+            </Text>
+          </View>
+        }
+      >
+        <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
+          Paso {step + 1} de 4: {STEP_TITLES[step]}
+        </Text>
+      </ScreenHero>
       <View
         style={styles.progressWrap}
         accessibilityRole="progressbar"
@@ -833,7 +855,7 @@ export default function UploadIncidentPhotoScreen() {
           <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>Siguiente</Text>
         </TouchableOpacity>
       </View>
-    </ScrollView>
+    </ScreenScaffold>
   );
 }
 
@@ -842,9 +864,16 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 12,
   },
-  title: {
-    fontSize: 24,
+  heroBadge: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  heroBadgeText: {
     fontFamily: fontFamilies.bold,
+    fontSize: 11.5,
+    letterSpacing: 0.3,
   },
   subtitle: {
     fontSize: 13,
@@ -884,7 +913,7 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
@@ -898,7 +927,7 @@ const styles = StyleSheet.create({
   },
   checkItem: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 12,
   },
@@ -914,7 +943,7 @@ const styles = StyleSheet.create({
   secondaryButton: {
     flex: 1,
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 14,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
@@ -925,7 +954,7 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     flex: 1,
-    borderRadius: 10,
+    borderRadius: 14,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
@@ -940,7 +969,7 @@ const styles = StyleSheet.create({
   },
   previewCard: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 16,
     padding: 10,
     gap: 8,
   },

@@ -4,7 +4,6 @@ import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
   Alert,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -12,14 +11,21 @@ import {
   View,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
+import * as WebBrowser from "expo-web-browser";
 
-import { deleteDriver, listDrivers, uploadDriver, type DriverRecord } from "@/src/api/drivers";
+import {
+  deleteDriver,
+  listDrivers,
+  resolveDriverDownloadUrl,
+  uploadDriver,
+  type DriverRecord,
+} from "@/src/api/drivers";
 import { extractApiError } from "@/src/api/client";
-import { clearWebSession, readStoredWebSession } from "@/src/api/webAuth";
-import { evaluateWebSession } from "@/src/api/webSession";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
-import { consumeForceLoginOnOpenFlag } from "@/src/security/startup-session-policy";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
+import ScreenHero from "@/src/components/ScreenHero";
+import ScreenScaffold from "@/src/components/ScreenScaffold";
+import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -50,17 +56,17 @@ export default function DriversScreen() {
   const palette = useAppPalette();
   const router = useRouter();
 
-  const [checkingSession, setCheckingSession] = useState(true);
-  const [hasActiveSession, setHasActiveSession] = useState(false);
   const [drivers, setDrivers] = useState<DriverRecord[]>([]);
   const [loadingDrivers, setLoadingDrivers] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [deletingKey, setDeletingKey] = useState("");
+  const [downloadingKey, setDownloadingKey] = useState("");
   const [feedback, setFeedback] = useState<FeedbackState>(null);
   const [brand, setBrand] = useState("");
   const [version, setVersion] = useState("");
   const [description, setDescription] = useState("");
   const [pickedFile, setPickedFile] = useState<PickedFile | null>(null);
+  const { checkingSession, hasActiveSession } = useSharedWebSessionState();
 
   const selectedFileLabel = useMemo(() => {
     if (!pickedFile) return "Sin archivo seleccionado";
@@ -72,46 +78,22 @@ export default function DriversScreen() {
     setFeedback({ message, tone });
   }, []);
 
-  const refreshSessionState = useCallback(async (options?: { showLoader?: boolean }) => {
-    const showLoader = options?.showLoader === true;
-    if (showLoader) setCheckingSession(true);
-
-    try {
-      if (consumeForceLoginOnOpenFlag()) {
-        await clearWebSession();
-      }
-      const storedSession = await readStoredWebSession();
-      const resolved = evaluateWebSession(storedSession.accessToken, storedSession.expiresAt);
-      if (resolved.state === "expired") {
-        await clearWebSession();
-      }
-      const isActive = resolved.state === "active";
-      setHasActiveSession(isActive);
-      if (!isActive) {
-        setDrivers([]);
-      }
-      return isActive;
-    } finally {
-      if (showLoader) setCheckingSession(false);
-    }
-  }, []);
-
   const loadDrivers = useCallback(async () => {
-    if (!(await refreshSessionState())) return;
+    if (!hasActiveSession) return;
 
     try {
       setLoadingDrivers(true);
       const items = await listDrivers({ limit: DRIVER_LIST_LIMIT });
       setDrivers(items);
       if (!items.length) {
-        pushFeedback("Aún no hay drivers cargados para este tenant.", "info");
+        pushFeedback("Aun no hay drivers cargados para este tenant.", "info");
       }
     } catch (error) {
       pushFeedback(`No se pudieron cargar drivers: ${extractApiError(error)}`, "error");
     } finally {
       setLoadingDrivers(false);
     }
-  }, [pushFeedback, refreshSessionState]);
+  }, [hasActiveSession, pushFeedback]);
 
   const onPickFile = useCallback(async () => {
     try {
@@ -137,8 +119,8 @@ export default function DriversScreen() {
   }, [pushFeedback]);
 
   const onUpload = useCallback(async () => {
-    if (!(await refreshSessionState())) {
-      pushFeedback("Sesión requerida. Inicia sesión web en Configuración y acceso.", "warning");
+    if (!hasActiveSession) {
+      pushFeedback("Sesion requerida. Inicia sesion web en Configuracion y acceso.", "warning");
       router.push("/modal?focus=login");
       return;
     }
@@ -152,7 +134,7 @@ export default function DriversScreen() {
       return;
     }
     if (!String(version).trim()) {
-      pushFeedback("La versión es obligatoria.", "warning");
+      pushFeedback("La version es obligatoria.", "warning");
       return;
     }
 
@@ -175,59 +157,82 @@ export default function DriversScreen() {
     } finally {
       setUploading(false);
     }
-  }, [brand, description, loadDrivers, pickedFile, pushFeedback, refreshSessionState, router, version]);
+  }, [brand, description, hasActiveSession, loadDrivers, pickedFile, pushFeedback, router, version]);
 
-  const onDelete = useCallback(async (driver: DriverRecord) => {
-    Alert.alert(
-      "Eliminar driver",
-      `Se eliminara ${driver.brand} ${driver.version}. Continuar?`,
-      [
-        { text: "Cancelar", style: "cancel" },
-        {
-          text: "Eliminar",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              setDeletingKey(driver.key);
-              await deleteDriver(driver.key);
-              await loadDrivers();
-              pushFeedback(`Driver eliminado: ${driver.brand} ${driver.version}`, "success");
-            } catch (error) {
-              pushFeedback(`No se pudo eliminar: ${extractApiError(error)}`, "error");
-            } finally {
-              setDeletingKey("");
-            }
+  const onDelete = useCallback(
+    async (driver: DriverRecord) => {
+      Alert.alert(
+        "Eliminar driver",
+        `Se eliminara ${driver.brand} ${driver.version}. Continuar?`,
+        [
+          { text: "Cancelar", style: "cancel" },
+          {
+            text: "Eliminar",
+            style: "destructive",
+            onPress: async () => {
+              try {
+                setDeletingKey(driver.key);
+                await deleteDriver(driver.key);
+                await loadDrivers();
+                pushFeedback(`Driver eliminado: ${driver.brand} ${driver.version}`, "success");
+              } catch (error) {
+                pushFeedback(`No se pudo eliminar: ${extractApiError(error)}`, "error");
+              } finally {
+                setDeletingKey("");
+              }
+            },
           },
-        },
-      ],
-    );
-  }, [loadDrivers, pushFeedback]);
+        ],
+      );
+    },
+    [loadDrivers, pushFeedback],
+  );
+
+  const onDownload = useCallback(
+    async (driver: DriverRecord) => {
+      try {
+        setDownloadingKey(driver.key);
+        const targetUrl = await resolveDriverDownloadUrl(driver);
+        await WebBrowser.openBrowserAsync(targetUrl);
+        pushFeedback(`Abriendo descarga: ${driver.brand} ${driver.version}`, "info");
+      } catch (error) {
+        pushFeedback(`No se pudo abrir la descarga: ${extractApiError(error)}`, "error");
+      } finally {
+        setDownloadingKey("");
+      }
+    },
+    [pushFeedback],
+  );
 
   useEffect(() => {
-    void refreshSessionState({ showLoader: true }).then((active) => {
-      if (!active) return;
-      void loadDrivers();
-    });
-  }, [loadDrivers, refreshSessionState]);
+    if (!hasActiveSession) {
+      setDrivers([]);
+      return;
+    }
+    void loadDrivers();
+  }, [hasActiveSession, loadDrivers]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!hasActiveSession) {
+        return;
+      }
       void loadDrivers();
-    }, [loadDrivers]),
+    }, [hasActiveSession, loadDrivers]),
   );
 
   if (checkingSession) {
     return (
-      <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
+      <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
         <ActivityIndicator size="large" color={palette.loadingSpinner} />
-        <Text style={[styles.hintText, { color: palette.textSecondary }]}>Verificando sesión...</Text>
-      </View>
+        <Text style={[styles.hintText, { color: palette.textSecondary }]}>Verificando sesion...</Text>
+      </ScreenScaffold>
     );
   }
 
   if (!hasActiveSession) {
     return (
-      <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
+      <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
         <WebInlineLoginCard
           hint="Inicia sesion web para gestionar drivers en R2."
           onLoginSuccess={async () => {
@@ -235,22 +240,36 @@ export default function DriversScreen() {
           }}
           onOpenAdvanced={() => router.push("/modal?focus=login")}
         />
-      </View>
+      </ScreenScaffold>
     );
   }
 
   return (
-    <ScrollView
-      contentContainerStyle={[styles.container, { backgroundColor: palette.screenBg }]}
-      keyboardShouldPersistTaps="handled"
+    <ScreenScaffold
+      contentContainerStyle={styles.container}
+      scrollViewProps={{ keyboardShouldPersistTaps: "handled" }}
     >
-      <Text style={[styles.title, { color: palette.textPrimary }]}>Drivers R2</Text>
-      <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
-        Sube paquetes de drivers al bucket R2 y mantenlos disponibles por marca/versión.
-      </Text>
-      {feedback ? (
-        <InlineFeedback message={feedback.message} tone={feedback.tone} />
-      ) : null}
+      <ScreenHero
+        eyebrow="Repositorio movil"
+        title="Drivers R2"
+        description="Mantiene paquetes de instalacion listos para soporte en campo, con una jerarquia mas clara entre carga y consulta."
+        aside={
+          <View
+            style={[
+              styles.heroBadge,
+              {
+                backgroundColor: palette.heroEyebrowBg,
+                borderColor: palette.heroBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.heroBadgeText, { color: palette.heroEyebrowText }]}>
+              {drivers.length} items
+            </Text>
+          </View>
+        }
+      />
+      {feedback ? <InlineFeedback message={feedback.message} tone={feedback.tone} /> : null}
 
       <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
         <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Subir driver</Text>
@@ -266,7 +285,7 @@ export default function DriversScreen() {
           placeholderTextColor={palette.placeholder}
         />
 
-        <Text style={[styles.label, { color: palette.label }]}>Versión</Text>
+        <Text style={[styles.label, { color: palette.label }]}>Version</Text>
         <TextInput
           value={version}
           onChangeText={setVersion}
@@ -278,7 +297,7 @@ export default function DriversScreen() {
           placeholderTextColor={palette.placeholder}
         />
 
-        <Text style={[styles.label, { color: palette.label }]}>Descripción (opcional)</Text>
+        <Text style={[styles.label, { color: palette.label }]}>Descripcion (opcional)</Text>
         <TextInput
           value={description}
           onChangeText={setDescription}
@@ -358,10 +377,10 @@ export default function DriversScreen() {
             ]}
           >
             <Text style={[styles.emptyStateTitle, { color: palette.textPrimary }]}>
-              Aún no hay drivers cargados
+              Aun no hay drivers cargados
             </Text>
             <Text style={[styles.hintText, { color: palette.textSecondary }]}>
-              Sube el primer paquete para habilitar instalaciones por marca y versión.
+              Sube el primer paquete para habilitar instalaciones por marca y version.
             </Text>
             <TouchableOpacity
               style={[styles.secondaryButtonCompact, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
@@ -387,35 +406,57 @@ export default function DriversScreen() {
                     {driver.brand} - {driver.version}
                   </Text>
                   <Text style={[styles.driverMeta, { color: palette.textSecondary }]}>
-                    {driver.filename} • {formatBytes(driver.size_bytes)}
+                    {driver.filename} - {formatBytes(driver.size_bytes)}
                   </Text>
                   <Text style={[styles.driverMeta, { color: palette.textMuted }]}>
                     {driver.last_modified || driver.uploaded || "-"}
                   </Text>
                 </View>
 
-                <TouchableOpacity
-                  style={[styles.deleteButton, { backgroundColor: palette.errorBg }]}
-                  onPress={() => {
-                    void onDelete(driver);
-                  }}
-                  disabled={deletingKey === driver.key}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Eliminar driver ${driver.brand} ${driver.version}`}
-                  activeOpacity={0.86}
-                >
-                  {deletingKey === driver.key ? (
-                    <ActivityIndicator size="small" color={palette.errorText} />
-                  ) : (
-                    <Text style={[styles.deleteButtonText, { color: palette.errorText }]}>Eliminar</Text>
-                  )}
-                </TouchableOpacity>
+                <View style={styles.driverActions}>
+                  <TouchableOpacity
+                    style={[
+                      styles.actionButton,
+                      { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+                    ]}
+                    onPress={() => {
+                      void onDownload(driver);
+                    }}
+                    disabled={downloadingKey === driver.key}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Descargar driver ${driver.brand} ${driver.version}`}
+                    activeOpacity={0.86}
+                  >
+                    {downloadingKey === driver.key ? (
+                      <ActivityIndicator size="small" color={palette.refreshText} />
+                    ) : (
+                      <Text style={[styles.actionButtonText, { color: palette.refreshText }]}>Descargar</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: palette.errorBg }]}
+                    onPress={() => {
+                      void onDelete(driver);
+                    }}
+                    disabled={deletingKey === driver.key}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Eliminar driver ${driver.brand} ${driver.version}`}
+                    activeOpacity={0.86}
+                  >
+                    {deletingKey === driver.key ? (
+                      <ActivityIndicator size="small" color={palette.errorText} />
+                    ) : (
+                      <Text style={[styles.actionButtonText, { color: palette.errorText }]}>Eliminar</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
               </View>
             ))}
           </View>
         )}
       </View>
-    </ScrollView>
+    </ScreenScaffold>
   );
 }
 
@@ -423,7 +464,6 @@ const styles = StyleSheet.create({
   container: {
     padding: 22,
     gap: 14,
-    paddingBottom: 44,
   },
   centerContainer: {
     flex: 1,
@@ -431,30 +471,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  authCard: {
-    width: "100%",
+  heroBadge: {
     borderWidth: 1,
-    borderRadius: 14,
-    padding: 16,
-    gap: 10,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
   },
-  authTitle: {
-    fontSize: 21,
+  heroBadgeText: {
     fontFamily: fontFamilies.bold,
-  },
-  title: {
-    fontSize: 28,
-    fontFamily: fontFamilies.bold,
-  },
-  subtitle: {
-    fontSize: 14,
-    lineHeight: 20,
-    fontFamily: fontFamilies.regular,
+    fontSize: 11.5,
+    letterSpacing: 0.3,
   },
   card: {
     borderWidth: 1,
-    borderRadius: 14,
-    padding: 14,
+    borderRadius: 20,
+    padding: 16,
     gap: 10,
   },
   sectionTitle: {
@@ -468,7 +499,7 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 11,
     minHeight: 44,
@@ -479,7 +510,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   button: {
-    borderRadius: 12,
+    borderRadius: 14,
     minHeight: 46,
     alignItems: "center",
     justifyContent: "center",
@@ -495,7 +526,7 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     borderWidth: 1,
-    borderRadius: 11,
+    borderRadius: 14,
     minHeight: 44,
     alignItems: "center",
     justifyContent: "center",
@@ -504,7 +535,7 @@ const styles = StyleSheet.create({
   },
   secondaryButtonCompact: {
     borderWidth: 1,
-    borderRadius: 11,
+    borderRadius: 12,
     minHeight: 44,
     paddingHorizontal: 12,
     alignItems: "center",
@@ -522,7 +553,7 @@ const styles = StyleSheet.create({
   emptyStateWrap: {
     borderWidth: 1,
     borderStyle: "dashed",
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 12,
     gap: 9,
     alignItems: "flex-start",
@@ -542,7 +573,7 @@ const styles = StyleSheet.create({
   },
   driverRow: {
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 12,
     flexDirection: "row",
     alignItems: "center",
@@ -553,6 +584,9 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
+  driverActions: {
+    gap: 8,
+  },
   driverTitle: {
     fontSize: 14,
     fontFamily: fontFamilies.semibold,
@@ -561,8 +595,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: fontFamilies.regular,
   },
-  deleteButton: {
-    borderRadius: 10,
+  actionButton: {
+    borderRadius: 12,
+    borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 10,
     minHeight: 44,
@@ -570,7 +605,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  deleteButtonText: {
+  actionButtonText: {
     fontSize: 13,
     fontFamily: fontFamilies.bold,
   },

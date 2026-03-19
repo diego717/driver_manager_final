@@ -13,6 +13,8 @@ import {
 
 import { lookupCode } from "@/src/api/scan";
 import { extractApiError } from "@/src/api/client";
+import ScreenHero from "@/src/components/ScreenHero";
+import ScreenScaffold from "@/src/components/ScreenScaffold";
 import { parseScannedPayload } from "@/src/utils/scan";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
@@ -92,13 +94,31 @@ export default function ScanScreen() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: palette.screenBg }]}>
+    <ScreenScaffold contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: "Escanear codigo" }} />
 
-      <Text style={[styles.title, { color: palette.textPrimary }]}>Escanear QR / Codigo de barras</Text>
-      <Text style={[styles.subtitle, { color: palette.textSecondary }]}>Usa la camara o ingresa el codigo manualmente.</Text>
+      <ScreenHero
+        eyebrow="Captura en campo"
+        title="Escanear QR o codigo"
+        description="Prioriza el escaneo directo, pero mantiene un fallback manual para resolver instalaciones y equipos cuando la camara no alcanza."
+        aside={
+          <View
+            style={[
+              styles.heroBadge,
+              {
+                backgroundColor: palette.heroEyebrowBg,
+                borderColor: palette.heroBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.heroBadgeText, { color: palette.heroEyebrowText }]}>
+              {permission?.granted ? "camara lista" : "permiso pendiente"}
+            </Text>
+          </View>
+        }
+      />
 
-      <View style={[styles.cameraFrame, { borderColor: palette.cameraBorder }]}> 
+      <View style={[styles.cameraFrame, { borderColor: palette.cameraBorder, backgroundColor: palette.cardBg }]}>
         {permission?.granted ? (
           <CameraView
             style={StyleSheet.absoluteFill}
@@ -128,7 +148,7 @@ export default function ScanScreen() {
         ) : null}
       </View>
 
-      <View style={[styles.manualCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}> 
+      <View style={[styles.manualCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
         <Text style={[styles.label, { color: palette.textPrimary }]}>Fallback manual</Text>
         <TextInput
           value={manualCode}
@@ -150,7 +170,7 @@ export default function ScanScreen() {
           <Text style={[styles.primaryButtonText, { color: palette.buttonText }]}>Continuar con codigo</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </ScreenScaffold>
   );
 }
 
@@ -160,18 +180,21 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 12,
   },
-  title: {
-    fontSize: 22,
-    fontFamily: fontFamilies.bold,
+  heroBadge: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
   },
-  subtitle: {
-    fontSize: 14,
-    fontFamily: fontFamilies.regular,
+  heroBadgeText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 11.5,
+    letterSpacing: 0.3,
   },
   cameraFrame: {
     height: 300,
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 22,
     overflow: "hidden",
     position: "relative",
   },
@@ -198,8 +221,8 @@ const styles = StyleSheet.create({
   },
   manualCard: {
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 18,
+    padding: 14,
     gap: 10,
   },
   label: {
@@ -207,12 +230,12 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
   primaryButton: {
-    borderRadius: 10,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
@@ -221,7 +244,7 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bold,
   },
   secondaryButton: {
-    borderRadius: 10,
+    borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },

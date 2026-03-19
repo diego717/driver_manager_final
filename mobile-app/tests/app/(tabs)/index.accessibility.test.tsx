@@ -35,6 +35,13 @@ const routerMocks = vi.hoisted(() => ({
 const startupSessionPolicyMocks = vi.hoisted(() => ({
   consumeForceLoginOnOpenFlag: vi.fn(() => false),
 }));
+const webSessionStoreMocks = vi.hoisted(() => ({
+  useSharedWebSessionState: vi.fn(() => ({
+    checkingSession: false,
+    hasActiveSession: true,
+    lastCheckedAt: Date.now(),
+  })),
+}));
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const normalized = hex.replace("#", "").trim();
@@ -212,6 +219,7 @@ vi.mock("@/src/api/drivers", () => driversApiMocks);
 vi.mock("@/src/storage/secure", () => secureStorageMocks);
 vi.mock("@/src/api/webAuth", () => webAuthMocks);
 vi.mock("@/src/security/startup-session-policy", () => startupSessionPolicyMocks);
+vi.mock("@/src/session/web-session-store", () => webSessionStoreMocks);
 vi.mock("expo-document-picker", () => ({
   getDocumentAsync: vi.fn(async () => ({ canceled: true, assets: [] })),
 }));

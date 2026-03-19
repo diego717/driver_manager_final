@@ -23,11 +23,12 @@ import {
   listInstallations,
 } from "@/src/api/incidents";
 import { extractApiError } from "@/src/api/client";
-import { clearWebSession, readStoredWebSession } from "@/src/api/webAuth";
-import { evaluateWebSession } from "@/src/api/webSession";
-import { consumeForceLoginOnOpenFlag } from "@/src/security/startup-session-policy";
+import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { getStoredWebAccessUsername } from "@/src/storage/secure";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
+import EmptyStateCard from "@/src/components/EmptyStateCard";
+import ScreenHero from "@/src/components/ScreenHero";
+import ScreenScaffold from "@/src/components/ScreenScaffold";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
@@ -95,7 +96,6 @@ function recordAttentionStateLabel(value: unknown): string {
 
 export default function CreateIncidentScreen() {
   const router = useRouter();
-  const bottomSpacing = 112;
   const queryParams = useLocalSearchParams<{
     installationId?: string | string[];
     assetExternalCode?: string | string[];
@@ -133,12 +133,11 @@ export default function CreateIncidentScreen() {
   const [linkingAssetOnly, setLinkingAssetOnly] = useState(false);
   const [creatingManualRecord, setCreatingManualRecord] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<FeedbackState>(null);
-  const [checkingSession, setCheckingSession] = useState(true);
-  const [hasActiveSession, setHasActiveSession] = useState(false);
   const [lastCreatedIncidentId, setLastCreatedIncidentId] = useState<number | null>(null);
   const [lastCreatedInstallationId, setLastCreatedInstallationId] = useState<number | null>(null);
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleInstallations = useMemo(() => installations.slice(0, 30), [installations]);
+  const { checkingSession, hasActiveSession } = useSharedWebSessionState();
 
   const resolveFeedbackTone = (title: string): InlineFeedbackTone => {
     const normalized = String(title || "").trim().toLowerCase();
@@ -166,33 +165,8 @@ export default function CreateIncidentScreen() {
     }, 5000);
   };
 
-  const refreshSessionState = useCallback(async () => {
-    setCheckingSession(true);
-    try {
-      if (consumeForceLoginOnOpenFlag()) {
-        await clearWebSession();
-      }
-      const storedSession = await readStoredWebSession();
-      const resolved = evaluateWebSession(storedSession.accessToken, storedSession.expiresAt);
-      if (resolved.state === "expired") {
-        await clearWebSession();
-      }
-      const isActive = resolved.state === "active";
-      setHasActiveSession(isActive);
-      if (!isActive) {
-        setInstallations([]);
-        setLastCreatedIncidentId(null);
-        setLastCreatedInstallationId(null);
-      }
-      return isActive;
-    } finally {
-      setCheckingSession(false);
-    }
-  }, []);
-
   const loadInstallations = useCallback(async (options?: { forceRefresh?: boolean }) => {
-    const activeSession = await refreshSessionState();
-    if (!activeSession) {
+    if (!hasActiveSession) {
       return;
     }
     try {
@@ -212,12 +186,15 @@ export default function CreateIncidentScreen() {
     } finally {
       setLoadingInstallations(false);
     }
-  }, [refreshSessionState]);
+  }, [hasActiveSession]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!hasActiveSession) {
+        return;
+      }
       void loadInstallations();
-    }, [loadInstallations]),
+    }, [hasActiveSession, loadInstallations]),
   );
 
   useEffect(() => {
@@ -227,6 +204,13 @@ export default function CreateIncidentScreen() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (hasActiveSession) return;
+    setInstallations([]);
+    setLastCreatedIncidentId(null);
+    setLastCreatedInstallationId(null);
+  }, [hasActiveSession]);
 
   useEffect(() => {
     if (initialInstallationIdFromQr) {
@@ -261,7 +245,7 @@ export default function CreateIncidentScreen() {
   }, []);
 
   const onCreateManualRecord = async () => {
-    if (!(await refreshSessionState())) {
+    if (!hasActiveSession) {
       notify("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
       router.push("/modal?focus=login");
       return;
@@ -299,7 +283,7 @@ export default function CreateIncidentScreen() {
   };
 
   const onSubmit = async () => {
-    if (!(await refreshSessionState())) {
+    if (!hasActiveSession) {
       notify("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
       router.push("/modal?focus=login");
       return;
@@ -398,7 +382,7 @@ export default function CreateIncidentScreen() {
   };
 
   const onLinkAssetWithoutIncident = async () => {
-    if (!(await refreshSessionState())) {
+    if (!hasActiveSession) {
       notify("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
       router.push("/modal?focus=login");
       return;
@@ -535,18 +519,18 @@ export default function CreateIncidentScreen() {
 
   if (checkingSession) {
     return (
-      <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
+      <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
         <ActivityIndicator size="large" color={palette.loadingSpinner} />
         <Text style={[styles.authHintText, { color: palette.textSecondary }]}>
           Verificando sesión web...
         </Text>
-      </View>
+      </ScreenScaffold>
     );
   }
 
   if (!hasActiveSession) {
     return (
-      <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
+      <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
         <WebInlineLoginCard
           hint="Inicia sesion web para ver registros e incidencias."
           onLoginSuccess={async () => {
@@ -554,24 +538,61 @@ export default function CreateIncidentScreen() {
           }}
           onOpenAdvanced={() => router.push("/modal?focus=login")}
         />
-      </View>
+      </ScreenScaffold>
     );
   }
 
   return (
-    <ScrollView
-      contentContainerStyle={[
-        styles.container,
-        {
-          backgroundColor: palette.screenBg,
-          paddingBottom: bottomSpacing,
-        },
-      ]}
-    >
-      <Text style={[styles.title, { color: palette.textPrimary }]}>Crear incidencia</Text>
-      <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
-        Usa esta pantalla para crear incidencias y validar el flujo contra el Worker.
-      </Text>
+    <ScreenScaffold contentContainerStyle={styles.container}>
+      <ScreenHero
+        eyebrow="Android Ops"
+        title="Crear incidencia"
+        description="Disenado para captura rapida en terreno: selecciona el registro, marca urgencia y dispara el siguiente paso sin perder contexto."
+        aside={
+          <View
+            style={[
+              styles.heroBadge,
+              {
+                backgroundColor: palette.heroEyebrowBg,
+                borderColor: palette.heroBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.heroBadgeText, { color: palette.heroEyebrowText }]}>
+              {assetExternalCode ? "QR listo" : "Manual"}
+            </Text>
+          </View>
+        }
+      >
+        <View style={styles.heroMetaRow}>
+          <View
+            style={[
+              styles.heroMetaChip,
+              {
+                backgroundColor: palette.heroEyebrowBg,
+                borderColor: palette.heroBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.heroMetaText, { color: palette.heroEyebrowText }]}>
+              {installations.length} registros
+            </Text>
+          </View>
+          <View
+            style={[
+              styles.heroMetaChip,
+              {
+                backgroundColor: palette.heroEyebrowBg,
+                borderColor: palette.heroBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.heroMetaText, { color: palette.heroEyebrowText }]}>
+              severidad {severity}
+            </Text>
+          </View>
+        </View>
+      </ScreenHero>
       {feedbackMessage ? (
         <InlineFeedback message={feedbackMessage.message} tone={feedbackMessage.tone} />
       ) : null}
@@ -786,7 +807,10 @@ export default function CreateIncidentScreen() {
         </TouchableOpacity>
       </View>
       {installations.length === 0 ? (
-        <Text style={[styles.hint, { color: palette.textMuted }]}>No hay registros para seleccionar.</Text>
+        <EmptyStateCard
+          title="No hay registros para seleccionar."
+          body="Inicia un registro manual o refresca la lista para continuar con la incidencia."
+        />
       ) : (
         <>
           {installations.length > 30 ? (
@@ -921,7 +945,7 @@ export default function CreateIncidentScreen() {
           </TouchableOpacity>
         </View>
       ) : null}
-    </ScrollView>
+    </ScreenScaffold>
   );
 }
 
@@ -961,6 +985,32 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontFamily: fontFamilies.bold,
+  },
+  heroBadge: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  heroBadgeText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 11.5,
+    letterSpacing: 0.3,
+  },
+  heroMetaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  heroMetaChip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  heroMetaText: {
+    fontFamily: fontFamilies.semibold,
+    fontSize: 12,
   },
   subtitle: {
     fontSize: 15,

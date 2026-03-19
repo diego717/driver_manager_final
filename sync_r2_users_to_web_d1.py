@@ -2,7 +2,7 @@
 Sync desktop users (R2 users.json) into Worker D1 web_users.
 
 Usage (interactive):
-  python sync_r2_users_to_web_d1.py
+  python sync_r2_users_to_web_d1.py --api-base-url https://tu-worker.example.workers.dev
 
 Typical flow:
   1) Decrypt config/config.enc with desktop master password.
@@ -23,18 +23,6 @@ from pathlib import Path
 
 from core.security_manager import CloudDataEncryption, SecurityManager
 from managers.cloud_manager import CloudflareR2Manager
-
-
-def parse_env_file(env_path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
-    return values
-
 
 def detect_hash_type(password_hash: str) -> str:
     value = (password_hash or "").strip()
@@ -202,8 +190,11 @@ def load_users_from_file(users_file: Path) -> dict[str, dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Sync R2 users.json into Worker D1 web_users.")
-    parser.add_argument("--api-base-url", default="", help="Worker base URL. If empty, uses mobile-app/.env")
-    parser.add_argument("--env-file", default="mobile-app/.env", help="Path to mobile .env")
+    parser.add_argument(
+        "--api-base-url",
+        default=os.getenv("DRIVER_MANAGER_HISTORY_API_URL", os.getenv("WORKER_URL", "")).strip(),
+        help="Worker base URL. Required if not set in DRIVER_MANAGER_HISTORY_API_URL or WORKER_URL.",
+    )
     parser.add_argument("--admin-username", default="", help="Web admin username for /web/auth/login")
     parser.add_argument(
         "--admin-username-env",
@@ -238,17 +229,9 @@ def main() -> int:
     parser.add_argument("--salt-dir", default="", help="Optional directory containing .security_salt")
     args = parser.parse_args()
 
-    api_base_url = args.api_base_url.strip()
+    api_base_url = args.api_base_url.strip().rstrip("/")
     if not api_base_url:
-        env_path = Path(args.env_file)
-        if not env_path.exists():
-            print(f"ERROR: env file not found: {env_path}")
-            return 1
-        env_data = parse_env_file(env_path)
-        api_base_url = (env_data.get("EXPO_PUBLIC_API_BASE_URL") or "").strip()
-    api_base_url = api_base_url.rstrip("/")
-    if not api_base_url:
-        print("ERROR: API base URL is empty.")
+        print("ERROR: API base URL is empty. Use --api-base-url or DRIVER_MANAGER_HISTORY_API_URL/WORKER_URL.")
         return 1
 
     access_token = args.access_token.strip()

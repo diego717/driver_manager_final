@@ -33,6 +33,7 @@ from core.exceptions import (
     ValidationError,
     ConfigurationError,
     CloudStorageError,
+    SecurityError,
     validate_min_length
 )
 
@@ -399,6 +400,30 @@ class UserManagerV2:
             "source": "web",
         }
 
+    def _extract_web_auth_session(self, payload, username="", context_label="Login web"):
+        """Validar el contrato oficial de sesion web emitido por /web/auth/login|bootstrap."""
+        if not isinstance(payload, dict):
+            payload = {}
+
+        if payload.get("authenticated") is False:
+            raise ConfigurationError(f"{context_label} devolvio authenticated=false.")
+
+        access_token = str(payload.get("access_token") or "").strip()
+        if not access_token:
+            raise ConfigurationError(f"{context_label} exitoso pero sin access_token.")
+
+        token_type = str(payload.get("token_type") or "Bearer").strip() or "Bearer"
+        if token_type.lower() != "bearer":
+            raise ConfigurationError(
+                f"{context_label} devolvio token_type no soportado: {token_type}."
+            )
+
+        return {
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "user": self._build_web_current_user(username, payload.get("user")),
+        }
+
     def _authenticate_web(self, username, password):
         """Autenticar contra /web/auth/login."""
         base_url = self._resolve_web_api_url()
@@ -432,17 +457,11 @@ class UserManagerV2:
             raise ConfigurationError(f"Falló login web. {detail}")
 
         payload = response.json() if response.content else {}
-        if not isinstance(payload, dict):
-            payload = {}
-
-        access_token = str(payload.get("access_token") or "").strip()
-        if not access_token:
-            raise ConfigurationError("Login web exitoso pero sin access_token.")
-
-        user = self._build_web_current_user(username, payload.get("user"))
+        session = self._extract_web_auth_session(payload, username, "Login web")
+        user = session["user"]
         self.current_user = user
-        self.current_web_token = access_token
-        self.current_web_token_type = "Bearer"
+        self.current_web_token = session["access_token"]
+        self.current_web_token_type = session["token_type"]
 
         self.logger.security_event(
             "login_success",
@@ -459,12 +478,91 @@ class UserManagerV2:
         self.logger.operation_end("authenticate", success=True, mode="web")
         return True, "Login exitoso."
 
+    def _logout_web_session_best_effort(self):
+        """Invalidar la sesion remota usando el mismo Bearer emitido por /web/auth/login."""
+        access_token = str(self.current_web_token or "").strip()
+        if not access_token:
+            return
+
+        base_url = self._resolve_web_api_url()
+        if not base_url:
+            return
+
+        token_type = str(self.current_web_token_type or "Bearer").strip() or "Bearer"
+        try:
+            response = requests.post(
+                f"{base_url}/web/auth/logout",
+                headers={
+                    "Authorization": f"{token_type} {access_token}",
+                },
+                timeout=10,
+            )
+        except requests.RequestException as error:
+            self.logger.warning(f"No se pudo invalidar la sesion web remota: {error}")
+            return
+
+        if not response.ok and response.status_code not in (401, 403):
+            self.logger.warning(
+                "Logout web remoto devolvio un estado inesperado.",
+                status_code=response.status_code,
+            )
+
     def _can_use_audit_api(self):
-        return (
-            not self.local_mode and
-            self.audit_api_client is not None and
-            hasattr(self.audit_api_client, "_make_request")
-        )
+        if self.local_mode:
+            return False
+
+        client = self.audit_api_client
+        if client is None or not hasattr(client, "_make_request"):
+            return False
+
+        mode_getter = getattr(client, "_current_desktop_auth_mode", None)
+        auth_mode = ""
+        if callable(mode_getter):
+            try:
+                auth_mode = str(mode_getter() or "").strip().lower()
+            except Exception:
+                auth_mode = ""
+
+        token_getter = getattr(client, "_get_web_access_token", None)
+        web_access_token = ""
+        if callable(token_getter):
+            try:
+                web_access_token = str(token_getter() or "").strip()
+            except Exception:
+                web_access_token = ""
+
+        if auth_mode == self.AUTH_MODE_WEB:
+            return bool(web_access_token)
+
+        if auth_mode == self.AUTH_MODE_AUTO and web_access_token:
+            return True
+
+        allow_unsigned = bool(getattr(client, "allow_unsigned_requests", False))
+        api_token = str(getattr(client, "api_token", "") or "").strip()
+        api_secret = str(getattr(client, "api_secret", "") or "").strip()
+        has_signed_auth = bool(api_token and api_secret)
+
+        if auth_mode == self.AUTH_MODE_AUTO:
+            return allow_unsigned or has_signed_auth
+
+        return allow_unsigned or has_signed_auth or auth_mode in {"", self.AUTH_MODE_LEGACY}
+
+    def _should_defer_access_logging(self):
+        """Skip legacy audit persistence until desktop has a usable auth context."""
+        if self.local_mode or self._can_use_audit_api():
+            return False
+
+        if self.auth_mode not in {self.AUTH_MODE_WEB, self.AUTH_MODE_AUTO}:
+            return False
+
+        if str(self.current_web_token or "").strip():
+            return False
+
+        client = self.audit_api_client
+        allow_unsigned = bool(getattr(client, "allow_unsigned_requests", False))
+        api_token = str(getattr(client, "api_token", "") or "").strip()
+        api_secret = str(getattr(client, "api_secret", "") or "").strip()
+        return not allow_unsigned and not (api_token and api_secret)
 
     def _cache_clock(self):
         return time.monotonic()
@@ -731,18 +829,16 @@ class UserManagerV2:
                 elif isinstance(content, str):
                     content = content.lstrip('\ufeff')
                 cloud_payload = json.loads(content)
-                data, recovered = self._decode_cloud_users_payload(cloud_payload)
-
-                if recovered and data:
-                    self.logger.warning(
-                        "Se recuperaron usuarios con estrategia best-effort; normalizando y resincronizando."
+                try:
+                    data = self._decode_cloud_users_payload(cloud_payload)
+                except SecurityError as integrity_error:
+                    self.logger.error(
+                        f"Integridad invalida en payload cloud de usuarios: {integrity_error}"
                     )
-                    try:
-                        self._save_users(data)
-                    except Exception as sync_error:
-                        self.logger.warning(
-                            f"No se pudo resincronizar usuarios recuperados a la nube: {sync_error}"
-                        )
+                    raise CloudStorageError(
+                        str(integrity_error),
+                        original_error=integrity_error,
+                    ) from integrity_error
 
                 if not data or not data.get("users"):
                     fallback_users = self._load_users_disk_fallback()
@@ -796,54 +892,28 @@ class UserManagerV2:
 
     def _decode_cloud_users_payload(self, cloud_payload):
         """
-        Decodificar payload de usuarios desde nube con estrategia best-effort.
+        Decodificar payload de usuarios desde nube con integridad estricta.
 
         Returns:
-            tuple(dict | None, bool): (users_data_normalizado, recovered_with_fallback)
+            dict | None: users_data_normalizado
         """
         if not isinstance(cloud_payload, dict):
-            return None, False
-
-        fallback_recovered = False
+            return None
         payload_copy = dict(cloud_payload)
 
         if self.cloud_encryption:
             decrypted = self.cloud_encryption.decrypt_cloud_data(dict(payload_copy))
             if isinstance(decrypted, dict) and isinstance(decrypted.get("users"), dict):
-                return self._normalize_users_data(decrypted), fallback_recovered
+                return self._normalize_users_data(decrypted)
 
-        # Fallback para payload legacy o con HMAC inválido.
-        fallback_recovered = True
+        has_integrity_metadata = "_hmac" in payload_copy or bool(payload_copy.get("_encrypted"))
+        if not has_integrity_metadata and isinstance(payload_copy.get("users"), dict):
+            return self._normalize_users_data(payload_copy)
 
-        if isinstance(payload_copy.get("users"), dict):
-            self.logger.warning(
-                "Recuperando usuarios desde payload legacy sin validación HMAC completa."
-            )
-            payload_copy.pop("_hmac", None)
-            payload_copy.pop("_encrypted", None)
-            return self._normalize_users_data(payload_copy), fallback_recovered
-
-        if (
-            self.security_manager
-            and self.security_manager.fernet
-            and isinstance(payload_copy.get("users"), str)
-        ):
-            try:
-                decrypted_users = self.security_manager.decrypt_data(payload_copy["users"])
-                if isinstance(decrypted_users, dict):
-                    recovered_payload = dict(payload_copy)
-                    recovered_payload["users"] = decrypted_users
-                    recovered_payload.pop("_hmac", None)
-                    recovered_payload.pop("_encrypted", None)
-                    self.logger.warning(
-                        "Recuperación best-effort aplicada para usuarios con HMAC inválido."
-                    )
-                    return self._normalize_users_data(recovered_payload), fallback_recovered
-            except Exception:
-                pass
-
-        self.logger.warning("No fue posible recuperar payload de usuarios desde nube.")
-        return None, fallback_recovered
+        raise SecurityError(
+            "Payload cloud de usuarios con integridad invalida. "
+            "No se aplicara recuperacion automatica; usa una reparacion offline/manual."
+        )
 
     def _load_users_disk_fallback(self):
         """Intentar recuperar usuarios desde copias locales."""
@@ -1140,6 +1210,14 @@ class UserManagerV2:
                 "system_info": system_info,
             }
 
+            if self._should_defer_access_logging():
+                self.logger.operation_end(
+                    "_log_access",
+                    success=True,
+                    mode="deferred_until_web_login",
+                )
+                return
+
             if self._can_use_audit_api():
                 self.audit_api_client._make_request(
                     "post",
@@ -1424,7 +1502,7 @@ class UserManagerV2:
 
     @returns_result_tuple("create_tenant_web_user")
     def create_tenant_web_user(self, username, password, role, tenant_id, admin_web_password):
-        """Crear usuario en API web por tenant usando /web/auth/users."""
+        """Crear usuario en API web usando /web/auth/users con tenant opcional."""
         self.logger.operation_start(
             "create_tenant_web_user",
             username=username,
@@ -1443,8 +1521,6 @@ class UserManagerV2:
             )
 
         tenant_id = str(tenant_id or "").strip()
-        if not tenant_id:
-            raise ValidationError("Tenant ID es obligatorio.")
 
         is_valid, message, score = PasswordValidator.validate_password_strength(password, username)
         if not is_valid:
@@ -1479,29 +1555,33 @@ class UserManagerV2:
             raise AuthenticationError(f"Falló login web de super_admin. {detail}")
 
         login_payload = login_response.json() if login_response.content else {}
-        access_token = str(login_payload.get("access_token") or "").strip()
-        if not access_token:
-            raise ConfigurationError("Login web exitoso pero sin access_token.")
+        admin_session = self._extract_web_auth_session(
+            login_payload,
+            admin_username,
+            "Login web de super_admin",
+        )
 
         create_response = requests.post(
             f"{base_url}/web/auth/users",
             headers={
-                "Authorization": f"Bearer {access_token}",
+                "Authorization": f"{admin_session['token_type']} {admin_session['access_token']}",
                 "Content-Type": "application/json",
             },
             json={
                 "username": username,
                 "password": password,
                 "role": role,
-                "tenant_id": tenant_id,
+                "tenant_id": tenant_id or None,
             },
             timeout=20,
         )
         if not create_response.ok:
             detail = self._extract_http_error_message(create_response)
-            raise ValidationError(
-                f"No se pudo crear usuario web en tenant '{tenant_id}'. {detail}"
-            )
+            if tenant_id:
+                raise ValidationError(
+                    f"No se pudo crear usuario web en tenant '{tenant_id}'. {detail}"
+                )
+            raise ValidationError(f"No se pudo crear usuario web. {detail}")
 
         self._log_access(
             "user_created_tenant_web",
@@ -1516,9 +1596,14 @@ class UserManagerV2:
         )
 
         self.logger.operation_end("create_tenant_web_user", success=True)
+        if tenant_id:
+            return True, (
+                f"Usuario web creado en tenant '{tenant_id}'.\n"
+                "Nota: este usuario se gestiona en D1/web y puede no aparecer en la lista local."
+            )
         return True, (
-            f"Usuario web creado en tenant '{tenant_id}'.\n"
-            "Nota: este usuario se gestiona en D1/web y puede no aparecer en la lista local."
+            "Usuario web creado exitosamente.\n"
+            "Nota: este usuario se autentica contra la API web y puede no aparecer en la lista local."
         )
 
     @handle_errors("fetch_tenant_web_users", reraise=True, default_return=[])
@@ -1555,9 +1640,11 @@ class UserManagerV2:
             raise AuthenticationError(f"Falló login web de super_admin. {detail}")
 
         login_payload = login_response.json() if login_response.content else {}
-        access_token = str(login_payload.get("access_token") or "").strip()
-        if not access_token:
-            raise ConfigurationError("Login web exitoso pero sin access_token.")
+        admin_session = self._extract_web_auth_session(
+            login_payload,
+            admin_username,
+            "Login web de super_admin",
+        )
 
         params = {}
         normalized_tenant_id = str(tenant_id or "").strip()
@@ -1567,7 +1654,7 @@ class UserManagerV2:
         users_response = requests.get(
             f"{base_url}/web/auth/users",
             headers={
-                "Authorization": f"Bearer {access_token}",
+                "Authorization": f"{admin_session['token_type']} {admin_session['access_token']}",
             },
             params=params,
             timeout=20,
@@ -1702,6 +1789,7 @@ class UserManagerV2:
             users_list.append({
                 "username": username,
                 "role": user.get("role", "admin"),
+                "source": "local",
                 "tenant_id": user.get("tenant_id"),
                 "created_at": user.get("created_at"),
                 "last_login": user.get("last_login"),
@@ -1833,10 +1921,12 @@ class UserManagerV2:
     
     def logout(self):
         """Cerrar sesión"""
+        self._logout_web_session_best_effort()
         if self.current_user:
             self._log_access("logout", self.current_user.get("username"), True)
             self.current_user = None
         self.current_web_token = None
+        self.current_web_token_type = "Bearer"
     
     def has_permission(self, permission):
         """Verificar permiso"""

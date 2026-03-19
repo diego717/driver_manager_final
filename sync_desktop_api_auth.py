@@ -1,15 +1,14 @@
 """
-Sync desktop API auth credentials into config/config.enc.
+Sync desktop legacy API auth credentials into config/config.enc.
 
 Usage:
+  $env:DRIVER_MANAGER_API_TOKEN="token-legacy"
+  $env:DRIVER_MANAGER_API_SECRET="secret-legacy"
   python sync_desktop_api_auth.py
 
-The script reads:
-  - EXPO_PUBLIC_API_TOKEN
-  - EXPO_PUBLIC_API_SECRET
-  - EXPO_PUBLIC_API_BASE_URL (optional)
-from mobile-app/.env by default, asks for the desktop master password,
-decrypts config/config.enc, updates api_token/api_secret, and re-encrypts it.
+The script reads explicit desktop env vars/flags, asks for the desktop master
+password, decrypts config/config.enc, updates api_token/api_secret, and
+re-encrypts it. Use it only for private or legacy HMAC integrations.
 """
 
 from __future__ import annotations
@@ -20,18 +19,6 @@ import os
 from pathlib import Path
 
 from core.security_manager import SecurityManager
-
-
-def parse_env_file(env_path: Path) -> dict[str, str]:
-    data: dict[str, str] = {}
-    for raw in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        data[key.strip()] = value.strip().strip('"').strip("'")
-    return data
-
 
 def decrypt_with_salt_dir(
     config_path: Path, password: str, salt_dir: Path
@@ -44,12 +31,22 @@ def decrypt_with_salt_dir(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Sync API token/secret from mobile .env into desktop encrypted config."
+        description="Sync explicit legacy API token/secret into desktop encrypted config."
     )
     parser.add_argument(
-        "--env-file",
-        default="mobile-app/.env",
-        help="Path to .env file containing EXPO_PUBLIC_API_TOKEN/SECRET.",
+        "--api-token",
+        default=os.getenv("DRIVER_MANAGER_API_TOKEN", ""),
+        help="Legacy API token to persist in config.enc (or use DRIVER_MANAGER_API_TOKEN).",
+    )
+    parser.add_argument(
+        "--api-secret",
+        default=os.getenv("DRIVER_MANAGER_API_SECRET", ""),
+        help="Legacy API secret to persist in config.enc (or use DRIVER_MANAGER_API_SECRET).",
+    )
+    parser.add_argument(
+        "--api-base-url",
+        default=os.getenv("DRIVER_MANAGER_HISTORY_API_URL", os.getenv("WORKER_URL", "")),
+        help="Optional Worker base URL to persist as api_url/history_api_url.",
     )
     parser.add_argument(
         "--config-file",
@@ -76,26 +73,20 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    env_path = Path(args.env_file)
     config_path = Path(args.config_file)
-
-    if not env_path.exists():
-        print(f"ERROR: env file not found: {env_path}")
-        return 1
 
     if not config_path.exists():
         print(f"ERROR: encrypted config not found: {config_path}")
         return 1
 
-    env_data = parse_env_file(env_path)
-    api_token = env_data.get("EXPO_PUBLIC_API_TOKEN", "")
-    api_secret = env_data.get("EXPO_PUBLIC_API_SECRET", "")
-    api_base_url = env_data.get("EXPO_PUBLIC_API_BASE_URL", "")
+    api_token = (args.api_token or "").strip()
+    api_secret = (args.api_secret or "").strip()
+    api_base_url = (args.api_base_url or "").strip()
 
     if not api_token or not api_secret:
         print(
-            "ERROR: EXPO_PUBLIC_API_TOKEN/EXPO_PUBLIC_API_SECRET missing in "
-            f"{env_path}"
+            "ERROR: missing legacy API credentials. "
+            "Use --api-token/--api-secret or DRIVER_MANAGER_API_TOKEN/DRIVER_MANAGER_API_SECRET."
         )
         return 1
 
@@ -180,8 +171,12 @@ def main() -> int:
         print("ERROR: failed to re-encrypt config.enc.")
         return 1
 
+    updated_keys = ["api_token", "api_secret"]
+    if api_base_url:
+        updated_keys.append("api_url/history_api_url")
+
     print("OK: desktop encrypted config updated.")
-    print("Updated keys: api_token, api_secret, api_url")
+    print(f"Updated keys: {', '.join(updated_keys)}")
     print(f"Salt directory used: {used_salt_dir}")
     return 0
 

@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.dialogs.qr_generator_dialog import QrGeneratorDialog
+from ui.theme_manager import resolve_theme_manager
 
 
 class AssetManagementDialog(QDialog):
@@ -26,6 +27,8 @@ class AssetManagementDialog(QDialog):
 
     def __init__(self, history_manager, parent=None, can_edit=False, can_delete=False):
         super().__init__(parent)
+        self.theme_manager = resolve_theme_manager(parent)
+        self.colors = self.theme_manager.get_theme_colors()
         self._history = history_manager
         self._can_edit = bool(can_edit)
         self._can_delete = bool(can_delete)
@@ -37,6 +40,7 @@ class AssetManagementDialog(QDialog):
 
         self.setWindowTitle("Gestion de equipos")
         self.setMinimumSize(1280, 820)
+        self.setStyleSheet(self.theme_manager.generate_stylesheet())
 
         self._build_ui()
         self._bind_events()
@@ -193,8 +197,10 @@ class AssetManagementDialog(QDialog):
         self.delete_btn.setVisible(self._can_delete)
 
     def _set_status(self, text, error=False):
-        color = "#dc2626" if error else "#1f2937"
-        self.status_label.setStyleSheet(f"color: {color};")
+        css_class = "error" if error else "info"
+        self.status_label.setProperty("class", css_class)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
         self.status_label.setText(str(text or ""))
 
     def _format_asset_list_item(self, asset):

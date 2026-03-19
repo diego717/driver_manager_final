@@ -4,6 +4,8 @@ from unittest.mock import patch
 import json
 import shutil
 from pathlib import Path
+
+from core.exceptions import CloudStorageError, SecurityError
 from managers.user_manager_v2 import UserManagerV2
 
 
@@ -80,7 +82,9 @@ class TestUserManagerV2(unittest.TestCase):
         response.ok = True
         response.content = b'{"ok":true}'
         response.json.return_value = {
+            "authenticated": True,
             "access_token": "token-abc",
+            "token_type": "Bearer",
             "user": {
                 "id": "u1",
                 "username": "superadmin",
@@ -121,6 +125,118 @@ class TestUserManagerV2(unittest.TestCase):
         success, message = manager.authenticate("superadmin", "wrongpassword")
         self.assertFalse(success)
         self.assertIn("incorrect", message.lower())
+
+    @patch("managers.user_manager_v2.requests.post")
+    def test_create_tenant_web_user_allows_empty_tenant_id(self, mock_post):
+        audit_api = MagicMock()
+        audit_api._get_api_url.return_value = "https://example.workers.dev"
+        manager = UserManagerV2(
+            cloud_manager=MagicMock(),
+            security_manager=MagicMock(),
+            local_mode=False,
+            audit_api_client=audit_api,
+            auth_mode="web",
+        )
+        manager.current_user = {"username": "diegosasen", "role": "super_admin", "source": "web"}
+        manager._log_access = MagicMock()
+
+        login_response = MagicMock()
+        login_response.ok = True
+        login_response.content = b'{"access_token":"token-admin"}'
+        login_response.json.return_value = {
+            "authenticated": True,
+            "access_token": "token-admin",
+            "token_type": "Bearer",
+        }
+
+        create_response = MagicMock()
+        create_response.ok = True
+        create_response.content = b'{"ok":true}'
+        create_response.json.return_value = {"ok": True}
+
+        mock_post.side_effect = [login_response, create_response]
+
+        success, message = manager.create_tenant_web_user(
+            username="Diego",
+            password="Q4@rZ8!kP1#sM7t",
+            role="admin",
+            tenant_id="",
+            admin_web_password="AdminPass123!",
+        )
+
+        self.assertTrue(success)
+        self.assertIn("usuario web creado", message.lower())
+        self.assertEqual(mock_post.call_count, 2)
+        _args, kwargs = mock_post.call_args
+        self.assertIsNone(kwargs["json"]["tenant_id"])
+
+    @patch("managers.user_manager_v2.requests.post")
+    def test_authenticate_web_mode_invalid_credentials_skip_remote_audit_without_session(self, mock_post):
+        cloud = MagicMock()
+        security = MagicMock()
+        audit_api = MagicMock()
+        audit_api._get_api_url.return_value = "https://example.workers.dev"
+        audit_api._current_desktop_auth_mode.return_value = "web"
+        audit_api._get_web_access_token.return_value = ""
+        audit_api.allow_unsigned_requests = False
+        audit_api.api_token = ""
+        audit_api.api_secret = ""
+
+        manager = UserManagerV2(
+            cloud_manager=cloud,
+            security_manager=security,
+            local_mode=False,
+            audit_api_client=audit_api,
+            auth_mode="web",
+        )
+        manager.config_dir = self.test_dir
+        manager.logs_file = self.test_dir / "access_logs_web_invalid_remote.json"
+        manager._append_legacy_log_entry = MagicMock(return_value=True)
+
+        response = MagicMock()
+        response.ok = False
+        response.status_code = 401
+        response.text = "unauthorized"
+        response.json.return_value = {"error": {"message": "Credenciales invalidas"}}
+        mock_post.return_value = response
+
+        success, message = manager.authenticate("superadmin", "wrongpassword")
+
+        self.assertFalse(success)
+        self.assertIn("incorrect", message.lower())
+        audit_api._make_request.assert_not_called()
+        manager._append_legacy_log_entry.assert_not_called()
+        cloud.download_file_content.assert_not_called()
+
+    @patch("managers.user_manager_v2.requests.post")
+    def test_logout_invalidates_remote_web_session_best_effort(self, mock_post):
+        audit_api = MagicMock()
+        audit_api._get_api_url.return_value = "https://example.workers.dev"
+        manager = UserManagerV2(
+            local_mode=True,
+            audit_api_client=audit_api,
+            auth_mode="web",
+        )
+        manager.current_user = {"username": "superadmin", "role": "super_admin", "source": "web"}
+        manager.current_web_token = "token-abc"
+        manager.current_web_token_type = "Bearer"
+        manager._log_access = MagicMock()
+
+        response = MagicMock()
+        response.ok = True
+        mock_post.return_value = response
+
+        manager.logout()
+
+        mock_post.assert_called_once_with(
+            "https://example.workers.dev/web/auth/logout",
+            headers={"Authorization": "Bearer token-abc"},
+            timeout=10,
+        )
+        manager._log_access.assert_called_once_with("logout", "superadmin", True)
+        self.assertIsNone(manager.current_user)
+        self.assertIsNone(manager.current_web_token)
+        self.assertEqual(manager.current_web_token_type, "Bearer")
 
     def test_web_mode_skips_local_initialization_flow(self):
         audit_api = MagicMock()
@@ -215,7 +331,7 @@ class TestUserManagerV2(unittest.TestCase):
         self.assertFalse(success)
         self.assertIn("No puedes reutilizar", message)
 
-    def test_decode_cloud_users_payload_recovers_legacy_users_dict(self):
+    def test_decode_cloud_users_payload_rejects_invalid_integrity(self):
         cloud = MagicMock()
         security = MagicMock()
         manager = UserManagerV2(cloud_manager=cloud, security_manager=security, local_mode=False)
@@ -233,12 +349,10 @@ class TestUserManagerV2(unittest.TestCase):
             },
         }
 
-        decoded, recovered = manager._decode_cloud_users_payload(payload)
+        with self.assertRaises(SecurityError):
+            manager._decode_cloud_users_payload(payload)
 
-        self.assertTrue(recovered)
-        self.assertIn("administrador", decoded["users"])
-
-    def test_load_users_recovers_from_local_backup_when_cloud_payload_is_invalid(self):
+    def test_load_users_fails_closed_when_cloud_payload_is_invalid(self):
         local_backup = {
             "users": {
                 "administrador": {
@@ -269,12 +383,12 @@ class TestUserManagerV2(unittest.TestCase):
         manager.cloud_encryption.decrypt_cloud_data.return_value = {}
 
         with patch.object(manager, "_save_users") as mock_save:
-            users_data = manager._load_users()
+            with self.assertRaises(CloudStorageError):
+                manager._load_users()
 
-        self.assertIn("administrador", users_data["users"])
-        mock_save.assert_called_once()
+        mock_save.assert_not_called()
 
-    def test_load_users_recovers_from_local_backup_with_utf8_bom(self):
+    def test_load_users_fails_closed_with_utf8_bom_backup_when_cloud_payload_is_invalid(self):
         local_backup = {
             "users": {
                 "administrador": {
@@ -302,9 +416,8 @@ class TestUserManagerV2(unittest.TestCase):
         manager.cloud_encryption = MagicMock()
         manager.cloud_encryption.decrypt_cloud_data.return_value = {}
 
-        users_data = manager._load_users()
-
-        self.assertIn("administrador", users_data["users"])
+        with self.assertRaises(CloudStorageError):
+            manager._load_users()
 
     def test_load_users_cloud_cache_uses_ttl(self):
         cloud = MagicMock()

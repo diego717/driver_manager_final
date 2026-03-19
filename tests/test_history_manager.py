@@ -10,6 +10,8 @@ from managers.history_manager import InstallationHistory
 
 class TestInstallationHistory(unittest.TestCase):
     def setUp(self):
+        self._original_desktop_auth_mode = os.environ.get("DRIVER_MANAGER_DESKTOP_AUTH_MODE")
+        os.environ.pop("DRIVER_MANAGER_DESKTOP_AUTH_MODE", None)
         self.mock_config = MagicMock()
         self.mock_config.load_config_data.return_value = {
             "api_url": "https://api.example.com/",
@@ -17,6 +19,12 @@ class TestInstallationHistory(unittest.TestCase):
             "api_secret": "cfg-secret-abc",
         }
         self.history = InstallationHistory(self.mock_config)
+
+    def tearDown(self):
+        if self._original_desktop_auth_mode is None:
+            os.environ.pop("DRIVER_MANAGER_DESKTOP_AUTH_MODE", None)
+        else:
+            os.environ["DRIVER_MANAGER_DESKTOP_AUTH_MODE"] = self._original_desktop_auth_mode
 
     def test_get_api_url_uses_config_in_test_environment(self):
         url = self.history._get_api_url()
@@ -39,6 +47,16 @@ class TestInstallationHistory(unittest.TestCase):
 
         self.assertEqual(history.api_token, "env-token-123")
         self.assertEqual(history.api_secret, "env-secret-abc")
+
+    @patch("pathlib.Path.read_text", side_effect=AssertionError("mobile .env should not be read"))
+    def test_initialize_api_config_does_not_read_mobile_env_file(self, _mock_read_text):
+        self.mock_config.load_config_data.return_value = {
+            "api_url": "https://api.example.com/",
+        }
+
+        history = InstallationHistory(self.mock_config)
+
+        self.assertEqual(history.api_url, "https://api.example.com")
 
     @patch("managers.history_manager.requests.request")
     def test_make_request_success_returns_json(self, mock_request):
@@ -130,6 +148,30 @@ class TestInstallationHistory(unittest.TestCase):
 
         with self.assertRaises(ConnectionError):
             history._make_request("get", "installations")
+
+    @patch.dict(os.environ, {"DRIVER_MANAGER_DESKTOP_AUTH_MODE": "web"}, clear=False)
+    @patch.object(InstallationHistory, "_make_request")
+    def test_get_installations_returns_empty_without_session_in_web_mode(self, mock_make_request):
+        mock_config = MagicMock()
+        mock_config.load_config_data.return_value = {"api_url": "https://api.example.com/"}
+        history = InstallationHistory(mock_config)
+        history.set_web_token_provider(lambda: "")
+
+        self.assertEqual(history.get_installations(limit=10), [])
+        mock_make_request.assert_not_called()
+
+    @patch.dict(os.environ, {"DRIVER_MANAGER_DESKTOP_AUTH_MODE": "web"}, clear=False)
+    @patch.object(InstallationHistory, "_make_request")
+    def test_get_statistics_returns_defaults_without_session_in_web_mode(self, mock_make_request):
+        mock_config = MagicMock()
+        mock_config.load_config_data.return_value = {"api_url": "https://api.example.com/"}
+        history = InstallationHistory(mock_config)
+        history.set_web_token_provider(lambda: "")
+
+        stats = history.get_statistics()
+
+        self.assertEqual(stats, history._default_statistics())
+        mock_make_request.assert_not_called()
 
     @patch.object(InstallationHistory, "_save_local")
     @patch.object(InstallationHistory, "_make_request")
@@ -261,6 +303,7 @@ class TestInstallationHistory(unittest.TestCase):
             "api_url": "https://api.example.com/",
             "api_token": "token-123",
             "api_secret": "secret-abc",
+            "api_tenant_id": "tenant-alpha",
         }
         history = InstallationHistory(self.mock_config)
 
@@ -279,6 +322,7 @@ class TestInstallationHistory(unittest.TestCase):
         self.assertEqual(headers["X-Request-Signature"], expected_signature)
         self.assertEqual(headers["X-Request-Nonce"], "nonce-fixed-123")
         self.assertEqual(headers["X-Body-SHA256"], empty_hash)
+        self.assertEqual(headers["X-Tenant-Id"], "tenant-alpha")
 
     @patch.object(InstallationHistory, "get_installations")
     @patch.object(InstallationHistory, "_make_request")

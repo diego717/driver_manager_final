@@ -13,16 +13,19 @@ import {
 } from "react-native";
 
 import {
+  deleteAsset,
   getAssetIncidents,
   linkAssetToInstallation,
   listAssets,
+  updateAsset,
   type AssetRecord,
 } from "@/src/api/assets";
 import { extractApiError } from "@/src/api/client";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
-import { clearWebSession, readStoredWebSession } from "@/src/api/webAuth";
-import { evaluateWebSession } from "@/src/api/webSession";
-import { consumeForceLoginOnOpenFlag } from "@/src/security/startup-session-policy";
+import EmptyStateCard from "@/src/components/EmptyStateCard";
+import ScreenHero from "@/src/components/ScreenHero";
+import ScreenScaffold from "@/src/components/ScreenScaffold";
+import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 import { buildQrPayload } from "@/src/utils/qr";
@@ -45,7 +48,6 @@ function incidentStatusLabel(value: string | null | undefined): string {
 export default function AssetsTabScreen() {
   const palette = useAppPalette();
   const router = useRouter();
-  const bottomSpacing = 112;
 
   const [search, setSearch] = useState("");
   const [assets, setAssets] = useState<AssetRecord[]>([]);
@@ -61,44 +63,25 @@ export default function AssetsTabScreen() {
   const [loadingAssets, setLoadingAssets] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [linking, setLinking] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(false);
-  const [hasActiveSession, setHasActiveSession] = useState(false);
+  const [updatingAssetAction, setUpdatingAssetAction] = useState("");
+  const { checkingSession, hasActiveSession } = useSharedWebSessionState();
 
   const selectedAsset = useMemo(
     () => assets.find((item) => item.id === selectedAssetId) || assetDetail?.asset || null,
     [assetDetail?.asset, assets, selectedAssetId],
   );
-
-  const refreshSessionState = useCallback(async (options?: { showLoader?: boolean }) => {
-    const showLoader = options?.showLoader === true;
-    if (showLoader) setCheckingSession(true);
-
-    try {
-      if (consumeForceLoginOnOpenFlag()) {
-        await clearWebSession();
-      }
-      const storedSession = await readStoredWebSession();
-      const resolved = evaluateWebSession(storedSession.accessToken, storedSession.expiresAt);
-      if (resolved.state === "expired") {
-        await clearWebSession();
-      }
-
-      const isActive = resolved.state === "active";
-      setHasActiveSession(isActive);
-      if (!isActive) {
-        setAssets([]);
-        setSelectedAssetId(null);
-        setAssetDetail(null);
-      }
-      return isActive;
-    } finally {
-      if (showLoader) setCheckingSession(false);
-    }
-  }, []);
+  const activeAssetIncidents = useMemo(
+    () => (assetDetail?.incidents || []).filter((incident) => incidentStatusLabel(incident.incident_status) !== "Resuelta"),
+    [assetDetail?.incidents],
+  );
+  const resolvedAssetIncidents = useMemo(
+    () => (assetDetail?.incidents || []).filter((incident) => incidentStatusLabel(incident.incident_status) === "Resuelta"),
+    [assetDetail?.incidents],
+  );
 
   const loadAssets = useCallback(
     async (options?: { keepSelection?: boolean }) => {
-      if (!(await refreshSessionState())) return;
+      if (!hasActiveSession) return;
       try {
         setLoadingAssets(true);
         const items = await listAssets({
@@ -125,12 +108,12 @@ export default function AssetsTabScreen() {
         setLoadingAssets(false);
       }
     },
-    [refreshSessionState, search],
+    [hasActiveSession, search],
   );
 
   const loadAssetDetail = useCallback(
     async (assetId: number) => {
-      if (!(await refreshSessionState())) return;
+      if (!hasActiveSession) return;
       try {
         setLoadingDetail(true);
         const detail = await getAssetIncidents(assetId, { limit: ASSET_INCIDENTS_LIMIT });
@@ -147,7 +130,7 @@ export default function AssetsTabScreen() {
         setLoadingDetail(false);
       }
     },
-    [refreshSessionState],
+    [hasActiveSession],
   );
 
   const openCreateIncident = useCallback(
@@ -194,7 +177,7 @@ export default function AssetsTabScreen() {
   );
 
   const onLinkAsset = useCallback(async () => {
-    if (!(await refreshSessionState())) {
+    if (!hasActiveSession) {
       Alert.alert("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
       router.push("/modal?focus=login");
       return;
@@ -225,44 +208,103 @@ export default function AssetsTabScreen() {
     } finally {
       setLinking(false);
     }
-  }, [linkInstallationId, linkNotes, loadAssetDetail, refreshSessionState, router, selectedAsset]);
+  }, [hasActiveSession, linkInstallationId, linkNotes, loadAssetDetail, router, selectedAsset]);
+
+  const onToggleAssetStatus = useCallback(async () => {
+    if (!selectedAsset?.id) return;
+    const normalizedStatus = normalizeString(selectedAsset.status).toLowerCase();
+    const nextStatus = normalizedStatus === "inactive" || normalizedStatus === "retired" ? "active" : "retired";
+    const actionLabel = nextStatus === "active" ? "reactivar" : "dar de baja";
+
+    Alert.alert(
+      nextStatus === "active" ? "Reactivar equipo" : "Dar de baja equipo",
+      `Se va a ${actionLabel} ${selectedAsset.external_code || `#${selectedAsset.id}`}.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: nextStatus === "active" ? "Reactivar" : "Dar de baja",
+          onPress: async () => {
+            try {
+              setUpdatingAssetAction("status");
+              await updateAsset(selectedAsset.id, { status: nextStatus });
+              await loadAssets({ keepSelection: true });
+              await loadAssetDetail(selectedAsset.id);
+            } catch (error) {
+              Alert.alert("Error", extractApiError(error));
+            } finally {
+              setUpdatingAssetAction("");
+            }
+          },
+        },
+      ],
+    );
+  }, [loadAssetDetail, loadAssets, selectedAsset]);
+
+  const onDeleteAsset = useCallback(async () => {
+    if (!selectedAsset?.id) return;
+
+    Alert.alert(
+      "Eliminar equipo",
+      `Se eliminara ${selectedAsset.external_code || `#${selectedAsset.id}`}. Esta accion no se puede deshacer.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Eliminar",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setUpdatingAssetAction("delete");
+              await deleteAsset(selectedAsset.id);
+              setSelectedAssetId(null);
+              setAssetDetail(null);
+              await loadAssets();
+            } catch (error) {
+              Alert.alert("Error", extractApiError(error));
+            } finally {
+              setUpdatingAssetAction("");
+            }
+          },
+        },
+      ],
+    );
+  }, [loadAssets, selectedAsset]);
 
   useEffect(() => {
-    let cancelled = false;
-    const bootstrap = async () => {
-      const active = await refreshSessionState({ showLoader: true });
-      if (!active || cancelled) return;
-      await loadAssets({ keepSelection: true });
-    };
-    void bootstrap();
-    return () => {
-      cancelled = true;
-    };
-  }, [loadAssets, refreshSessionState]);
+    if (hasActiveSession) {
+      void loadAssets({ keepSelection: true });
+      return;
+    }
+    setAssets([]);
+    setSelectedAssetId(null);
+    setAssetDetail(null);
+  }, [hasActiveSession, loadAssets]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!hasActiveSession) {
+        return;
+      }
       void loadAssets({ keepSelection: true });
-    }, [loadAssets]),
+    }, [hasActiveSession, loadAssets]),
   );
 
   useEffect(() => {
-    if (!selectedAssetId) return;
+    if (!hasActiveSession || !selectedAssetId) return;
     void loadAssetDetail(selectedAssetId);
-  }, [loadAssetDetail, selectedAssetId]);
+  }, [hasActiveSession, loadAssetDetail, selectedAssetId]);
 
   if (checkingSession) {
     return (
-      <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
+      <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
         <ActivityIndicator size="large" color={palette.loadingSpinner} />
         <Text style={[styles.hintText, { color: palette.textSecondary }]}>Verificando sesion...</Text>
-      </View>
+      </ScreenScaffold>
     );
   }
 
   if (!hasActiveSession) {
     return (
-      <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
+      <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
         <WebInlineLoginCard
           hint="Inicia sesion web para ver y asociar equipos."
           onLoginSuccess={async () => {
@@ -270,25 +312,51 @@ export default function AssetsTabScreen() {
           }}
           onOpenAdvanced={() => router.push("/modal?focus=login")}
         />
-      </View>
+      </ScreenScaffold>
     );
   }
 
   return (
-    <ScrollView
-      contentContainerStyle={[
-        styles.container,
-        {
-          backgroundColor: palette.screenBg,
-          paddingBottom: bottomSpacing,
-        },
-      ]}
-      keyboardShouldPersistTaps="handled"
+    <ScreenScaffold
+      contentContainerStyle={styles.container}
+      scrollViewProps={{ keyboardShouldPersistTaps: "handled" }}
     >
-      <Text style={[styles.title, { color: palette.textPrimary }]}>Equipos</Text>
-      <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
-        Busca, revisa detalle, crea incidencia, vincula instalacion y consulta QR.
-      </Text>
+      <ScreenHero
+        eyebrow="Inventario movil"
+        title="Equipos y QR"
+        description="Busca activos, revisa su historial y salta a incidencia, vinculacion o etiqueta desde una sola vista."
+        aside={
+          <View
+            style={[
+              styles.heroBadge,
+              {
+                backgroundColor: palette.heroEyebrowBg,
+                borderColor: palette.heroBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.heroBadgeText, { color: palette.heroEyebrowText }]}>
+              {assets.length} activos
+            </Text>
+          </View>
+        }
+      >
+        <View style={styles.heroMetaRow}>
+          <View
+            style={[
+              styles.heroMetaChip,
+              {
+                backgroundColor: palette.heroEyebrowBg,
+                borderColor: palette.heroBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.heroMetaText, { color: palette.heroEyebrowText }]}>
+              {selectedAsset ? `seleccionado #${selectedAsset.id}` : "sin seleccion"}
+            </Text>
+          </View>
+        </View>
+      </ScreenHero>
 
       <View style={styles.searchRow}>
         <TextInput
@@ -360,7 +428,10 @@ export default function AssetsTabScreen() {
       </View>
 
       {assets.length === 0 ? (
-        <Text style={[styles.hintText, { color: palette.textMuted }]}>No hay equipos para mostrar.</Text>
+        <EmptyStateCard
+          title="No hay equipos para mostrar."
+          body="Prueba otra busqueda, refresca el inventario o crea un equipo nuevo con QR."
+        />
       ) : (
         <View style={styles.assetList}>
           {assets.map((asset) => {
@@ -451,6 +522,38 @@ export default function AssetsTabScreen() {
             >
               <Text style={[styles.actionBtnText, { color: palette.refreshText }]}>Ver QR</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionBtn, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
+              onPress={() => {
+                void onToggleAssetStatus();
+              }}
+              disabled={updatingAssetAction === "status"}
+              accessibilityRole="button"
+            >
+              {updatingAssetAction === "status" ? (
+                <ActivityIndicator size="small" color={palette.refreshText} />
+              ) : (
+                <Text style={[styles.actionBtnText, { color: palette.refreshText }]}>
+                  {normalizeString(selectedAsset.status).toLowerCase() === "inactive" || normalizeString(selectedAsset.status).toLowerCase() === "retired"
+                    ? "Reactivar equipo"
+                    : "Dar de baja"}
+                </Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionBtn, { backgroundColor: palette.errorBg, borderColor: palette.errorBorder }]}
+              onPress={() => {
+                void onDeleteAsset();
+              }}
+              disabled={updatingAssetAction === "delete"}
+              accessibilityRole="button"
+            >
+              {updatingAssetAction === "delete" ? (
+                <ActivityIndicator size="small" color={palette.errorText} />
+              ) : (
+                <Text style={[styles.actionBtnText, { color: palette.errorText }]}>Eliminar equipo</Text>
+              )}
+            </TouchableOpacity>
           </View>
 
           <View style={styles.metaGrid}>
@@ -485,9 +588,10 @@ export default function AssetsTabScreen() {
               Instalacion activa: #{assetDetail.active_link.installation_id}
             </Text>
           ) : (
-            <Text style={[styles.hintText, { color: palette.textMuted }]}>
-              Sin instalacion activa vinculada.
-            </Text>
+            <EmptyStateCard
+              title="Sin instalacion activa vinculada."
+              body="Puedes vincular este equipo a una instalacion desde esta misma pantalla."
+            />
           )}
 
           {showLinkForm ? (
@@ -542,9 +646,10 @@ export default function AssetsTabScreen() {
 
           <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Historial de asociaciones</Text>
           {!assetDetail?.links?.length ? (
-            <Text style={[styles.hintText, { color: palette.textMuted }]}>
-              Este equipo no tiene asociaciones registradas.
-            </Text>
+            <EmptyStateCard
+              title="Este equipo no tiene asociaciones registradas."
+              body="Cuando se vincule a una instalacion, el historial aparecera aqui."
+            />
           ) : (
             <View style={styles.listWrap}>
               {assetDetail.links.slice(0, 20).map((link) => {
@@ -566,14 +671,15 @@ export default function AssetsTabScreen() {
             </View>
           )}
 
-          <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Incidencias del equipo</Text>
-          {!assetDetail?.incidents?.length ? (
-            <Text style={[styles.hintText, { color: palette.textMuted }]}>
-              No hay incidencias registradas para este equipo.
-            </Text>
+          <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Incidencias activas</Text>
+          {!activeAssetIncidents.length ? (
+            <EmptyStateCard
+              title="No hay incidencias activas para este equipo."
+              body="Si existe historial cerrado, aparece debajo en resueltas."
+            />
           ) : (
             <View style={styles.listWrap}>
-              {assetDetail.incidents.slice(0, 20).map((incident) => (
+              {activeAssetIncidents.slice(0, 20).map((incident) => (
                 <View
                   key={incident.id}
                   style={[styles.listItem, { borderColor: palette.inputBorder, backgroundColor: palette.itemBg }]}
@@ -617,9 +723,36 @@ export default function AssetsTabScreen() {
               ))}
             </View>
           )}
+
+          <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Resueltas</Text>
+          {!resolvedAssetIncidents.length ? (
+            <EmptyStateCard
+              title="Sin historial resuelto."
+              body="Las incidencias cerradas del equipo apareceran aqui."
+            />
+          ) : (
+            <View style={styles.listWrap}>
+              {resolvedAssetIncidents.slice(0, 20).map((incident) => (
+                <View
+                  key={incident.id}
+                  style={[styles.listItem, { borderColor: palette.inputBorder, backgroundColor: palette.itemBg }]}
+                >
+                  <Text style={[styles.listItemTitle, { color: palette.textPrimary }]}>
+                    #{incident.id} · {incident.severity || "n/a"} · Resuelta · inst #{incident.installation_id}
+                  </Text>
+                  <Text style={[styles.listItemMeta, { color: palette.textSecondary }]}>
+                    {incident.note || "Sin nota"}
+                  </Text>
+                  <Text style={[styles.listItemMeta, { color: palette.textMuted }]}>
+                    {incident.resolution_note || "Sin nota de resolucion."}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
         </View>
       ) : null}
-    </ScrollView>
+    </ScreenScaffold>
   );
 }
 
@@ -645,14 +778,31 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontFamily: fontFamilies.bold,
   },
-  title: {
-    fontSize: 24,
-    fontFamily: fontFamilies.bold,
+  heroBadge: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
   },
-  subtitle: {
-    fontSize: 14,
-    fontFamily: fontFamilies.regular,
-    marginBottom: 2,
+  heroBadgeText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 11.5,
+    letterSpacing: 0.3,
+  },
+  heroMetaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  heroMetaChip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  heroMetaText: {
+    fontFamily: fontFamilies.semibold,
+    fontSize: 12,
   },
   searchRow: {
     flexDirection: "row",

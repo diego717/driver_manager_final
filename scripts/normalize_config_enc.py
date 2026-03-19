@@ -1,10 +1,10 @@
 """
-Normaliza credenciales API dentro de config/config.enc.
+Normaliza credenciales API legacy dentro de config/config.enc.
 
-Uso recomendado (PowerShell):
+Uso recomendado (PowerShell, solo integraciones legacy privadas):
   $env:DRIVER_MANAGER_MASTER_PASSWORD="***"
   python scripts/normalize_config_enc.py `
-    --api-url "https://driver-manager-db.diegosasen.workers.dev" `
+    --api-url "https://tu-worker.example.workers.dev" `
     --api-token "test-token" `
     --api-secret "test-secret"
 """
@@ -43,12 +43,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--api-token",
         default=os.getenv("DRIVER_MANAGER_API_TOKEN", "").strip(),
-        help="API token para X-API-Token",
+        help="API token legacy para X-API-Token",
     )
     parser.add_argument(
         "--api-secret",
         default=os.getenv("DRIVER_MANAGER_API_SECRET", "").strip(),
-        help="API secret para firma HMAC",
+        help="API secret legacy para firma HMAC",
     )
     parser.add_argument(
         "--master-password",
@@ -58,7 +58,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--worker-defaults",
         action="store_true",
-        help="Usa defaults del worker actual (test-token/test-secret) si no pasas token/secret",
+        help="Usa defaults locales/no productivos del worker (test-token/test-secret)",
     )
     return parser
 
@@ -143,4 +143,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

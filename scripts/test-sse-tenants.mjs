@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const DEFAULT_WORKER_URL = "https://driver-manager-db.diegosasen.workers.dev";
+const DEFAULT_WORKER_URL = "http://127.0.0.1:8787";
 const DEFAULT_WAIT_MS = 8000;
 const DEFAULT_PUBLISHER = "A";
 
@@ -112,7 +112,10 @@ function isProbeEvent(payload, marker) {
 }
 
 async function main() {
-  const baseUrl = optionalEnv("WORKER_URL", DEFAULT_WORKER_URL).replace(/\/+$/, "");
+  const baseUrl = optionalEnv(
+    "WORKER_URL",
+    optionalEnv("DRIVER_MANAGER_HISTORY_API_URL", DEFAULT_WORKER_URL),
+  ).replace(/\/+$/, "");
   const waitMs = Number.parseInt(optionalEnv("WAIT_MS", String(DEFAULT_WAIT_MS)), 10);
   const publisher = optionalEnv("PUBLISH_WITH", DEFAULT_PUBLISHER).toUpperCase();
 

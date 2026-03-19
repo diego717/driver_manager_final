@@ -246,7 +246,13 @@ class ConfigManager:
                 with open(self.portable_json_path, 'r', encoding='utf-8-sig') as f:
                     portable_data = json.load(f)
                 
-                if portable_data.get('account_id'):
+                portable_auth_mode = str(portable_data.get("desktop_auth_mode", "")).strip().lower()
+                has_r2_config = bool(portable_data.get('account_id'))
+                has_web_config = (
+                    portable_auth_mode in {"web", "auto"}
+                    and bool(portable_data.get("api_url") or portable_data.get("history_api_url"))
+                )
+                if has_r2_config or has_web_config:
                     logger.info("📂 Configuración portable detectada en USB.")
                     self._config_loaded = True
                     return portable_data

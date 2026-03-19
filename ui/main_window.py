@@ -4,12 +4,13 @@ import json
 import gc
 import re
 import os
+import html
 from pathlib import Path
 from datetime import datetime, timedelta
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QTabWidget, QProgressBar, QMessageBox, QListWidgetItem, QLabel, QPushButton,
-                             QDialog, QGroupBox, QLineEdit, QInputDialog, QFileDialog)
+                             QDialog, QGroupBox, QLineEdit, QInputDialog, QFileDialog, QTextEdit)
 from PyQt6.QtCore import Qt, QObject, pyqtSignal, QRunnable, QThreadPool
 from PyQt6.QtGui import QFont, QPixmap, QIcon
 
@@ -130,7 +131,13 @@ class MainWindow(QMainWindow):
                     config_data = json.load(f)
                 
                 # 2. Validar datos mínimos
-                if config_data and config_data.get('account_id'):
+                portable_auth_mode = str(config_data.get("desktop_auth_mode", "")).strip().lower()
+                has_r2_config = bool(config_data.get("account_id"))
+                has_web_config = (
+                    portable_auth_mode in {"web", "auto"}
+                    and bool(config_data.get("api_url") or config_data.get("history_api_url"))
+                )
+                if config_data and (has_r2_config or has_web_config):
                     logger.info("🚀 Configuración portable detectada. Inyectando en el USB...")
                     
                     # 3. Inyectar y Guardar en config.enc
@@ -785,6 +792,16 @@ class MainWindow(QMainWindow):
 
     def refresh_history_view(self):
         """Actualizar vista actual del historial"""
+        if (
+            self._resolve_desktop_auth_mode() == "web"
+            and not self._resolve_current_web_token()
+        ):
+            self.history_tab.history_list.clear()
+            self.history_tab.edit_button.setEnabled(False)
+            if hasattr(self.history_tab, "view_incidents_button"):
+                self.history_tab.view_incidents_button.setEnabled(False)
+            return
+
         try:
             installations = self.history.get_installations(limit=10)
             self.history_tab.history_list.clear()
@@ -934,6 +951,244 @@ class MainWindow(QMainWindow):
         if normalized == "resolved":
             return "Resuelta"
         return "Abierta"
+
+    def _format_incident_datetime_label(self, raw_value):
+        """Formatear fecha/hora de incidencia en hora local legible."""
+        dt = self._parse_incident_datetime(raw_value)
+        if dt is None:
+            return str(raw_value or "-")
+        return dt.strftime("%d/%m/%Y %H:%M")
+
+    def _incident_severity_label(self, raw_value):
+        """Etiqueta corta para severidad."""
+        value = str(raw_value or "medium").strip().lower()
+        labels = {
+            "critical": "Crítica",
+            "high": "Alta",
+            "medium": "Media",
+            "low": "Baja",
+        }
+        return labels.get(value, str(raw_value or "Media").strip().title() or "Media")
+
+    def _incident_detail_chip(self, text, background, text_color, border):
+        """Construir chip HTML para el resumen de incidencia."""
+        return (
+            f"<td style=\"padding:6px 10px;background:{background};color:{text_color};"
+            f"border:1px solid {border};font-weight:600;white-space:nowrap;\">"
+            f"{html.escape(str(text))}</td>"
+        )
+
+    def _incident_detail_meta_row(self, label, value):
+        """Fila HTML para pares label/value del detalle."""
+        safe_label = html.escape(str(label))
+        safe_value = html.escape(str(value if value not in (None, "") else "-"))
+        return (
+            "<tr>"
+            f"<td width=\"132\" valign=\"top\" style=\"padding:0 12px 8px 0;font-weight:600;\">{safe_label}</td>"
+            f"<td valign=\"top\" style=\"padding:0 0 8px 0;\">{safe_value}</td>"
+            "</tr>"
+        )
+
+    def _render_incident_detail_html(self, incident):
+        """Renderizar detalle de incidencia en un formato más cercano a la web."""
+        colors = self.theme_manager.get_theme_colors() if self.theme_manager else {
+            "surface_raised": "#ffffff",
+            "surface": "#f7f9fc",
+            "surface_alt": "#e6ebf2",
+            "border": "#c7d0db",
+            "text_primary": "#16202c",
+            "text_secondary": "#4d5d70",
+            "accent_soft": "rgba(31, 91, 147, 0.14)",
+            "accent": "#1f5b93",
+            "panel_info": "rgba(43, 106, 166, 0.12)",
+            "panel_success": "rgba(47, 125, 82, 0.13)",
+            "panel_warning": "rgba(139, 90, 28, 0.15)",
+            "panel_error": "rgba(167, 66, 52, 0.14)",
+            "success": "#2f7d52",
+            "warning": "#8b5a1c",
+            "error": "#a74234",
+        }
+
+        photos = incident.get("photos") or []
+        incident_id = incident.get("id")
+        record_id = incident.get("installation_id")
+        incident_status = self._normalize_incident_status(incident.get("incident_status"))
+        severity = str(incident.get("severity") or "medium").strip().lower()
+        status_label = self._incident_status_label(incident_status)
+        severity_label = self._incident_severity_label(severity)
+        raw_adjustment = self._coerce_seconds(incident.get("time_adjustment_seconds"), allow_negative=True)
+        note = str(incident.get("note") or "").strip()
+        resolution_note = str(incident.get("resolution_note") or "").strip()
+        evidence_note = str(incident.get("evidence_note") or "").strip()
+
+        status_tones = {
+            "open": (colors["panel_info"], colors["text_primary"], colors["accent"]),
+            "in_progress": (colors["panel_warning"], colors["text_primary"], colors["warning"]),
+            "resolved": (colors["panel_success"], colors["text_primary"], colors["success"]),
+        }
+        severity_tones = {
+            "critical": (colors["panel_error"], colors["text_primary"], colors["error"]),
+            "high": (colors["panel_warning"], colors["text_primary"], colors["warning"]),
+            "medium": (colors["accent_soft"], colors["text_primary"], colors["accent"]),
+            "low": (colors["surface_alt"], colors["text_secondary"], colors["border"]),
+        }
+        status_bg, status_fg, status_border = status_tones.get(
+            incident_status, status_tones["open"]
+        )
+        severity_bg, severity_fg, severity_border = severity_tones.get(
+            severity, severity_tones["medium"]
+        )
+
+        chips = [
+            self._incident_detail_chip(f"Inc #{incident_id}", colors["surface_alt"], colors["text_primary"], colors["border"]),
+            self._incident_detail_chip(f"Estado: {status_label}", status_bg, status_fg, status_border),
+            self._incident_detail_chip(f"Severidad: {severity_label}", severity_bg, severity_fg, severity_border),
+            self._incident_detail_chip(f"Registro #{record_id}", colors["surface_alt"], colors["text_secondary"], colors["border"]),
+            self._incident_detail_chip(f"Fotos: {len(photos)}", colors["surface_alt"], colors["text_secondary"], colors["border"]),
+        ]
+        if raw_adjustment:
+            chips.append(
+                self._incident_detail_chip(
+                    f"Tiempo: {self._format_duration(raw_adjustment)}",
+                    colors["accent_soft"],
+                    colors["text_primary"],
+                    colors["accent"],
+                )
+            )
+
+        chip_rows = []
+        for index in range(0, len(chips), 3):
+            chip_rows.append(f"<tr>{''.join(chips[index:index + 3])}</tr>")
+
+        context_rows = [
+            self._incident_detail_meta_row("Reportado por", incident.get("reporter_username") or "-"),
+            self._incident_detail_meta_row("Origen", incident.get("source") or "-"),
+            self._incident_detail_meta_row("Creada", self._format_incident_datetime_label(incident.get("created_at"))),
+        ]
+        if incident.get("status_updated_at"):
+            context_rows.append(
+                self._incident_detail_meta_row(
+                    "Cambio de estado",
+                    f"{self._format_incident_datetime_label(incident.get('status_updated_at'))} · {incident.get('status_updated_by') or '-'}",
+                )
+            )
+        if incident.get("resolved_at"):
+            context_rows.append(
+                self._incident_detail_meta_row(
+                    "Resuelta",
+                    f"{self._format_incident_datetime_label(incident.get('resolved_at'))} · {incident.get('resolved_by') or '-'}",
+                )
+            )
+
+        timing_rows = [
+            self._incident_detail_meta_row("Estado actual", status_label),
+            self._incident_detail_meta_row("Severidad", severity_label),
+            self._incident_detail_meta_row(
+                "Ajuste de tiempo",
+                f"{self._format_duration(raw_adjustment)} ({raw_adjustment}s)",
+            ),
+        ]
+        actual_duration = incident.get("actual_duration_seconds")
+        if actual_duration not in (None, ""):
+            timing_rows.append(
+                self._incident_detail_meta_row(
+                    "Tiempo real",
+                    self._format_duration(actual_duration),
+                )
+            )
+        estimated_duration = incident.get("estimated_duration_seconds")
+        if estimated_duration not in (None, ""):
+            timing_rows.append(
+                self._incident_detail_meta_row(
+                    "Tiempo estimado",
+                    self._format_duration(estimated_duration),
+                )
+            )
+
+        optional_sections = []
+        if evidence_note:
+            optional_sections.append(
+                "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"margin-top:12px;\">"
+                "<tr><td>"
+                f"<div style=\"font-size:11px;font-weight:700;color:{colors['text_secondary']};margin-bottom:6px;\">"
+                "NOTA OPERATIVA</div>"
+                f"<table width=\"100%\" cellspacing=\"0\" cellpadding=\"12\" "
+                f"style=\"background:{colors['surface']};border:1px solid {colors['border']};\">"
+                f"<tr><td style=\"line-height:1.5;\">{html.escape(evidence_note)}</td></tr></table>"
+                "</td></tr></table>"
+            )
+        if resolution_note:
+            optional_sections.append(
+                "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"margin-top:12px;\">"
+                "<tr><td>"
+                f"<div style=\"font-size:11px;font-weight:700;color:{colors['text_secondary']};margin-bottom:6px;\">"
+                "RESOLUCIÓN</div>"
+                f"<table width=\"100%\" cellspacing=\"0\" cellpadding=\"12\" "
+                f"style=\"background:{colors['panel_success']};border:1px solid {colors['success']};\">"
+                f"<tr><td style=\"line-height:1.5;\">{html.escape(resolution_note)}</td></tr></table>"
+                "</td></tr></table>"
+            )
+
+        safe_note = html.escape(note or "Sin nota registrada.").replace("\n", "<br>")
+        return f"""
+        <div style="font-family:'Segoe UI Variable Text','Segoe UI',sans-serif;color:{colors['text_primary']};">
+            <table cellspacing="6" cellpadding="0" style="margin-bottom:10px;">
+                {''.join(chip_rows)}
+            </table>
+            <table width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:12px;">
+                <tr>
+                    <td>
+                        <table width="100%" cellspacing="0" cellpadding="14"
+                               style="background:{colors['surface_raised']};border:1px solid {colors['border']};">
+                            <tr>
+                                <td>
+                                    <div style="font-size:11px;font-weight:700;color:{colors['text_secondary']};margin-bottom:8px;">
+                                        RESUMEN
+                                    </div>
+                                    <div style="font-size:14px;line-height:1.55;">{safe_note}</div>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+            <table width="100%" cellspacing="10" cellpadding="0">
+                <tr>
+                    <td width="50%" valign="top">
+                        <table width="100%" cellspacing="0" cellpadding="14"
+                               style="background:{colors['surface_raised']};border:1px solid {colors['border']};">
+                            <tr>
+                                <td>
+                                    <div style="font-size:11px;font-weight:700;color:{colors['text_secondary']};margin-bottom:8px;">
+                                        CONTEXTO
+                                    </div>
+                                    <table width="100%" cellspacing="0" cellpadding="0">
+                                        {''.join(context_rows)}
+                                    </table>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                    <td width="50%" valign="top">
+                        <table width="100%" cellspacing="0" cellpadding="14"
+                               style="background:{colors['surface_raised']};border:1px solid {colors['border']};">
+                            <tr>
+                                <td>
+                                    <div style="font-size:11px;font-weight:700;color:{colors['text_secondary']};margin-bottom:8px;">
+                                        ESTADO Y TIEMPOS
+                                    </div>
+                                    <table width="100%" cellspacing="0" cellpadding="0">
+                                        {''.join(timing_rows)}
+                                    </table>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+            {''.join(optional_sections)}
+        </div>
+        """
 
     def _normalize_record_attention_state(self, raw_value):
         """Normalizar estado operativo del registro según incidencias."""
@@ -1197,25 +1452,9 @@ class MainWindow(QMainWindow):
             self.history_tab.incident_detail.clear()
             return
 
-        photos = incident.get("photos") or []
-        raw_adjustment = self._coerce_seconds(incident.get("time_adjustment_seconds"), allow_negative=True)
         incident_status = self._normalize_incident_status(incident.get("incident_status"))
-        details = (
-            f"ID: {incident.get('id')}\n"
-            f"Registro: {incident.get('installation_id')}\n"
-            f"Severidad: {incident.get('severity')}\n"
-            f"Estado: {self._incident_status_label(incident_status)}\n"
-            f"Reportado por: {incident.get('reporter_username')}\n"
-            f"Origen: {incident.get('source')}\n"
-            f"Ajuste tiempo: {self._format_duration(raw_adjustment)} ({raw_adjustment}s)\n"
-            f"Fecha: {incident.get('created_at')}\n"
-            f"Actualizado estado: {incident.get('status_updated_at') or '-'} por {incident.get('status_updated_by') or '-'}\n"
-            f"Resuelta: {incident.get('resolved_at') or '-'} por {incident.get('resolved_by') or '-'}\n"
-            f"Nota resolución: {incident.get('resolution_note') or '-'}\n"
-            f"Fotos: {len(photos)}\n\n"
-            f"Nota:\n{incident.get('note') or ''}"
-        )
-        self.history_tab.incident_detail.setText(details)
+        photos = incident.get("photos") or []
+        self.history_tab.incident_detail.setHtml(self._render_incident_detail_html(incident))
         if self.is_admin and hasattr(self.history_tab, "incident_mark_open_btn"):
             self.history_tab.incident_mark_open_btn.setEnabled(incident_status != "open")
             self.history_tab.incident_mark_progress_btn.setEnabled(incident_status != "in_progress")
@@ -1350,6 +1589,16 @@ class MainWindow(QMainWindow):
 
     def _update_management_stats(self):
         """Actualizar estadísticas y logs en la vista de gestión de registros"""
+        if (
+            self._resolve_desktop_auth_mode() == "web"
+            and not self._resolve_current_web_token()
+        ):
+            self.history_tab.mgmt_stats_display.setText(
+                "📊 ESTADÍSTICAS ACTUALES:\n\n• Inicia sesión para cargar estadísticas."
+            )
+            self.history_tab.management_history_list.clear()
+            return
+
         try:
             # Obtener estadísticas agregadas desde el backend (SQL), sin cargar todo el historial.
             stats = self.history.get_statistics()
@@ -1680,25 +1929,22 @@ class MainWindow(QMainWindow):
 
     def _show_incident_details(self, incident):
         """Mostrar detalle de incidencia en una ventana simple."""
-        photos_count = len(incident.get("photos") or [])
-        raw_adjustment = self._coerce_seconds(incident.get("time_adjustment_seconds"), allow_negative=True)
-        incident_status = self._normalize_incident_status(incident.get("incident_status"))
-        details = (
-            f"ID: {incident.get('id')}\n"
-            f"Registro: {incident.get('installation_id')}\n"
-            f"Severidad: {incident.get('severity')}\n"
-            f"Estado: {self._incident_status_label(incident_status)}\n"
-            f"Reportado por: {incident.get('reporter_username')}\n"
-            f"Origen: {incident.get('source')}\n"
-            f"Ajuste tiempo: {self._format_duration(raw_adjustment)} ({raw_adjustment}s)\n"
-            f"Fecha: {incident.get('created_at')}\n"
-            f"Actualizado estado: {incident.get('status_updated_at') or '-'} por {incident.get('status_updated_by') or '-'}\n"
-            f"Resuelta: {incident.get('resolved_at') or '-'} por {incident.get('resolved_by') or '-'}\n"
-            f"Nota resolución: {incident.get('resolution_note') or '-'}\n"
-            f"Fotos: {photos_count}\n\n"
-            f"Nota:\n{incident.get('note') or ''}"
-        )
-        QMessageBox.information(self, f"Incidencia #{incident.get('id')}", details)
+        details_dialog = QDialog(self)
+        details_dialog.setWindowTitle(f"Incidencia #{incident.get('id')}")
+        details_dialog.resize(760, 560)
+        details_dialog.setStyleSheet(self.theme_manager.generate_stylesheet())
+
+        layout = QVBoxLayout(details_dialog)
+        details_view = QTextEdit()
+        details_view.setReadOnly(True)
+        details_view.setHtml(self._render_incident_detail_html(incident))
+        layout.addWidget(details_view)
+
+        close_btn = QPushButton("Cerrar")
+        close_btn.clicked.connect(details_dialog.accept)
+        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
+
+        details_dialog.exec()
 
     def _select_incident_photo(self, incident):
         """Elegir y abrir una foto de incidencia."""
@@ -2496,6 +2742,9 @@ class MainWindow(QMainWindow):
                 self.theme_manager.apply_theme_to_widget(
                     self.history_tab.mgmt_stats_display, "stats"
                 )
+
+            if hasattr(self.drivers_tab, "drop_zone"):
+                self.drivers_tab.drop_zone.refresh_theme()
             
             # Forzar actualización visual
             self.update()

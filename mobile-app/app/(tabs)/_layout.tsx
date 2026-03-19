@@ -2,6 +2,7 @@ import React from "react";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { Link, Tabs } from "expo-router";
 import { Image, Platform, Pressable, StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useClientOnlyValue } from "@/components/useClientOnlyValue";
 import AppHeaderTitle from "@/src/components/AppHeaderTitle";
@@ -17,30 +18,35 @@ function TabBarIcon(props: {
 
 export default function TabLayout() {
   const palette = useAppPalette();
+  const insets = useSafeAreaInsets();
   const logoSource = require("../../assets/images/Logotipo.png");
-  const tabBarBottomInset = Platform.OS === "android" ? 14 : 6;
-  const tabBarHeight = Platform.OS === "android" ? 70 : 62;
+  const tabBarBottomInset = Math.max(insets.bottom, Platform.OS === "android" ? 12 : 6);
+  const tabBarHeight = 52 + tabBarBottomInset + 8;
 
   return (
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: palette.accent,
         tabBarInactiveTintColor: palette.textMuted,
+        tabBarActiveBackgroundColor: palette.navActiveBg,
         tabBarHideOnKeyboard: true,
         tabBarStyle: {
-          backgroundColor: palette.surface,
-          borderTopColor: palette.border,
+          backgroundColor: palette.tabBarSurface,
+          borderTopColor: palette.heroBorder,
           borderTopWidth: 1,
           height: tabBarHeight,
-          paddingTop: 6,
+          paddingTop: 8,
           paddingBottom: tabBarBottomInset,
-          shadowColor: "#0f1720",
-          shadowOpacity: 0.08,
+          shadowColor: palette.shadowColor,
+          shadowOpacity: 0.12,
           shadowOffset: { width: 0, height: -3 },
-          shadowRadius: 8,
-          elevation: 8,
+          shadowRadius: 14,
+          elevation: 12,
         },
         tabBarItemStyle: {
+          marginHorizontal: 4,
+          marginTop: 4,
+          borderRadius: 16,
           minHeight: 44,
           paddingVertical: 4,
         },
@@ -49,9 +55,9 @@ export default function TabLayout() {
           fontSize: 12.5,
         },
         headerStyle: {
-          backgroundColor: palette.surface,
-          height: 88,
-          borderBottomColor: palette.border,
+          backgroundColor: palette.headerSurface,
+          height: 84 + insets.top,
+          borderBottomColor: palette.heroBorder,
           borderBottomWidth: 1,
         },
         headerTitleAlign: "left",
@@ -61,7 +67,7 @@ export default function TabLayout() {
           right: 12,
         },
         headerRightContainerStyle: {
-          paddingRight: 6,
+          paddingRight: 6 + Math.max(insets.right, 0),
         },
         headerTitleStyle: {
           color: palette.textPrimary,
@@ -79,8 +85,8 @@ export default function TabLayout() {
                 style={({ pressed }) => [
                   styles.settingsButton,
                   {
-                    borderColor: palette.border,
-                    backgroundColor: pressed ? palette.hoverBg : palette.subtleBg,
+                    borderColor: palette.heroBorder,
+                    backgroundColor: pressed ? palette.navActiveBg : palette.heroBg,
                     transform: [{ scale: pressed ? 0.95 : 1 }],
                     opacity: pressed ? 0.9 : 1,
                   },
@@ -139,12 +145,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
-    width: 184,
+    width: 168,
     gap: 10,
   },
   headerLogo: {
-    width: 132,
-    height: 48,
+    width: 108,
+    height: 40,
   },
   settingsButton: {
     width: Platform.select({ ios: 44, default: 44 }),

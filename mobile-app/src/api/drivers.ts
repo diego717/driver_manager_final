@@ -118,3 +118,23 @@ export async function deleteDriver(key: string): Promise<void> {
     path: `/drivers?key=${encodeURIComponent(normalizedKey)}`,
   });
 }
+
+export async function resolveDriverDownloadUrl(driver: Pick<DriverRecord, "key" | "download_url">): Promise<string> {
+  const directUrl = String(driver.download_url || "").trim();
+  if (directUrl) {
+    if (directUrl.startsWith("http://") || directUrl.startsWith("https://")) {
+      return directUrl;
+    }
+    return joinUrl(await getResolvedApiBaseUrl(), directUrl);
+  }
+
+  const normalizedKey = String(driver.key || "").trim();
+  if (!normalizedKey) {
+    throw new Error("Key de driver requerida.");
+  }
+
+  return joinUrl(
+    await getResolvedApiBaseUrl(),
+    `/web/drivers/download?key=${encodeURIComponent(normalizedKey)}`,
+  );
+}

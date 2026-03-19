@@ -19,6 +19,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui.theme_manager import resolve_theme_manager
+
 
 QR_MAX_ASSET_CODE_LENGTH = 128
 QR_MAX_BRAND_LENGTH = 120
@@ -68,8 +70,10 @@ class QrGeneratorDialog(QDialog):
         auto_generate=False,
     ):
         super().__init__(parent)
+        self.theme_manager = resolve_theme_manager(parent)
         self.setWindowTitle("Alta de equipo y QR")
         self.setMinimumSize(760, 760)
+        self.setStyleSheet(self.theme_manager.generate_stylesheet())
 
         self._history_manager = history_manager
         self._current_payload = ""
@@ -100,22 +104,20 @@ class QrGeneratorDialog(QDialog):
 
         self.helper_label = QLabel("")
         self.helper_label.setWordWrap(True)
-        self.helper_label.setStyleSheet("color: #5f6b7a;")
+        self.helper_label.setProperty("class", "subtle")
 
         self.error_label = QLabel("")
         self.error_label.setWordWrap(True)
-        self.error_label.setStyleSheet("color: #dc2626;")
+        self.error_label.setProperty("class", "error")
 
         self.preview_label = QLabel("Vista previa QR")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_label.setMinimumHeight(300)
-        self.preview_label.setStyleSheet("border: 1px solid #dce1e8; border-radius: 8px;")
+        self.preview_label.setProperty("class", "info")
 
         self.details_label = QLabel("")
         self.details_label.setWordWrap(True)
-        self.details_label.setStyleSheet(
-            "background: #f8fafc; border: 1px solid #dce1e8; border-radius: 8px; padding: 8px;"
-        )
+        self.details_label.setProperty("class", "info")
 
         self.payload_value = QLineEdit()
         self.payload_value.setReadOnly(True)

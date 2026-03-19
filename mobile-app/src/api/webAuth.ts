@@ -1,42 +1,56 @@
-import { extractApiError, getResolvedApiBaseUrl } from "./client";
+import {
+  buildMobileWebHeaders,
+  extractApiError,
+  getResolvedApiBaseUrl,
+  WEB_AUTH_TOKEN_TYPE,
+} from "./client";
 import {
   clearStoredWebSession,
+  getStoredWebSession,
   getStoredWebAccessExpiresAt,
   getStoredWebAccessRole,
   getStoredWebAccessToken,
   getStoredWebAccessUsername,
-  setStoredWebAccessExpiresAt,
-  setStoredWebAccessRole,
-  setStoredWebAccessToken,
-  setStoredWebAccessUsername,
+  setStoredWebSession,
 } from "../storage/secure";
 import { ensureNonEmpty } from "../utils/validation";
 import { resolveWebSession } from "./webSession";
 
 export interface WebSessionUser {
-  id?: number;
+  id?: number | null;
   username: string;
   role: string;
+  tenant_id?: string;
+  is_active?: boolean;
+  created_at?: string;
+  updated_at?: string;
+  last_login_at?: string | null;
   legacy?: boolean;
 }
 
-export interface WebLoginResponse {
+interface WebSessionState {
   success: boolean;
-  access_token: string;
-  token_type: "Bearer";
+  authenticated: true;
+  token_type: typeof WEB_AUTH_TOKEN_TYPE;
   expires_in: number;
   expires_at: string;
   user: WebSessionUser;
 }
 
-export interface WebBootstrapResponse {
-  success: boolean;
-  bootstrapped: boolean;
+export interface WebLoginResponse extends WebSessionState {
   access_token: string;
-  token_type: "Bearer";
-  expires_in: number;
-  expires_at: string;
-  user: WebSessionUser;
+}
+
+export interface WebBootstrapResponse extends WebLoginResponse {
+  bootstrapped: boolean;
+}
+
+export type WebCurrentSessionResponse = WebSessionState;
+
+export interface WebLogoutResponse {
+  success: boolean;
+  authenticated: false;
+  logged_out: boolean;
 }
 
 export interface WebManagedUser {
@@ -57,6 +71,42 @@ interface WebUsersListResponse {
 interface WebUserMutationResponse {
   success: boolean;
   user: WebManagedUser;
+}
+
+function sanitizeWebSessionUser(user: Partial<WebSessionUser> | null | undefined): WebSessionUser {
+  const username =
+    typeof user?.username === "string" && user.username.trim() ? user.username.trim() : "usuario";
+  const role = typeof user?.role === "string" && user.role.trim() ? user.role.trim() : "viewer";
+  const tenantId =
+    typeof user?.tenant_id === "string" && user.tenant_id.trim() ? user.tenant_id.trim() : undefined;
+  const createdAt =
+    typeof user?.created_at === "string" && user.created_at.trim() ? user.created_at : undefined;
+  const updatedAt =
+    typeof user?.updated_at === "string" && user.updated_at.trim() ? user.updated_at : undefined;
+
+  return {
+    id: typeof user?.id === "number" ? user.id : user?.id === null ? null : undefined,
+    username,
+    role,
+    tenant_id: tenantId,
+    is_active: typeof user?.is_active === "boolean" ? user.is_active : undefined,
+    created_at: createdAt,
+    updated_at: updatedAt,
+    last_login_at:
+      typeof user?.last_login_at === "string" || user?.last_login_at === null
+        ? user.last_login_at
+        : undefined,
+    legacy: Boolean(user?.legacy),
+  };
+}
+
+function normalizeWebSessionResponse<
+  T extends WebLoginResponse | WebBootstrapResponse | WebCurrentSessionResponse,
+>(login: T): T {
+  return {
+    ...login,
+    user: sanitizeWebSessionUser(login.user),
+  } as T;
 }
 
 function extractErrorMessage(body: unknown, fallback: string): string {
@@ -88,24 +138,27 @@ async function authorizedWebFetch(path: string, init: RequestInit = {}): Promise
 
   const token = await resolveActiveWebToken();
   const headers = new Headers(init.headers ?? {});
-  headers.set("Authorization", `Bearer ${token}`);
+  for (const [key, value] of Object.entries(buildMobileWebHeaders(token))) {
+    headers.set(key, value);
+  }
   if (!headers.has("Content-Type") && init.body !== undefined) {
     headers.set("Content-Type", "application/json");
   }
 
   return fetch(`${apiBaseUrl}${path}`, {
     ...init,
+    credentials: init.credentials ?? "include",
     headers,
   });
 }
 
 async function persistWebSession(login: WebLoginResponse | WebBootstrapResponse): Promise<void> {
-  await Promise.all([
-    setStoredWebAccessToken(login.access_token),
-    setStoredWebAccessExpiresAt(login.expires_at),
-    setStoredWebAccessUsername(login.user.username),
-    setStoredWebAccessRole(login.user.role),
-  ]);
+  await setStoredWebSession({
+    accessToken: login.access_token,
+    expiresAt: login.expires_at,
+    username: login.user.username,
+    role: login.user.role,
+  });
 }
 
 export async function loginWebSession(
@@ -118,11 +171,16 @@ export async function loginWebSession(
   ensureNonEmpty(password, "password");
 
   try {
+    const headers = new Headers({
+      "Content-Type": "application/json",
+    });
+    for (const [key, value] of Object.entries(buildMobileWebHeaders())) {
+      headers.set(key, value);
+    }
     const response = await fetch(`${apiBaseUrl}/web/auth/login`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      credentials: "include",
+      headers,
       body: JSON.stringify({
         username: username.trim().toLowerCase(),
         password,
@@ -134,7 +192,7 @@ export async function loginWebSession(
       throw new Error(extractErrorMessage(body, "Login web fallido."));
     }
 
-    const login = body as WebLoginResponse;
+    const login = normalizeWebSessionResponse(body as WebLoginResponse);
     await persistWebSession(login);
 
     return login;
@@ -156,11 +214,16 @@ export async function bootstrapWebUser(params: {
   ensureNonEmpty(params.password, "password");
 
   try {
+    const headers = new Headers({
+      "Content-Type": "application/json",
+    });
+    for (const [key, value] of Object.entries(buildMobileWebHeaders())) {
+      headers.set(key, value);
+    }
     const response = await fetch(`${apiBaseUrl}/web/auth/bootstrap`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      credentials: "include",
+      headers,
       body: JSON.stringify({
         bootstrap_password: params.bootstrapPassword,
         username: params.username.trim().toLowerCase(),
@@ -174,9 +237,26 @@ export async function bootstrapWebUser(params: {
       throw new Error(extractErrorMessage(body, "Bootstrap web fallido."));
     }
 
-    const login = body as WebBootstrapResponse;
+    const login = normalizeWebSessionResponse(body as WebBootstrapResponse);
     await persistWebSession(login);
     return login;
+  } catch (error) {
+    throw new Error(extractApiError(error));
+  }
+}
+
+export async function getCurrentWebSession(): Promise<WebCurrentSessionResponse> {
+  try {
+    const response = await authorizedWebFetch("/web/auth/me", {
+      method: "GET",
+    });
+    const body = (await response.json()) as WebCurrentSessionResponse | { error?: { message?: string } };
+
+    if (!response.ok) {
+      throw new Error(extractErrorMessage(body, "No se pudo validar la sesion web."));
+    }
+
+    return normalizeWebSessionResponse(body as WebCurrentSessionResponse);
   } catch (error) {
     throw new Error(extractApiError(error));
   }
@@ -188,6 +268,11 @@ export async function readStoredWebSession(): Promise<{
   username: string | null;
   role: string | null;
 }> {
+  const session = await getStoredWebSession();
+  if (session) {
+    return session;
+  }
+
   const [accessToken, expiresAt, username, role] = await Promise.all([
     getStoredWebAccessToken(),
     getStoredWebAccessExpiresAt(),
@@ -208,6 +293,7 @@ export async function logoutWebSession(): Promise<void> {
     });
     if (!response.ok) {
       // Best effort: always clear local session, even if server-side invalidation fails.
+      await response.json().catch(() => undefined);
     }
   } catch {
     // Best effort: local cleanup still required.

@@ -16,10 +16,12 @@ import {
   type AppStateStatus,
 } from "react-native";
 import "react-native-reanimated";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import BiometricLockScreen from "@/src/components/BiometricLockScreen";
 import AppHeaderTitle from "@/src/components/AppHeaderTitle";
 import { useNotifications } from "@/src/hooks/useNotifications";
+import { refreshSharedWebSessionState } from "@/src/session/web-session-store";
 import { getNavigationTheme, useAppPalette } from "@/src/theme/palette";
 import {
   authenticateWithBiometrics,
@@ -69,9 +71,11 @@ export default function RootLayout() {
   }
 
   return (
-    <ThemePreferenceProvider>
-      <RootLayoutNav />
-    </ThemePreferenceProvider>
+    <SafeAreaProvider>
+      <ThemePreferenceProvider>
+        <RootLayoutNav />
+      </ThemePreferenceProvider>
+    </SafeAreaProvider>
   );
 }
 
@@ -244,6 +248,10 @@ export function RootLayoutNav() {
     if (!notifications.error) return;
     console.warn(`[notifications] ${notifications.error}`);
   }, [notifications.error]);
+
+  useEffect(() => {
+    void refreshSharedWebSessionState({ showLoader: true });
+  }, []);
 
   return (
     <ThemeProvider value={navigationTheme}>

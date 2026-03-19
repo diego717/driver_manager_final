@@ -59,6 +59,7 @@ describe("critical integration flow: web login + incidents", () => {
       ok: true,
       json: async () => ({
         success: true,
+        authenticated: true,
         access_token: "web-token-1",
         token_type: "Bearer",
         expires_in: 3600,

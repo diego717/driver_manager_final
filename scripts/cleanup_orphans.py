@@ -19,9 +19,6 @@ from typing import Any
 import requests
 
 
-DEFAULT_BASE_URL = "https://driver-manager-db.diegosasen.workers.dev"
-
-
 def _mask(value: str) -> str:
     value = str(value or "")
     if len(value) <= 6:
@@ -35,8 +32,8 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-url",
-        default=os.getenv("WORKER_URL", DEFAULT_BASE_URL),
-        help=f"Worker base URL (default: {DEFAULT_BASE_URL})",
+        default=os.getenv("WORKER_URL", os.getenv("DRIVER_MANAGER_HISTORY_API_URL", "")).strip(),
+        help="Worker base URL. Required if not set in WORKER_URL or DRIVER_MANAGER_HISTORY_API_URL.",
     )
     parser.add_argument("--admin-user", required=True, help="Web admin/super_admin username")
     parser.add_argument("--admin-pass", required=True, help="Web admin/super_admin password")
@@ -61,6 +58,8 @@ def _parse_args() -> argparse.Namespace:
         help="Request timeout in seconds (default: 30)",
     )
     args = parser.parse_args()
+    if not str(args.base_url).strip():
+        parser.error("Real cleanup requiere --base-url o la variable WORKER_URL/DRIVER_MANAGER_HISTORY_API_URL.")
     if not args.dry_run and not args.yes:
         parser.error("Real cleanup requires --yes (or use --dry-run).")
     return args

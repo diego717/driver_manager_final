@@ -58,7 +58,7 @@ $rotation = [ordered]@{
     notes = @(
         "WEB_SESSION_SECRET rotation logs out current web sessions (expected).",
         "WEB_LOGIN_PASSWORD is only for bootstrap/initialization; keep it strong even if not actively used.",
-        "API_TOKEN/API_SECRET rotation WILL break existing desktop/mobile/API clients until they are updated."
+        "API_TOKEN/API_SECRET rotation WILL break existing desktop or private HMAC clients until they are updated."
     )
     web = [ordered]@{
         WEB_SESSION_SECRET = New-RandomBase64Url -Bytes 48
@@ -79,7 +79,7 @@ Write-Host ""
 Write-Host "Safe now (web only, logs out sessions):" -ForegroundColor Yellow
 Write-Host "  .\\scripts\\rotate_worker_secrets.ps1 -ApplyWeb"
 Write-Host ""
-Write-Host "Requires coordinated client rollout (API):" -ForegroundColor Yellow
+Write-Host "Requires coordinated client rollout (legacy API/HMAC):" -ForegroundColor Yellow
 Write-Host "  .\\scripts\\rotate_worker_secrets.ps1 -ApplyApi"
 Write-Host ""
 
@@ -91,7 +91,7 @@ if ($ApplyWeb) {
 
 if ($ApplyApi) {
     Write-Host "Applying API_* secrets..." -ForegroundColor Red
-    Write-Host "WARNING: This will invalidate current API clients until they are reconfigured." -ForegroundColor Red
+    Write-Host "WARNING: This will invalidate current legacy/private HMAC clients until they are reconfigured." -ForegroundColor Red
     Set-WranglerSecret -Name "API_TOKEN" -Value $rotation.api.API_TOKEN
     Set-WranglerSecret -Name "API_SECRET" -Value $rotation.api.API_SECRET
 }

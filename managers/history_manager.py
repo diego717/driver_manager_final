@@ -47,6 +47,7 @@ class InstallationHistory:
         self.api_url = None
         self.api_token = None
         self.api_secret = None
+        self.api_tenant_id = None
         self.web_token_provider = None
         self.allow_unsigned_requests = str(
             os.getenv("DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS", "")
@@ -61,7 +62,24 @@ class InstallationHistory:
         self.web_token_provider = token_provider
 
     def _current_desktop_auth_mode(self):
-        return str(os.getenv("DRIVER_MANAGER_DESKTOP_AUTH_MODE", "")).strip().lower()
+        """Resolver modo desktop desde env o config persistida."""
+        allowed_modes = {"legacy", "web", "auto"}
+
+        env_mode = str(os.getenv("DRIVER_MANAGER_DESKTOP_AUTH_MODE", "")).strip().lower()
+        if env_mode in allowed_modes:
+            return env_mode
+
+        config_manager = getattr(self, "config_manager", None)
+        if config_manager and hasattr(config_manager, "load_config_data"):
+            try:
+                config = config_manager.load_config_data() or {}
+            except Exception:
+                config = {}
+            config_mode = str(config.get("desktop_auth_mode", "")).strip().lower()
+            if config_mode in allowed_modes:
+                return config_mode
+
+        return "legacy"
 
     def _get_web_access_token(self):
         provider = self.web_token_provider
@@ -77,6 +95,10 @@ class InstallationHistory:
         if mode not in {"web", "auto"}:
             return False
         return bool(self._get_web_access_token())
+
+    def _requires_web_session(self):
+        """Indicate when desktop is configured as web-only but has no active bearer session."""
+        return self._current_desktop_auth_mode() == "web" and not self._get_web_access_token()
 
     def _default_statistics(self):
         """Estructura estándar de estadísticas para mantener compatibilidad."""
@@ -248,28 +270,6 @@ class InstallationHistory:
 
         return filtered
 
-    def _read_env_file(self, env_path: Path):
-        """Leer variables clave=valor desde archivo .env (sin dependencias externas)."""
-        data = {}
-        if not env_path.exists():
-            return data
-
-        try:
-            for raw in env_path.read_text(encoding="utf-8").splitlines():
-                line = raw.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                data[key.strip()] = value.strip().strip('"').strip("'")
-        except Exception as error:
-            logger.warning(f"No se pudo leer .env en {env_path}: {error}")
-
-        return data
-
-    def _is_test_environment(self):
-        """Detectar ejecución de tests para mantener comportamiento determinista."""
-        return "PYTEST_CURRENT_TEST" in os.environ or "unittest" in sys.modules
-    
     def _initialize_api_config(self):
         """
         Inicializar configuración de API de forma segura.
@@ -278,85 +278,64 @@ class InstallationHistory:
         """
         try:
             config = self.config_manager.load_config_data()
+            desktop_auth_mode = self._current_desktop_auth_mode()
             
             if not config:
                 logger.warning("No configuration found for API initialization")
                 config = {}
             
-            # Validar y cargar URL
-            # Prioridad: env de escritorio > config.enc > fallback mobile-app/.env
-            local_env = {} if self._is_test_environment() else self._read_env_file(Path("mobile-app/.env"))
+            # Validar y cargar URL.
+            # Prioridad: env de escritorio > config.enc.
             api_url = (
                 os.getenv("DRIVER_MANAGER_HISTORY_API_URL", "")
                 or config.get('api_url')
                 or config.get('history_api_url', '')
-                or local_env.get("EXPO_PUBLIC_API_BASE_URL", "")
             )
             if api_url:
                 self.api_url = api_url.rstrip('/')
                 logger.info(f"API URL configured: {self.api_url[:30]}...")
 
-            # Cargar credenciales de autenticacion
+            # Cargar credenciales legacy HMAC.
             # Prioridad segura: env de escritorio > config.enc.
-            # Fallback a mobile-app/.env solo si se habilita explicitamente.
-            allow_mobile_secret_fallback = str(
-                os.getenv("DRIVER_MANAGER_ALLOW_MOBILE_ENV_FALLBACK", "")
-            ).strip().lower() in {"1", "true", "yes", "on"}
             self.api_token = (
                 os.getenv("DRIVER_MANAGER_API_TOKEN")
                 or config.get('api_token')
-                or (
-                    local_env.get("EXPO_PUBLIC_API_TOKEN")
-                    if allow_mobile_secret_fallback
-                    else None
-                )
             )
             self.api_secret = (
                 os.getenv("DRIVER_MANAGER_API_SECRET")
                 or config.get('api_secret')
-                or (
-                    local_env.get("EXPO_PUBLIC_API_SECRET")
-                    if allow_mobile_secret_fallback
-                    else None
-                )
             )
             if self.api_token and self.api_secret:
-                logger.info("API authentication configured successfully")
-                if (
-                    allow_mobile_secret_fallback
-                    and
-                    not os.getenv("DRIVER_MANAGER_API_TOKEN")
-                    and not config.get('api_token')
-                    and local_env.get("EXPO_PUBLIC_API_TOKEN")
-                ):
-                    logger.warning(
-                        "Usando API token desde mobile-app/.env (fallback). "
-                        "Para desktop productivo deshabilita DRIVER_MANAGER_ALLOW_MOBILE_ENV_FALLBACK "
-                        "y define DRIVER_MANAGER_API_TOKEN o guarda api_token en config.enc."
-                    )
-                if (
-                    allow_mobile_secret_fallback
-                    and
-                    not os.getenv("DRIVER_MANAGER_API_SECRET")
-                    and not config.get('api_secret')
-                    and local_env.get("EXPO_PUBLIC_API_SECRET")
-                ):
-                    logger.warning(
-                        "Usando API secret desde mobile-app/.env (fallback). "
-                        "Para desktop productivo deshabilita DRIVER_MANAGER_ALLOW_MOBILE_ENV_FALLBACK "
-                        "y define DRIVER_MANAGER_API_SECRET o guarda api_secret en config.enc."
-                    )
+                logger.info("Legacy API authentication configured successfully")
             else:
-                if self.allow_unsigned_requests:
+                if desktop_auth_mode == "web":
+                    logger.info(
+                        "Desktop auth mode 'web': legacy API token/secret are not required at startup."
+                    )
+                elif desktop_auth_mode == "auto":
+                    logger.info(
+                        "Desktop auth mode 'auto': use an active web session for /web/* or "
+                        "configure legacy API token/secret for private HMAC routes."
+                    )
+                elif self.allow_unsigned_requests:
                     logger.warning(
-                        "API authentication not configured. "
+                        "Legacy API authentication not configured. "
                         "Unsigned requests enabled by DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS."
                     )
                 else:
                     logger.error(
-                        "API authentication not configured. "
-                        "Requests will be blocked until API token/secret are configured."
+                        "Legacy API authentication not configured. "
+                        "Requests in legacy mode will be blocked until API token/secret are configured."
                     )
+
+            self.api_tenant_id = (
+                os.getenv("DRIVER_MANAGER_API_TENANT_ID")
+                or config.get('api_tenant_id')
+                or config.get('tenant_id')
+                or None
+            )
+            if self.api_tenant_id:
+                self.api_tenant_id = str(self.api_tenant_id).strip()
                 
         except Exception as e:
             logger.error(f"Failed to initialize API config: {e}", exc_info=True)
@@ -410,7 +389,7 @@ class InstallationHistory:
     
     def _generate_request_signature(self, method, path, timestamp, body_hash, nonce):
         """
-        Generar firma HMAC para la solicitud.
+        Generar firma HMAC para solicitudes legacy privadas.
         
         SECURITY IMPROVEMENT (SEC-003): Request signing to prevent tampering.
         
@@ -445,7 +424,7 @@ class InstallationHistory:
     
     def _get_headers(self, method='GET', path='/', body_hash=''):
         """
-        Generar headers con autenticación.
+        Generar headers con autenticación legacy HMAC.
         
         SECURITY IMPROVEMENT (SEC-003): Added authentication headers.
         
@@ -477,6 +456,8 @@ class InstallationHistory:
                 'X-Request-Signature': signature,
                 'X-Request-Nonce': nonce,
             })
+            if self.api_tenant_id:
+                headers['X-Tenant-Id'] = self.api_tenant_id
         
         return headers
 
@@ -540,11 +521,12 @@ class InstallationHistory:
             )
         
         endpoint_clean = str(endpoint or "").lstrip("/")
-        web_mode_active = self._current_desktop_auth_mode() in {"web", "auto"}
+        auth_mode = self._current_desktop_auth_mode()
+        web_mode_active = auth_mode in {"web", "auto"}
         web_access_token = self._get_web_access_token()
         use_web_bearer_mode = self._should_use_web_bearer_mode()
 
-        if web_mode_active and self._current_desktop_auth_mode() == "web" and not web_access_token:
+        if web_mode_active and auth_mode == "web" and not web_access_token:
             raise ConnectionError(
                 "❌ No hay sesión web activa para consumir la API.\n\n"
                 "Inicia sesión nuevamente para operar en modo web."
@@ -599,8 +581,15 @@ class InstallationHistory:
                     if not headers.get(header_name)
                 ]
                 if missing_auth_headers:
+                    if auth_mode == "auto":
+                        raise ConnectionError(
+                            "❌ Autenticación desktop no configurada para modo auto.\n\n"
+                            "Activa una sesión web para usar /web/* o configura "
+                            "DRIVER_MANAGER_API_TOKEN y DRIVER_MANAGER_API_SECRET para rutas legacy privadas.\n"
+                            "Para debug local únicamente, habilita DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS=true."
+                        )
                     raise ConnectionError(
-                        "❌ Autenticación API no configurada para desktop.\n\n"
+                        "❌ Autenticación API legacy no configurada para desktop.\n\n"
                         "Configura DRIVER_MANAGER_API_TOKEN y DRIVER_MANAGER_API_SECRET (o config.enc).\n"
                         "Para debug local únicamente, habilita DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS=true."
                     )
@@ -772,7 +761,10 @@ class InstallationHistory:
             params['start_date'] = start_date
         if end_date:
             params['end_date'] = end_date
-        
+
+        if self._requires_web_session():
+            return []
+
         try:
             installations = self._make_request('get', 'installations', params=params) or []
             return self._apply_local_filters(
@@ -1222,7 +1214,10 @@ class InstallationHistory:
             params['start_date'] = start_date
         if end_date:
             params['end_date'] = end_date
-        
+
+        if self._requires_web_session():
+            return self._default_statistics()
+
         try:
             stats = self._make_request('get', 'statistics', params=params)
             return self._normalize_statistics(stats, start_date=start_date, end_date=end_date)

@@ -12,6 +12,8 @@ import { resolveWebSession } from "./webSession";
 const envBaseURL = normalizeApiBaseUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? "");
 const allowHttpApiBaseUrlInDebug =
   process.env.EXPO_PUBLIC_ALLOW_HTTP_API_BASE_URL === "true";
+export const WEB_AUTH_TOKEN_TYPE = "Bearer" as const;
+export const MOBILE_WEB_CLIENT_PLATFORM = "mobile" as const;
 
 if (!envBaseURL) {
   // Keep an explicit warning for dev builds; requests will fail if baseURL stays empty.
@@ -92,6 +94,13 @@ function ensureWebPath(path: string): string {
   return path.startsWith("/web/") ? path : `/web${path}`;
 }
 
+export function buildMobileWebHeaders(accessToken?: string): Record<string, string> {
+  return {
+    ...(accessToken ? { Authorization: `${WEB_AUTH_TOKEN_TYPE} ${accessToken}` } : {}),
+    "X-Client-Platform": MOBILE_WEB_CLIENT_PLATFORM,
+  };
+}
+
 async function resolveValidWebAccessToken(): Promise<string | null> {
   const resolved = await resolveWebSession({
     getAccessToken: getStoredWebAccessToken,
@@ -131,10 +140,7 @@ export async function resolveRequestAuth({
 
   return {
     path: ensureWebPath(normalizedPath),
-    headers: {
-      Authorization: `Bearer ${webAccessToken}`,
-      "X-Client-Platform": "mobile",
-    },
+    headers: buildMobileWebHeaders(webAccessToken),
     mode: "web",
   };
 }

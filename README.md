@@ -123,9 +123,11 @@ En la raiz del proyecto (o junto al `.exe`) crea `portable_config.json` con, com
   "access_key_id": "TU_R2_ACCESS_KEY_ID",
   "secret_access_key": "TU_R2_SECRET_ACCESS_KEY",
   "bucket_name": "TU_BUCKET_DE_DRIVERS",
+  "desktop_auth_mode": "auto",
   "api_url": "https://tu-worker.workers.dev",
-  "api_token": "TOKEN_OPCIONAL_PARA_AUTH",
-  "api_secret": "SECRET_OPCIONAL_PARA_FIRMAS_HMAC"
+  "api_tenant_id": "TENANT_LEGACY_PERMITIDO",
+  "api_token": "TOKEN_OPCIONAL_SOLO_PARA_LEGACY_PRIVADO",
+  "api_secret": "SECRET_OPCIONAL_SOLO_PARA_FIRMAS_HMAC_LEGACY"
 }
 ```
 
@@ -133,9 +135,9 @@ En la raiz del proyecto (o junto al `.exe`) crea `portable_config.json` con, com
 
 El cliente desktop soporta un feature flag para autenticación:
 
-- `DRIVER_MANAGER_DESKTOP_AUTH_MODE=legacy` (default): login contra `users.json` (flujo actual).
-- `DRIVER_MANAGER_DESKTOP_AUTH_MODE=web`: login por `username/password` contra `/web/auth/login`.
-- `DRIVER_MANAGER_DESKTOP_AUTH_MODE=auto`: intenta web si hay `api_url`, y si falla cae a legacy.
+- `DRIVER_MANAGER_DESKTOP_AUTH_MODE=legacy` (default): login contra `users.json` y rutas legacy firmadas. Úsalo solo para integraciones privadas/heredadas.
+- `DRIVER_MANAGER_DESKTOP_AUTH_MODE=web`: login por `username/password` contra `/web/auth/login` y consumo exclusivo de `/web/*` con Bearer.
+- `DRIVER_MANAGER_DESKTOP_AUTH_MODE=auto`: usa `/web/*` cuando hay sesión web activa; si no, cae a legacy firmado solo si configuraste `api_token`/`api_secret`.
 
 Con `web` (o `auto` con sesión web activa), el desktop usa Bearer `/web/*` para:
 - gestión de drivers (`/web/drivers`)
@@ -152,6 +154,7 @@ python main.py
 Notas:
 
 - `history_api_url` tambien es aceptado como fallback para `api_url`.
+- Mobile distribuida usa solo `/web/*` + sesión corta; no requiere `API_TOKEN` ni `API_SECRET`.
 - En el primer inicio, la app inyecta esta config en `config/config.enc` y elimina `portable_config.json`.
 - `config/`, `*.enc` y `portable_config.json` ya estan ignorados en `.gitignore`.
 
@@ -188,6 +191,7 @@ npm run deploy
 `npm run deploy` ahora ejecuta una verificacion de seguridad previa (`security:verify-deploy`) que:
 - valida bindings KV criticos (`RATE_LIMIT_KV` y `WEB_SESSION_KV`) en `wrangler.toml`
 - valida que exista `WEB_SESSION_SECRET` en el Worker remoto
+- valida que exista `DRIVER_MANAGER_API_TENANT_ID` si detecta credenciales legacy HMAC
 - bloquea deploy si detecta `ALLOW_INSECURE_WEB_AUTH_FALLBACK` en remoto
 
 Comandos utiles:
@@ -223,14 +227,16 @@ Luego reemplaza en `wrangler.toml`:
 - `REPLACE_WITH_WEB_SESSION_KV_ID`
 - `REPLACE_WITH_WEB_SESSION_KV_PREVIEW_ID`
 
-Para compatibilidad con clientes legacy firmados (no recomendado en mobile distribuida), puedes configurar:
+Solo para compatibilidad con clientes legacy firmados o integraciones privadas puedes configurar:
 
 ```powershell
 wrangler secret put API_TOKEN
 wrangler secret put API_SECRET
+wrangler secret put DRIVER_MANAGER_API_TENANT_ID
 ```
 
-> Recomendado para produccion mobile: **no embebas `API_SECRET` en apps distribuidas**. Usa solo `/web/*` + Bearer de sesion corta.
+> Recomendado para produccion mobile: no embebas `API_SECRET` ni `API_TOKEN` en apps distribuidas. Usa solo `/web/*` + Bearer de sesion corta.
+> Seguridad legacy: `DRIVER_MANAGER_API_TENANT_ID` fija el unico tenant permitido para rutas HMAC no-web. Si necesitas multi-tenant real, usa `/web/*` con sesion por usuario en lugar de secretos globales.
 
 Por seguridad, CORS para `localhost/127.0.0.1` ahora queda deshabilitado por defecto.
 Si necesitas habilitarlo en desarrollo local, define explicitamente:
@@ -254,6 +260,12 @@ Con eso:
 - `WEB_SESSION_SECRET` firma y valida la sesion web (cookie HttpOnly).
 - `WEB_LOGIN_PASSWORD` se usa para bootstrap inicial de usuarios web.
 - `FCM_SERVICE_ACCOUNT_JSON` habilita envio de push FCM HTTP v1 desde el Worker.
+
+Politica de sesion web recomendada:
+- Expo web no comparte autenticacion entre tabs como requisito del producto.
+- El bearer de sesion web en clientes Expo se guarda en `sessionStorage`, no en `localStorage`.
+- `localStorage` solo se lee para migrar sesiones legacy existentes y se limpia en cuanto se detectan.
+- Logout, expirada de token y cambios de version/revocacion se validan contra `WEB_SESSION_KV` como fuente de verdad.
 
 Importante para produccion:
 - No habilites `ALLOW_INSECURE_WEB_AUTH_FALLBACK`.
@@ -303,7 +315,7 @@ Variables en `mobile-app/.env`:
 - `EXPO_PUBLIC_API_BASE_URL`
 - `EXPO_PUBLIC_ALLOW_HTTP_API_BASE_URL` (solo debug/local si necesitas URL HTTP)
 
-La autenticacion mobile en produccion usa exclusivamente login web (`/web/auth/login`) y Bearer de corta duracion con expiracion/revocacion server-side.
+No uses `EXPO_PUBLIC_API_TOKEN` ni `EXPO_PUBLIC_API_SECRET`: la autenticacion mobile en produccion usa exclusivamente login web (`/web/auth/login`) y Bearer de corta duracion con expiracion/revocacion server-side.
 
 ### APK Android con EAS (recomendado)
 
@@ -403,7 +415,7 @@ Notas API:
 - Headers HMAC requeridos: `X-API-Token`, `X-Request-Timestamp`, `X-Request-Nonce`, `X-Request-Signature`.
 - En upload binario (`POST /incidents/:incidentId/photos`) tambien se requiere `X-Body-SHA256`.
 - Ventana anti-replay: 300 segundos.
-- Requests mobile con header `X-Client-Platform: mobile` no pueden usar HMAC en rutas legacy.
+- Requests mobile distribuidos con header `X-Client-Platform: mobile` no pueden usar HMAC en rutas legacy.
 - Web token: `Authorization: Bearer <token>` emitido por `/web/auth/login` (TTL 8 horas), renovable con nuevo login/refresh y revocable server-side por version de sesion.
 - Login web: `username + password` contra `web_users` (bootstrap inicial con `/web/auth/bootstrap`).
 - Password policy web: minimo 12 caracteres, mayuscula, minuscula, numero y caracter especial.
@@ -417,7 +429,9 @@ Notas API:
 - Limite por foto: 5 MB (post-compresion recomendada en cliente movil).
 
 Migracion desktop (seguridad):
-- El cliente desktop ahora falla en cerrado si faltan credenciales firmadas (`DRIVER_MANAGER_API_TOKEN`/`DRIVER_MANAGER_API_SECRET` o `config.enc`).
+- En modo `legacy`, el cliente desktop falla en cerrado si faltan credenciales firmadas (`DRIVER_MANAGER_API_TOKEN`/`DRIVER_MANAGER_API_SECRET` o `config.enc`).
+- En modo `web`, el cliente desktop requiere una sesión web activa y no usa secretos HMAC globales.
+- En modo `auto`, el cliente desktop usa sesión web cuando existe y solo cae a HMAC si configuraste credenciales legacy explícitas.
 - Solo para debug local puedes permitir requests sin firma con `DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS=true` (no usar en produccion).
 
 Ejemplo rapido de flujo web:
@@ -443,7 +457,7 @@ curl "$BASE_URL/web/installations" `
 Script incluido:
 
 ```powershell
-python sync_r2_users_to_web_d1.py
+python sync_r2_users_to_web_d1.py --api-base-url https://tu-worker.example.workers.dev
 ```
 
 El script:
@@ -451,19 +465,34 @@ El script:
 - Descarga `system/users.json` desde R2.
 - Hace login web con un admin existente.
 - Importa usuarios hacia D1 (`/web/auth/import-users`) preservando hashes.
+- Usa `--api-base-url` o `DRIVER_MANAGER_HISTORY_API_URL`; ya no lee `mobile-app/.env`.
 
 ## Testing
 
 ### Python (desktop)
 
 ```powershell
-python -m unittest discover -s tests -v
+python scripts/run_python_tests.py
 ```
 
-### Worker contract tests
+Raiz oficial Python: `tests/`. No uses `python -m unittest` sin `start_dir`, porque vuelve a mezclar discovery fuera de la suite soportada.
+
+### Web + dashboard + Worker
 
 ```powershell
-node --test tests_js/*.test.mjs
+npm run test:web
+```
+
+Ese comando:
+- sincroniza assets del dashboard a `public/`
+- ejecuta tests del dashboard contra `public/` como fuente de verdad
+- ejecuta contract tests del Worker
+
+Si quieres correrlos por separado:
+
+```powershell
+npm run test:dashboard
+npm run test:worker
 ```
 
 ### Mobile tests
@@ -473,7 +502,7 @@ cd mobile-app
 npm test
 ```
 
-CI (`.github/workflows/tests.yml`) ejecuta estas tres suites.
+CI (`.github/workflows/tests.yml`) ejecuta los mismos comandos oficiales: `python scripts/run_python_tests.py`, `npm run test:web` y `npm test` en `mobile-app/`.
 
 ## Documentacion API
 

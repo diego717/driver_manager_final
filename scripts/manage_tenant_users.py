@@ -26,9 +26,6 @@ from typing import Any
 import requests
 
 
-DEFAULT_BASE_URL = "https://driver-manager-db.diegosasen.workers.dev"
-
-
 def _mask(value: str) -> str:
     value = str(value or "")
     if len(value) <= 6:
@@ -47,8 +44,8 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-url",
-        default=os.getenv("WORKER_URL", DEFAULT_BASE_URL),
-        help=f"Base URL del Worker (default: {DEFAULT_BASE_URL})",
+        default=os.getenv("WORKER_URL", os.getenv("DRIVER_MANAGER_HISTORY_API_URL", "")).strip(),
+        help="Base URL del Worker. Requerida si no defines WORKER_URL o DRIVER_MANAGER_HISTORY_API_URL.",
     )
     parser.add_argument("--admin-user", required=True, help="Usuario web super_admin")
     parser.add_argument("--admin-pass", required=True, help="Password del super_admin web")
@@ -65,6 +62,8 @@ def _parse_args() -> argparse.Namespace:
     )
 
     args = parser.parse_args()
+    if not str(args.base_url).strip():
+        parser.error("Debes definir --base-url o la variable WORKER_URL/DRIVER_MANAGER_HISTORY_API_URL.")
     if args.action == "create":
         missing = [name for name in ["username", "password", "tenant_id"] if not getattr(args, name)]
         if missing:
@@ -200,4 +199,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

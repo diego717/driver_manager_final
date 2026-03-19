@@ -26,6 +26,8 @@ import {
   setStoredApiBaseUrl,
   type ThemeMode,
 } from "@/src/storage/secure";
+import ScreenHero from "@/src/components/ScreenHero";
+import { clearSharedWebSessionState, refreshSharedWebSessionState, useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
 import { useThemePreference } from "@/src/theme/theme-preference";
 import { fontFamilies } from "@/src/theme/typography";
@@ -93,6 +95,7 @@ export default function ApiSettingsScreen() {
   const params = useLocalSearchParams<{ focus?: string | string[] }>();
   const { mode, resolvedScheme, setMode } = useThemePreference();
   const palette = useAppPalette();
+  const { hasActiveSession } = useSharedWebSessionState();
   const scrollViewRef = useRef<ScrollView | null>(null);
   const loginFocusHandledRef = useRef(false);
 
@@ -123,10 +126,10 @@ export default function ApiSettingsScreen() {
     () => requestedFocus === "login" || requestedFocus === "web-login" || requestedFocus === "auth",
     [requestedFocus],
   );
-  const hasWebSession = useMemo(
-    () => Boolean(webSessionExpiresAt && Date.parse(webSessionExpiresAt) > Date.now()),
-    [webSessionExpiresAt],
-  );
+  const hasWebSession = useMemo(() => {
+    if (!hasActiveSession) return false;
+    return Boolean(webSessionExpiresAt && Date.parse(webSessionExpiresAt) > Date.now());
+  }, [hasActiveSession, webSessionExpiresAt]);
   const sessionStatusTitle = hasWebSession ? "Conectado" : "Sin sesion activa";
   const sessionStatusSubtitle = hasWebSession
     ? formatRelativeTimeUntil(webSessionExpiresAt)
@@ -210,6 +213,7 @@ export default function ApiSettingsScreen() {
       setWebSessionExpiresAt(webSession.expiresAt);
       setWebSessionUsername(webSession.username);
       setWebSessionRole(webSession.role);
+      await refreshSharedWebSessionState();
     } catch (error) {
       notify("Error", `No se pudo cargar configuracion: ${extractApiError(error)}`);
     } finally {
@@ -252,6 +256,7 @@ export default function ApiSettingsScreen() {
       setSaving(true);
       await logoutWebSession();
       await clearStoredApiBaseUrl();
+      await clearSharedWebSessionState();
 
       setApiBaseUrl(getApiBaseUrl());
       setBaseUrlFromStorage(false);
@@ -317,6 +322,7 @@ export default function ApiSettingsScreen() {
     try {
       setWebSigningIn(true);
       const login = await loginWebSession(username, password);
+      await refreshSharedWebSessionState();
       setWebSessionExpiresAt(login.expires_at);
       setWebSessionUsername(login.user.username);
       setWebSessionRole(login.user.role);
@@ -334,6 +340,7 @@ export default function ApiSettingsScreen() {
     try {
       setWebClearing(true);
       await logoutWebSession();
+      await clearSharedWebSessionState();
       setWebSessionExpiresAt(null);
       setWebSessionUsername(null);
       setWebSessionRole(null);
@@ -398,10 +405,26 @@ export default function ApiSettingsScreen() {
         contentInset={{ bottom: keyboardHeight }}
         contentOffset={{ x: 0, y: 0 }}
       >
-        <Text style={[styles.title, { color: palette.title }]}>Configuracion y acceso</Text>
-        <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
-          Configura conexion API, sesion web y apariencia.
-        </Text>
+        <ScreenHero
+          eyebrow="Control movil"
+          title="Configuracion y acceso"
+          description="Ajusta conexion, sesion web y apariencia con el mismo lenguaje visual del resto de la app Android."
+          aside={
+            <View
+              style={[
+                styles.heroBadge,
+                {
+                  backgroundColor: palette.heroEyebrowBg,
+                  borderColor: palette.heroBorder,
+                },
+              ]}
+            >
+              <Text style={[styles.heroBadgeText, { color: palette.heroEyebrowText }]}>
+                {hasWebSession ? "conectado" : "sin sesion"}
+              </Text>
+            </View>
+          }
+        />
 
         <View style={[styles.summaryCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
           <Text style={[styles.summaryTitle, { color: hasWebSession ? palette.successText : palette.warningText }]}>
@@ -662,16 +685,16 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 12,
   },
-  title: {
-    fontSize: 25,
-    fontFamily: fontFamilies.bold,
-    color: "#0f172a",
+  heroBadge: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
   },
-  subtitle: {
-    color: "#475569",
-    fontSize: 13,
-    fontFamily: fontFamilies.regular,
-    marginBottom: 4,
+  heroBadgeText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 11.5,
+    letterSpacing: 0.3,
   },
   sourceText: {
     color: "#64748b",
@@ -680,7 +703,7 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 18,
     paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 4,
@@ -743,7 +766,7 @@ const styles = StyleSheet.create({
   },
   themePanel: {
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 18,
     paddingHorizontal: 12,
     paddingVertical: 12,
     gap: 12,
@@ -772,7 +795,7 @@ const styles = StyleSheet.create({
   },
   detailsToggle: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 10,
@@ -783,7 +806,7 @@ const styles = StyleSheet.create({
   },
   detailsPanel: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 14,
     paddingHorizontal: 10,
     paddingVertical: 8,
     gap: 4,
@@ -791,7 +814,7 @@ const styles = StyleSheet.create({
   input: {
     borderWidth: 1,
     borderColor: "#cbd5e1",
-    borderRadius: 10,
+    borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 10,
     backgroundColor: "#ffffff",
@@ -801,7 +824,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   primaryButton: {
-    borderRadius: 10,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 14,
@@ -812,7 +835,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   secondaryButton: {
-    borderRadius: 10,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: "#cbd5e1",
     backgroundColor: "#ffffff",
@@ -826,7 +849,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   warningButton: {
-    borderRadius: 10,
+    borderRadius: 14,
     backgroundColor: "#fee2e2",
     alignItems: "center",
     justifyContent: "center",

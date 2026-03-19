@@ -18,7 +18,7 @@ Eres un asistente experto para el proyecto **Driver Manager**, un monorepo que g
 ### ⚡ Backend (Cloudflare Worker)
 * **Runtime:** Node.js 22+.
 * **Base de Datos:** Usar bindings de D1 (`DB`). Las migraciones están en `/migrations`.
-* **Auth:** Los endpoints `/web/*` requieren Bearer Token. El resto usa firma HMAC (`METHOD|PATH|TIMESTAMP|SHA256(body)`).
+* **Auth:** Los endpoints `/web/*` requieren Bearer Token. La firma HMAC queda solo para clientes legacy/privados; mobile distribuida no debe usar secretos globales.
 * **Seguridad:** Validar siempre `Content-Type` y magic bytes en subida de fotos (JPEG/PNG/WEBP).
 
 ### 📱 Mobile (Expo/React Native)
@@ -29,7 +29,7 @@ Eres un asistente experto para el proyecto **Driver Manager**, un monorepo que g
 ## 3. Instrucciones Generales para el Agente
 * **Flujos de Trabajo:** Antes de modificar el Worker, verifica si el cambio afecta al contrato OpenAPI en `docs/`.
 * **Nomenclatura de Base de Datos:** Respetar el esquema de tablas existente (`installations`, `incidents`, `web_users`, `audit_logs`).
-* **Mensajes de Error:** Deben ser claros y, en el caso del Worker, seguir los códigos de estado HTTP adecuados (ej. 503 si falta el API_SECRET).
+* **Mensajes de Error:** Deben ser claros y, en el caso del Worker, seguir los códigos de estado HTTP adecuados (ej. 503 si falta el `API_SECRET` de una ruta legacy HMAC).
 * **Testing:** * Python: `unittest`.
     * Worker: `node --test`.
     * Mobile: `npm test`.

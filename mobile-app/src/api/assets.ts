@@ -104,6 +104,15 @@ export interface ResolveAssetPayload {
   update_existing?: boolean;
 }
 
+export interface UpdateAssetPayload {
+  brand?: string;
+  serial_number?: string;
+  model?: string;
+  client_name?: string;
+  notes?: string;
+  status?: string;
+}
+
 export async function resolveAssetByExternalCode(
   externalCode: string,
   payload?: ResolveAssetPayload,
@@ -175,5 +184,25 @@ export async function getAssetIncidents(
   return signedJsonRequest<AssetIncidentsResponse>({
     method: "GET",
     path: suffix ? `/assets/${assetId}/incidents?${suffix}` : `/assets/${assetId}/incidents`,
+  });
+}
+
+export async function updateAsset(
+  assetId: number,
+  payload: UpdateAssetPayload,
+): Promise<ResolveAssetResponse> {
+  ensurePositiveInt(assetId, "assetId");
+  return signedJsonRequest<ResolveAssetResponse>({
+    method: "PATCH",
+    path: `/assets/${assetId}`,
+    data: payload,
+  });
+}
+
+export async function deleteAsset(assetId: number): Promise<void> {
+  ensurePositiveInt(assetId, "assetId");
+  await signedJsonRequest<{ success: boolean }>({
+    method: "DELETE",
+    path: `/assets/${assetId}`,
   });
 }

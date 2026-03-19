@@ -5,10 +5,11 @@ Componentes de UI para Driver Manager
 from pathlib import Path
 from datetime import datetime
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QListWidget, QLabel, QLineEdit, QComboBox, QTextEdit,
                              QListWidgetItem, QGroupBox, QStackedWidget, QDialog,
-                             QSpinBox, QDialogButtonBox, QInputDialog, QMessageBox)
+                             QSpinBox, QDialogButtonBox, QInputDialog, QMessageBox,
+                             QBoxLayout, QSizePolicy)
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QFont
 
@@ -22,6 +23,8 @@ logger = get_logger()
 
 class DriversTab(QWidget):
     """Tab principal de drivers"""
+
+    LAYOUT_BREAKPOINT = 1220
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -162,6 +165,298 @@ class DriversTab(QWidget):
         upload_btn.setProperty("class", "primary")
         file_layout.addWidget(upload_btn)
         layout.addLayout(file_layout)
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+
+        header_layout = QVBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(4)
+
+        header_title = QLabel("Catalogo de drivers")
+        header_title.setProperty("class", "heroTitle")
+        header_layout.addWidget(header_title)
+
+        header_meta = QLabel(
+            "Explora el catalogo, revisa el detalle del paquete y deja la carga "
+            "administrativa como una tarea secundaria."
+        )
+        header_meta.setWordWrap(True)
+        header_meta.setProperty("class", "sectionMeta")
+        header_layout.addWidget(header_meta)
+        layout.addLayout(header_layout)
+
+        self.workspace_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self.workspace_layout.setContentsMargins(0, 0, 0, 0)
+        self.workspace_layout.setSpacing(16)
+        layout.addLayout(self.workspace_layout, 1)
+
+        self.catalog_panel = self._create_catalog_panel()
+        self.details_panel = self._create_details_panel()
+        self.operations_panel = self._create_operations_panel()
+
+        self.workspace_layout.addWidget(self.catalog_panel, 5)
+        self.workspace_layout.addWidget(self.details_panel, 4)
+        self.workspace_layout.addWidget(self.operations_panel, 3)
+
+        self._update_workspace_mode()
+
+    def toggle_upload_section(self, visible: bool):
+        """Mostrar u ocultar seccion de subida"""
+        self.upload_container.setVisible(visible)
+        self._update_workspace_mode()
+
+    def resizeEvent(self, event):
+        """Adapt the panel distribution to the available width."""
+        super().resizeEvent(event)
+        self._update_workspace_mode()
+
+    def _create_catalog_panel(self):
+        """Create the browsing panel for the available drivers."""
+        catalog_group = QGroupBox("Drivers disponibles")
+        catalog_layout = QVBoxLayout(catalog_group)
+        catalog_layout.setSpacing(12)
+
+        filter_layout = QHBoxLayout()
+        filter_layout.setSpacing(8)
+
+        filter_label = QLabel("Marca")
+        filter_label.setProperty("class", "sectionMeta")
+        filter_layout.addWidget(filter_label)
+
+        self.brand_filter = QComboBox()
+        self.brand_filter.addItems(["Todas", "Magicard", "Zebra", "Entrust Sigma"])
+        self.brand_filter.setToolTip("Filtrar la lista de controladores por fabricante")
+        self.brand_filter.setAccessibleName("Filtro de marca")
+        filter_layout.addWidget(self.brand_filter, 1)
+        filter_layout.addStretch()
+
+        self.refresh_btn = QPushButton("Actualizar lista")
+        self.refresh_btn.setToolTip("Actualizar la lista de controladores desde la nube")
+        self.refresh_btn.setAccessibleName("Actualizar lista de drivers")
+        self.refresh_btn.setAccessibleDescription("Recarga la lista de drivers disponibles desde la nube")
+        filter_layout.addWidget(self.refresh_btn)
+        catalog_layout.addLayout(filter_layout)
+
+        catalog_hint = QLabel(
+            "Selecciona un paquete para ver sus detalles y las acciones disponibles."
+        )
+        catalog_hint.setWordWrap(True)
+        catalog_hint.setProperty("class", "sectionMeta")
+        catalog_layout.addWidget(catalog_hint)
+
+        self.drivers_list = QListWidget()
+        self.drivers_list.setMinimumHeight(360)
+        self.drivers_list.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        catalog_layout.addWidget(self.drivers_list, 1)
+        return catalog_group
+
+    def _create_details_panel(self):
+        """Create the detail panel for the selected driver."""
+        details_group = QGroupBox("Detalle y acciones")
+        details_layout = QVBoxLayout(details_group)
+        details_layout.setSpacing(12)
+
+        details_hint = QLabel(
+            "Muestra la informacion tecnica del driver seleccionado y concentra las "
+            "acciones principales de descarga."
+        )
+        details_hint.setWordWrap(True)
+        details_hint.setProperty("class", "sectionMeta")
+        details_layout.addWidget(details_hint)
+
+        self.driver_details = QTextEdit()
+        self.driver_details.setReadOnly(True)
+        self.driver_details.setProperty("class", "logPanel")
+        self.driver_details.setMinimumHeight(260)
+        self.driver_details.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        details_layout.addWidget(self.driver_details, 1)
+
+        actions_label = QLabel("Acciones principales")
+        actions_label.setProperty("class", "sectionTitle")
+        details_layout.addWidget(actions_label)
+
+        actions_meta = QLabel(
+            "Descarga el paquete para cache local o ejecuta la instalacion directa."
+        )
+        actions_meta.setWordWrap(True)
+        actions_meta.setProperty("class", "sectionMeta")
+        details_layout.addWidget(actions_meta)
+
+        primary_actions_layout = QVBoxLayout()
+        primary_actions_layout.setSpacing(8)
+
+        self.download_btn = QPushButton("Descargar")
+        self.download_btn.setEnabled(False)
+        self.download_btn.setToolTip("Descargar el controlador seleccionado a la cache local")
+        primary_actions_layout.addWidget(self.download_btn)
+
+        self.install_btn = QPushButton("Descargar e instalar")
+        self.install_btn.setEnabled(False)
+        self.install_btn.setToolTip("Descargar y ejecutar el instalador del controlador seleccionado")
+        self.install_btn.setProperty("class", "primary")
+        primary_actions_layout.addWidget(self.install_btn)
+
+        details_layout.addLayout(primary_actions_layout)
+        return details_group
+
+    def _create_operations_panel(self):
+        """Create the secondary operations panel."""
+        panel = QWidget()
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(16)
+
+        tools_group = QGroupBox("Herramientas de equipo")
+        tools_layout = QVBoxLayout(tools_group)
+        tools_layout.setSpacing(8)
+
+        tools_meta = QLabel(
+            "Accesos rapidos para QR, asociacion de activos y gestion de equipos."
+        )
+        tools_meta.setWordWrap(True)
+        tools_meta.setProperty("class", "sectionMeta")
+        tools_layout.addWidget(tools_meta)
+
+        self.generate_qr_btn = QPushButton("QR equipo")
+        self.generate_qr_btn.setToolTip("Generar un codigo QR local para asociar equipos o instalaciones")
+        tools_layout.addWidget(self.generate_qr_btn)
+
+        self.associate_asset_btn = QPushButton("Asociar equipo")
+        self.associate_asset_btn.setToolTip("Asociar un equipo a una instalacion sin crear incidencia")
+        tools_layout.addWidget(self.associate_asset_btn)
+
+        self.manage_assets_btn = QPushButton("Gestion de equipos")
+        self.manage_assets_btn.setToolTip("Abrir panel de gestion de equipos")
+        tools_layout.addWidget(self.manage_assets_btn)
+        panel_layout.addWidget(tools_group)
+
+        self.upload_container = QWidget()
+        self.upload_container.setVisible(False)
+        self.upload_container.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
+
+        upload_layout = QVBoxLayout(self.upload_container)
+        upload_layout.setContentsMargins(0, 0, 0, 0)
+        upload_layout.setSpacing(12)
+
+        upload_meta = QLabel(
+            "Solo administracion. La carga queda desacoplada del catalogo para no "
+            "romper el foco operativo."
+        )
+        upload_meta.setWordWrap(True)
+        upload_meta.setProperty("class", "sectionMeta")
+        upload_layout.addWidget(upload_meta)
+
+        self._create_drag_drop_upload_section(upload_layout)
+        self._create_upload_section(upload_layout)
+        panel_layout.addWidget(self.upload_container)
+        panel_layout.addStretch()
+        return panel
+
+    def _create_drag_drop_upload_section(self, layout):
+        """Crear seccion de upload con drag and drop"""
+        upload_group = QGroupBox("Subir nuevo driver")
+        upload_layout = QVBoxLayout(upload_group)
+        upload_layout.setSpacing(10)
+
+        instructions = QLabel(
+            "Arrastra un archivo .exe, .zip o .msi o haz clic en la zona para abrir "
+            "el explorador."
+        )
+        instructions.setWordWrap(True)
+        instructions.setProperty("class", "info")
+        upload_layout.addWidget(instructions)
+
+        self.drop_zone = DropZoneWidget(
+            parent=self,
+            accepted_extensions=['.exe', '.zip', '.msi']
+        )
+        self.drop_zone.file_dropped.connect(self.on_file_dropped)
+        self.drop_zone.setMinimumHeight(124)
+        self.drop_zone.setMaximumHeight(168)
+        upload_layout.addWidget(self.drop_zone)
+
+        layout.addWidget(upload_group)
+
+    def _create_upload_section(self, layout):
+        """Crear seccion de subida manual"""
+        upload_group = QGroupBox("Metadatos de la carga")
+        upload_layout = QVBoxLayout(upload_group)
+        upload_layout.setSpacing(10)
+
+        intro_label = QLabel(
+            "Completa la version y una descripcion breve para publicar el paquete."
+        )
+        intro_label.setWordWrap(True)
+        intro_label.setProperty("class", "sectionMeta")
+        upload_layout.addWidget(intro_label)
+
+        brand_version_layout = QHBoxLayout()
+        brand_version_layout.setSpacing(8)
+        brand_version_layout.addWidget(QLabel("Marca"))
+
+        self.upload_brand = QComboBox()
+        self.upload_brand.addItems(["Magicard", "Zebra", "Entrust Sigma"])
+        brand_version_layout.addWidget(self.upload_brand, 1)
+
+        brand_version_layout.addWidget(QLabel("Version"))
+        self.upload_version = QLineEdit()
+        self.upload_version.setPlaceholderText("ej: 1.2.3")
+        brand_version_layout.addWidget(self.upload_version, 1)
+        upload_layout.addLayout(brand_version_layout)
+
+        desc_layout = QHBoxLayout()
+        desc_layout.setSpacing(8)
+        desc_layout.addWidget(QLabel("Descripcion"))
+        self.upload_description = QLineEdit()
+        self.upload_description.setPlaceholderText("Descripcion del driver")
+        desc_layout.addWidget(self.upload_description)
+        upload_layout.addLayout(desc_layout)
+
+        file_layout = QHBoxLayout()
+        file_layout.setSpacing(8)
+        self.selected_file_label = QLabel("No se ha seleccionado archivo")
+        self.selected_file_label.setWordWrap(True)
+        self.selected_file_label.setProperty("class", "sectionMeta")
+        file_layout.addWidget(self.selected_file_label, 1)
+
+        select_btn = QPushButton("📁 Seleccionar Archivo")
+        file_layout.addWidget(select_btn)
+
+        upload_btn = QPushButton("☁️ Subir a la Nube")
+        upload_btn.setProperty("class", "primary")
+        file_layout.addWidget(upload_btn)
+        upload_layout.addLayout(file_layout)
+
+        layout.addWidget(upload_group)
+
+    def _update_workspace_mode(self):
+        """Adjust the tab layout based on the available width."""
+        if not hasattr(self, 'workspace_layout'):
+            return
+
+        compact_mode = self.width() < self.LAYOUT_BREAKPOINT
+        direction = (
+            QBoxLayout.Direction.TopToBottom
+            if compact_mode
+            else QBoxLayout.Direction.LeftToRight
+        )
+        self.workspace_layout.setDirection(direction)
+
+        self.drivers_list.setMinimumHeight(300 if compact_mode else 360)
+        self.driver_details.setMinimumHeight(220 if compact_mode else 260)
+        self.drop_zone.setMaximumHeight(148 if compact_mode else 168)
 
     def on_file_dropped(self, file_path):
         """Manejador cuando se suelta/selecciona un archivo"""

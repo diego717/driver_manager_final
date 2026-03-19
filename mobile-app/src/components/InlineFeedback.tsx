@@ -27,7 +27,7 @@ export default function InlineFeedback({
         backgroundColor: palette.successBg,
         borderColor: palette.successBorder,
         textColor: palette.successText,
-        icon: "✓",
+        icon: "OK",
       };
     }
     if (tone === "warning") {
@@ -86,7 +86,15 @@ export default function InlineFeedback({
         style,
       ]}
     >
-      <View style={[styles.iconWrap, { borderColor: visualTone.borderColor }]}>
+      <View
+        style={[
+          styles.iconWrap,
+          {
+            borderColor: visualTone.borderColor,
+            backgroundColor: palette.heroBg,
+          },
+        ]}
+      >
         <Text style={[styles.iconText, { color: visualTone.textColor }]}>{visualTone.icon}</Text>
       </View>
       <Text style={[styles.messageText, { color: visualTone.textColor }]}>{message}</Text>
@@ -97,32 +105,34 @@ export default function InlineFeedback({
 const styles = StyleSheet.create({
   wrapper: {
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 8,
+    gap: 10,
   },
   iconWrap: {
-    width: 18,
-    height: 18,
+    minWidth: 26,
+    height: 26,
     borderRadius: 999,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 6,
     marginTop: 1,
     flexShrink: 0,
   },
   iconText: {
     fontFamily: fontFamilies.bold,
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: 10.5,
+    lineHeight: 12,
+    letterSpacing: 0.2,
   },
   messageText: {
     flex: 1,
     fontFamily: fontFamilies.regular,
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 12.5,
+    lineHeight: 18,
   },
 });

@@ -1,4 +1,4 @@
-name: Python Tests
+name: Tests
 
 on:
   push:
@@ -28,9 +28,9 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Unit Tests
-        run: python -m unittest discover -s tests -v
+        run: python scripts/run_python_tests.py
 
-  worker-contract-tests:
+  web-tests:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -46,8 +46,8 @@ jobs:
       - name: Install Worker Dependencies
         run: npm ci
 
-      - name: Run Worker Contract Tests
-        run: npm run test:worker
+      - name: Run Web And Worker Tests
+        run: npm run test:web
 
   mobile-app-tests:
     runs-on: ubuntu-latest

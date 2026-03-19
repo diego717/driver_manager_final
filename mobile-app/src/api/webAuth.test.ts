@@ -5,18 +5,26 @@ const clientMocks = vi.hoisted(() => ({
   extractApiError: vi.fn((error: unknown) =>
     error instanceof Error ? error.message : String(error),
   ),
+  buildMobileWebHeaders: vi.fn((accessToken?: string) => ({
+    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    "X-Client-Platform": "mobile",
+  })),
+  WEB_AUTH_TOKEN_TYPE: "Bearer",
 }));
 
 const secureMocks = vi.hoisted(() => ({
   clearStoredWebSession: vi.fn(async (): Promise<void> => undefined),
+  getStoredWebSession: vi.fn(async (): Promise<{
+    accessToken: string | null;
+    expiresAt: string | null;
+    username: string | null;
+    role: string | null;
+  } | null> => null),
   getStoredWebAccessExpiresAt: vi.fn(async (): Promise<string | null> => null),
   getStoredWebAccessRole: vi.fn(async (): Promise<string | null> => null),
   getStoredWebAccessToken: vi.fn(async (): Promise<string | null> => null),
   getStoredWebAccessUsername: vi.fn(async (): Promise<string | null> => null),
-  setStoredWebAccessExpiresAt: vi.fn(async (): Promise<void> => undefined),
-  setStoredWebAccessRole: vi.fn(async (): Promise<void> => undefined),
-  setStoredWebAccessToken: vi.fn(async (): Promise<void> => undefined),
-  setStoredWebAccessUsername: vi.fn(async (): Promise<void> => undefined),
+  setStoredWebSession: vi.fn(async (): Promise<void> => undefined),
 }));
 
 vi.mock("./client", () => clientMocks);
@@ -34,14 +42,12 @@ describe("webAuth", () => {
     clientMocks.getResolvedApiBaseUrl.mockClear();
     clientMocks.extractApiError.mockClear();
     secureMocks.clearStoredWebSession.mockClear();
+    secureMocks.getStoredWebSession.mockClear();
     secureMocks.getStoredWebAccessExpiresAt.mockClear();
     secureMocks.getStoredWebAccessRole.mockClear();
     secureMocks.getStoredWebAccessToken.mockClear();
     secureMocks.getStoredWebAccessUsername.mockClear();
-    secureMocks.setStoredWebAccessExpiresAt.mockClear();
-    secureMocks.setStoredWebAccessRole.mockClear();
-    secureMocks.setStoredWebAccessToken.mockClear();
-    secureMocks.setStoredWebAccessUsername.mockClear();
+    secureMocks.setStoredWebSession.mockClear();
     vi.stubGlobal("fetch", vi.fn());
   });
 
@@ -51,6 +57,7 @@ describe("webAuth", () => {
       ok: true,
       json: async () => ({
         success: true,
+        authenticated: true,
         access_token: "token-123",
         token_type: "Bearer",
         expires_in: 3600,
@@ -67,6 +74,8 @@ describe("webAuth", () => {
     ) as Record<string, string>;
     expect(body.username).toBe("admin");
     expect(body.password).toBe("  pass with spaces  ");
+    const headers = new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit)?.headers);
+    expect(headers.get("X-Client-Platform")).toBe("mobile");
   });
 
   it("throws API error message on 401 login response", async () => {
@@ -101,6 +110,7 @@ describe("webAuth", () => {
     expect(url).toBe("https://worker.example/web/auth/users");
     const headers = new Headers(init.headers);
     expect(headers.get("Authorization")).toBe("Bearer web-token-123");
+    expect(headers.get("X-Client-Platform")).toBe("mobile");
   });
 
   it("clears session when token is expired before making authorized request", async () => {

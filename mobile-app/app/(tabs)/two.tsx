@@ -1,35 +1,24 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
-import {
-  ActivityIndicator,
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 
 import { extractApiError } from "@/src/api/client";
-import { listIncidentsByInstallation, listInstallations } from "@/src/api/incidents";
-import { clearWebSession, readStoredWebSession } from "@/src/api/webAuth";
-import { evaluateWebSession } from "@/src/api/webSession";
+import { listIncidentsByInstallation, listInstallations, updateIncidentStatus } from "@/src/api/incidents";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
-import { consumeForceLoginOnOpenFlag } from "@/src/security/startup-session-policy";
+import EmptyStateCard from "@/src/components/EmptyStateCard";
+import ScreenHero from "@/src/components/ScreenHero";
+import ScreenScaffold from "@/src/components/ScreenScaffold";
+import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
-import { type Incident, type InstallationRecord } from "@/src/types/api";
+import { type Incident, type IncidentStatus, type InstallationRecord } from "@/src/types/api";
+
+const MIN_TOUCH_TARGET_SIZE = 44;
 
 function normalizeRecordAttentionState(value: unknown): "clear" | "open" | "in_progress" | "resolved" | "critical" {
   const normalized = String(value ?? "").trim().toLowerCase();
-  if (
-    normalized === "open" ||
-    normalized === "in_progress" ||
-    normalized === "resolved" ||
-    normalized === "critical"
-  ) {
+  if (normalized === "open" || normalized === "in_progress" || normalized === "resolved" || normalized === "critical") {
     return normalized;
   }
   return "clear";
@@ -44,447 +33,390 @@ function recordAttentionStateLabel(value: unknown): string {
   return "Sin incidencias";
 }
 
+function normalizeIncidentStatus(value: string | null | undefined): IncidentStatus {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "in_progress") return "in_progress";
+  if (normalized === "resolved") return "resolved";
+  return "open";
+}
+
+function incidentStatusLabel(value: string | null | undefined): string {
+  const status = normalizeIncidentStatus(value);
+  if (status === "in_progress") return "En curso";
+  if (status === "resolved") return "Resuelta";
+  return "Abierta";
+}
+
+function severityLabel(value: string | null | undefined): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "critical") return "Critica";
+  if (normalized === "high") return "Alta";
+  if (normalized === "medium") return "Media";
+  return "Baja";
+}
+
+function formatDate(value: string | null | undefined): string {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
 export default function IncidentListScreen() {
   const palette = useAppPalette();
   const router = useRouter();
-  const bottomSpacing = 112;
   const [installationId, setInstallationId] = useState("1");
   const [loading, setLoading] = useState(false);
   const [loadingInstallations, setLoadingInstallations] = useState(false);
+  const [updatingIncidentId, setUpdatingIncidentId] = useState<number | null>(null);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
-  const [checkingSession, setCheckingSession] = useState(true);
-  const [hasActiveSession, setHasActiveSession] = useState(false);
+  const { checkingSession, hasActiveSession } = useSharedWebSessionState();
 
-  const refreshSessionState = useCallback(async () => {
-    setCheckingSession(true);
-    try {
-      if (consumeForceLoginOnOpenFlag()) {
-        await clearWebSession();
-      }
-      const storedSession = await readStoredWebSession();
-      const resolved = evaluateWebSession(storedSession.accessToken, storedSession.expiresAt);
-      if (resolved.state === "expired") {
-        await clearWebSession();
-      }
-      const isActive = resolved.state === "active";
-      setHasActiveSession(isActive);
-      if (!isActive) {
-        setIncidents([]);
-        setInstallations([]);
-      }
-      return isActive;
-    } finally {
-      setCheckingSession(false);
-    }
-  }, []);
-
-  const loadIncidents = useCallback(
-    async (targetInstallationId: number) => {
-      const activeSession = await refreshSessionState();
-      if (!activeSession) {
-        return;
-      }
-      if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-        Alert.alert("Dato invalido", "El ID de registro debe ser un numero positivo.");
-        return;
-      }
-
-      try {
-        setLoading(true);
-        const response = await listIncidentsByInstallation(targetInstallationId);
-        setIncidents(response.incidents);
-      } catch (error) {
-        Alert.alert("Error", extractApiError(error));
-      } finally {
-        setLoading(false);
-      }
-    },
-    [refreshSessionState],
-  );
-
-  const loadInstallations = useCallback(
-    async (options?: { forceRefresh?: boolean }) => {
-      const activeSession = await refreshSessionState();
-      if (!activeSession) {
-        return;
-      }
-
-      try {
-        setLoadingInstallations(true);
-        const records = await listInstallations(options);
-        setInstallations(records);
-        setInstallationId((current) => {
-          const currentId = Number.parseInt(current, 10);
-          const exists = records.some((item) => item.id === currentId);
-          if (!exists && records.length > 0) {
-            return String(records[0].id);
-          }
-          return current;
-        });
-      } catch (error) {
-        Alert.alert("Error", `No se pudo cargar registros: ${extractApiError(error)}`);
-      } finally {
-        setLoadingInstallations(false);
-      }
-    },
-    [refreshSessionState],
-  );
-
-  const onLoad = async () => {
-    if (!(await refreshSessionState())) {
-      Alert.alert("Sesion requerida", "Inicia sesion web en Configuracion y acceso.");
-      router.push("/modal?focus=login");
+  const loadIncidents = useCallback(async (targetInstallationId: number) => {
+    if (!hasActiveSession) return;
+    if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
+      Alert.alert("Dato invalido", "El ID de registro debe ser un numero positivo.");
       return;
     }
-    const parsedInstallationId = Number.parseInt(installationId, 10);
-    await loadIncidents(parsedInstallationId);
-  };
+    try {
+      setLoading(true);
+      const response = await listIncidentsByInstallation(targetInstallationId);
+      setIncidents(response.incidents);
+    } catch (error) {
+      Alert.alert("Error", extractApiError(error));
+    } finally {
+      setLoading(false);
+    }
+  }, [hasActiveSession]);
+
+  const loadInstallations = useCallback(async (options?: { forceRefresh?: boolean }) => {
+    if (!hasActiveSession) return;
+    try {
+      setLoadingInstallations(true);
+      const records = await listInstallations(options);
+      setInstallations(records);
+      setInstallationId((current) => {
+        const currentId = Number.parseInt(current, 10);
+        return records.some((item) => item.id === currentId) || records.length === 0 ? current : String(records[0].id);
+      });
+    } catch (error) {
+      Alert.alert("Error", `No se pudo cargar registros: ${extractApiError(error)}`);
+    } finally {
+      setLoadingInstallations(false);
+    }
+  }, [hasActiveSession]);
 
   const onSelectInstallation = async (id: number) => {
-    if (!(await refreshSessionState())) {
-      Alert.alert("Sesion requerida", "Inicia sesion web en Configuracion y acceso.");
-      router.push("/modal?focus=login");
-      return;
-    }
-    const next = String(id);
-    setInstallationId(next);
+    setInstallationId(String(id));
     await loadIncidents(id);
   };
 
-  useEffect(() => {
-    void loadInstallations();
-  }, [loadInstallations]);
-
-  useFocusEffect(
-    useCallback(() => {
-      const parsedInstallationId = Number.parseInt(installationId, 10);
-      if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) {
-        return;
+  const onChangeStatus = useCallback(async (incident: Incident, nextStatus: IncidentStatus) => {
+    if (normalizeIncidentStatus(incident.incident_status) === nextStatus) return;
+    const runChange = async () => {
+      try {
+        setUpdatingIncidentId(incident.id);
+        await updateIncidentStatus(incident.id, {
+          incident_status: nextStatus,
+          resolution_note: nextStatus === "resolved"
+            ? String(incident.resolution_note || incident.evidence_note || "Resuelta desde Android").trim()
+            : "",
+          reporter_username: incident.reporter_username || "mobile_user",
+        });
+        const parsedInstallationId = Number.parseInt(installationId, 10);
+        await Promise.all([loadIncidents(parsedInstallationId), loadInstallations({ forceRefresh: true })]);
+      } catch (error) {
+        Alert.alert("Error", extractApiError(error));
+      } finally {
+        setUpdatingIncidentId(null);
       }
+    };
+    if (nextStatus !== "resolved") {
+      await runChange();
+      return;
+    }
+    Alert.alert("Resolver incidencia", `Se marcara la incidencia #${incident.id} como resuelta.`, [
+      { text: "Cancelar", style: "cancel" },
+      { text: "Resolver", onPress: () => { void runChange(); } },
+    ]);
+  }, [installationId, loadIncidents, loadInstallations]);
+
+  useEffect(() => {
+    if (!hasActiveSession) {
+      setIncidents([]);
+      setInstallations([]);
+      return;
+    }
+    void loadInstallations();
+  }, [hasActiveSession, loadInstallations]);
+
+  useFocusEffect(useCallback(() => {
+    if (!hasActiveSession) return;
+    const parsedInstallationId = Number.parseInt(installationId, 10);
+    if (Number.isInteger(parsedInstallationId) && parsedInstallationId > 0) {
       void loadIncidents(parsedInstallationId);
-    }, [installationId, loadIncidents]),
+    }
+  }, [hasActiveSession, installationId, loadIncidents]));
+
+  const activeIncidents = useMemo(
+    () => incidents.filter((incident) => normalizeIncidentStatus(incident.incident_status) !== "resolved"),
+    [incidents],
+  );
+  const resolvedIncidents = useMemo(
+    () => incidents.filter((incident) => normalizeIncidentStatus(incident.incident_status) === "resolved"),
+    [incidents],
   );
 
   if (checkingSession) {
     return (
-      <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
+      <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
         <ActivityIndicator size="large" color={palette.loadingSpinner} />
-        <Text style={[styles.authHintText, { color: palette.textSecondary }]}>
-          Verificando sesion web...
-        </Text>
-      </View>
+        <Text style={[styles.authHintText, { color: palette.textSecondary }]}>Verificando sesion web...</Text>
+      </ScreenScaffold>
     );
   }
 
   if (!hasActiveSession) {
     return (
-      <View style={[styles.centerContainer, { backgroundColor: palette.screenBg }]}>
+      <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
         <WebInlineLoginCard
           hint="Inicia sesion web para ver registros e incidencias."
           onLoginSuccess={async () => {
             await loadInstallations({ forceRefresh: true });
-            const parsedInstallationId = Number.parseInt(installationId, 10);
-            if (Number.isInteger(parsedInstallationId) && parsedInstallationId > 0) {
-              await loadIncidents(parsedInstallationId);
-            }
           }}
           onOpenAdvanced={() => router.push("/modal?focus=login")}
         />
-      </View>
+      </ScreenScaffold>
     );
   }
 
   return (
-    <ScrollView
-      contentContainerStyle={[
-        styles.container,
-        {
-          backgroundColor: palette.screenBg,
-          paddingBottom: bottomSpacing,
-        },
-      ]}
-    >
-      <Text style={[styles.title, { color: palette.textPrimary }]}>Incidencias</Text>
+    <ScreenScaffold contentContainerStyle={styles.container}>
+      <ScreenHero
+        eyebrow="Android Ops"
+        title="Incidencias"
+        description="Backlog por registro con mejor contexto visual y acciones rapidas para pasar de abierta a resuelta."
+        aside={
+          <View style={[styles.heroBadge, { backgroundColor: palette.heroEyebrowBg, borderColor: palette.heroBorder }]}>
+            <Text style={[styles.heroBadgeText, { color: palette.heroEyebrowText }]}>#{installationId || "--"}</Text>
+          </View>
+        }
+      >
+        <View style={styles.heroMetaRow}>
+          <View style={[styles.heroMetaChip, { backgroundColor: palette.heroEyebrowBg, borderColor: palette.heroBorder }]}>
+            <Text style={[styles.heroMetaText, { color: palette.heroEyebrowText }]}>{activeIncidents.length} activas</Text>
+          </View>
+          <View style={[styles.heroMetaChip, { backgroundColor: palette.heroEyebrowBg, borderColor: palette.heroBorder }]}>
+            <Text style={[styles.heroMetaText, { color: palette.heroEyebrowText }]}>{resolvedIncidents.length} resueltas</Text>
+          </View>
+        </View>
+      </ScreenHero>
 
-      <View style={styles.rowBetween}>
-        <Text style={[styles.label, { color: palette.textSecondary }]}>Registros disponibles</Text>
+      <View style={styles.topActionsRow}>
+        <TouchableOpacity style={[styles.topActionButton, { backgroundColor: palette.primaryButtonBg }]} onPress={() => router.push(`/?installationId=${encodeURIComponent(installationId || "1")}` as never)}>
+          <Text style={[styles.topActionText, { color: palette.primaryButtonText }]}>Nueva incidencia</Text>
+        </TouchableOpacity>
         <TouchableOpacity
-          style={[
-            styles.refreshButton,
-            { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-          ]}
-          onPress={() => {
-            void loadInstallations({ forceRefresh: true });
-          }}
-          disabled={loadingInstallations}
+          style={[styles.topActionButton, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
+          onPress={() => { void loadIncidents(Number.parseInt(installationId, 10)); }}
+          disabled={loading}
         >
-          {loadingInstallations ? (
-            <ActivityIndicator size="small" color={palette.refreshText} />
-          ) : (
-            <Text style={[styles.refreshButtonText, { color: palette.refreshText }]}>Refrescar</Text>
-          )}
+          {loading ? <ActivityIndicator size="small" color={palette.refreshText} /> : <Text style={[styles.topActionText, { color: palette.refreshText }]}>Refrescar</Text>}
         </TouchableOpacity>
       </View>
-      {installations.length === 0 ? (
-        <Text style={[styles.emptyText, { color: palette.textMuted }]}>No hay registros para seleccionar.</Text>
-      ) : (
-        <>
-          {installations.length > 30 ? (
-            <Text style={[styles.emptyText, { color: palette.textMuted }]}>
-              Mostrando 30 de {installations.length}. Usa ID de registro para buscar otras.
-            </Text>
-          ) : null}
+
+      <View style={[styles.filterCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+        <View style={styles.rowBetween}>
+          <Text style={[styles.label, { color: palette.textSecondary }]}>Registros disponibles</Text>
+          <TouchableOpacity
+            style={[styles.refreshButton, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
+            onPress={() => { void loadInstallations({ forceRefresh: true }); }}
+            disabled={loadingInstallations}
+          >
+            {loadingInstallations ? <ActivityIndicator size="small" color={palette.refreshText} /> : <Text style={[styles.refreshButtonText, { color: palette.refreshText }]}>Actualizar</Text>}
+          </TouchableOpacity>
+        </View>
+
+        {installations.length === 0 ? (
+          <Text style={[styles.emptyText, { color: palette.textMuted }]}>No hay registros para seleccionar.</Text>
+        ) : (
           <View style={styles.chipsWrap}>
             {installations.slice(0, 30).map((item) => {
               const selected = String(item.id) === installationId;
-              const attentionLabel = recordAttentionStateLabel(item.attention_state);
               return (
                 <TouchableOpacity
                   key={item.id}
                   style={[
                     styles.chip,
                     { backgroundColor: palette.chipBg, borderColor: palette.chipBorder },
-                    selected && {
-                      backgroundColor: palette.chipSelectedBg,
-                      borderColor: palette.chipSelectedBorder,
-                    },
+                    selected && { backgroundColor: palette.chipSelectedBg, borderColor: palette.chipSelectedBorder },
                   ]}
-                  onPress={() => {
-                    void onSelectInstallation(item.id);
-                  }}
+                  onPress={() => { void onSelectInstallation(item.id); }}
                   disabled={loading}
                 >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      { color: palette.chipText },
-                      selected && { color: palette.chipSelectedText },
-                    ]}
-                  >
-                    #{item.id} [{attentionLabel}] {item.client_name ? `- ${item.client_name}` : ""}
+                  <Text style={[styles.chipText, { color: selected ? palette.chipSelectedText : palette.chipText }]}>
+                    #{item.id} [{recordAttentionStateLabel(item.attention_state)}]
                   </Text>
                 </TouchableOpacity>
               );
             })}
           </View>
-        </>
-      )}
-
-      <Text style={[styles.label, { color: palette.textSecondary }]}>ID de registro</Text>
-      <TextInput
-        value={installationId}
-        onChangeText={setInstallationId}
-        keyboardType="numeric"
-        style={[
-          styles.input,
-          {
-            backgroundColor: palette.inputBg,
-            borderColor: palette.inputBorder,
-            color: palette.textPrimary,
-          },
-        ]}
-        placeholder="1"
-        placeholderTextColor={palette.placeholder}
-      />
-
-      <TouchableOpacity
-        style={[
-          styles.button,
-          { backgroundColor: palette.primaryButtonBg },
-          loading && styles.buttonDisabled,
-        ]}
-        onPress={() => {
-          void onLoad();
-        }}
-        disabled={loading}
-      >
-        {loading ? (
-          <ActivityIndicator color={palette.primaryButtonText} />
-        ) : (
-          <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>Cargar</Text>
         )}
-      </TouchableOpacity>
 
-      <View style={styles.section}>
-        {incidents.length === 0 ? (
-          <Text style={[styles.emptyText, { color: palette.textMuted }]}>Sin incidencias cargadas.</Text>
-        ) : (
-          incidents.map((incident) => (
-            <View
-              key={incident.id}
-              style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}
-            >
-              <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>#{incident.id} - {incident.severity}</Text>
-              <Text style={[styles.cardText, { color: palette.textSecondary }]}>{incident.note}</Text>
-              <Text style={[styles.cardMeta, { color: palette.textMuted }]}>
-                Usuario: {incident.reporter_username} | Fotos: {incident.photos?.length ?? 0}
-              </Text>
-              <Text style={[styles.cardMeta, { color: palette.textMuted }]}>{incident.created_at}</Text>
+        <Text style={[styles.label, { color: palette.textSecondary }]}>ID de registro</Text>
+        <TextInput
+          value={installationId}
+          onChangeText={setInstallationId}
+          keyboardType="numeric"
+          style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
+          placeholder="1"
+          placeholderTextColor={palette.placeholder}
+        />
+      </View>
+
+      <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Activas ({activeIncidents.length})</Text>
+      {activeIncidents.length === 0 ? (
+        <EmptyStateCard title="Sin incidencias activas." body="Este registro no tiene incidencias abiertas o en curso." />
+      ) : (
+        activeIncidents.map((incident) => {
+          const status = normalizeIncidentStatus(incident.incident_status);
+          const busy = updatingIncidentId === incident.id;
+          return (
+            <View key={incident.id} style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+              <View style={styles.cardHeader}>
+                <View style={styles.badgesRow}>
+                  <View style={[styles.badge, { backgroundColor: palette.infoBg, borderColor: palette.infoBorder }]}>
+                    <Text style={[styles.badgeText, { color: palette.infoText }]}>{severityLabel(incident.severity)}</Text>
+                  </View>
+                  <View style={[styles.badge, { backgroundColor: status === "in_progress" ? palette.warningBg : palette.infoBg, borderColor: palette.inputBorder }]}>
+                    <Text style={[styles.badgeText, { color: status === "in_progress" ? palette.warningText : palette.infoText }]}>{incidentStatusLabel(status)}</Text>
+                  </View>
+                </View>
+                <Text style={[styles.metaText, { color: palette.textMuted }]}>#{incident.id} · {formatDate(incident.created_at)}</Text>
+              </View>
+
+              <Text style={[styles.noteText, { color: palette.textPrimary }]}>{incident.note || "Sin detalle operativo."}</Text>
+              <Text style={[styles.supportingText, { color: palette.textSecondary }]}>Usuario: {incident.reporter_username || "-"} · Fotos: {incident.photos?.length ?? 0}</Text>
+              {incident.evidence_note?.trim() ? <Text style={[styles.supportingText, { color: palette.textSecondary }]}>Nota operativa: {incident.evidence_note}</Text> : null}
+              {incident.checklist_items?.length ? <Text style={[styles.supportingText, { color: palette.textSecondary }]}>Checklist: {incident.checklist_items.slice(0, 3).join(" · ")}</Text> : null}
+
+              <View style={styles.statusRow}>
+                {(["open", "in_progress", "resolved"] as IncidentStatus[]).map((nextStatus) => {
+                  const selected = status === nextStatus;
+                  const primary = nextStatus === "resolved";
+                  return (
+                    <TouchableOpacity
+                      key={`${incident.id}-${nextStatus}`}
+                      style={[
+                        styles.statusButton,
+                        {
+                          backgroundColor: selected || primary ? palette.primaryButtonBg : palette.refreshBg,
+                          borderColor: primary ? palette.primaryButtonBg : palette.inputBorder,
+                        },
+                      ]}
+                      onPress={() => { void onChangeStatus(incident, nextStatus); }}
+                      disabled={busy}
+                    >
+                      {busy && nextStatus === "resolved" ? (
+                        <ActivityIndicator size="small" color={palette.primaryButtonText} />
+                      ) : (
+                        <Text style={[styles.statusButtonText, { color: selected || primary ? palette.primaryButtonText : palette.refreshText }]}>
+                          {nextStatus === "open" ? "Abierta" : nextStatus === "in_progress" ? "En curso" : "Resolver"}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
               <View style={styles.actionsRow}>
                 <TouchableOpacity
-                  style={[
-                    styles.detailButton,
-                    { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-                  ]}
-                  onPress={() =>
-                    router.push(
-                      `/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
-                    )
-                  }
+                  style={[styles.detailButton, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
+                  onPress={() => router.push(`/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never)}
                 >
                   <Text style={[styles.detailButtonText, { color: palette.refreshText }]}>Ver detalle</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.uploadButton, { backgroundColor: palette.uploadButtonBg }]}
-                  onPress={() =>
-                    router.push(
-                      `/incident/upload?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
-                    )
-                  }
+                  onPress={() => router.push(`/incident/upload?incidentId=${incident.id}&installationId=${incident.installation_id}` as never)}
                 >
-                  <Text style={[styles.uploadButtonText, { color: palette.uploadButtonText }]}>
-                    Adjuntar foto
-                  </Text>
+                  <Text style={[styles.uploadButtonText, { color: palette.uploadButtonText }]}>Subir evidencia</Text>
                 </TouchableOpacity>
               </View>
             </View>
-          ))
-        )}
-      </View>
-    </ScrollView>
+          );
+        })
+      )}
+
+      <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Resueltas ({resolvedIncidents.length})</Text>
+      {resolvedIncidents.length === 0 ? (
+        <EmptyStateCard title="Sin historial resuelto." body="Las incidencias cerradas apareceran aqui con su nota final." />
+      ) : (
+        resolvedIncidents.map((incident) => (
+          <View key={incident.id} style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+            <View style={styles.cardHeader}>
+              <View style={styles.badgesRow}>
+                <View style={[styles.badge, { backgroundColor: palette.successBg, borderColor: palette.successBorder }]}>
+                  <Text style={[styles.badgeText, { color: palette.successText }]}>Resuelta</Text>
+                </View>
+                <View style={[styles.badge, { backgroundColor: palette.infoBg, borderColor: palette.infoBorder }]}>
+                  <Text style={[styles.badgeText, { color: palette.infoText }]}>{severityLabel(incident.severity)}</Text>
+                </View>
+              </View>
+              <Text style={[styles.metaText, { color: palette.textMuted }]}>#{incident.id} · {formatDate(incident.resolved_at || incident.status_updated_at || incident.created_at)}</Text>
+            </View>
+            <Text style={[styles.noteText, { color: palette.textPrimary }]}>{incident.note || "Sin detalle operativo."}</Text>
+            <Text style={[styles.supportingText, { color: palette.textSecondary }]}>Resolucion: {incident.resolution_note?.trim() || "Sin nota de resolucion."}</Text>
+            <TouchableOpacity
+              style={[styles.detailButton, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
+              onPress={() => router.push(`/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never)}
+            >
+              <Text style={[styles.detailButtonText, { color: palette.refreshText }]}>Ver detalle</Text>
+            </TouchableOpacity>
+          </View>
+        ))
+      )}
+    </ScreenScaffold>
   );
 }
 
 const styles = StyleSheet.create({
-  centerContainer: {
-    flex: 1,
-    padding: 20,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  container: {
-    padding: 20,
-    gap: 10,
-  },
-  authCard: {
-    width: "100%",
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 14,
-    gap: 8,
-  },
-  authTitle: {
-    fontSize: 18,
-    fontFamily: fontFamilies.bold,
-  },
-  authHintText: {
-    fontSize: 13,
-    fontFamily: fontFamilies.regular,
-  },
-  rowBetween: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 8,
-  },
-  title: {
-    fontSize: 24,
-    fontFamily: fontFamilies.bold,
-  },
-  label: {
-    fontSize: 13,
-    fontFamily: fontFamilies.semibold,
-  },
-  input: {
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  button: {
-    marginTop: 6,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 14,
-  },
-  chipsWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 4,
-  },
-  chip: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  chipText: {
-    fontSize: 12,
-    fontFamily: fontFamilies.semibold,
-  },
-  refreshButton: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  refreshButtonText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 12,
-  },
-  buttonDisabled: {
-    opacity: 0.7,
-  },
-  buttonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 15,
-  },
-  section: {
-    marginTop: 10,
-    gap: 10,
-  },
-  emptyText: {},
-  card: {
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 12,
-    gap: 6,
-  },
-  cardTitle: {
-    fontFamily: fontFamilies.bold,
-  },
-  cardText: {},
-  cardMeta: {
-    fontSize: 12,
-    fontFamily: fontFamilies.regular,
-  },
-  actionsRow: {
-    marginTop: 4,
-    flexDirection: "row",
-    gap: 8,
-  },
-  detailButton: {
-    alignSelf: "flex-start",
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  detailButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
-  },
-  uploadButton: {
-    alignSelf: "flex-start",
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  uploadButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
-  },
+  centerContainer: { flex: 1, padding: 20, alignItems: "center", justifyContent: "center" },
+  container: { padding: 20, gap: 12 },
+  authHintText: { fontSize: 13, fontFamily: fontFamilies.regular },
+  heroBadge: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7 },
+  heroBadgeText: { fontFamily: fontFamilies.bold, fontSize: 11.5, letterSpacing: 0.3 },
+  heroMetaRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  heroMetaChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7 },
+  heroMetaText: { fontFamily: fontFamilies.semibold, fontSize: 12 },
+  topActionsRow: { flexDirection: "row", gap: 10 },
+  topActionButton: { flex: 1, minHeight: MIN_TOUCH_TARGET_SIZE, borderRadius: 14, borderWidth: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
+  topActionText: { fontFamily: fontFamilies.bold, fontSize: 14 },
+  rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  label: { fontSize: 13, fontFamily: fontFamilies.semibold },
+  filterCard: { borderWidth: 1, borderRadius: 22, padding: 16, gap: 12 },
+  chipsWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7 },
+  chipText: { fontSize: 12, fontFamily: fontFamilies.semibold },
+  refreshButton: { borderWidth: 1, borderRadius: 12, minHeight: MIN_TOUCH_TARGET_SIZE, paddingHorizontal: 12, paddingVertical: 8, justifyContent: "center" },
+  refreshButtonText: { fontFamily: fontFamilies.semibold, fontSize: 12 },
+  input: { borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10 },
+  sectionTitle: { fontSize: 16, fontFamily: fontFamilies.bold, marginTop: 2 },
+  card: { borderWidth: 1, borderRadius: 18, padding: 14, gap: 9 },
+  cardHeader: { flexDirection: "row", justifyContent: "space-between", gap: 10 },
+  badgesRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, flex: 1 },
+  badge: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  badgeText: { fontSize: 11.5, fontFamily: fontFamilies.bold },
+  metaText: { fontSize: 12, fontFamily: fontFamilies.regular, textAlign: "right", flexShrink: 1 },
+  noteText: { fontSize: 14, lineHeight: 20, fontFamily: fontFamilies.semibold },
+  supportingText: { fontSize: 12.5, lineHeight: 18, fontFamily: fontFamilies.regular },
+  statusRow: { flexDirection: "row", gap: 8 },
+  statusButton: { flex: 1, minHeight: MIN_TOUCH_TARGET_SIZE, borderWidth: 1, borderRadius: 12, alignItems: "center", justifyContent: "center", paddingHorizontal: 8, paddingVertical: 8 },
+  statusButtonText: { fontSize: 12, fontFamily: fontFamilies.bold },
+  actionsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  detailButton: { alignSelf: "flex-start", borderRadius: 12, borderWidth: 1, minHeight: MIN_TOUCH_TARGET_SIZE, paddingHorizontal: 12, paddingVertical: 10, justifyContent: "center" },
+  detailButtonText: { fontFamily: fontFamilies.bold, fontSize: 12.5 },
+  uploadButton: { alignSelf: "flex-start", borderRadius: 12, minHeight: MIN_TOUCH_TARGET_SIZE, paddingHorizontal: 12, paddingVertical: 10, justifyContent: "center" },
+  uploadButtonText: { fontFamily: fontFamilies.bold, fontSize: 12.5 },
+  emptyText: { fontSize: 12.5, fontFamily: fontFamilies.regular },
 });

@@ -30,6 +30,10 @@ const notificationsHookMocks = vi.hoisted(() => ({
   })),
 }));
 
+const webSessionStoreMocks = vi.hoisted(() => ({
+  refreshSharedWebSessionState: vi.fn(async () => false),
+}));
+
 const originalModuleLoad = (Module as any)._load as (...args: any[]) => unknown;
 (Module as any)._load = function patchedLoad(request: string, parent: unknown, isMain: boolean) {
   if (request.endsWith(".png")) {
@@ -160,6 +164,7 @@ vi.mock("@/src/components/BiometricLockScreen", () => ({
 vi.mock("@/src/services/biometric", () => biometricMocks);
 vi.mock("@/src/storage/app-preferences", () => appPreferencesMocks);
 vi.mock("@/src/hooks/useNotifications", () => notificationsHookMocks);
+vi.mock("@/src/session/web-session-store", () => webSessionStoreMocks);
 
 import { RootLayoutNav } from "@/app/_layout";
 

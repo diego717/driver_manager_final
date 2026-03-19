@@ -9,14 +9,16 @@ import { createAssetsBinding } from "./helpers/assets.mock.mjs";
 const DEFAULT_API_TOKEN = "token-123";
 const DEFAULT_API_SECRET = "secret-abc";
 const WEB_SESSION_COOKIE_NAME = "__Host-web_session";
+const DEFAULT_REALTIME_TENANT_ID = "default";
 let nonceCounter = 0;
 
 async function workerFetch(request, env = {}) {
+  ensureDefaultSecurityStores(env);
   const mergedEnv = {
     API_TOKEN: DEFAULT_API_TOKEN,
     API_SECRET: DEFAULT_API_SECRET,
+    DRIVER_MANAGER_API_TENANT_ID: "default",
     ASSETS: createAssetsBinding(),
-    ALLOW_INSECURE_WEB_AUTH_FALLBACK: "true",
     ...env,
   };
 
@@ -91,6 +93,54 @@ function webSessionHeadersFromResponse(response) {
   return {
     Cookie: extractWebSessionCookieFromResponse(response),
   };
+}
+
+function webAuthorizationHeadersFromBody(body) {
+  const accessToken = String(body?.access_token || "");
+  if (!accessToken) {
+    throw new Error("No se encontro access_token en el payload de sesion web.");
+  }
+  return {
+    Authorization: `Bearer ${accessToken}`,
+  };
+}
+
+function assertWebSessionAuthBody(
+  body,
+  { username, role, tenantId = DEFAULT_REALTIME_TENANT_ID, bootstrapped } = {},
+) {
+  assert.equal(body.success, true);
+  assert.equal(body.authenticated, true);
+  assert.equal(body.token_type, "Bearer");
+  assert.equal(typeof body.access_token, "string");
+  assert.ok(body.access_token.length > 20);
+  assert.equal(typeof body.expires_in, "number");
+  assert.ok(body.expires_in > 0);
+  assert.equal(typeof body.expires_at, "string");
+  assert.equal(body.user.username, username);
+  assert.equal(body.user.role, role);
+  assert.equal(body.user.tenant_id, tenantId);
+  assert.equal(body.user.is_active, true);
+  if (bootstrapped !== undefined) {
+    assert.equal(body.bootstrapped, bootstrapped);
+  }
+}
+
+function assertWebSessionStatusBody(
+  body,
+  { username, role, tenantId = DEFAULT_REALTIME_TENANT_ID } = {},
+) {
+  assert.equal(body.success, true);
+  assert.equal(body.authenticated, true);
+  assert.equal(body.token_type, "Bearer");
+  assert.equal(body.access_token, undefined);
+  assert.equal(typeof body.expires_in, "number");
+  assert.ok(body.expires_in > 0);
+  assert.equal(typeof body.expires_at, "string");
+  assert.equal(body.user.username, username);
+  assert.equal(body.user.role, role);
+  assert.equal(body.user.tenant_id, tenantId);
+  assert.equal(body.user.is_active, true);
 }
 
 function createTestFcmServiceAccountJson(projectId = "driver-manager-fcm-test") {
@@ -1499,6 +1549,93 @@ function createMockKV(initialEntries = {}) {
   };
 }
 
+function createMockR2Bucket(initialEntries = {}) {
+  const objects = new Map();
+
+  for (const [key, entry] of Object.entries(initialEntries)) {
+    objects.set(String(key), {
+      body: entry?.body ?? "",
+      httpMetadata: entry?.httpMetadata ?? {},
+    });
+  }
+
+  return {
+    async get(key) {
+      const normalizedKey = String(key);
+      const entry = objects.get(normalizedKey);
+      if (!entry) return null;
+
+      const bodyBuffer =
+        typeof entry.body === "string"
+          ? Buffer.from(entry.body)
+          : Buffer.isBuffer(entry.body)
+            ? entry.body
+            : Buffer.from(entry.body);
+
+      return {
+        body: bodyBuffer,
+        httpMetadata: entry.httpMetadata || {},
+        async text() {
+          return bodyBuffer.toString("utf8");
+        },
+      };
+    },
+    async put(key, value, options = {}) {
+      const normalizedKey = String(key);
+      let normalizedBody = value;
+
+      if (value && typeof value.getReader === "function") {
+        normalizedBody = Buffer.from(await new Response(value).arrayBuffer());
+      } else if (value instanceof Uint8Array && !Buffer.isBuffer(value)) {
+        normalizedBody = Buffer.from(value);
+      }
+
+      objects.set(normalizedKey, {
+        body: normalizedBody,
+        httpMetadata: options.httpMetadata || {},
+      });
+    },
+    async delete(key) {
+      objects.delete(String(key));
+    },
+  };
+}
+
+function ensureDefaultSecurityStores(env) {
+  if (!env || typeof env !== "object" || env.__skipDefaultSecurityStores) {
+    return;
+  }
+
+  const db = env.DB;
+  if (db && typeof db === "object") {
+    if (!db.__testSecurityStores) {
+      Object.defineProperty(db, "__testSecurityStores", {
+        value: {
+          RATE_LIMIT_KV: createMockKV(),
+          WEB_SESSION_KV: createMockKV(),
+        },
+        configurable: true,
+        enumerable: false,
+        writable: false,
+      });
+    }
+    if (!env.RATE_LIMIT_KV) {
+      env.RATE_LIMIT_KV = db.__testSecurityStores.RATE_LIMIT_KV;
+    }
+    if (!env.WEB_SESSION_KV) {
+      env.WEB_SESSION_KV = db.__testSecurityStores.WEB_SESSION_KV;
+    }
+    return;
+  }
+
+  if (!env.RATE_LIMIT_KV) {
+    env.RATE_LIMIT_KV = createMockKV();
+  }
+  if (!env.WEB_SESSION_KV) {
+    env.WEB_SESSION_KV = createMockKV();
+  }
+}
+
 test("OPTIONS returns CORS headers only for allowed origins", async () => {
   const request = new Request("https://worker.example/installations", {
     method: "OPTIONS",
@@ -2774,7 +2911,11 @@ test("GET /web/photos/:id returns binary content with web Bearer session", async
   });
   const bootstrapBody = await bootstrapResponse.json();
   assert.equal(bootstrapResponse.status, 201);
-  assert.equal(bootstrapBody.access_token, undefined);
+  assertWebSessionAuthBody(bootstrapBody, {
+    username: "admin_root",
+    role: "admin",
+    bootstrapped: true,
+  });
 
   const request = new Request("https://worker.example/web/photos/21", {
     method: "GET",
@@ -3314,7 +3455,10 @@ test("returns 503 when API auth secrets are missing", async () => {
   const db = createMockDB();
   const request = new Request("https://worker.example/installations", { method: "GET" });
 
-  const response = await worker.fetch(request, { DB: db });
+  const response = await worker.fetch(request, {
+    DB: db,
+    DRIVER_MANAGER_API_TENANT_ID: "default",
+  });
   const body = await response.json();
 
   assert.equal(response.status, 503);
@@ -3331,6 +3475,7 @@ test("returns 401 when auth secrets are configured but headers are missing", asy
     DB: db,
     API_TOKEN: "token-123",
     API_SECRET: "secret-abc",
+    DRIVER_MANAGER_API_TENANT_ID: "default",
   });
   const body = await response.json();
 
@@ -3535,8 +3680,10 @@ test("POST /web/auth/login creates cookie session for web routes", async () => {
   const loginBody = await loginResponse.json();
 
   assert.equal(loginResponse.status, 200);
-  assert.equal(loginBody.success, true);
-  assert.equal(loginBody.access_token, undefined);
+  assertWebSessionAuthBody(loginBody, {
+    username: "admin_root",
+    role: "admin",
+  });
 
   const listRequest = new Request("https://worker.example/web/installations", {
     method: "GET",
@@ -3801,9 +3948,11 @@ test("POST /web/auth/bootstrap creates first web user with hashed password", asy
   const body = await response.json();
 
   assert.equal(response.status, 201);
-  assert.equal(body.success, true);
-  assert.equal(body.bootstrapped, true);
-  assert.equal(body.user.username, "admin_root");
+  assertWebSessionAuthBody(body, {
+    username: "admin_root",
+    role: "admin",
+    bootstrapped: true,
+  });
   assert.equal(db.state.webUsers.length, 1);
   assert.notEqual(db.state.webUsers[0].password_hash, "StrongPass#2026");
   assert.match(db.state.webUsers[0].password_hash, /^pbkdf2_sha256\$/);
@@ -3872,15 +4021,14 @@ test("POST /web/auth/login accepts username/password after bootstrap", async () 
   const loginBody = await loginResponse.json();
 
   assert.equal(loginResponse.status, 200);
-  assert.equal(loginBody.success, true);
-  assert.equal(loginBody.user.username, "admin_root");
-  assert.equal(loginBody.access_token, undefined);
+  assertWebSessionAuthBody(loginBody, {
+    username: "admin_root",
+    role: "admin",
+  });
 
   const meRequest = new Request("https://worker.example/web/auth/me", {
     method: "GET",
-    headers: {
-      ...webSessionHeadersFromResponse(loginResponse),
-    },
+    headers: webAuthorizationHeadersFromBody(loginBody),
   });
   const meResponse = await workerFetch(meRequest, {
     DB: db,
@@ -3890,8 +4038,223 @@ test("POST /web/auth/login accepts username/password after bootstrap", async () 
   const meBody = await meResponse.json();
 
   assert.equal(meResponse.status, 200);
-  assert.equal(meBody.username, "admin_root");
-  assert.equal(meBody.role, "admin");
+  assertWebSessionStatusBody(meBody, {
+    username: "admin_root",
+    role: "admin",
+  });
+});
+
+test("POST /web/auth/logout invalidates bearer session and clears cookie", async () => {
+  const db = createMockDB();
+  const sessionKv = createMockKV();
+  const env = {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+    WEB_SESSION_KV: sessionKv,
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_root",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const loginResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: "admin_root",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  const loginBody = await loginResponse.json();
+
+  assert.equal(loginResponse.status, 200);
+  assertWebSessionAuthBody(loginBody, {
+    username: "admin_root",
+    role: "admin",
+  });
+
+  const logoutResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/logout", {
+      method: "POST",
+      headers: webAuthorizationHeadersFromBody(loginBody),
+    }),
+    env,
+  );
+  const logoutBody = await logoutResponse.json();
+
+  assert.equal(logoutResponse.status, 200);
+  assert.equal(logoutBody.success, true);
+  assert.equal(logoutBody.authenticated, false);
+  assert.equal(logoutBody.logged_out, true);
+  assert.match(String(logoutResponse.headers.get("set-cookie") || ""), /Max-Age=0/);
+
+  const meResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/me", {
+      method: "GET",
+      headers: webAuthorizationHeadersFromBody(loginBody),
+    }),
+    env,
+  );
+  const meBody = await meResponse.json();
+
+  assert.equal(meResponse.status, 401);
+  assert.equal(meBody.success, false);
+});
+
+test("POST /web/auth/bootstrap returns 503 when WEB_SESSION_KV is missing", async () => {
+  const db = createMockDB();
+  const response = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_root",
+        password: "StrongPass#2026",
+      }),
+    }),
+    {
+      __skipDefaultSecurityStores: true,
+      DB: db,
+      WEB_LOGIN_PASSWORD: "web-pass",
+      WEB_SESSION_SECRET: "web-session-secret",
+      RATE_LIMIT_KV: createMockKV(),
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(body.success, false);
+  assert.match(String(body?.error?.message || ""), /WEB_SESSION_KV/);
+});
+
+test("POST/GET/DELETE /web/drivers smoke flow uploads, lists and deletes a driver", async () => {
+  const db = createMockDB();
+  const bucket = createMockR2Bucket();
+  const env = {
+    DB: db,
+    DRIVERS_BUCKET: bucket,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+    WEB_SESSION_KV: createMockKV(),
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "driver_admin",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const loginResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: "driver_admin",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  const loginBody = await loginResponse.json();
+  assert.equal(loginResponse.status, 200);
+
+  const uploadForm = new FormData();
+  uploadForm.append("brand", "Zebra");
+  uploadForm.append("version", "7.4.1");
+  uploadForm.append("description", "Driver QA");
+  uploadForm.append(
+    "file",
+    new Blob([Buffer.from("driver-binary-smoke")], { type: "application/octet-stream" }),
+    "zebra.exe",
+  );
+
+  const uploadResponse = await workerFetch(
+    new Request("https://worker.example/web/drivers", {
+      method: "POST",
+      headers: webAuthorizationHeadersFromBody(loginBody),
+      body: uploadForm,
+    }),
+    env,
+  );
+  const uploadBody = await uploadResponse.json();
+
+  assert.equal(uploadResponse.status, 201);
+  assert.equal(uploadBody.success, true);
+  assert.equal(uploadBody.driver.brand, "Zebra");
+  assert.equal(uploadBody.driver.version, "7.4.1");
+  assert.equal(uploadBody.driver.filename, "zebra.exe");
+
+  const listResponse = await workerFetch(
+    new Request("https://worker.example/web/drivers", {
+      method: "GET",
+      headers: webAuthorizationHeadersFromBody(loginBody),
+    }),
+    env,
+  );
+  const listBody = await listResponse.json();
+
+  assert.equal(listResponse.status, 200);
+  assert.equal(listBody.success, true);
+  assert.equal(listBody.total, 1);
+  assert.equal(listBody.items.length, 1);
+  assert.equal(listBody.items[0].key, uploadBody.driver.key);
+
+  const deleteResponse = await workerFetch(
+    new Request(
+      `https://worker.example/web/drivers?key=${encodeURIComponent(uploadBody.driver.key)}`,
+      {
+        method: "DELETE",
+        headers: webAuthorizationHeadersFromBody(loginBody),
+      },
+    ),
+    env,
+  );
+  const deleteBody = await deleteResponse.json();
+
+  assert.equal(deleteResponse.status, 200);
+  assert.equal(deleteBody.success, true);
+  assert.equal(deleteBody.deleted_key, uploadBody.driver.key);
+
+  const listAfterDeleteResponse = await workerFetch(
+    new Request("https://worker.example/web/drivers", {
+      method: "GET",
+      headers: webAuthorizationHeadersFromBody(loginBody),
+    }),
+    env,
+  );
+  const listAfterDeleteBody = await listAfterDeleteResponse.json();
+
+  assert.equal(listAfterDeleteResponse.status, 200);
+  assert.equal(listAfterDeleteBody.total, 0);
+  assert.equal(listAfterDeleteBody.items.length, 0);
+
+  const manifestObject = await bucket.get("manifest.json");
+  assert.ok(manifestObject);
+  const manifest = JSON.parse(await manifestObject.text());
+  assert.deepEqual(manifest.drivers, []);
 });
 
 test("POST /web/auth/verify-password validates current user password without re-login", async () => {
@@ -4142,7 +4505,12 @@ test("web auth preserves tenant_id in bootstrap, login and me", async () => {
   const bootstrapBody = await bootstrapResponse.json();
 
   assert.equal(bootstrapResponse.status, 201);
-  assert.equal(bootstrapBody.user.tenant_id, "acme-logistics");
+  assertWebSessionAuthBody(bootstrapBody, {
+    username: "tenant_admin",
+    role: "admin",
+    tenantId: "acme-logistics",
+    bootstrapped: true,
+  });
 
   const loginRequest = new Request("https://worker.example/web/auth/login", {
     method: "POST",
@@ -4159,7 +4527,11 @@ test("web auth preserves tenant_id in bootstrap, login and me", async () => {
   const loginBody = await loginResponse.json();
 
   assert.equal(loginResponse.status, 200);
-  assert.equal(loginBody.user.tenant_id, "acme-logistics");
+  assertWebSessionAuthBody(loginBody, {
+    username: "tenant_admin",
+    role: "admin",
+    tenantId: "acme-logistics",
+  });
 
   const meRequest = new Request("https://worker.example/web/auth/me", {
     method: "GET",
@@ -4174,7 +4546,11 @@ test("web auth preserves tenant_id in bootstrap, login and me", async () => {
   const meBody = await meResponse.json();
 
   assert.equal(meResponse.status, 200);
-  assert.equal(meBody.tenant_id, "acme-logistics");
+  assertWebSessionStatusBody(meBody, {
+    username: "tenant_admin",
+    role: "admin",
+    tenantId: "acme-logistics",
+  });
 });
 
 test("admin cannot create users in a different tenant", async () => {
@@ -4367,6 +4743,13 @@ test("GET /web/auth/users paginates with limit and cursor", async () => {
 
 test("PATCH /web/auth/users/:id updates role and active status", async () => {
   const db = createMockDB();
+  const sessionKv = createMockKV();
+  const env = {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+    WEB_SESSION_KV: sessionKv,
+  };
 
   const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
     method: "POST",
@@ -4377,11 +4760,7 @@ test("PATCH /web/auth/users/:id updates role and active status", async () => {
       password: "StrongPass#2026",
     }),
   });
-  const bootstrapResponse = await workerFetch(bootstrapRequest, {
-    DB: db,
-    WEB_LOGIN_PASSWORD: "web-pass",
-    WEB_SESSION_SECRET: "web-session-secret",
-  });
+  const bootstrapResponse = await workerFetch(bootstrapRequest, env);
   const bootstrapBody = await bootstrapResponse.json();
   assert.equal(bootstrapResponse.status, 201);
 
@@ -4397,12 +4776,20 @@ test("PATCH /web/auth/users/:id updates role and active status", async () => {
       role: "viewer",
     }),
   });
-  const createUserResponse = await workerFetch(createUserRequest, {
-    DB: db,
-    WEB_SESSION_SECRET: "web-session-secret",
-  });
+  const createUserResponse = await workerFetch(createUserRequest, env);
   const createUserBody = await createUserResponse.json();
   assert.equal(createUserResponse.status, 201);
+
+  const viewerLoginRequest = new Request("https://worker.example/web/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "viewer_1",
+      password: "ViewerPass#2026",
+    }),
+  });
+  const viewerLoginResponse = await workerFetch(viewerLoginRequest, env);
+  assert.equal(viewerLoginResponse.status, 200);
 
   const patchUserRequest = new Request(
     `https://worker.example/web/auth/users/${createUserBody.user.id}`,
@@ -4418,20 +4805,31 @@ test("PATCH /web/auth/users/:id updates role and active status", async () => {
       }),
     },
   );
-  const patchUserResponse = await workerFetch(patchUserRequest, {
-    DB: db,
-    WEB_SESSION_SECRET: "web-session-secret",
-  });
+  const patchUserResponse = await workerFetch(patchUserRequest, env);
   const patchUserBody = await patchUserResponse.json();
 
   assert.equal(patchUserResponse.status, 200);
   assert.equal(patchUserBody.success, true);
   assert.equal(patchUserBody.user.role, "admin");
   assert.equal(patchUserBody.user.is_active, false);
+
+  const revokedViewerSessionRequest = new Request("https://worker.example/web/auth/me", {
+    method: "GET",
+    headers: webSessionHeadersFromResponse(viewerLoginResponse),
+  });
+  const revokedViewerSessionResponse = await workerFetch(revokedViewerSessionRequest, env);
+  assert.equal(revokedViewerSessionResponse.status, 401);
 });
 
 test("POST /web/auth/users/:id/force-password resets password and allows login", async () => {
   const db = createMockDB();
+  const sessionKv = createMockKV();
+  const env = {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+    WEB_SESSION_KV: sessionKv,
+  };
 
   const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
     method: "POST",
@@ -4442,11 +4840,7 @@ test("POST /web/auth/users/:id/force-password resets password and allows login",
       password: "StrongPass#2026",
     }),
   });
-  const bootstrapResponse = await workerFetch(bootstrapRequest, {
-    DB: db,
-    WEB_LOGIN_PASSWORD: "web-pass",
-    WEB_SESSION_SECRET: "web-session-secret",
-  });
+  const bootstrapResponse = await workerFetch(bootstrapRequest, env);
   const bootstrapBody = await bootstrapResponse.json();
   assert.equal(bootstrapResponse.status, 201);
 
@@ -4462,12 +4856,20 @@ test("POST /web/auth/users/:id/force-password resets password and allows login",
       role: "viewer",
     }),
   });
-  const createUserResponse = await workerFetch(createUserRequest, {
-    DB: db,
-    WEB_SESSION_SECRET: "web-session-secret",
-  });
+  const createUserResponse = await workerFetch(createUserRequest, env);
   const createUserBody = await createUserResponse.json();
   assert.equal(createUserResponse.status, 201);
+
+  const viewerLoginRequest = new Request("https://worker.example/web/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: "viewer_1",
+      password: "ViewerPass#2026",
+    }),
+  });
+  const viewerLoginResponse = await workerFetch(viewerLoginRequest, env);
+  assert.equal(viewerLoginResponse.status, 200);
 
   const resetPasswordRequest = new Request(
     `https://worker.example/web/auth/users/${createUserBody.user.id}/force-password`,
@@ -4482,13 +4884,17 @@ test("POST /web/auth/users/:id/force-password resets password and allows login",
       }),
     },
   );
-  const resetPasswordResponse = await workerFetch(resetPasswordRequest, {
-    DB: db,
-    WEB_SESSION_SECRET: "web-session-secret",
-  });
+  const resetPasswordResponse = await workerFetch(resetPasswordRequest, env);
   const resetPasswordBody = await resetPasswordResponse.json();
   assert.equal(resetPasswordResponse.status, 200);
   assert.equal(resetPasswordBody.success, true);
+
+  const revokedViewerSessionRequest = new Request("https://worker.example/web/auth/me", {
+    method: "GET",
+    headers: webSessionHeadersFromResponse(viewerLoginResponse),
+  });
+  const revokedViewerSessionResponse = await workerFetch(revokedViewerSessionRequest, env);
+  assert.equal(revokedViewerSessionResponse.status, 401);
 
   const oldLoginRequest = new Request("https://worker.example/web/auth/login", {
     method: "POST",
@@ -4498,10 +4904,7 @@ test("POST /web/auth/users/:id/force-password resets password and allows login",
       password: "ViewerPass#2026",
     }),
   });
-  const oldLoginResponse = await workerFetch(oldLoginRequest, {
-    DB: db,
-    WEB_SESSION_SECRET: "web-session-secret",
-  });
+  const oldLoginResponse = await workerFetch(oldLoginRequest, env);
   assert.equal(oldLoginResponse.status, 401);
 
   const newLoginRequest = new Request("https://worker.example/web/auth/login", {
@@ -4512,10 +4915,7 @@ test("POST /web/auth/users/:id/force-password resets password and allows login",
       password: "ViewerPass#2027",
     }),
   });
-  const newLoginResponse = await workerFetch(newLoginRequest, {
-    DB: db,
-    WEB_SESSION_SECRET: "web-session-secret",
-  });
+  const newLoginResponse = await workerFetch(newLoginRequest, env);
   const newLoginBody = await newLoginResponse.json();
 
   assert.equal(newLoginResponse.status, 200);
@@ -5009,6 +5409,80 @@ test("accepts signed requests when auth secrets are configured", async () => {
       attention_state: "clear",
     },
   ]);
+});
+
+test("rejects signed requests when X-Tenant-Id does not match configured legacy tenant", async () => {
+  const db = createMockDB({
+    installations: [{ id: 1, driver_brand: "Zebra", status: "success" }],
+  });
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = signRequest({
+    method: "GET",
+    path: "/installations",
+    timestamp,
+    bodyBuffer: Buffer.alloc(0),
+    secret: "secret-abc",
+  });
+
+  const request = new Request("https://worker.example/installations", {
+    method: "GET",
+    headers: {
+      "X-API-Token": "token-123",
+      "X-Request-Timestamp": timestamp,
+      "X-Request-Signature": signature,
+      "X-Request-Nonce": "nonce-test-000000000001",
+      "X-Tenant-Id": "tenant-b",
+    },
+  });
+
+  const response = await workerFetch(request, {
+    DB: db,
+    API_TOKEN: "token-123",
+    API_SECRET: "secret-abc",
+    DRIVER_MANAGER_API_TENANT_ID: "tenant-a",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 403);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /tenant permitido/i);
+});
+
+test("rejects signed requests when legacy tenant binding is not configured", async () => {
+  const db = createMockDB({
+    installations: [{ id: 1, driver_brand: "Zebra", status: "success" }],
+  });
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = signRequest({
+    method: "GET",
+    path: "/installations",
+    timestamp,
+    bodyBuffer: Buffer.alloc(0),
+    secret: "secret-abc",
+  });
+
+  const request = new Request("https://worker.example/installations", {
+    method: "GET",
+    headers: {
+      "X-API-Token": "token-123",
+      "X-Request-Timestamp": timestamp,
+      "X-Request-Signature": signature,
+      "X-Request-Nonce": "nonce-test-000000000001",
+    },
+  });
+
+  const response = await workerFetch(request, {
+    DB: db,
+    API_TOKEN: "token-123",
+    API_SECRET: "secret-abc",
+    DRIVER_MANAGER_API_TENANT_ID: "",
+    API_TENANT_ID: "",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /api legacy deshabilitada/i);
 });
 
 
