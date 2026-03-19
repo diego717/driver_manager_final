@@ -1,5 +1,10 @@
 import bcrypt from "bcryptjs";
 
+import { DEFAULT_REALTIME_TENANT_ID, HttpError } from "./worker/lib/core.js";
+import { createDevicesRouteHandlers } from "./worker/routes/devices.js";
+import { createStatisticsRouteHandlers } from "./worker/routes/statistics.js";
+import { createSystemRouteHandlers } from "./worker/routes/system.js";
+
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const MIN_PHOTO_BYTES = 1024;
 const ALLOWED_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -51,7 +56,6 @@ const SSE_MAX_CONNECTION_MS = 2 * 60 * 1000;
 const SSE_MAX_CLIENTS_PER_BROKER = 200;
 const SSE_CLIENT_KEY_PATTERN = /^[a-z0-9._:-]{1,96}$/;
 const REALTIME_BROKER_INSTANCE = "global";
-const DEFAULT_REALTIME_TENANT_ID = "default";
 const ASSET_EXTERNAL_CODE_MAX_LENGTH = 128;
 const ASSET_BRAND_MAX_LENGTH = 120;
 const ASSET_SERIAL_MAX_LENGTH = 128;
@@ -68,13 +72,6 @@ const MAX_DRIVER_UPLOAD_BYTES = 300 * 1024 * 1024;
 const MAX_INCIDENT_ESTIMATED_DURATION_SECONDS = 7 * 24 * 60 * 60;
 const WEB_AUTH_ALLOW_INSECURE_FALLBACK_ENV = "ALLOW_INSECURE_WEB_AUTH_FALLBACK";
 const LEGACY_API_TENANT_ENV_NAME = "DRIVER_MANAGER_API_TENANT_ID";
-
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
 
 function errorCodeFromHttpStatus(status) {
   const normalizedStatus = Number.isInteger(status) ? status : Number.parseInt(String(status || ""), 10);
@@ -4912,54 +4909,6 @@ function validateIncidentPayload(data, options = {}) {
   };
 }
 
-function handleServiceMetadataRoute(request, env, corsPolicy, routeParts) {
-  if (routeParts.length !== 0 || request.method !== "GET") {
-    return null;
-  }
-  return jsonResponse(request, env, corsPolicy,{
-    service: "driver-manager-api",
-    status: "ok",
-    docs: {
-      health: "/health",
-      web_login: "/web/auth/login",
-      web_verify_password: "/web/auth/verify-password",
-      web_bootstrap: "/web/auth/bootstrap",
-      web_users: "/web/auth/users",
-      web_user_update: "/web/auth/users/:user_id",
-      web_user_force_password: "/web/auth/users/:user_id/force-password",
-      web_import_users: "/web/auth/import-users",
-      installations: "/installations",
-      web_installations: "/web/installations",
-      web_assets: "/web/assets",
-      web_assets_resolve: "/web/assets/resolve",
-      web_asset_link: "/web/assets/:asset_id/link-installation",
-      web_incident_status: "/web/incidents/:incident_id/status",
-      web_incident_evidence: "/web/incidents/:incident_id/evidence",
-      web_installation_incident_status: "/web/installations/:installation_id/incidents/:incident_id/status",
-      incident_evidence: "/incidents/:incident_id/evidence",
-      web_drivers: "/web/drivers",
-      web_drivers_upload: "/web/drivers",
-      web_drivers_delete: "/web/drivers?key=drivers/default/Brand/Version/file.exe",
-      web_drivers_download: "/web/drivers/download?key=drivers/default/Brand/Version/file.exe",
-      web_devices: "/web/devices",
-      web_lookup: "/web/lookup?type=asset&code=EQ-123",
-      statistics_trend: "/statistics/trend?days=7",
-      web_statistics_trend: "/web/statistics/trend?days=7",
-      audit_logs: "/audit-logs",
-      web_audit_logs: "/web/audit-logs",
-      maintenance_cleanup_orphans: "/maintenance/cleanup-orphans",
-      web_maintenance_cleanup_orphans: "/web/maintenance/cleanup-orphans",
-    },
-  });
-}
-
-function handleHealthCheckRoute(request, env, corsPolicy, routeParts) {
-  if (routeParts.length !== 1 || routeParts[0] !== "health" || request.method !== "GET") {
-    return null;
-  }
-  return jsonResponse(request, env, corsPolicy,{ ok: true, now: nowIso() });
-}
-
 async function handleSseEventsRoute(request, env, url, corsPolicy, routeParts) {
   if (routeParts.length !== 1 || routeParts[0] !== "events" || request.method !== "GET") {
     return null;
@@ -7179,42 +7128,6 @@ async function handleAuditLogsRoute(
 
   return null;
 }
-async function handleDevicesRoute(
-  request,
-  env,
-  corsPolicy,
-  routeParts,
-  isWebRoute,
-  webSession,
-) {
-      if (routeParts.length === 1 && routeParts[0] === "devices" && request.method === "POST") {
-        if (!isWebRoute || !webSession?.user_id) {
-          throw new HttpError(401, "Registro de dispositivos requiere token Bearer web.");
-        }
-
-        const data = await readJsonOrThrowBadRequest(request);
-
-        const fcmToken = normalizeFcmToken(data?.fcm_token);
-        await upsertDeviceTokenForWebUser(env, {
-          userId: Number(webSession.user_id),
-          fcmToken,
-          tenantId: webSession?.tenant_id,
-          deviceModel: data?.device_model,
-          appVersion: data?.app_version,
-          platform: data?.platform || "android",
-        });
-
-        return jsonResponse(request, env, corsPolicy,
-          {
-            success: true,
-            registered: true,
-          },
-          200,
-        );
-      }
-
-  return null;
-}
 async function handleRecordsRoute(
   request,
   env,
@@ -7897,239 +7810,21 @@ async function handleInstallationByIdRoute(
   return null;
 }
 
-async function handleStatisticsTrendRoute(
-  request,
-  env,
-  url,
-  corsPolicy,
-  routeParts,
-  isWebRoute,
-  webSession,
-  realtimeTenantId,
-) {
-  if (routeParts.length === 2 && routeParts[0] === "statistics" && routeParts[1] === "trend") {
-    const statsTenantId = normalizeRealtimeTenantId(
-      isWebRoute ? webSession?.tenant_id : realtimeTenantId,
-    );
-    if (request.method !== "GET") {
-      return textResponse(request, env, corsPolicy, "Ruta no encontrada.", 404);
-    }
+const systemRouteHandlers = createSystemRouteHandlers({
+  jsonResponse,
+});
 
-    const requestedDays = parseOptionalPositiveInt(url.searchParams.get("days"), "days");
-    const normalizedDays = requestedDays === null ? 7 : Math.min(Math.max(requestedDays, 1), 90);
-    const startDateFilter = parseDateOrNull(url.searchParams.get("start_date"));
-    const endDateFilter = parseDateOrNull(url.searchParams.get("end_date"));
+const devicesRouteHandlers = createDevicesRouteHandlers({
+  jsonResponse,
+  normalizeFcmToken,
+  readJsonOrThrowBadRequest,
+  upsertDeviceTokenForWebUser,
+});
 
-    const endExclusive = endDateFilter
-      ? startOfUtcDay(endDateFilter)
-      : addUtcDays(startOfUtcDay(new Date()), 1);
-    const startInclusive = startDateFilter
-      ? startOfUtcDay(startDateFilter)
-      : addUtcDays(endExclusive, -normalizedDays);
-
-    if (startInclusive.getTime() >= endExclusive.getTime()) {
-      throw new HttpError(400, "Rango de fechas invalido para trend.");
-    }
-
-    const { results: trendRows } = await env.DB.prepare(`
-      SELECT
-        substr(timestamp, 1, 10) AS day,
-        COUNT(*) AS total_installations,
-        SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_installations,
-        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_installations
-      FROM installations
-      WHERE tenant_id = ?
-        AND timestamp >= ?
-        AND timestamp < ?
-      GROUP BY substr(timestamp, 1, 10)
-      ORDER BY day ASC
-    `)
-      .bind(statsTenantId, startInclusive.toISOString(), endExclusive.toISOString())
-      .all();
-
-    const byDay = new Map();
-    for (const row of trendRows || []) {
-      const day = normalizeOptionalString(row?.day, "");
-      if (!day) continue;
-      byDay.set(day, {
-        total_installations: Number(row?.total_installations) || 0,
-        successful_installations: Number(row?.successful_installations) || 0,
-        failed_installations: Number(row?.failed_installations) || 0,
-      });
-    }
-
-    const points = [];
-    for (
-      let cursor = new Date(startInclusive.getTime());
-      cursor.getTime() < endExclusive.getTime();
-      cursor = addUtcDays(cursor, 1)
-    ) {
-      const key = toUtcDayKey(cursor);
-      const values = byDay.get(key) || {
-        total_installations: 0,
-        successful_installations: 0,
-        failed_installations: 0,
-      };
-      points.push({
-        date: key,
-        total_installations: values.total_installations,
-        successful_installations: values.successful_installations,
-        failed_installations: values.failed_installations,
-      });
-    }
-
-    return jsonResponse(request, env, corsPolicy, {
-      start_date: startInclusive.toISOString(),
-      end_date: endExclusive.toISOString(),
-      days: points.length,
-      points,
-    });
-  }
-
-  return null;
-}
-
-async function handleStatisticsRoute(
-  request,
-  env,
-  url,
-  corsPolicy,
-  routeParts,
-  isWebRoute,
-  webSession,
-  realtimeTenantId,
-) {
-  if (routeParts.length === 1 && routeParts[0] === "statistics") {
-    const statsTenantId = normalizeRealtimeTenantId(
-      isWebRoute ? webSession?.tenant_id : realtimeTenantId,
-    );
-    const startDate = parseDateOrNull(url.searchParams.get("start_date"));
-    const endDate = parseDateOrNull(url.searchParams.get("end_date"));
-    const startFilter = startDate ? startDate.toISOString() : null;
-    const endFilter = endDate ? endDate.toISOString() : null;
-
-    const { results: totalsRows } = await env.DB.prepare(`
-      SELECT
-        COUNT(*) AS total_installations,
-        SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_installations,
-        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_installations,
-        ROUND(
-          100.0 * SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0),
-          2
-        ) AS success_rate,
-        ROUND(
-          AVG(CASE WHEN installation_time_seconds > 0 THEN installation_time_seconds END) / 60.0,
-          2
-        ) AS average_time_minutes,
-        COUNT(DISTINCT NULLIF(TRIM(client_name), '')) AS unique_clients
-      FROM installations
-      WHERE tenant_id = ?
-        AND (? IS NULL OR timestamp >= ?)
-        AND (? IS NULL OR timestamp < ?)
-    `)
-      .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
-      .all();
-
-    const { results: byBrandRows } = await env.DB.prepare(`
-      SELECT driver_brand AS brand, COUNT(*) AS count
-      FROM installations
-      WHERE tenant_id = ?
-        AND (? IS NULL OR timestamp >= ?)
-        AND (? IS NULL OR timestamp < ?)
-        AND NULLIF(TRIM(driver_brand), '') IS NOT NULL
-      GROUP BY driver_brand
-      ORDER BY count DESC
-    `)
-      .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
-      .all();
-
-    const { results: topDriverRows } = await env.DB.prepare(`
-      SELECT TRIM(driver_brand) AS brand, TRIM(driver_version) AS version, COUNT(*) AS count
-      FROM installations
-      WHERE tenant_id = ?
-        AND (? IS NULL OR timestamp >= ?)
-        AND (? IS NULL OR timestamp < ?)
-        AND NULLIF(TRIM(driver_brand || ' ' || driver_version), '') IS NOT NULL
-      GROUP BY TRIM(driver_brand), TRIM(driver_version)
-      ORDER BY count DESC
-    `)
-      .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
-      .all();
-
-    const rawSlaMinutes = Number.parseInt(String(env?.INCIDENT_SLA_MINUTES || ""), 10);
-    const incidentSlaMinutes = Number.isInteger(rawSlaMinutes) && rawSlaMinutes > 0
-      ? Math.min(rawSlaMinutes, 24 * 60)
-      : 30;
-    const outsideSlaCutoffIso = new Date(Date.now() - incidentSlaMinutes * 60 * 1000).toISOString();
-    let incidentSummary = {
-      incident_in_progress_count: 0,
-      incident_critical_active_count: 0,
-      incident_outside_sla_count: 0,
-    };
-    try {
-      const { results: incidentSummaryRows } = await env.DB.prepare(`
-        SELECT
-          SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
-          SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress')
-            AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count,
-          SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress')
-            AND COALESCE(created_at, '') < ? THEN 1 ELSE 0 END) AS incident_outside_sla_count
-        FROM incidents
-        WHERE tenant_id = ?
-      `)
-        .bind(outsideSlaCutoffIso, statsTenantId)
-        .all();
-      const row = incidentSummaryRows?.[0] || {};
-      incidentSummary = {
-        incident_in_progress_count: Number(row?.incident_in_progress_count) || 0,
-        incident_critical_active_count: Number(row?.incident_critical_active_count) || 0,
-        incident_outside_sla_count: Number(row?.incident_outside_sla_count) || 0,
-      };
-    } catch (error) {
-      if (!isMissingIncidentsTableError(error)) {
-        console.warn("[statistics] incident summary unavailable", { error: String(error) });
-      }
-    }
-
-    const totals = totalsRows?.[0] || {};
-    const byBrand = {};
-    for (const row of byBrandRows || []) {
-      const brand = normalizeOptionalString(row.brand, "");
-      const count = Number(row.count);
-      if (brand && Number.isFinite(count) && count > 0) {
-        byBrand[brand] = count;
-      }
-    }
-
-    const topDrivers = {};
-    for (const row of topDriverRows || []) {
-      const brand = normalizeOptionalString(row.brand, "");
-      const version = normalizeOptionalString(row.version, "");
-      const count = Number(row.count);
-      const key = `${brand} ${version}`.trim();
-      if (key && Number.isFinite(count) && count > 0) {
-        topDrivers[key] = count;
-      }
-    }
-
-    return jsonResponse(request, env, corsPolicy, {
-      total_installations: Number(totals.total_installations) || 0,
-      successful_installations: Number(totals.successful_installations) || 0,
-      failed_installations: Number(totals.failed_installations) || 0,
-      success_rate: Number(totals.success_rate) || 0,
-      average_time_minutes: Number(totals.average_time_minutes) || 0,
-      unique_clients: Number(totals.unique_clients) || 0,
-      incident_in_progress_count: incidentSummary.incident_in_progress_count,
-      incident_critical_active_count: incidentSummary.incident_critical_active_count,
-      incident_outside_sla_count: incidentSummary.incident_outside_sla_count,
-      incident_sla_minutes: incidentSlaMinutes,
-      top_drivers: topDrivers,
-      by_brand: byBrand,
-    });
-  }
-
-  return null;
-}
+const statisticsRouteHandlers = createStatisticsRouteHandlers({
+  jsonResponse,
+  textResponse,
+});
 
 export default {
   async fetch(request, env) {
@@ -8152,7 +7847,7 @@ export default {
     }
 
     try {
-      const serviceMetadataResponse = handleServiceMetadataRoute(
+      const serviceMetadataResponse = systemRouteHandlers.handleServiceMetadataRoute(
         request,
         env,
         corsPolicy,
@@ -8162,7 +7857,12 @@ export default {
         return serviceMetadataResponse;
       }
 
-      const healthCheckResponse = handleHealthCheckRoute(request, env, corsPolicy, routeParts);
+      const healthCheckResponse = systemRouteHandlers.handleHealthCheckRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+      );
       if (healthCheckResponse) {
         return healthCheckResponse;
       }
@@ -8284,7 +7984,7 @@ export default {
       if (auditLogsResponse) {
         return auditLogsResponse;
       }
-      const devicesResponse = await handleDevicesRoute(
+      const devicesResponse = await devicesRouteHandlers.handleDevicesRoute(
         request,
         env,
         corsPolicy,
@@ -8727,7 +8427,7 @@ export default {
       if (installationByIdResponse) {
         return installationByIdResponse;
       }
-      const statisticsTrendResponse = await handleStatisticsTrendRoute(
+      const statisticsTrendResponse = await statisticsRouteHandlers.handleStatisticsTrendRoute(
         request,
         env,
         url,
@@ -8740,7 +8440,7 @@ export default {
       if (statisticsTrendResponse) {
         return statisticsTrendResponse;
       }
-      const statisticsResponse = await handleStatisticsRoute(
+      const statisticsResponse = await statisticsRouteHandlers.handleStatisticsRoute(
         request,
         env,
         url,
@@ -8756,16 +8456,17 @@ export default {
 
       return textResponse(request, env, corsPolicy, "Ruta no encontrada.", 404);
     } catch (error) {
-      if (error instanceof HttpError) {
+      const errorStatus = Number.isInteger(error?.status) ? error.status : null;
+      if (error instanceof HttpError || errorStatus !== null) {
         return jsonResponse(request, env, corsPolicy,
           {
             success: false,
             error: {
-              code: errorCodeFromHttpStatus(error.status),
+              code: errorCodeFromHttpStatus(errorStatus ?? error.status),
               message: error.message,
             },
           },
-          error.status,
+          errorStatus ?? error.status,
         );
       }
 

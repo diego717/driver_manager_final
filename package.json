@@ -15,7 +15,7 @@
     "test:dashboard-embed": "node --test tests_js/dashboard.embed.test.mjs",
     "test:dashboard:raw": "node --test tests_js/dashboard.embed.test.mjs tests_js/dashboard.accessibility.test.mjs tests_js/dashboard.xss.unit.test.mjs tests_js/dashboard.unit.test.mjs",
     "test:dashboard": "npm run dashboard:sync-assets && npm run test:dashboard:raw",
-    "test:worker:raw": "node --test tests_js/worker.contract.test.mjs",
+    "test:worker:raw": "node --test tests_js/worker.contract.test.mjs tests_js/worker/routes.test.mjs",
     "test:worker": "npm run dashboard:sync-assets && npm run test:worker:raw",
     "test:python": "python scripts/run_python_tests.py",
     "test:sse:tenants": "node scripts/test-sse-tenants.mjs",
