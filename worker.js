@@ -1,13 +1,30 @@
 import bcrypt from "bcryptjs";
 
 import { DEFAULT_REALTIME_TENANT_ID, HttpError } from "./worker/lib/core.js";
+import { createAuditLogsRouteHandlers } from "./worker/routes/audit-logs.js";
 import { createDevicesRouteHandlers } from "./worker/routes/devices.js";
+import { createIncidentsRouteHandlers } from "./worker/routes/incidents.js";
+import { createInstallationsRouteHandlers } from "./worker/routes/installations.js";
+import { createLookupRouteHandlers } from "./worker/routes/lookup.js";
+import { createMaintenanceRouteHandlers } from "./worker/routes/maintenance.js";
+import { createRecordsRouteHandlers } from "./worker/routes/records.js";
 import { createStatisticsRouteHandlers } from "./worker/routes/statistics.js";
 import { createSystemRouteHandlers } from "./worker/routes/system.js";
+import {
+  ALLOWED_INCIDENT_PHOTO_TYPES,
+  buildIncidentPhotoDescriptor,
+  buildIncidentPhotoFileName,
+  buildIncidentR2Key,
+  extensionFromType,
+  loadIncidentByIdForTenant,
+  loadIncidentForTenant,
+  loadIncidentPhotoByIdForTenant,
+  loadIncidentTimingFieldsForTenant,
+  requireIncidentsBucketOperation,
+  resolveIncidentPhotoMetadata,
+  validateAndProcessPhoto,
+} from "./worker/services/incidents.js";
 
-const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
-const MIN_PHOTO_BYTES = 1024;
-const ALLOWED_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const AUTH_WINDOW_SECONDS = 300;
 const AUTH_NONCE_TTL_SECONDS = AUTH_WINDOW_SECONDS + 60;
 const AUTH_NONCE_MAX_LENGTH = 128;
@@ -540,159 +557,6 @@ function sanitizeFileName(input, fallbackBase) {
   const candidate = (input || `${fallbackBase}.jpg`).trim();
   const normalized = candidate.replace(/[^a-zA-Z0-9._-]/g, "_");
   return normalized || `${fallbackBase}.jpg`;
-}
-
-function sanitizeDescriptorPart(value, fallback = "na", maxLength = 40) {
-  const normalized = normalizeOptionalString(value, "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, maxLength);
-  return normalized || fallback;
-}
-
-function buildIncidentPhotoDescriptor({ installationId, incidentId, clientName, assetCode }) {
-  const clientPart = sanitizeDescriptorPart(clientName, "sin-cliente", 36);
-  const assetPart = assetCode
-    ? `_equipo-${sanitizeDescriptorPart(assetCode, "sin-equipo", 32)}`
-    : "";
-  return `inst-${installationId}_inc-${incidentId}_cliente-${clientPart}${assetPart}`;
-}
-
-function buildIncidentPhotoFileName({ installationId, incidentId, clientName, assetCode, extension }) {
-  const descriptor = buildIncidentPhotoDescriptor({
-    installationId,
-    incidentId,
-    clientName,
-    assetCode,
-  });
-  return `${descriptor}.${sanitizeDescriptorPart(extension, "jpg", 5)}`;
-}
-
-async function resolveIncidentPhotoMetadata(env, request, incident, tenantId) {
-  let clientName = normalizeOptionalString(request.headers.get("X-Client-Name"), "")
-    .slice(0, ASSET_CLIENT_NAME_MAX_LENGTH);
-  let assetCode = normalizeOptionalString(request.headers.get("X-Asset-Code"), "")
-    .slice(0, ASSET_EXTERNAL_CODE_MAX_LENGTH);
-
-  if (!env?.DB || typeof env.DB.prepare !== "function") {
-    return { clientName, assetCode };
-  }
-
-  if (!clientName) {
-    try {
-      const { results } = await env.DB.prepare(`
-        SELECT client_name
-        FROM installations
-        WHERE id = ?
-          AND tenant_id = ?
-        LIMIT 1
-      `)
-        .bind(incident.installation_id, tenantId)
-        .all();
-      clientName = normalizeOptionalString(results?.[0]?.client_name, "")
-        .slice(0, ASSET_CLIENT_NAME_MAX_LENGTH);
-    } catch {
-      // Best-effort metadata enrichment.
-    }
-  }
-
-  if (!assetCode) {
-    try {
-      const { results } = await env.DB.prepare(`
-        SELECT a.external_code
-        FROM asset_installation_links l
-        INNER JOIN assets a
-          ON a.id = l.asset_id
-          AND a.tenant_id = l.tenant_id
-        WHERE l.installation_id = ?
-          AND l.tenant_id = ?
-          AND l.unlinked_at IS NULL
-        ORDER BY l.linked_at DESC, l.id DESC
-        LIMIT 1
-      `)
-        .bind(incident.installation_id, tenantId)
-        .all();
-      assetCode = normalizeOptionalString(results?.[0]?.external_code, "")
-        .slice(0, ASSET_EXTERNAL_CODE_MAX_LENGTH);
-    } catch {
-      // Best-effort metadata enrichment.
-    }
-  }
-
-  return { clientName, assetCode };
-}
-
-function extensionFromType(contentType) {
-  if (contentType === "image/png") return "png";
-  if (contentType === "image/webp") return "webp";
-  return "jpg";
-}
-
-function detectPhotoContentTypeFromMagicBytes(bodyBuffer) {
-  const bytes = new Uint8Array(bodyBuffer);
-  if (bytes.length < 12) return "";
-
-  const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
-  const isPng =
-    bytes[0] === 0x89 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x4e &&
-    bytes[3] === 0x47 &&
-    bytes[4] === 0x0d &&
-    bytes[5] === 0x0a &&
-    bytes[6] === 0x1a &&
-    bytes[7] === 0x0a;
-  const isWebp =
-    bytes[0] === 0x52 &&
-    bytes[1] === 0x49 &&
-    bytes[2] === 0x46 &&
-    bytes[3] === 0x46 &&
-    bytes[8] === 0x57 &&
-    bytes[9] === 0x45 &&
-    bytes[10] === 0x42 &&
-    bytes[11] === 0x50;
-
-  if (isJpeg) return "image/jpeg";
-  if (isPng) return "image/png";
-  if (isWebp) return "image/webp";
-  return "";
-}
-
-function validateAndProcessPhoto(bodyBuffer, declaredContentType) {
-  const sizeBytes = bodyBuffer.byteLength;
-  if (!sizeBytes) {
-    throw new HttpError(400, "La imagen esta vacia.");
-  }
-  if (sizeBytes < MIN_PHOTO_BYTES) {
-    throw new HttpError(400, "Imagen demasiado pequena o corrupta.");
-  }
-  if (sizeBytes > MAX_PHOTO_BYTES) {
-    throw new HttpError(
-      413,
-      `Imagen demasiado grande (${(sizeBytes / (1024 * 1024)).toFixed(1)}MB). Maximo: 5MB.`,
-    );
-  }
-
-  const detectedContentType = detectPhotoContentTypeFromMagicBytes(bodyBuffer);
-  if (!detectedContentType) {
-    throw new HttpError(400, "El archivo no es una imagen valida.");
-  }
-
-  if (!ALLOWED_PHOTO_TYPES.has(detectedContentType)) {
-    throw new HttpError(400, "Tipo de imagen no permitido.");
-  }
-
-  if (declaredContentType && declaredContentType !== detectedContentType) {
-    throw new HttpError(400, "El Content-Type no coincide con el archivo de imagen.");
-  }
-
-  return {
-    sizeBytes,
-    contentType: detectedContentType,
-  };
 }
 
 function nowIso() {
@@ -4656,17 +4520,6 @@ async function verifyAuth(request, env, url) {
   return configuredTenantId;
 }
 
-function buildIncidentR2Key(installationId, incidentId, extension, descriptor = "") {
-  const timestamp = nowIso().replace(/[-:.TZ]/g, "");
-  const randomPart = Math.random().toString(36).slice(2, 10);
-  const safeDescriptor = sanitizeDescriptorPart(
-    descriptor || `inst-${installationId}-inc-${incidentId}`,
-    "foto",
-    84,
-  );
-  return `incidents/${installationId}/${incidentId}/${timestamp}_${safeDescriptor}_${randomPart}.${extension}`;
-}
-
 function normalizeIncidentStatus(value, fallback = "open") {
   const normalized = normalizeOptionalString(value, fallback).toLowerCase();
   if (!ALLOWED_INCIDENT_STATUSES.has(normalized)) {
@@ -5092,149 +4945,6 @@ async function handleSseEventsRoute(request, env, url, corsPolicy, routeParts) {
       "Cache-Control": "no-cache",
       "Connection": "keep-alive"
     }
-  });
-}
-
-async function handleLookupRoute(request, env, url, corsPolicy, routeParts, lookupTenantId) {
-  if (routeParts.length !== 1 || routeParts[0] !== "lookup" || request.method !== "GET") {
-    return null;
-  }
-
-  const requestedType = normalizeOptionalString(url.searchParams.get("type"), "").toLowerCase();
-  const code = normalizeOptionalString(url.searchParams.get("code"), "").trim();
-
-  if (!code) {
-    throw new HttpError(400, "Parametro 'code' es obligatorio.");
-  }
-
-  if (requestedType && requestedType !== "installation" && requestedType !== "asset") {
-    throw new HttpError(400, "Parametro 'type' invalido. Usa installation o asset.");
-  }
-
-  const normalizedCode = code.toLowerCase();
-
-  if (requestedType === "installation") {
-    const asNumber = Number.parseInt(code, 10);
-    if (!Number.isInteger(asNumber) || asNumber <= 0) {
-      throw new HttpError(400, "Codigo de instalacion invalido.");
-    }
-
-    const { results } = await env.DB.prepare(`
-      SELECT id, timestamp, status, client_name, driver_brand, driver_version
-      FROM installations
-      WHERE id = ?
-        AND tenant_id = ?
-      LIMIT 1
-    `)
-      .bind(asNumber, lookupTenantId)
-      .all();
-
-    if (!results?.[0]) {
-      throw new HttpError(404, "Instalacion no encontrada.");
-    }
-
-    return jsonResponse(request, env, corsPolicy, {
-      success: true,
-      match: {
-        type: "installation",
-        installation_id: results[0].id,
-      },
-    });
-  }
-
-  let matchedAsset = null;
-  try {
-    const numericAssetId = Number.parseInt(code, 10);
-    const resolvedNumericAssetId =
-      Number.isInteger(numericAssetId) && numericAssetId > 0 ? numericAssetId : null;
-    const { results: assetMatches } = await env.DB.prepare(`
-      SELECT
-        a.id,
-        a.external_code,
-        (
-          SELECT l.installation_id
-          FROM asset_installation_links l
-          WHERE l.asset_id = a.id
-            AND l.tenant_id = a.tenant_id
-            AND l.unlinked_at IS NULL
-          ORDER BY l.linked_at DESC, l.id DESC
-          LIMIT 1
-        ) AS installation_id
-      FROM assets a
-      WHERE a.tenant_id = ?
-        AND (
-          LOWER(a.external_code) = ?
-          OR a.external_code = ?
-          OR (? IS NOT NULL AND a.id = ?)
-        )
-      ORDER BY a.id DESC
-      LIMIT 1
-    `)
-      .bind(
-        lookupTenantId,
-        normalizedCode,
-        code,
-        resolvedNumericAssetId,
-        resolvedNumericAssetId,
-      )
-      .all();
-    matchedAsset = assetMatches?.[0] || null;
-  } catch (error) {
-    if (!isMissingAssetsTableError(error)) {
-      throw error;
-    }
-  }
-
-  if (matchedAsset) {
-    return jsonResponse(request, env, corsPolicy, {
-      success: true,
-      match: {
-        type: "asset",
-        asset_record_id: Number(matchedAsset.id),
-        asset_id: normalizeOptionalString(matchedAsset.external_code, code),
-        external_code: normalizeOptionalString(matchedAsset.external_code, code),
-        installation_id: matchedAsset.installation_id ? Number(matchedAsset.installation_id) : null,
-      },
-    });
-  }
-
-  const wildcard = `%${code}%`;
-  const { results: installationMatches } = await env.DB.prepare(`
-    SELECT id
-    FROM installations
-    WHERE tenant_id = ?
-      AND (
-        LOWER(client_name) = ?
-        OR LOWER(driver_description) = ?
-        OR LOWER(notes) = ?
-        OR client_name LIKE ?
-        OR driver_description LIKE ?
-        OR notes LIKE ?
-      )
-    ORDER BY id DESC
-    LIMIT 1
-  `)
-    .bind(
-      lookupTenantId,
-      normalizedCode,
-      normalizedCode,
-      normalizedCode,
-      wildcard,
-      wildcard,
-      wildcard,
-    )
-    .all();
-
-  const installationId = installationMatches?.[0]?.id || null;
-
-  return jsonResponse(request, env, corsPolicy, {
-    success: true,
-    match: {
-      type: "asset",
-      asset_id: code,
-      external_code: code,
-      installation_id: installationId,
-    },
   });
 }
 
@@ -6810,1006 +6520,6 @@ async function handleDriversRoute(
 
   return null;
 }
-async function handleInstallationsRoute(
-  request,
-  env,
-  url,
-  corsPolicy,
-  routeParts,
-  isWebRoute,
-  webSession,
-  realtimeTenantId,
-) {
-      if (routeParts.length === 1 && routeParts[0] === "installations") {
-        const installationsTenantId = normalizeRealtimeTenantId(
-          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
-        );
-
-        if (request.method === "GET") {
-          const clientName = normalizeOptionalString(
-            url.searchParams.get("client_name"),
-            "",
-          ).toLowerCase();
-          const brand = normalizeOptionalString(url.searchParams.get("brand"), "").toLowerCase();
-          const status = normalizeOptionalString(url.searchParams.get("status"), "").toLowerCase();
-          const startDate = parseDateOrNull(url.searchParams.get("start_date"));
-          const endDate = parseDateOrNull(url.searchParams.get("end_date"));
-          const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
-          const cursor = parseTimestampIdCursor(url.searchParams.get("cursor"));
-          const pageSize = limit + 1;
-
-          let query = "SELECT * FROM installations WHERE tenant_id = ?";
-          const bindings = [installationsTenantId];
-
-          if (clientName) {
-            query += " AND LOWER(COALESCE(client_name, '')) LIKE ?";
-            bindings.push(`%${clientName}%`);
-          }
-          if (brand) {
-            query += " AND LOWER(COALESCE(driver_brand, '')) = ?";
-            bindings.push(brand);
-          }
-          if (status) {
-            query += " AND LOWER(COALESCE(status, '')) = ?";
-            bindings.push(status);
-          }
-          if (startDate) {
-            query += " AND timestamp >= ?";
-            bindings.push(startDate.toISOString());
-          }
-          if (endDate) {
-            query += " AND timestamp < ?";
-            bindings.push(endDate.toISOString());
-          }
-          if (cursor) {
-            query += " AND (timestamp < ? OR (timestamp = ? AND id < ?))";
-            bindings.push(cursor.timestamp, cursor.timestamp, cursor.id);
-          }
-
-          query += " ORDER BY timestamp DESC, id DESC LIMIT ?";
-          bindings.push(pageSize);
-
-          const { results } = await env.DB.prepare(query).bind(...bindings).all();
-          const rows = results || [];
-          const hasMore = rows.length > limit;
-          const items = hasMore ? rows.slice(0, limit) : rows;
-          const nextCursor = hasMore
-            ? buildTimestampIdCursor(
-                items[items.length - 1].timestamp,
-                items[items.length - 1].id,
-              )
-            : null;
-
-          const operationalSummary = await loadInstallationOperationalSummaries(
-            env,
-            items.map((row) => row?.id),
-            installationsTenantId,
-          );
-          const enrichedItems = items.map((item) =>
-            mapInstallationWithOperationalState(item, operationalSummary),
-          );
-
-          const response = jsonResponse(request, env, corsPolicy, enrichedItems);
-          appendPaginationHeader(response, nextCursor);
-          return response;
-        }
-
-        if (request.method === "POST") {
-          if (isWebRoute) {
-            requireWebWriteRole(webSession?.role);
-          }
-          const data = await readJsonOrThrowBadRequest(request);
-          const payload = normalizeInstallationPayload(data, "unknown");
-
-          const insertResult = await env.DB.prepare(`
-            INSERT INTO installations (
-              timestamp,
-              driver_brand,
-              driver_version,
-              status,
-              client_name,
-              driver_description,
-              installation_time_seconds,
-              os_info,
-              notes,
-              tenant_id
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `)
-            .bind(
-              payload.timestamp,
-              payload.driver_brand,
-              payload.driver_version,
-              payload.status,
-              payload.client_name,
-              payload.driver_description,
-              payload.installation_time_seconds,
-              payload.os_info,
-              payload.notes,
-              installationsTenantId,
-            )
-            .run();
-          const installationId = insertResult?.meta?.last_row_id || null;
-          const installationEventPayload = {
-            id: installationId,
-            tenant_id: installationsTenantId,
-            ...payload,
-            ...buildDefaultInstallationOperationalSummary(),
-          };
-
-          // Log audit event for installation creation
-          await logAuditEvent(env, {
-            action: "installation_created",
-            username: webSession?.sub || "api",
-            success: true,
-            tenantId: installationsTenantId,
-            details: {
-              driver_brand: payload.driver_brand,
-              driver_version: payload.driver_version,
-              status: payload.status,
-              client_name: payload.client_name,
-              tenant_id: installationsTenantId,
-            },
-            ipAddress: getClientIpForRateLimit(request),
-            platform: isWebRoute ? "web" : "api"
-          });
-
-          await publishRealtimeEvent(env, {
-            type: "installation_created",
-            installation: installationEventPayload,
-          }, realtimeTenantId);
-          await publishRealtimeStatsUpdate(env, realtimeTenantId);
-
-          return jsonResponse(request, env, corsPolicy,{ success: true }, 201);
-        }
-      }
-
-  return null;
-}
-async function handleMaintenanceCleanupRoute(
-  request,
-  env,
-  corsPolicy,
-  routeParts,
-  isWebRoute,
-  webSession,
-  realtimeTenantId,
-) {
-      if (routeParts.length === 2 && routeParts[0] === "maintenance" && routeParts[1] === "cleanup-orphans") {
-        if (request.method !== "POST") {
-          return textResponse(request, env, corsPolicy, "Ruta no encontrada.", 404);
-        }
-
-        if (isWebRoute) {
-          requireAdminRole(webSession?.role);
-        }
-
-        const body = await readJsonOrThrowBadRequest(request);
-        const requestedTenant = normalizeOptionalString(body?.tenant_id, "");
-        const dryRunValue = parseBooleanOrNull(body?.dry_run);
-        const dryRun = dryRunValue === null ? false : dryRunValue;
-        const targetTenantId = requestedTenant
-          ? normalizeRealtimeTenantId(requestedTenant)
-          : normalizeRealtimeTenantId(realtimeTenantId);
-
-        if (isWebRoute) {
-          assertSameTenantOrSuperAdmin(webSession, targetTenantId);
-        }
-
-        const summary = await cleanupOrphanInstallationArtifacts(env, targetTenantId, {
-          dryRun,
-        });
-
-        await logAuditEvent(env, {
-          action: "maintenance_cleanup_orphans",
-          username: webSession?.sub || "api",
-          success: true,
-          tenantId: targetTenantId,
-          details: {
-            tenant_id: targetTenantId,
-            dry_run: dryRun,
-            ...summary,
-          },
-          ipAddress: getClientIpForRateLimit(request),
-          platform: isWebRoute ? "web" : "api",
-        });
-
-        return jsonResponse(request, env, corsPolicy, {
-          success: true,
-          message: dryRun
-            ? "Simulacion de limpieza completada."
-            : "Limpieza de huerfanos completada.",
-          tenant_id: targetTenantId,
-          dry_run: dryRun,
-          summary,
-        });
-      }
-
-  return null;
-}
-async function handleAuditLogsRoute(
-  request,
-  env,
-  url,
-  corsPolicy,
-  routeParts,
-  isWebRoute,
-  webSession,
-  realtimeTenantId,
-) {
-      if (routeParts.length === 1 && routeParts[0] === "audit-logs") {
-        const auditTenantId = normalizeRealtimeTenantId(
-          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
-        );
-
-        if (request.method === "POST") {
-          if (isWebRoute) {
-            requireAdminRole(webSession?.role);
-          }
-
-          const data = await readJsonOrThrowBadRequest(request);
-
-          const action = normalizeOptionalString(data?.action, "");
-          const payloadUsername = normalizeOptionalString(data?.username, "");
-          const username = isWebRoute
-            ? normalizeWebUsername(webSession?.sub || "unknown")
-            : payloadUsername;
-
-          if (!action) {
-            throw new HttpError(400, "Campo 'action' es obligatorio.");
-          }
-          if (!username) {
-            throw new HttpError(400, "Campo 'username' es obligatorio.");
-          }
-
-          const rawDetails =
-            data && typeof data.details === "object" && data.details !== null ? data.details : {};
-          await logAuditEvent(
-            env,
-            {
-              timestamp: data?.timestamp,
-              action,
-              username,
-              success: Boolean(data?.success),
-              tenantId: auditTenantId,
-              details: rawDetails,
-              computerName: data?.computer_name,
-              ipAddress: data?.ip_address,
-              platform: data?.platform,
-            },
-            { swallowErrors: false },
-          );
-
-          return jsonResponse(request, env, corsPolicy,{ success: true }, 201);
-
-        }
-
-        if (request.method === "GET") {
-          if (isWebRoute) {
-            requireAdminRole(webSession?.role);
-          }
-
-          const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
-          const cursor = parseTimestampIdCursor(url.searchParams.get("cursor"));
-          const pageSize = limit + 1;
-
-          let query = `
-            SELECT id, timestamp, action, username, success, details, computer_name, ip_address, platform
-            FROM audit_logs
-            WHERE tenant_id = ?
-          `;
-          const bindings = [auditTenantId];
-          if (cursor) {
-            query += " AND (timestamp < ? OR (timestamp = ? AND id < ?))";
-            bindings.push(cursor.timestamp, cursor.timestamp, cursor.id);
-          }
-          query += `
-            ORDER BY timestamp DESC, id DESC
-            LIMIT ?
-          `;
-          bindings.push(pageSize);
-
-          const { results } = await env.DB.prepare(query).bind(...bindings).all();
-          const rows = results || [];
-          const hasMore = rows.length > limit;
-          const items = hasMore ? rows.slice(0, limit) : rows;
-          const nextCursor = hasMore
-            ? buildTimestampIdCursor(
-                items[items.length - 1].timestamp,
-                items[items.length - 1].id,
-              )
-            : null;
-
-          const response = jsonResponse(request, env, corsPolicy, items);
-          appendPaginationHeader(response, nextCursor);
-          return response;
-        }
-      }
-
-  return null;
-}
-async function handleRecordsRoute(
-  request,
-  env,
-  corsPolicy,
-  routeParts,
-  isWebRoute,
-  webSession,
-  realtimeTenantId,
-) {
-      if (routeParts.length === 1 && routeParts[0] === "records" && request.method === "POST") {
-        if (isWebRoute) {
-          requireWebWriteRole(webSession?.role);
-        }
-        const recordsTenantId = normalizeRealtimeTenantId(
-          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
-        );
-        const data = await readJsonOrThrowBadRequest(request);
-        const payload = normalizeInstallationPayload(data, "manual");
-
-        if (!payload.driver_brand) payload.driver_brand = "N/A";
-        if (!payload.driver_version) payload.driver_version = "N/A";
-        if (!payload.driver_description) payload.driver_description = "Registro manual";
-        if (!payload.client_name) payload.client_name = "Sin cliente";
-        if (!payload.os_info) payload.os_info = "manual";
-
-        const insertResult = await env.DB.prepare(`
-          INSERT INTO installations (
-            timestamp,
-            driver_brand,
-            driver_version,
-            status,
-            client_name,
-            driver_description,
-            installation_time_seconds,
-            os_info,
-            notes,
-            tenant_id
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `)
-          .bind(
-            payload.timestamp,
-            payload.driver_brand,
-            payload.driver_version,
-            payload.status,
-            payload.client_name,
-            payload.driver_description,
-            payload.installation_time_seconds,
-            payload.os_info,
-            payload.notes,
-            recordsTenantId,
-          )
-          .run();
-        const record = {
-          id: insertResult?.meta?.last_row_id || null,
-          tenant_id: recordsTenantId,
-          ...payload,
-          ...buildDefaultInstallationOperationalSummary(),
-        };
-
-        await publishRealtimeEvent(env, {
-          type: "installation_created",
-          installation: record,
-        }, realtimeTenantId);
-        await publishRealtimeStatsUpdate(env, realtimeTenantId);
-
-        return jsonResponse(request, env, corsPolicy,
-          {
-            success: true,
-            record,
-          },
-          201,
-        );
-      }
-
-        return null;
-}
-
-async function handleInstallationIncidentsRoute(
-  request,
-  env,
-  corsPolicy,
-  routeParts,
-  isWebRoute,
-  webSession,
-  incidentsTenantId,
-  realtimeTenantId,
-) {
-
-      if (
-        routeParts.length === 3 &&
-        routeParts[0] === "installations" &&
-        routeParts[2] === "incidents"
-      ) {
-        const installationId = parsePositiveInt(routeParts[1], "installation_id");
-
-        if (request.method === "GET") {
-          const { results: incidents } = await env.DB.prepare(`
-            SELECT
-              id,
-              installation_id,
-              reporter_username,
-              note,
-              time_adjustment_seconds,
-              severity,
-              source,
-              created_at,
-              incident_status,
-              status_updated_at,
-              status_updated_by,
-              resolved_at,
-              resolved_by,
-              resolution_note,
-              checklist_json,
-              evidence_note
-            FROM incidents
-            WHERE installation_id = ?
-              AND tenant_id = ?
-            ORDER BY created_at DESC, id DESC
-          `)
-            .bind(installationId, incidentsTenantId)
-            .all();
-
-          const { results: photos } = await env.DB.prepare(`
-            SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
-            FROM incident_photos p
-            INNER JOIN incidents i ON i.id = p.incident_id
-            WHERE i.installation_id = ?
-              AND i.tenant_id = ?
-            ORDER BY p.created_at ASC, p.id ASC
-          `)
-            .bind(installationId, incidentsTenantId)
-            .all();
-
-          const photosByIncident = {};
-          for (const photo of photos) {
-            if (!photosByIncident[photo.incident_id]) {
-              photosByIncident[photo.incident_id] = [];
-            }
-            photosByIncident[photo.incident_id].push(photo);
-          }
-
-          const enriched = incidents.map((incident) =>
-            mapIncidentRow(incident, photosByIncident[incident.id] || [])
-          );
-
-          return jsonResponse(request, env, corsPolicy,{
-            success: true,
-            installation_id: installationId,
-            incidents: enriched,
-          });
-        }
-
-        if (request.method === "POST") {
-          if (isWebRoute) {
-            requireWebWriteRole(webSession?.role);
-          }
-          const data = await readJsonOrThrowBadRequest(request);
-          const payload = validateIncidentPayload(data, {
-            defaultSource: isWebRoute ? "web" : "mobile",
-            defaultReporterUsername: webSession?.sub || "unknown",
-          });
-          const requestedAssetId = parseOptionalPositiveInt(data?.asset_id, "asset_id");
-          const createdAt = nowIso();
-
-          if (requestedAssetId !== null) {
-            const { results: assetRows } = await env.DB.prepare(`
-              SELECT id
-              FROM assets
-              WHERE id = ?
-                AND tenant_id = ?
-              LIMIT 1
-            `)
-              .bind(requestedAssetId, incidentsTenantId)
-              .all();
-            if (!assetRows?.[0]) {
-              throw new HttpError(404, "Equipo no encontrado.");
-            }
-          }
-
-          const { results: installationRows } = await env.DB.prepare(`
-            SELECT id, notes, installation_time_seconds
-            FROM installations
-            WHERE id = ?
-              AND tenant_id = ?
-          `)
-            .bind(installationId, incidentsTenantId)
-            .all();
-
-          const installation = installationRows?.[0];
-          if (!installation) {
-            throw new HttpError(404, "Instalación no encontrada.");
-          }
-
-          let persistedAssetId = requestedAssetId;
-          let insertResult;
-          try {
-            insertResult = await env.DB.prepare(`
-              INSERT INTO incidents (
-                installation_id,
-                asset_id,
-                tenant_id,
-                reporter_username,
-                note,
-                time_adjustment_seconds,
-                estimated_duration_seconds,
-                severity,
-                source,
-                created_at,
-                incident_status,
-                status_updated_at,
-                status_updated_by,
-                work_started_at,
-                work_ended_at,
-                actual_duration_seconds
-              )
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `)
-              .bind(
-                installationId,
-                requestedAssetId,
-                incidentsTenantId,
-                payload.reporterUsername,
-                payload.note,
-                payload.timeAdjustment,
-                payload.estimatedDurationSeconds,
-                payload.severity,
-                payload.source,
-                createdAt,
-                payload.incidentStatus,
-                createdAt,
-                payload.reporterUsername,
-                null,
-                null,
-                null,
-              )
-              .run();
-          } catch (error) {
-            if (!isMissingIncidentAssetColumnError(error) && !isMissingIncidentTimingColumnsError(error)) {
-              throw error;
-            }
-            try {
-              insertResult = await env.DB.prepare(`
-                INSERT INTO incidents (
-                  installation_id,
-                  asset_id,
-                  tenant_id,
-                  reporter_username,
-                  note,
-                  time_adjustment_seconds,
-                  severity,
-                  source,
-                  created_at,
-                  incident_status,
-                  status_updated_at,
-                  status_updated_by
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-              `)
-                .bind(
-                  installationId,
-                  requestedAssetId,
-                  incidentsTenantId,
-                  payload.reporterUsername,
-                  payload.note,
-                  payload.timeAdjustment,
-                  payload.severity,
-                  payload.source,
-                  createdAt,
-                  payload.incidentStatus,
-                  createdAt,
-                  payload.reporterUsername,
-                )
-                .run();
-            } catch (legacyError) {
-              if (!isMissingIncidentAssetColumnError(legacyError)) {
-                throw legacyError;
-              }
-              insertResult = await env.DB.prepare(`
-                INSERT INTO incidents (
-                  installation_id,
-                  tenant_id,
-                  reporter_username,
-                  note,
-                  time_adjustment_seconds,
-                  severity,
-                  source,
-                  created_at,
-                  incident_status,
-                  status_updated_at,
-                  status_updated_by
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-              `)
-                .bind(
-                  installationId,
-                  incidentsTenantId,
-                  payload.reporterUsername,
-                  payload.note,
-                  payload.timeAdjustment,
-                  payload.severity,
-                  payload.source,
-                  createdAt,
-                  payload.incidentStatus,
-                  createdAt,
-                  payload.reporterUsername,
-                )
-                .run();
-              persistedAssetId = null;
-            }
-          }
-
-          const incidentId = insertResult?.meta?.last_row_id || null;
-
-          if (payload.applyToInstallation) {
-            const currentNotes = (installation.notes || "").toString();
-            const composedNotes = currentNotes
-              ? `${currentNotes}\n[INCIDENT] ${payload.note}`
-              : payload.note;
-            const currentTime = Number(installation.installation_time_seconds || 0);
-            const nextTime = Math.max(0, currentTime + payload.timeAdjustment);
-
-            await env.DB.prepare(`
-              UPDATE installations
-              SET notes = ?, installation_time_seconds = ?
-              WHERE id = ?
-                AND tenant_id = ?
-            `)
-              .bind(composedNotes, nextTime, installationId, incidentsTenantId)
-              .run();
-          }
-
-          if (payload.severity === "critical") {
-            try {
-              const fcmTokens = await listDeviceTokensForWebRoles(
-                env,
-                CRITICAL_INCIDENT_PUSH_ROLES,
-                incidentsTenantId,
-              );
-              if (fcmTokens.length > 0) {
-                await sendPushNotification(env, fcmTokens, {
-                  title: "Incidencia critica",
-                  body: `Nueva incidencia critica en instalacion #${installationId}`,
-                  data: {
-                    installation_id: String(installationId),
-                    incident_id: String(incidentId || ""),
-                    asset_id: persistedAssetId !== null ? String(persistedAssetId) : "",
-                    severity: payload.severity,
-                    source: payload.source,
-                  },
-                });
-              }
-            } catch {
-              // Best effort: una falla de push no debe impedir registrar la incidencia.
-            }
-          }
-
-          // Log audit event for incident creation
-          await logAuditEvent(env, {
-            action: "create_incident",
-            username: payload.reporterUsername,
-            success: true,
-            tenantId: incidentsTenantId,
-            details: {
-              incident_id: incidentId,
-              installation_id: installationId,
-              asset_id: persistedAssetId,
-              estimated_duration_seconds: payload.estimatedDurationSeconds,
-              severity: payload.severity,
-              source: payload.source,
-              note_preview: payload.note.substring(0, 100),
-              tenant_id: incidentsTenantId,
-            },
-            computerName: "",
-            ipAddress: getClientIpForRateLimit(request),
-            platform: payload.source
-          });
-
-          const incidentEventPayload = mapIncidentRow({
-            id: incidentId,
-            installation_id: installationId,
-            asset_id: persistedAssetId,
-            reporter_username: payload.reporterUsername,
-            note: payload.note,
-            time_adjustment_seconds: payload.timeAdjustment,
-            estimated_duration_seconds: payload.estimatedDurationSeconds,
-            severity: payload.severity,
-            source: payload.source,
-            created_at: createdAt,
-            incident_status: payload.incidentStatus,
-            status_updated_at: createdAt,
-            status_updated_by: payload.reporterUsername,
-            resolved_at: null,
-            resolved_by: null,
-            resolution_note: null,
-            checklist_json: null,
-            evidence_note: null,
-          });
-
-          await publishRealtimeEvent(env, {
-            type: "incident_created",
-            incident: incidentEventPayload,
-          }, realtimeTenantId);
-          if (payload.applyToInstallation) {
-            await publishRealtimeEvent(env, {
-              type: "installation_updated",
-              installation: {
-                id: installationId,
-                notes: (installation.notes || "").toString()
-                  ? `${(installation.notes || "").toString()}\n[INCIDENT] ${payload.note}`
-                  : payload.note,
-                installation_time_seconds: Math.max(
-                  0,
-                  Number(installation.installation_time_seconds || 0) + payload.timeAdjustment,
-                ),
-              },
-            }, realtimeTenantId);
-          }
-          await publishRealtimeStatsUpdate(env, realtimeTenantId);
-
-          return jsonResponse(request, env, corsPolicy,
-            {
-              success: true,
-              incident: incidentEventPayload,
-            },
-            201,
-          );
-        }
-      }
-
-
-        return null;
-}
-
-function resolveIncidentActorUsername(isWebRoute, webSession, data) {
-  return normalizeOptionalString(
-    isWebRoute ? webSession?.sub : data?.reporter_username || data?.username,
-    isWebRoute ? "web" : "api",
-  );
-}
-
-function enforceIncidentPatchAccess(
-  request,
-  isWebRoute,
-  webSession,
-  methodNotAllowedMessage,
-) {
-  if (request.method !== "PATCH") {
-    throw new HttpError(405, methodNotAllowedMessage);
-  }
-  if (isWebRoute) {
-    requireAdminRole(webSession?.role);
-  }
-}
-
-async function loadIncidentForTenant(
-  env,
-  {
-    incidentId,
-    incidentsTenantId,
-    installationId = null,
-  },
-) {
-  let query = `
-    SELECT
-      i.id,
-      i.installation_id,
-      i.reporter_username,
-      i.note,
-      i.time_adjustment_seconds,
-      i.severity,
-      i.source,
-      i.created_at,
-      i.incident_status,
-      i.status_updated_at,
-      i.status_updated_by,
-      i.resolved_at,
-      i.resolved_by,
-      i.resolution_note,
-      i.checklist_json,
-      i.evidence_note
-    FROM incidents i
-    INNER JOIN installations inst
-      ON inst.id = i.installation_id
-    WHERE i.id = ?
-      AND i.tenant_id = ?
-      AND inst.tenant_id = ?
-  `;
-  const bindings = [incidentId, incidentsTenantId, incidentsTenantId];
-
-  if (installationId !== null) {
-    query += " AND i.installation_id = ?";
-    bindings.push(installationId);
-  }
-  query += " LIMIT 1";
-
-  const { results } = await env.DB.prepare(query).bind(...bindings).all();
-  return results?.[0] || null;
-}
-
-async function loadIncidentTimingFieldsForTenant(env, incidentId, incidentsTenantId) {
-  try {
-    const { results } = await env.DB.prepare(`
-      SELECT
-        estimated_duration_seconds,
-        work_started_at,
-        work_ended_at,
-        actual_duration_seconds
-      FROM incidents
-      WHERE id = ?
-        AND tenant_id = ?
-      LIMIT 1
-    `)
-      .bind(incidentId, incidentsTenantId)
-      .all();
-    return results?.[0] || {};
-  } catch {
-    return {};
-  }
-}
-
-function requireIncidentsBucketOperation(env, operation) {
-  const bucket = env?.INCIDENTS_BUCKET;
-  if (!bucket || typeof bucket[operation] !== "function") {
-    throw new Error("El bucket R2 (INCIDENTS_BUCKET) no esta configurado.");
-  }
-  return bucket;
-}
-
-async function loadIncidentByIdForTenant(env, incidentId, incidentsTenantId) {
-  const { results } = await env.DB.prepare(`
-    SELECT id, installation_id
-    FROM incidents
-    WHERE id = ?
-      AND tenant_id = ?
-  `)
-    .bind(incidentId, incidentsTenantId)
-    .all();
-  return results?.[0] || null;
-}
-
-async function loadIncidentPhotoByIdForTenant(env, photoId, incidentsTenantId) {
-  const { results } = await env.DB.prepare(`
-    SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
-    FROM incident_photos p
-    INNER JOIN incidents i
-      ON i.id = p.incident_id
-    WHERE p.id = ?
-      AND p.tenant_id = ?
-      AND i.tenant_id = ?
-  `)
-    .bind(photoId, incidentsTenantId, incidentsTenantId)
-    .all();
-  return results?.[0] || null;
-}
-
-async function handleInstallationByIdRoute(
-  request,
-  env,
-  corsPolicy,
-  routeParts,
-  isWebRoute,
-  webSession,
-  realtimeTenantId,
-) {
-  if (routeParts.length === 2 && routeParts[0] === "installations") {
-    const installationsTenantId = normalizeRealtimeTenantId(
-      isWebRoute ? webSession?.tenant_id : realtimeTenantId,
-    );
-    const recordId = routeParts[1];
-
-    if (request.method === "GET") {
-      const installationId = parsePositiveInt(recordId, "id");
-      const { results } = await env.DB.prepare(
-        "SELECT * FROM installations WHERE id = ? AND tenant_id = ? LIMIT 1",
-      )
-        .bind(installationId, installationsTenantId)
-        .all();
-
-      if (!results?.length) {
-        throw new HttpError(404, "Registro no encontrado.");
-      }
-
-      const summaryById = await loadInstallationOperationalSummaries(
-        env,
-        [installationId],
-        installationsTenantId,
-      );
-      const enrichedRecord = mapInstallationWithOperationalState(results[0], summaryById);
-
-      return jsonResponse(request, env, corsPolicy, enrichedRecord);
-    }
-
-    if (request.method === "PUT") {
-      if (isWebRoute) {
-        requireWebWriteRole(webSession?.role);
-      }
-      const installationId = parsePositiveInt(recordId, "id");
-      const data = await readJsonOrThrowBadRequest(request);
-      const payload = normalizeInstallationUpdatePayload(data);
-      const updateResult = await env.DB.prepare(`
-        UPDATE installations
-        SET notes = ?, installation_time_seconds = ?
-        WHERE id = ?
-          AND tenant_id = ?
-      `)
-        .bind(payload.notes, payload.installation_time_seconds, installationId, installationsTenantId)
-        .run();
-
-      if (!Number(updateResult?.meta?.changes || 0)) {
-        throw new HttpError(404, "Registro no encontrado.");
-      }
-
-      await publishRealtimeEvent(env, {
-        type: "installation_updated",
-        installation: {
-          id: installationId,
-          notes: payload.notes,
-          installation_time_seconds: payload.installation_time_seconds,
-        },
-      }, realtimeTenantId);
-      await publishRealtimeStatsUpdate(env, realtimeTenantId);
-
-      return jsonResponse(request, env, corsPolicy, { success: true, updated: String(installationId) });
-    }
-
-    if (request.method === "DELETE") {
-      if (isWebRoute) {
-        requireWebWriteRole(webSession?.role);
-      }
-      if (!recordId) {
-        return textResponse(request, env, corsPolicy, "Error: El ID del registro es obligatorio.", 400);
-      }
-
-      const installationId = parsePositiveInt(recordId, "id");
-      const normalizedTenantId = installationsTenantId;
-      const installationExists = await ensureInstallationExistsForDelete(
-        env,
-        installationId,
-        normalizedTenantId,
-      );
-      if (!installationExists) {
-        throw new HttpError(404, "Registro no encontrado.");
-      }
-
-      const incidentPhotoKeys = await listIncidentPhotoR2KeysForInstallation(
-        env,
-        installationId,
-        normalizedTenantId,
-      );
-      await deleteIncidentPhotoObjectsFromR2(env, incidentPhotoKeys);
-
-      // Log audit event for installation deletion
-      await logAuditEvent(env, {
-        action: "installation_deleted",
-        username: webSession?.sub || "api",
-        success: true,
-        tenantId: normalizedTenantId,
-        details: {
-          deleted_id: installationId,
-          deleted_incident_photos: incidentPhotoKeys.length,
-          tenant_id: normalizedTenantId,
-        },
-        ipAddress: getClientIpForRateLimit(request),
-        platform: isWebRoute ? "web" : "api",
-      });
-
-      await deleteInstallationCascade(env, installationId, normalizedTenantId);
-      await publishRealtimeEvent(env, {
-        type: "installation_deleted",
-        installation: {
-          id: installationId,
-        },
-      }, realtimeTenantId);
-      await publishRealtimeStatsUpdate(env, realtimeTenantId);
-      return jsonResponse(request, env, corsPolicy, { message: `Registro ${installationId} eliminado.` });
-    }
-  }
-
-  return null;
-}
-
 const systemRouteHandlers = createSystemRouteHandlers({
   jsonResponse,
 });
@@ -7824,6 +6534,117 @@ const devicesRouteHandlers = createDevicesRouteHandlers({
 const statisticsRouteHandlers = createStatisticsRouteHandlers({
   jsonResponse,
   textResponse,
+});
+
+const lookupRouteHandlers = createLookupRouteHandlers({
+  jsonResponse,
+  isMissingAssetsTableError,
+});
+
+const maintenanceRouteHandlers = createMaintenanceRouteHandlers({
+  jsonResponse,
+  textResponse,
+  readJsonOrThrowBadRequest,
+  normalizeOptionalString,
+  parseBooleanOrNull,
+  normalizeRealtimeTenantId,
+  requireAdminRole,
+  assertSameTenantOrSuperAdmin,
+  cleanupOrphanInstallationArtifacts,
+  logAuditEvent,
+  getClientIpForRateLimit,
+});
+
+const auditLogsRouteHandlers = createAuditLogsRouteHandlers({
+  jsonResponse,
+  readJsonOrThrowBadRequest,
+  requireAdminRole,
+  normalizeWebUsername,
+  logAuditEvent,
+  parsePageLimit,
+  parseTimestampIdCursor,
+  buildTimestampIdCursor,
+  appendPaginationHeader,
+});
+
+const recordsRouteHandlers = createRecordsRouteHandlers({
+  jsonResponse,
+  readJsonOrThrowBadRequest,
+  requireWebWriteRole,
+  normalizeRealtimeTenantId,
+  normalizeInstallationPayload,
+  buildDefaultInstallationOperationalSummary,
+  publishRealtimeEvent,
+  publishRealtimeStatsUpdate,
+});
+
+const installationsRouteHandlers = createInstallationsRouteHandlers({
+  jsonResponse,
+  textResponse,
+  normalizeOptionalString,
+  normalizeRealtimeTenantId,
+  parseDateOrNull,
+  parsePageLimit,
+  parseTimestampIdCursor,
+  buildTimestampIdCursor,
+  appendPaginationHeader,
+  loadInstallationOperationalSummaries,
+  mapInstallationWithOperationalState,
+  requireWebWriteRole,
+  readJsonOrThrowBadRequest,
+  normalizeInstallationPayload,
+  buildDefaultInstallationOperationalSummary,
+  logAuditEvent,
+  getClientIpForRateLimit,
+  publishRealtimeEvent,
+  publishRealtimeStatsUpdate,
+  parsePositiveInt,
+  normalizeInstallationUpdatePayload,
+  ensureInstallationExistsForDelete,
+  listIncidentPhotoR2KeysForInstallation,
+  deleteIncidentPhotoObjectsFromR2,
+  deleteInstallationCascade,
+});
+
+const incidentsRouteHandlers = createIncidentsRouteHandlers({
+  jsonResponse,
+  parsePositiveInt,
+  requireWebWriteRole,
+  requireAdminRole,
+  readJsonOrThrowBadRequest,
+  validateIncidentPayload,
+  parseOptionalPositiveInt,
+  nowIso,
+  isMissingIncidentAssetColumnError,
+  isMissingIncidentTimingColumnsError,
+  normalizeIncidentEvidencePayload,
+  normalizeIncidentStatusPayload,
+  loadIncidentForTenant,
+  loadIncidentTimingFieldsForTenant,
+  parseIncidentChecklistItems,
+  normalizeOptionalString,
+  listDeviceTokensForWebRoles,
+  criticalIncidentPushRoles: CRITICAL_INCIDENT_PUSH_ROLES,
+  sendPushNotification,
+  logAuditEvent,
+  getClientIpForRateLimit,
+  mapIncidentRow,
+  publishRealtimeEvent,
+  publishRealtimeStatsUpdate,
+  allowedPhotoTypes: ALLOWED_INCIDENT_PHOTO_TYPES,
+  normalizeContentType,
+  validateAndProcessPhoto,
+  requireIncidentsBucketOperation,
+  loadIncidentByIdForTenant,
+  extensionFromType,
+  resolveIncidentPhotoMetadata,
+  buildIncidentPhotoDescriptor,
+  buildIncidentPhotoFileName,
+  buildIncidentR2Key,
+  sha256Hex,
+  loadIncidentPhotoByIdForTenant,
+  sanitizeFileName,
+  corsHeaders,
 });
 
 export default {
@@ -7909,7 +6730,7 @@ export default {
       const lookupTenantId = normalizeRealtimeTenantId(
         isWebRoute ? webSession?.tenant_id : realtimeTenantId,
       );
-      const lookupResponse = await handleLookupRoute(
+      const lookupResponse = await lookupRouteHandlers.handleLookupRoute(
         request,
         env,
         url,
@@ -7946,7 +6767,7 @@ export default {
       if (driversResponse) {
         return driversResponse;
       }
-      const installationsResponse = await handleInstallationsRoute(
+      const installationsResponse = await installationsRouteHandlers.handleInstallationsRoute(
         request,
         env,
         url,
@@ -7959,7 +6780,7 @@ export default {
       if (installationsResponse) {
         return installationsResponse;
       }
-      const maintenanceResponse = await handleMaintenanceCleanupRoute(
+      const maintenanceResponse = await maintenanceRouteHandlers.handleMaintenanceCleanupRoute(
         request,
         env,
         corsPolicy,
@@ -7971,7 +6792,7 @@ export default {
       if (maintenanceResponse) {
         return maintenanceResponse;
       }
-      const auditLogsResponse = await handleAuditLogsRoute(
+      const auditLogsResponse = await auditLogsRouteHandlers.handleAuditLogsRoute(
         request,
         env,
         url,
@@ -7995,7 +6816,7 @@ export default {
       if (devicesResponse) {
         return devicesResponse;
       }
-      const recordsResponse = await handleRecordsRoute(
+      const recordsResponse = await recordsRouteHandlers.handleRecordsRoute(
         request,
         env,
         corsPolicy,
@@ -8007,7 +6828,7 @@ export default {
       if (recordsResponse) {
         return recordsResponse;
       }
-      const installationIncidentsResponse = await handleInstallationIncidentsRoute(
+      const installationIncidentsResponse = await incidentsRouteHandlers.handleInstallationIncidentsRoute(
         request,
         env,
         corsPolicy,
@@ -8020,402 +6841,46 @@ export default {
       if (installationIncidentsResponse) {
         return installationIncidentsResponse;
       }
-
-      if (
-        routeParts.length === 3 &&
-        routeParts[0] === "incidents" &&
-        routeParts[2] === "evidence"
-      ) {
-        enforceIncidentPatchAccess(
-          request,
-          isWebRoute,
-          webSession,
-          "Metodo no permitido para actualizar evidencia de incidencia.",
-        );
-
-        const incidentId = parsePositiveInt(routeParts[1], "incident_id");
-        const data = await readJsonOrThrowBadRequest(request);
-        const payload = normalizeIncidentEvidencePayload(data);
-        const actorUsername = resolveIncidentActorUsername(isWebRoute, webSession, data);
-        const existingIncident = await loadIncidentForTenant(env, {
-          incidentId,
-          incidentsTenantId,
-        });
-        if (!existingIncident) {
-          throw new HttpError(404, "Incidencia no encontrada.");
-        }
-
-        const nextChecklistItems = payload.hasChecklistItems
-          ? payload.checklistItems
-          : parseIncidentChecklistItems(existingIncident.checklist_json);
-        const nextEvidenceNote = payload.hasEvidenceNote
-          ? payload.evidenceNote
-          : (normalizeOptionalString(existingIncident.evidence_note, "").trim() || null);
-
-        await env.DB.prepare(`
-          UPDATE incidents
-          SET
-            checklist_json = ?,
-            evidence_note = ?
-          WHERE id = ?
-            AND tenant_id = ?
-        `)
-          .bind(
-            JSON.stringify(nextChecklistItems || []),
-            nextEvidenceNote,
-            incidentId,
-            incidentsTenantId,
-          )
-          .run();
-
-        const incidentEventPayload = mapIncidentRow({
-          ...existingIncident,
-          checklist_json: JSON.stringify(nextChecklistItems || []),
-          evidence_note: nextEvidenceNote,
-        });
-
-        await logAuditEvent(env, {
-          action: "update_incident_evidence",
-          username: actorUsername,
-          success: true,
-          tenantId: incidentsTenantId,
-          details: {
-            incident_id: incidentId,
-            installation_id: existingIncident.installation_id,
-            checklist_items_count: (nextChecklistItems || []).length,
-            has_evidence_note: Boolean(nextEvidenceNote),
-          },
-          ipAddress: getClientIpForRateLimit(request),
-          platform: isWebRoute ? "web" : "api",
-        });
-
-        await publishRealtimeEvent(env, {
-          type: "incident_evidence_updated",
-          incident: incidentEventPayload,
-        }, realtimeTenantId);
-
-        return jsonResponse(request, env, corsPolicy, {
-          success: true,
-          incident: incidentEventPayload,
-        });
+      const incidentEvidenceResponse = await incidentsRouteHandlers.handleIncidentEvidenceRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        incidentsTenantId,
+        realtimeTenantId,
+      );
+      if (incidentEvidenceResponse) {
+        return incidentEvidenceResponse;
+      }
+      const incidentStatusResponse = await incidentsRouteHandlers.handleIncidentStatusRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        incidentsTenantId,
+        realtimeTenantId,
+      );
+      if (incidentStatusResponse) {
+        return incidentStatusResponse;
+      }
+      const incidentPhotosResponse = await incidentsRouteHandlers.handleIncidentPhotosRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        incidentsTenantId,
+      );
+      if (incidentPhotosResponse) {
+        return incidentPhotosResponse;
       }
 
-      if (
-        (
-          routeParts.length === 3 &&
-          routeParts[0] === "incidents" &&
-          routeParts[2] === "status"
-        ) ||
-        (
-          routeParts.length === 5 &&
-          routeParts[0] === "installations" &&
-          routeParts[2] === "incidents" &&
-          routeParts[4] === "status"
-        )
-      ) {
-        enforceIncidentPatchAccess(
-          request,
-          isWebRoute,
-          webSession,
-          "Metodo no permitido para actualizacion de estado de incidencia.",
-        );
-
-        const incidentId = parsePositiveInt(
-          routeParts.length === 3 ? routeParts[1] : routeParts[3],
-          "incident_id",
-        );
-        const installationIdFromPath =
-          routeParts.length === 5 ? parsePositiveInt(routeParts[1], "installation_id") : null;
-        const data = await readJsonOrThrowBadRequest(request);
-        const payload = normalizeIncidentStatusPayload(data);
-        const statusUpdatedAt = nowIso();
-        const actorUsername = resolveIncidentActorUsername(isWebRoute, webSession, data);
-        const existingIncident = await loadIncidentForTenant(env, {
-          incidentId,
-          incidentsTenantId,
-          installationId: installationIdFromPath,
-        });
-        if (!existingIncident) {
-          throw new HttpError(404, "Incidencia no encontrada.");
-        }
-
-        const timingFields = await loadIncidentTimingFieldsForTenant(
-          env,
-          incidentId,
-          incidentsTenantId,
-        );
-        const previousStatus = normalizeOptionalString(existingIncident.incident_status, "open")
-          .toLowerCase();
-        let workStartedAt =
-          normalizeOptionalString(timingFields.work_started_at, "").trim() || null;
-        let workEndedAt =
-          normalizeOptionalString(timingFields.work_ended_at, "").trim() || null;
-        let actualDurationSeconds = Number.parseInt(
-          String(timingFields.actual_duration_seconds ?? ""),
-          10,
-        );
-        if (!Number.isInteger(actualDurationSeconds) || actualDurationSeconds < 0) {
-          actualDurationSeconds = null;
-        }
-        if (!workStartedAt && previousStatus === "in_progress") {
-          workStartedAt = normalizeOptionalString(existingIncident.status_updated_at, "").trim() || null;
-        }
-
-        if (payload.incidentStatus === "open") {
-          workStartedAt = null;
-          workEndedAt = null;
-          actualDurationSeconds = null;
-        } else if (payload.incidentStatus === "in_progress") {
-          if (!workStartedAt || previousStatus !== "in_progress") {
-            workStartedAt = statusUpdatedAt;
-          }
-          workEndedAt = null;
-          actualDurationSeconds = null;
-        } else if (payload.incidentStatus === "resolved") {
-          if (!workStartedAt) {
-            workStartedAt = normalizeOptionalString(existingIncident.created_at, "").trim() || statusUpdatedAt;
-          }
-          workEndedAt = statusUpdatedAt;
-          const startMs = Date.parse(workStartedAt);
-          const endMs = Date.parse(workEndedAt);
-          if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs) {
-            actualDurationSeconds = Math.floor((endMs - startMs) / 1000);
-          } else {
-            actualDurationSeconds = null;
-          }
-        }
-
-        const resolvedAt = payload.incidentStatus === "resolved" ? statusUpdatedAt : null;
-        const resolvedBy = payload.incidentStatus === "resolved" ? actorUsername : null;
-        const resolutionNote = payload.resolutionNote;
-
-        try {
-          await env.DB.prepare(`
-            UPDATE incidents
-            SET
-              incident_status = ?,
-              status_updated_at = ?,
-              status_updated_by = ?,
-              resolved_at = ?,
-              resolved_by = ?,
-              resolution_note = ?,
-              work_started_at = ?,
-              work_ended_at = ?,
-              actual_duration_seconds = ?
-            WHERE id = ?
-              AND tenant_id = ?
-          `)
-            .bind(
-              payload.incidentStatus,
-              statusUpdatedAt,
-              actorUsername,
-              resolvedAt,
-              resolvedBy,
-              resolutionNote,
-              workStartedAt,
-              workEndedAt,
-              actualDurationSeconds,
-              incidentId,
-              incidentsTenantId,
-            )
-            .run();
-        } catch (error) {
-          if (!isMissingIncidentTimingColumnsError(error)) {
-            throw error;
-          }
-          await env.DB.prepare(`
-            UPDATE incidents
-            SET
-              incident_status = ?,
-              status_updated_at = ?,
-              status_updated_by = ?,
-              resolved_at = ?,
-              resolved_by = ?,
-              resolution_note = ?
-            WHERE id = ?
-              AND tenant_id = ?
-          `)
-            .bind(
-              payload.incidentStatus,
-              statusUpdatedAt,
-              actorUsername,
-              resolvedAt,
-              resolvedBy,
-              resolutionNote,
-              incidentId,
-              incidentsTenantId,
-            )
-            .run();
-        }
-
-        const incidentEventPayload = mapIncidentRow({
-          ...existingIncident,
-          incident_status: payload.incidentStatus,
-          status_updated_at: statusUpdatedAt,
-          status_updated_by: actorUsername,
-          resolved_at: resolvedAt,
-          resolved_by: resolvedBy,
-          resolution_note: resolutionNote,
-          work_started_at: workStartedAt,
-          work_ended_at: workEndedAt,
-          actual_duration_seconds: actualDurationSeconds,
-        });
-        incidentEventPayload.incident_status = payload.incidentStatus;
-
-        await logAuditEvent(env, {
-          action: "update_incident_status",
-          username: actorUsername,
-          success: true,
-          tenantId: incidentsTenantId,
-          details: {
-            incident_id: incidentId,
-            installation_id: existingIncident.installation_id,
-            previous_status: existingIncident.incident_status || "open",
-            new_status: payload.incidentStatus,
-            has_resolution_note: Boolean(resolutionNote),
-            actual_duration_seconds: actualDurationSeconds,
-          },
-          ipAddress: getClientIpForRateLimit(request),
-          platform: isWebRoute ? "web" : "api",
-        });
-
-        await publishRealtimeEvent(env, {
-          type: "incident_status_updated",
-          incident: incidentEventPayload,
-        }, realtimeTenantId);
-
-        return jsonResponse(request, env, corsPolicy, {
-          success: true,
-          incident: incidentEventPayload,
-        });
-      }
-
-      if (
-        routeParts.length === 3 &&
-        routeParts[0] === "incidents" &&
-        routeParts[2] === "photos" &&
-        request.method === "POST"
-      ) {
-        if (isWebRoute) {
-          requireWebWriteRole(webSession?.role);
-        }
-        const incidentId = parsePositiveInt(routeParts[1], "incident_id");
-        const declaredContentType = normalizeContentType(request.headers.get("content-type"));
-
-        if (!ALLOWED_PHOTO_TYPES.has(declaredContentType)) {
-          throw new HttpError(400, "Tipo de imagen no permitido.");
-        }
-
-        const bodyBuffer = await request.arrayBuffer();
-        const { sizeBytes, contentType } = validateAndProcessPhoto(bodyBuffer, declaredContentType);
-
-        const incidentsBucket = requireIncidentsBucketOperation(env, "put");
-        const incident = await loadIncidentByIdForTenant(env, incidentId, incidentsTenantId);
-        if (!incident) {
-          throw new HttpError(404, "Incidencia no encontrada.");
-        }
-
-        const extension = extensionFromType(contentType);
-        const metadata = await resolveIncidentPhotoMetadata(
-          env,
-          request,
-          incident,
-          incidentsTenantId,
-        );
-        const descriptor = buildIncidentPhotoDescriptor({
-          installationId: incident.installation_id,
-          incidentId,
-          clientName: metadata.clientName,
-          assetCode: metadata.assetCode,
-        });
-        const fileName = buildIncidentPhotoFileName({
-          installationId: incident.installation_id,
-          incidentId,
-          clientName: metadata.clientName,
-          assetCode: metadata.assetCode,
-          extension,
-        });
-        const r2Key = buildIncidentR2Key(
-          incident.installation_id,
-          incidentId,
-          extension,
-          descriptor,
-        );
-        const sha256 = await sha256Hex(bodyBuffer);
-        const providedBodyHash = normalizeOptionalString(request.headers.get("X-Body-SHA256"), "").toLowerCase();
-        if (providedBodyHash) {
-          if (!/^[a-f0-9]{64}$/i.test(providedBodyHash)) {
-            throw new HttpError(400, "Header X-Body-SHA256 inválido.");
-          }
-          if (providedBodyHash !== sha256) {
-            throw new HttpError(
-              isWebRoute ? 400 : 401,
-              isWebRoute
-                ? "El hash del body no coincide con la imagen enviada."
-                : "Integridad inválida: X-Body-SHA256 no coincide con el body.",
-            );
-          }
-        }
-        const createdAt = nowIso();
-
-        await incidentsBucket.put(r2Key, bodyBuffer, {
-          httpMetadata: { contentType },
-        });
-
-        const insertResult = await env.DB.prepare(`
-          INSERT INTO incident_photos (incident_id, tenant_id, r2_key, file_name, content_type, size_bytes, sha256, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `)
-          .bind(incidentId, incidentsTenantId, r2Key, fileName, contentType, sizeBytes, sha256, createdAt)
-          .run();
-
-        return jsonResponse(request, env, corsPolicy,
-          {
-            success: true,
-            photo: {
-              id: insertResult?.meta?.last_row_id || null,
-              incident_id: incidentId,
-              r2_key: r2Key,
-              file_name: fileName,
-              content_type: contentType,
-              size_bytes: sizeBytes,
-              sha256,
-              created_at: createdAt,
-            },
-          },
-          201,
-        );
-      }
-
-      if (routeParts.length === 2 && routeParts[0] === "photos" && request.method === "GET") {
-        const photoId = parsePositiveInt(routeParts[1], "photo_id");
-
-        const incidentsBucket = requireIncidentsBucketOperation(env, "get");
-        const photo = await loadIncidentPhotoByIdForTenant(env, photoId, incidentsTenantId);
-        if (!photo) {
-          throw new HttpError(404, "Foto no encontrada.");
-        }
-
-        const object = await incidentsBucket.get(photo.r2_key);
-        if (!object || !object.body) {
-          throw new HttpError(404, "Archivo de foto no encontrado en almacenamiento.");
-        }
-
-        const safeName = sanitizeFileName(photo.file_name, `photo_${photoId}`);
-
-        return new Response(object.body, {
-          status: 200,
-          headers: {
-            ...corsHeaders(request, env, corsPolicy),
-            "Content-Type":
-              photo.content_type || object.httpMetadata?.contentType || "application/octet-stream",
-            "Content-Disposition": `inline; filename=\"${safeName}\"`,
-            "Cache-Control": "private, max-age=300",
-          },
-        });
-      }
-
-      const installationByIdResponse = await handleInstallationByIdRoute(
+      const installationByIdResponse = await installationsRouteHandlers.handleInstallationByIdRoute(
         request,
         env,
         corsPolicy,

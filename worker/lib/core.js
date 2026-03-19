@@ -65,6 +65,14 @@ export function isMissingIncidentsTableError(error) {
   return message.includes("no such table") && message.includes("incidents");
 }
 
+export function isMissingAssetsTableError(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  return (
+    message.includes("no such table") &&
+    (message.includes("assets") || message.includes("asset_installation_links"))
+  );
+}
+
 export function isMissingIncidentAssetColumnError(error) {
   const message = normalizeOptionalString(error?.message, "").toLowerCase();
   return (
