@@ -173,3 +173,139 @@ test("navigating to drivers loads data and updates the active section using serv
   assert.match(document.getElementById("driversTable").textContent, /Zebra/);
   assert.ok(router.calls.some((call) => call.pathname === "/web/drivers"));
 });
+
+test("reopening a resolved incident into in-progress requires confirmation and refreshes asset detail", async () => {
+  const statusPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+    {
+      method: "PATCH",
+      match: "/web/incidents/19/status",
+      resolver: async ({ request }) => {
+        statusPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({
+          success: true,
+          incident: {
+            id: 19,
+            incident_status: "open",
+          },
+        });
+      },
+    },
+    {
+      method: "GET",
+      match: ({ url }) => url.pathname === "/web/assets/77/incidents",
+      resolver: async () =>
+        createJsonResponse({
+          asset: {
+            id: 77,
+            external_code: "ARSL1-003",
+            brand: "Entrust",
+            model: "Sigma SL1",
+            serial_number: "SN-77",
+            client_name: "Cliente QA",
+            status: "active",
+            updated_at: "2026-03-18T10:10:00.000Z",
+          },
+          active_link: null,
+          links: [],
+          incidents: [],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  await window.updateIncidentStatusFromWeb(
+    {
+      id: 19,
+      incident_status: "resolved",
+      installation_id: 34,
+      created_at: "2026-03-18T10:00:00.000Z",
+      note: "Rodillo cambiado",
+    },
+    "in_progress",
+    { installationId: 34, assetId: 77 },
+  );
+  await flushDashboardTasks();
+
+  assert.equal(statusPayloads.length, 0);
+  assert.ok(document.getElementById("actionModal").classList.contains("active"));
+  assert.ok(document.getElementById("actionModalConfirmCheckbox"));
+
+  document.getElementById("actionModalSubmitBtn").click();
+  await flushDashboardTasks();
+
+  assert.equal(statusPayloads.length, 0);
+  assert.match(document.getElementById("actionModalError").textContent, /reapertura/i);
+
+  document.getElementById("actionModalConfirmCheckbox").checked = true;
+  document.getElementById("actionModalSubmitBtn").click();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(statusPayloads.length, 1);
+  assert.equal(statusPayloads[0].incident_status, "in_progress");
+  assert.ok(router.calls.some((call) => call.pathname === "/web/assets/77/incidents"));
+  assert.equal(router.calls.some((call) => call.pathname === "/web/installations/34/incidents"), false);
+  assert.equal(document.getElementById("actionModal").classList.contains("active"), false);
+});
+
+test("incident cards avoid repeating low-priority metadata already shown in chips and panels", async () => {
+  const { dom } = await setupDashboardApp();
+  const { window } = dom;
+  const { document } = window;
+
+  await window.renderIncidents(
+    [
+      {
+        id: 19,
+        installation_id: 34,
+        asset_id: 6,
+        severity: "high",
+        incident_status: "resolved",
+        reporter_username: "diegosasen",
+        created_at: "2026-03-19T06:29:00.000Z",
+        resolved_at: "2026-03-19T06:29:00.000Z",
+        resolved_by: "diegosasen",
+        note: "Se cambió el rodillo.",
+        resolution_note: "Equipo funcionando correctamente.",
+        checklist_items: [
+          "Equipo identificado (QR/serie)",
+          "Evidencia fotografica capturada",
+        ],
+        installation_client_name: "Equipo ARSL1-003",
+        installation_brand: "Entrust",
+        installation_version: "Sigma SL1",
+        photos: [],
+      },
+    ],
+    34,
+  );
+
+  const card = document.querySelector("#incidentsList .incident-card");
+  assert.ok(card);
+  assert.equal(card.textContent.includes("Cliente:"), false);
+  assert.equal(card.textContent.includes("Estado:"), false);
+  assert.equal(
+    card.querySelectorAll(".incident-meta-line").length,
+    0,
+  );
+});

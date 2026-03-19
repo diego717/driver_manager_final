@@ -1090,11 +1090,12 @@ tr[data-asset-id]:focus-visible {
 }
 
 .incident-card {
-    background: var(--bg-secondary);
+    background: color-mix(in oklab, var(--bg-secondary) 92%, var(--bg-card) 8%);
     border-radius: var(--radius);
     padding: 1.25rem;
-    border: 1px solid var(--border);
-    transition: all 0.25s ease;
+    border: 1px solid color-mix(in oklab, var(--border) 82%, var(--accent-primary) 18%);
+    box-shadow: var(--shadow-card);
+    transition: border-color 0.24s ease, transform 0.24s ease, box-shadow 0.24s ease, background-color 0.24s ease;
     position: relative;
     overflow: hidden;
 }
@@ -1105,15 +1106,33 @@ tr[data-asset-id]:focus-visible {
     top: 0;
     left: 0;
     width: 100%;
-    height: 3px;
+    height: 4px;
     background: var(--accent-gradient);
-    opacity: 0;
-    transition: opacity 0.25s;
+    opacity: 0.92;
+    transition: opacity 0.25s ease, background 0.25s ease;
+}
+
+.incident-card[data-status="open"]::before {
+    background: linear-gradient(90deg, color-mix(in oklab, var(--warning) 82%, var(--accent-primary) 18%), var(--warning));
+}
+
+.incident-card[data-status="in_progress"]::before {
+    background: linear-gradient(90deg, color-mix(in oklab, var(--info) 78%, var(--accent-primary) 22%), var(--info));
+}
+
+.incident-card[data-status="resolved"]::before {
+    background: linear-gradient(90deg, color-mix(in oklab, var(--success) 82%, var(--accent-secondary) 18%), var(--success));
+}
+
+.incident-card[data-status="resolved"] {
+    border-color: color-mix(in oklab, var(--border) 58%, var(--success) 42%);
+    background: color-mix(in oklab, var(--bg-secondary) 88%, var(--success) 12%);
 }
 
 .incident-card:hover {
-    border-color: var(--accent-primary);
-    transform: translateX(3px);
+    border-color: color-mix(in oklab, var(--accent-primary) 56%, var(--border) 44%);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
 }
 
 .incident-card:hover::before {
@@ -1132,6 +1151,29 @@ tr[data-asset-id]:focus-visible {
 .incident-header small {
     color: var(--text-secondary);
     font-size: 0.8125rem;
+}
+
+.incident-card-detailed {
+    padding-top: 0.95rem;
+}
+
+.incident-card-heading {
+    display: grid;
+    gap: 0.3rem;
+    min-width: 0;
+}
+
+.incident-card-header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.38rem;
+    flex-wrap: wrap;
+}
+
+.incident-reporter-line {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    line-height: 1.3;
 }
 
 .photos-grid {
@@ -1793,29 +1835,30 @@ tr[data-asset-id]:focus-visible {
 }
 
 .incident-note-text {
-    color: var(--text-secondary);
-    line-height: 1.6;
-    margin-top: 0.55rem;
-    margin-bottom: 0.55rem;
-    font-weight: 500;
+    color: color-mix(in oklab, var(--text-primary) 90%, var(--accent-primary) 10%);
+    line-height: 1.55;
+    margin-top: 0.25rem;
+    margin-bottom: 0.68rem;
+    font-weight: 600;
+    font-size: 1.02rem;
 }
 
 .incident-upload-btn {
-    margin-top: 0.5rem;
+    margin-top: 0;
 }
 
 .incident-highlights {
     display: flex;
     flex-wrap: wrap;
     gap: 0.42rem;
-    margin-bottom: 0.58rem;
+    margin-bottom: 0.68rem;
 }
 
 .incident-highlight-chip {
     display: inline-flex;
     align-items: center;
     min-height: 28px;
-    padding: 0.18rem 0.56rem;
+    padding: 0.2rem 0.62rem;
     border-radius: 999px;
     border: 1px solid var(--border);
     background: color-mix(in oklab, var(--bg-card) 90%, var(--accent-primary) 10%);
@@ -1868,6 +1911,81 @@ tr[data-asset-id]:focus-visible {
 .incident-highlight-chip[data-tone="critical"] {
     background: color-mix(in oklab, var(--bg-card) 82%, var(--error) 18%);
     border-color: color-mix(in oklab, var(--border) 58%, var(--error) 42%);
+}
+
+.incident-resolution-panel {
+    margin-top: 0.72rem;
+    padding: 0.72rem 0.82rem 0.8rem;
+    border-radius: 12px;
+    border: 1px solid color-mix(in oklab, var(--border) 58%, var(--success) 42%);
+    background: linear-gradient(
+        135deg,
+        color-mix(in oklab, var(--bg-secondary) 84%, var(--success) 16%),
+        color-mix(in oklab, var(--bg-card) 88%, var(--success) 12%)
+    );
+    display: grid;
+    gap: 0.42rem;
+}
+
+.incident-resolution-panel[data-status="open"],
+.incident-resolution-panel[data-status="in_progress"] {
+    border-color: color-mix(in oklab, var(--border) 74%, var(--warning) 26%);
+    background: linear-gradient(
+        135deg,
+        color-mix(in oklab, var(--bg-secondary) 90%, var(--warning) 10%),
+        color-mix(in oklab, var(--bg-card) 92%, var(--warning) 8%)
+    );
+}
+
+.incident-resolution-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.55rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.incident-resolution-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.38rem;
+    padding: 0.2rem 0.58rem;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 700;
+    border: 1px solid color-mix(in oklab, var(--border) 60%, var(--success) 40%);
+    background: color-mix(in oklab, var(--bg-card) 76%, var(--success) 24%);
+    color: color-mix(in oklab, var(--text-primary) 84%, var(--success) 16%);
+}
+
+.incident-resolution-panel[data-status="open"] .incident-resolution-state,
+.incident-resolution-panel[data-status="in_progress"] .incident-resolution-state {
+    border-color: color-mix(in oklab, var(--border) 68%, var(--warning) 32%);
+    background: color-mix(in oklab, var(--bg-card) 82%, var(--warning) 18%);
+    color: color-mix(in oklab, var(--text-primary) 86%, var(--warning) 14%);
+}
+
+.incident-resolution-text {
+    margin: 0;
+    color: color-mix(in oklab, var(--text-primary) 92%, var(--success) 8%);
+    font-size: 0.95rem;
+    font-weight: 700;
+    line-height: 1.52;
+}
+
+.incident-resolution-panel[data-status="open"] .incident-resolution-text,
+.incident-resolution-panel[data-status="in_progress"] .incident-resolution-text {
+    color: color-mix(in oklab, var(--text-primary) 92%, var(--warning) 8%);
+}
+
+.incident-resolution-meta {
+    color: color-mix(in oklab, var(--text-secondary) 88%, var(--success) 12%);
+    font-size: 0.78rem;
+}
+
+.incident-resolution-panel[data-status="open"] .incident-resolution-meta,
+.incident-resolution-panel[data-status="in_progress"] .incident-resolution-meta {
+    color: color-mix(in oklab, var(--text-secondary) 88%, var(--warning) 12%);
 }
 
 .incident-checklist-grid {
@@ -2286,29 +2404,18 @@ tr[data-asset-id]:focus-visible {
     font-size: 0.8125rem;
 }
 
-.asset-incident-header-left {
-    display: flex;
-    align-items: center;
-    gap: 0.38rem;
-    flex-wrap: wrap;
-}
-
-.asset-incident-card {
-    padding-top: 0.9rem;
-}
-
-.asset-incident-evidence {
+.incident-evidence-block {
     margin-top: 0.48rem;
     margin-bottom: 0.42rem;
-    padding: 0.5rem;
-    border: 1px solid color-mix(in oklab, var(--border) 72%, var(--info) 28%);
-    border-radius: var(--radius-sm);
-    background: color-mix(in oklab, var(--bg-secondary) 88%, var(--info) 12%);
+    padding: 0.6rem 0.68rem;
+    border: 1px solid color-mix(in oklab, var(--border) 66%, var(--info) 34%);
+    border-radius: 12px;
+    background: color-mix(in oklab, var(--bg-secondary) 84%, var(--info) 16%);
     display: grid;
-    gap: 0.36rem;
+    gap: 0.4rem;
 }
 
-.asset-incident-checklist {
+.incident-checklist-list {
     display: flex;
     gap: 0.35rem;
     flex-wrap: wrap;
@@ -2325,8 +2432,60 @@ tr[data-asset-id]:focus-visible {
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
-    margin-top: 0.55rem;
+    margin-top: 0.82rem;
     align-items: center;
+}
+
+.incident-action-btn {
+    min-width: 122px;
+    justify-content: center;
+    border-radius: 12px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.incident-action-btn[data-current="true"] {
+    box-shadow:
+        inset 0 0 0 1px color-mix(in oklab, var(--text-primary) 18%, transparent),
+        0 0 0 2px color-mix(in oklab, var(--accent-primary) 18%, transparent);
+}
+
+.incident-action-btn[data-action="open"] {
+    background: color-mix(in oklab, var(--bg-card) 78%, var(--warning) 22%);
+    border-color: color-mix(in oklab, var(--border) 56%, var(--warning) 44%);
+    color: color-mix(in oklab, var(--text-primary) 88%, var(--warning) 12%);
+}
+
+.incident-action-btn[data-action="in_progress"] {
+    background: color-mix(in oklab, var(--bg-card) 76%, var(--info) 24%);
+    border-color: color-mix(in oklab, var(--border) 54%, var(--info) 46%);
+    color: color-mix(in oklab, var(--text-primary) 86%, var(--info) 14%);
+}
+
+.incident-action-btn[data-action="resolved"] {
+    background: color-mix(in oklab, var(--bg-card) 72%, var(--success) 28%);
+    border-color: color-mix(in oklab, var(--border) 48%, var(--success) 52%);
+    color: color-mix(in oklab, var(--text-primary) 84%, var(--success) 16%);
+}
+
+.incident-action-btn[data-action="evidence"] {
+    background: color-mix(in oklab, var(--bg-card) 82%, var(--accent-primary) 18%);
+    border-color: color-mix(in oklab, var(--border) 58%, var(--accent-primary) 42%);
+    color: color-mix(in oklab, var(--text-primary) 88%, var(--accent-primary) 12%);
+}
+
+.incident-action-btn[data-action="photo"] {
+    background: color-mix(in oklab, var(--bg-card) 84%, var(--accent-secondary) 16%);
+    border-color: color-mix(in oklab, var(--border) 60%, var(--accent-secondary) 40%);
+    color: color-mix(in oklab, var(--text-primary) 88%, var(--accent-secondary) 12%);
+}
+
+.incident-action-btn:disabled {
+    opacity: 0.62;
+    filter: saturate(0.8);
+    transform: none;
+    cursor: not-allowed;
 }
 
 .asset-links-history,
@@ -2709,6 +2868,15 @@ tr[data-asset-id]:focus-visible {
         padding: 0.45rem 0.72rem;
         min-height: 44px;
         font-size: 0.82rem;
+    }
+
+    .incident-action-btn {
+        flex: 1 1 calc(50% - 0.45rem);
+        min-width: 0;
+    }
+
+    .incident-resolution-header {
+        align-items: flex-start;
     }
 }
 

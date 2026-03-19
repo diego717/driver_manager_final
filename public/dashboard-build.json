@@ -1,14 +1,14 @@
 {
   "versions": {
-    "css": "c479e4cf59",
+    "css": "1a25878b38",
     "chart": "74401d738d",
     "qr": "d8de215faf",
     "api": "79074def03",
-    "js": "40c0f025a6",
+    "js": "e235c6c6b6",
     "pwa": "55b84aa40e",
     "manifest": "9130a5f920",
     "sw": "4c87568cf6",
     "materialSymbolsFont": "ee7248184b",
-    "build": "67e9829c15"
+    "build": "f58d0dca05"
   }
 }

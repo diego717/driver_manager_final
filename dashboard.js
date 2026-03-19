@@ -2702,25 +2702,6 @@ function incidentStatusLabel(value) {
     return 'Abierta';
 }
 
-function incidentStatusIcon(value) {
-    const normalized = normalizeIncidentStatus(value);
-    if (normalized === 'resolved') return 'OK';
-    return '';
-}
-
-function buildIncidentStatusText(incident) {
-    const status = normalizeIncidentStatus(incident?.incident_status);
-    let text = [incidentStatusIcon(status), incidentStatusLabel(status)]
-        .filter((part) => part)
-        .join(' ');
-    if (status === 'resolved' && incident?.resolved_at) {
-        text += ` · ${new Date(incident.resolved_at).toLocaleString('es-ES')}`;
-    } else if (incident?.status_updated_at) {
-        text += ` · ${new Date(incident.status_updated_at).toLocaleString('es-ES')}`;
-    }
-    return text;
-}
-
 function normalizeIncidentChecklistItems(value) {
     if (Array.isArray(value)) {
         return value
@@ -2742,28 +2723,6 @@ function normalizeIncidentChecklistItems(value) {
     return [];
 }
 
-function buildIncidentChecklistText(checklistItemsValue) {
-    const checklistItems = normalizeIncidentChecklistItems(checklistItemsValue);
-    return checklistItems.length ? `Checklist: ${checklistItems.join(' · ')}` : 'Checklist: -';
-}
-
-function buildIncidentEvidenceText(evidenceNoteValue) {
-    const evidenceNote = String(evidenceNoteValue || '').trim();
-    return evidenceNote ? `Nota operativa: ${evidenceNote}` : 'Nota operativa: -';
-}
-
-function buildIncidentResolutionText(resolutionNoteValue) {
-    const resolutionNote = String(resolutionNoteValue || '').trim();
-    return resolutionNote ? `Resolución: ${resolutionNote}` : 'Resolución: -';
-}
-
-function createIncidentMetaLine(text) {
-    const meta = document.createElement('small');
-    meta.className = 'asset-muted incident-meta-line';
-    meta.textContent = text;
-    return meta;
-}
-
 function createIncidentHighlightChip(text, tone = 'neutral') {
     const chip = document.createElement('span');
     chip.className = 'incident-highlight-chip';
@@ -2772,37 +2731,17 @@ function createIncidentHighlightChip(text, tone = 'neutral') {
     return chip;
 }
 
-function appendIncidentHighlights(parent, incident) {
+function appendIncidentHighlights(parent, incident, options = {}) {
     const highlights = document.createElement('div');
     highlights.className = 'incident-highlights';
 
-    const incidentId = parseStrictInteger(incident?.id);
-    const installationId = parseStrictInteger(incident?.installation_id);
-    const assetId = parseStrictInteger(incident?.asset_id);
+    const installationId = parseStrictInteger(options.installationId ?? incident?.installation_id);
+    const assetId = parseStrictInteger(options.assetId ?? incident?.asset_id);
     const statusValue = normalizeIncidentStatus(incident?.incident_status);
-    const severityValue = normalizeSeverity(incident?.severity || 'medium');
     const estimatedDurationSeconds = resolveIncidentEstimatedDurationSeconds(incident);
     const realDurationSeconds = resolveIncidentRealDurationSeconds(incident);
 
-    highlights.append(
-        createIncidentHighlightChip(
-            Number.isInteger(incidentId) && incidentId > 0 ? `Inc #${incidentId}` : 'Incidencia',
-            'neutral',
-        ),
-        createIncidentHighlightChip(
-            `Estado: ${incidentStatusLabel(statusValue)}`,
-            statusValue,
-        ),
-        createIncidentHighlightChip(
-            `Severidad: ${String(severityValue || 'medium').toUpperCase()}`,
-            severityValue,
-        ),
-        createIncidentHighlightChip(
-            Number.isInteger(installationId) && installationId > 0
-                ? `Registro #${installationId}`
-                : 'Registro: auto/contexto',
-            'info',
-        ),
+    highlights.appendChild(
         createIncidentHighlightChip(
             `Tiempo estimado: ${formatDuration(estimatedDurationSeconds)}`,
             estimatedDurationSeconds > 0 ? 'accent' : 'neutral',
@@ -2825,26 +2764,88 @@ function appendIncidentHighlights(parent, incident) {
         highlights.appendChild(runtimeChip);
     }
 
+    highlights.appendChild(
+        createIncidentHighlightChip(
+            Number.isInteger(installationId) && installationId > 0
+                ? `Registro #${installationId}`
+                : 'Registro: auto/contexto',
+            'info',
+        ),
+    );
+
     if (Number.isInteger(assetId) && assetId > 0) {
-        highlights.appendChild(createIncidentHighlightChip(`Equipo #${assetId}`, 'accent'));
+        highlights.appendChild(
+            createIncidentHighlightChip(
+                `Equipo #${assetId}`,
+                options.assetTone || 'neutral',
+            ),
+        );
     }
 
     parent.appendChild(highlights);
 }
 
-function appendIncidentMetaLines(parent, incident) {
-    const estimatedDurationSeconds = resolveIncidentEstimatedDurationSeconds(incident);
-    const realDurationSeconds = resolveIncidentRealDurationSeconds(incident);
-    const timingText = Number.isInteger(realDurationSeconds) && realDurationSeconds >= 0
-        ? `Tiempo estimado: ${formatDuration(estimatedDurationSeconds)} | Tiempo real: ${formatDuration(realDurationSeconds)}`
-        : `Tiempo estimado: ${formatDuration(estimatedDurationSeconds)}`;
-    parent.append(
-        createIncidentMetaLine(`Estado: ${buildIncidentStatusText(incident)}`),
-        createIncidentMetaLine(timingText),
-        createIncidentMetaLine(buildIncidentChecklistText(incident.checklist_items)),
-        createIncidentMetaLine(buildIncidentEvidenceText(incident.evidence_note)),
-        createIncidentMetaLine(buildIncidentResolutionText(incident.resolution_note)),
+function formatIncidentCreatedAtText(value) {
+    return value
+        ? `Creada: ${new Date(value).toLocaleString('es-ES')}`
+        : 'Creada: -';
+}
+
+function appendIncidentResolutionSummary(parent, incident) {
+    const statusValue = normalizeIncidentStatus(incident?.incident_status);
+    const resolutionNote = String(incident?.resolution_note || '').trim();
+    if (!resolutionNote && statusValue !== 'resolved') return;
+
+    const resolutionPanel = document.createElement('div');
+    resolutionPanel.className = 'incident-resolution-panel';
+    resolutionPanel.dataset.status = statusValue;
+
+    const resolutionHeader = document.createElement('div');
+    resolutionHeader.className = 'incident-resolution-header';
+
+    const resolutionLabel = document.createElement('small');
+    resolutionLabel.className = 'asset-muted';
+    resolutionLabel.textContent = 'Resolución';
+
+    const resolutionState = document.createElement('span');
+    resolutionState.className = 'incident-resolution-state';
+    setElementTextWithMaterialIcon(
+        resolutionState,
+        statusValue === 'resolved' ? 'verified' : 'pending_actions',
+        statusValue === 'resolved' ? 'Cierre registrado' : 'Pendiente de cierre',
     );
+
+    resolutionHeader.append(resolutionLabel, resolutionState);
+
+    const resolutionBody = document.createElement('p');
+    resolutionBody.className = 'incident-resolution-text';
+    resolutionBody.textContent = resolutionNote || 'Incidencia marcada como resuelta sin nota de resolución.';
+
+    resolutionPanel.append(resolutionHeader, resolutionBody);
+
+    const metaParts = [];
+    if (incident?.resolved_at) {
+        metaParts.push(`Resuelta: ${new Date(incident.resolved_at).toLocaleString('es-ES')}`);
+    }
+    const resolvedBy = String(incident?.resolved_by || incident?.status_updated_by || '').trim();
+    if (resolvedBy) {
+        metaParts.push(`por ${resolvedBy}`);
+    }
+    if (metaParts.length) {
+        const resolutionMeta = document.createElement('small');
+        resolutionMeta.className = 'incident-resolution-meta';
+        resolutionMeta.textContent = metaParts.join(' · ');
+        resolutionPanel.appendChild(resolutionMeta);
+    }
+
+    parent.appendChild(resolutionPanel);
+}
+
+function decorateIncidentActionButton(button, actionKey, label, iconName) {
+    if (!(button instanceof HTMLElement)) return;
+    button.classList.add('incident-action-btn');
+    button.dataset.action = String(actionKey || 'custom').trim() || 'custom';
+    setElementTextWithMaterialIcon(button, iconName, label);
 }
 
 function buildIncidentStatusUpdateOptions(incident, options = {}) {
@@ -2860,6 +2861,42 @@ function buildIncidentStatusUpdateOptions(incident, options = {}) {
         updateOptions.assetId = parsedAssetId;
     }
     return updateOptions;
+}
+
+async function refreshIncidentContext(options = {}) {
+    const parsedAssetId = parseStrictInteger(options.assetId);
+    if (Number.isInteger(parsedAssetId) && parsedAssetId > 0) {
+        await loadAssetDetail(parsedAssetId, { keepSelection: true });
+        return;
+    }
+
+    const parsedInstallationId = parseStrictInteger(options.installationId);
+    if (Number.isInteger(parsedInstallationId) && parsedInstallationId > 0) {
+        await showIncidentsForInstallation(parsedInstallationId);
+        return;
+    }
+
+    const activeAssetsSection = document.getElementById('assetsSection')?.classList.contains('active');
+    const activeIncidentsSection = document.getElementById('incidentsSection')?.classList.contains('active');
+
+    if (activeAssetsSection && Number.isInteger(currentSelectedAssetId) && currentSelectedAssetId > 0) {
+        await loadAssetDetail(currentSelectedAssetId, { keepSelection: true });
+        return;
+    }
+
+    if (activeIncidentsSection && Number.isInteger(currentSelectedInstallationId) && currentSelectedInstallationId > 0) {
+        await showIncidentsForInstallation(currentSelectedInstallationId);
+        return;
+    }
+
+    if (Number.isInteger(currentSelectedInstallationId) && currentSelectedInstallationId > 0) {
+        await showIncidentsForInstallation(currentSelectedInstallationId);
+        return;
+    }
+
+    if (Number.isInteger(currentSelectedAssetId) && currentSelectedAssetId > 0) {
+        await loadAssetDetail(currentSelectedAssetId, { keepSelection: true });
+    }
 }
 
 function parseChecklistItemsFromMultiline(value) {
@@ -2953,15 +2990,7 @@ async function updateIncidentEvidenceFromWeb(incident, options = {}) {
             });
             closeActionModal(true);
             showNotification(`Evidencia actualizada en incidencia #${incidentId}`, 'success');
-
-            if (Number.isInteger(options.installationId) && options.installationId > 0) {
-                await showIncidentsForInstallation(options.installationId);
-                return;
-            }
-            if (Number.isInteger(options.assetId) && options.assetId > 0) {
-                await loadAssetDetail(options.assetId, { keepSelection: true });
-                return;
-            }
+            await refreshIncidentContext(options);
         },
     });
 }
@@ -2972,12 +3001,19 @@ function appendIncidentStatusActions(parent, incident, options = {}) {
     const incidentStatus = normalizeIncidentStatus(incident.incident_status);
     const canUpdateIncident = canCurrentUserEditAssets();
     const updateOptions = buildIncidentStatusUpdateOptions(incident, options);
+    const actionDefinitions = {
+        open: { label: 'Abrir', icon: 'radio_button_checked' },
+        in_progress: { label: 'En curso', icon: 'pending_actions' },
+        resolved: { label: 'Resolver', icon: 'task_alt' },
+    };
 
-    const makeStatusBtn = (label, statusValue) => {
+    const makeStatusBtn = (statusValue) => {
+        const actionMeta = actionDefinitions[statusValue] || { label: statusValue, icon: '' };
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'btn-secondary';
-        button.textContent = label;
+        decorateIncidentActionButton(button, statusValue, actionMeta.label, actionMeta.icon);
+        button.dataset.current = incidentStatus === statusValue ? 'true' : 'false';
         button.disabled = !canUpdateIncident || incidentStatus === statusValue;
         if (!canUpdateIncident) {
             button.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
@@ -2991,7 +3027,7 @@ function appendIncidentStatusActions(parent, incident, options = {}) {
     const evidenceBtn = document.createElement('button');
     evidenceBtn.type = 'button';
     evidenceBtn.className = 'btn-secondary';
-    evidenceBtn.textContent = 'Evidencia';
+    decorateIncidentActionButton(evidenceBtn, 'evidence', 'Evidencia', 'fact_check');
     evidenceBtn.disabled = !canUpdateIncident;
     if (!canUpdateIncident) {
         evidenceBtn.title = 'Solo admin/super_admin puede actualizar evidencia';
@@ -3001,12 +3037,13 @@ function appendIncidentStatusActions(parent, incident, options = {}) {
     });
 
     statusActions.append(
-        makeStatusBtn('Abrir', 'open'),
-        makeStatusBtn('En curso', 'in_progress'),
-        makeStatusBtn('Resolver', 'resolved'),
+        makeStatusBtn('open'),
+        makeStatusBtn('in_progress'),
+        makeStatusBtn('resolved'),
         evidenceBtn,
     );
     parent.appendChild(statusActions);
+    return statusActions;
 }
 
 function appendIncidentUploadPhotoAction(parent, incident, installationId, options = {}) {
@@ -3015,15 +3052,12 @@ function appendIncidentUploadPhotoAction(parent, incident, installationId, optio
     uploadPhotoBtn.className = 'btn-secondary';
     const iconName = String(options.icon || '').trim();
     const buttonLabel = String(options.label || 'Subir foto');
-    if (iconName) {
-        const icon = document.createElement('span');
-        icon.className = 'material-symbols-outlined icon-inline-sm';
-        icon.setAttribute('aria-hidden', 'true');
-        icon.textContent = iconName;
-        uploadPhotoBtn.replaceChildren(icon, document.createTextNode(` ${buttonLabel}`));
-    } else {
-        uploadPhotoBtn.textContent = buttonLabel;
-    }
+    decorateIncidentActionButton(
+        uploadPhotoBtn,
+        'photo',
+        buttonLabel,
+        iconName || 'add_a_photo',
+    );
     uploadPhotoBtn.classList.add('incident-upload-btn');
     uploadPhotoBtn.addEventListener('click', () => {
         void selectAndUploadIncidentPhoto(incident.id, installationId, {
@@ -3069,6 +3103,7 @@ async function updateIncidentStatusFromWeb(incident, targetStatus, options = {})
     }
 
     const normalizedStatus = normalizeIncidentStatus(targetStatus);
+    const currentStatus = normalizeIncidentStatus(incident?.incident_status);
     const applyStatusUpdate = async (resolutionNote = '') => {
         try {
             await api.updateIncidentStatus(incidentId, {
@@ -3080,18 +3115,7 @@ async function updateIncidentStatusFromWeb(incident, targetStatus, options = {})
                 `Incidencia #${incidentId} actualizada a "${incidentStatusLabel(normalizedStatus)}".`,
                 'success',
             );
-
-            if (Number.isInteger(options.installationId) && options.installationId > 0) {
-                await showIncidentsForInstallation(options.installationId);
-                return;
-            }
-            if (Number.isInteger(options.assetId) && options.assetId > 0) {
-                await loadAssetDetail(options.assetId, { keepSelection: true });
-                return;
-            }
-            if (currentSelectedInstallationId) {
-                await showIncidentsForInstallation(currentSelectedInstallationId);
-            }
+            await refreshIncidentContext(options);
         } catch (err) {
             showNotification(`No se pudo actualizar estado: ${err.message || err}`, 'error');
         }
@@ -3115,6 +3139,22 @@ async function updateIncidentStatusFromWeb(incident, targetStatus, options = {})
                     document.getElementById('actionIncidentResolutionNote')?.value || '',
                 ).trim();
                 await applyStatusUpdate(resolutionNote);
+                closeActionModal(true);
+            },
+        });
+        return;
+    }
+
+    if (currentStatus === 'resolved' && normalizedStatus !== 'resolved') {
+        const targetStatusLabel = incidentStatusLabel(normalizedStatus);
+        openActionConfirmModal({
+            title: `Reabrir incidencia #${incidentId}`,
+            subtitle: `La incidencia volverá al flujo activo y pasará a "${targetStatusLabel}".`,
+            submitLabel: `Cambiar a ${targetStatusLabel}`,
+            acknowledgementText: `Confirmo que quiero reabrir esta incidencia y moverla a "${targetStatusLabel}".`,
+            missingConfirmationMessage: 'Debes confirmar la reapertura para continuar.',
+            onSubmit: async () => {
+                await applyStatusUpdate('');
                 closeActionModal(true);
             },
         });
@@ -3746,9 +3786,9 @@ function createAssetDetailMetaItem(label, value) {
     return item;
 }
 
-function appendAssetIncidentEvidenceSummary(parent, incident) {
+function appendIncidentEvidenceSummary(parent, incident) {
     const evidenceWrap = document.createElement('div');
-    evidenceWrap.className = 'asset-incident-evidence';
+    evidenceWrap.className = 'incident-evidence-block';
 
     const checklistTitle = document.createElement('small');
     checklistTitle.className = 'asset-muted';
@@ -3758,7 +3798,7 @@ function appendAssetIncidentEvidenceSummary(parent, incident) {
     const checklistItems = normalizeIncidentChecklistItems(incident?.checklist_items);
     if (checklistItems.length) {
         const checklistList = document.createElement('div');
-        checklistList.className = 'asset-incident-checklist';
+        checklistList.className = 'incident-checklist-list';
         for (const item of checklistItems) {
             checklistList.appendChild(createIncidentHighlightChip(item, 'info'));
         }
@@ -3781,25 +3821,31 @@ function appendAssetIncidentEvidenceSummary(parent, incident) {
     parent.appendChild(evidenceWrap);
 }
 
-async function appendAssetIncidentCard(parent, incident, options = {}) {
+async function appendIncidentCard(parent, incident, options = {}) {
     const incidentCard = document.createElement('div');
-    incidentCard.className = 'incident-card asset-incident-card';
+    const statusValue = normalizeIncidentStatus(incident?.incident_status);
+    const severityValue = normalizeSeverity(incident?.severity || 'medium');
+    incidentCard.className = 'incident-card incident-card-detailed';
+    incidentCard.dataset.status = statusValue;
+    incidentCard.dataset.severity = severityValue;
 
     const incidentHeader = document.createElement('div');
     incidentHeader.className = 'incident-header';
 
+    const headingBlock = document.createElement('div');
+    headingBlock.className = 'incident-card-heading';
+
     const leftMeta = document.createElement('div');
-    leftMeta.className = 'asset-incident-header-left';
+    leftMeta.className = 'incident-card-header-left';
 
     const severityBadge = document.createElement('span');
-    severityBadge.className = `badge ${normalizeSeverity(incident?.severity || 'medium')}`;
+    severityBadge.className = `badge ${severityValue}`;
     setElementTextWithMaterialIcon(
         severityBadge,
         getSeverityIconName(incident?.severity),
         String(incident?.severity || 'medium').toUpperCase(),
     );
 
-    const statusValue = normalizeIncidentStatus(incident?.incident_status);
     const statusBadge = document.createElement('span');
     statusBadge.className = `badge attention-${statusValue}`;
     setElementTextWithMaterialIcon(
@@ -3816,13 +3862,22 @@ async function appendAssetIncidentCard(parent, incident, options = {}) {
         : 'Incidencia';
 
     leftMeta.append(severityBadge, statusBadge, incidentRef);
+    headingBlock.appendChild(leftMeta);
+
+    if (options.showReporter === true) {
+        const reporter = document.createElement('small');
+        reporter.className = 'incident-reporter-line';
+        reporter.textContent = 'por ';
+        const reporterStrong = document.createElement('strong');
+        reporterStrong.textContent = String(incident?.reporter_username || 'desconocido').trim() || 'desconocido';
+        reporter.appendChild(reporterStrong);
+        headingBlock.appendChild(reporter);
+    }
 
     const createdAt = document.createElement('small');
     createdAt.className = 'asset-muted';
-    createdAt.textContent = incident?.created_at
-        ? `Creada: ${new Date(incident.created_at).toLocaleString('es-ES')}`
-        : 'Creada: -';
-    incidentHeader.append(leftMeta, createdAt);
+    createdAt.textContent = formatIncidentCreatedAtText(incident?.created_at);
+    incidentHeader.append(headingBlock, createdAt);
     incidentCard.appendChild(incidentHeader);
 
     const note = document.createElement('p');
@@ -3830,68 +3885,27 @@ async function appendAssetIncidentCard(parent, incident, options = {}) {
     note.textContent = String(incident?.note || '').trim() || 'Sin detalle operativo.';
     incidentCard.appendChild(note);
 
-    const highlights = document.createElement('div');
-    highlights.className = 'incident-highlights';
-    const estimatedDurationSeconds = resolveIncidentEstimatedDurationSeconds(incident);
-    highlights.appendChild(
-        createIncidentHighlightChip(`Tiempo estimado: ${formatDuration(estimatedDurationSeconds)}`, 'accent'),
-    );
-    const realDurationSeconds = resolveIncidentRealDurationSeconds(incident);
-    if (Number.isInteger(realDurationSeconds) && realDurationSeconds >= 0) {
-        const runtimeChip = createIncidentHighlightChip(
-            `Tiempo real: ${formatDuration(realDurationSeconds)}${statusValue === 'in_progress' ? ' (en curso)' : ''}`,
-            statusValue === 'resolved' ? 'resolved' : statusValue,
-        );
-        if (statusValue === 'in_progress') {
-            const runtimeStartMs = resolveIncidentRuntimeStartMs(incident);
-            if (Number.isFinite(runtimeStartMs) && runtimeStartMs > 0) {
-                runtimeChip.dataset.runtimeLive = '1';
-                runtimeChip.dataset.runtimeStartMs = String(runtimeStartMs);
-                ensureIncidentRuntimeTicker();
-            }
-        }
-        highlights.appendChild(runtimeChip);
-    }
-    const installationId = parseStrictInteger(incident?.installation_id);
-    highlights.appendChild(
-        createIncidentHighlightChip(
-            Number.isInteger(installationId) && installationId > 0
-                ? `Registro #${installationId}`
-                : 'Registro: auto/contexto',
-            'info',
-        ),
-    );
-    incidentCard.appendChild(highlights);
-
-    const sourceMeta = document.createElement('small');
-    sourceMeta.className = 'asset-muted';
-    sourceMeta.textContent =
-        `Cliente: ${incident?.installation_client_name || '-'} | ` +
-        `${incident?.installation_brand || '-'} ${incident?.installation_version || ''}`.trim();
-    incidentCard.appendChild(sourceMeta);
-
-    appendAssetIncidentEvidenceSummary(incidentCard, incident);
-    const estimatedDurationSecondsForMeta = resolveIncidentEstimatedDurationSeconds(incident);
-    const realDurationSecondsForMeta = resolveIncidentRealDurationSeconds(incident);
-    const timingText = Number.isInteger(realDurationSecondsForMeta) && realDurationSecondsForMeta >= 0
-        ? `Tiempo estimado: ${formatDuration(estimatedDurationSecondsForMeta)} | Tiempo real: ${formatDuration(realDurationSecondsForMeta)}`
-        : `Tiempo estimado: ${formatDuration(estimatedDurationSecondsForMeta)}`;
-    incidentCard.append(
-        createIncidentMetaLine(`Estado: ${buildIncidentStatusText(incident)}`),
-        createIncidentMetaLine(timingText),
-    );
-    const resolutionNote = String(incident?.resolution_note || '').trim();
-    if (resolutionNote) {
-        incidentCard.appendChild(createIncidentMetaLine(`Resolucion: ${resolutionNote}`));
-    }
-    appendIncidentStatusActions(incidentCard, incident, {
-        assetId: parseStrictInteger(options.assetId),
-        installationId: parseStrictInteger(incident?.installation_id),
+    appendIncidentHighlights(incidentCard, incident, {
+        installationId: parseStrictInteger(options.installationId ?? incident?.installation_id),
+        assetId: options.includeAssetChip === true ? parseStrictInteger(options.assetId ?? incident?.asset_id) : null,
+        assetTone: options.assetTone || 'neutral',
     });
-    appendIncidentUploadPhotoAction(incidentCard, incident, incident.installation_id, {
+
+    appendIncidentEvidenceSummary(incidentCard, incident);
+    appendIncidentResolutionSummary(incidentCard, incident);
+
+    const actions = appendIncidentStatusActions(incidentCard, incident, {
+        assetId: parseStrictInteger(options.assetId),
+        installationId: parseStrictInteger(options.installationId ?? incident?.installation_id),
+    });
+    appendIncidentUploadPhotoAction(actions, incident, options.installationId ?? incident.installation_id, {
+        label: options.uploadLabel || 'Subir foto',
+        icon: options.uploadIcon || 'add_a_photo',
         assetId: parseStrictInteger(options.assetId),
     });
-    await appendIncidentPhotosGrid(incidentCard, incident.photos);
+    await appendIncidentPhotosGrid(incidentCard, incident.photos, {
+        attachPhotoIdDataset: options.attachPhotoIdDataset === true,
+    });
     parent.appendChild(incidentCard);
 }
 
@@ -4077,7 +4091,7 @@ async function renderAssetDetail(data) {
         const activeWrap = document.createElement('div');
         activeWrap.className = 'incidents-grid';
         for (const incident of activeIncidents) {
-            await appendAssetIncidentCard(activeWrap, incident, {
+            await appendIncidentCard(activeWrap, incident, {
                 assetId: parseStrictInteger(asset.id),
             });
         }
@@ -4095,7 +4109,7 @@ async function renderAssetDetail(data) {
         const resolvedWrap = document.createElement('div');
         resolvedWrap.className = 'incidents-grid asset-incidents-history-grid';
         for (const incident of resolvedIncidents) {
-            await appendAssetIncidentCard(resolvedWrap, incident, {
+            await appendIncidentCard(resolvedWrap, incident, {
                 assetId: parseStrictInteger(asset.id),
             });
         }
@@ -4187,53 +4201,16 @@ async function renderIncidents(incidents, installationId) {
     }
 
     for (const inc of incidents) {
-        const severityIcon = getSeverityIconName(inc.severity);
-
-        const incidentCard = document.createElement('div');
-        incidentCard.className = 'incident-card';
-
-        const incidentHeader = document.createElement('div');
-        incidentHeader.className = 'incident-header';
-
-        const leftMeta = document.createElement('div');
-        const severityBadge = document.createElement('span');
-        severityBadge.className = `badge ${inc.severity || 'low'}`;
-        setElementTextWithMaterialIcon(
-            severityBadge,
-            severityIcon,
-            String(inc.severity || 'low').toUpperCase(),
-        );
-        const reporter = document.createElement('small');
-        reporter.textContent = 'por ';
-        const reporterStrong = document.createElement('strong');
-        reporterStrong.textContent = inc.reporter_username || 'desconocido';
-        reporter.appendChild(reporterStrong);
-        leftMeta.append(severityBadge, document.createTextNode(' '), reporter);
-
-        const createdAt = document.createElement('small');
-        createdAt.textContent = `Creada: ${new Date(inc.created_at).toLocaleString('es-ES')}`;
-
-        incidentHeader.append(leftMeta, createdAt);
-
-        const note = document.createElement('p');
-        note.className = 'incident-note-text';
-        note.textContent = inc.note || '';
-
-        incidentCard.append(incidentHeader);
-        appendIncidentHighlights(incidentCard, inc);
-        incidentCard.append(note);
-        appendIncidentMetaLines(incidentCard, inc);
-        appendIncidentStatusActions(incidentCard, inc, {
+        await appendIncidentCard(container, inc, {
             installationId: Number.parseInt(String(installationId), 10),
-        });
-        appendIncidentUploadPhotoAction(incidentCard, inc, installationId, {
-            label: 'Subir foto',
-            icon: 'add_a_photo',
             assetId: parseStrictInteger(inc?.asset_id),
+            includeAssetChip: true,
+            assetTone: 'accent',
+            showReporter: true,
+            attachPhotoIdDataset: true,
+            uploadLabel: 'Subir foto',
+            uploadIcon: 'add_a_photo',
         });
-        await appendIncidentPhotosGrid(incidentCard, inc.photos, { attachPhotoIdDataset: true });
-
-        container.appendChild(incidentCard);
     }
 }
 
