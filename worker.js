@@ -1,6 +1,29 @@
 import bcrypt from "bcryptjs";
 
-import { DEFAULT_REALTIME_TENANT_ID, HttpError } from "./worker/lib/core.js";
+import {
+  addUtcDays,
+  DEFAULT_REALTIME_TENANT_ID,
+  HttpError,
+  isMissingAssetsTableError,
+  isMissingIncidentAssetColumnError,
+  isMissingIncidentTimingColumnsError,
+  isMissingIncidentsTableError,
+  normalizeOptionalString,
+  normalizeRealtimeTenantId,
+  nowIso,
+  parseDateOrNull,
+  parseOptionalPositiveInt,
+  startOfUtcDay,
+  toUtcDayKey,
+} from "./worker/lib/core.js";
+import {
+  appendPaginationHeader,
+  buildTimestampIdCursor,
+  buildUsernameIdCursor,
+  parsePageLimit,
+  parseTimestampIdCursor,
+  parseUsernameIdCursor,
+} from "./worker/lib/pagination.js";
 import { createAuditLogsRouteHandlers } from "./worker/routes/audit-logs.js";
 import { createDevicesRouteHandlers } from "./worker/routes/devices.js";
 import { createIncidentsRouteHandlers } from "./worker/routes/incidents.js";
@@ -559,24 +582,8 @@ function sanitizeFileName(input, fallbackBase) {
   return normalized || `${fallbackBase}.jpg`;
 }
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
 function nowUnixSeconds() {
   return Math.floor(Date.now() / 1000);
-}
-
-function normalizeOptionalString(value, fallback = "") {
-  if (value === null || value === undefined) return fallback;
-  return String(value).trim();
-}
-
-function normalizeRealtimeTenantId(value) {
-  const raw = normalizeOptionalString(value, "").toLowerCase();
-  if (!raw) return DEFAULT_REALTIME_TENANT_ID;
-  const normalized = raw.replace(/[^a-z0-9._-]/g, "_").slice(0, 64);
-  return normalized || DEFAULT_REALTIME_TENANT_ID;
 }
 
 function normalizeRealtimeClientKey(value) {
@@ -1016,32 +1023,6 @@ function mapInstallationWithOperationalState(installation, summaryById) {
   };
 }
 
-function isMissingIncidentsTableError(error) {
-  const message = normalizeOptionalString(error?.message, "").toLowerCase();
-  return message.includes("no such table") && message.includes("incidents");
-}
-
-function isMissingIncidentAssetColumnError(error) {
-  const message = normalizeOptionalString(error?.message, "").toLowerCase();
-  return (
-    (message.includes("no such column") || message.includes("has no column named")) &&
-    message.includes("asset_id")
-  );
-}
-
-function isMissingIncidentTimingColumnsError(error) {
-  const message = normalizeOptionalString(error?.message, "").toLowerCase();
-  if (!(message.includes("no such column") || message.includes("has no column named"))) {
-    return false;
-  }
-  return (
-    message.includes("estimated_duration_seconds") ||
-    message.includes("work_started_at") ||
-    message.includes("work_ended_at") ||
-    message.includes("actual_duration_seconds")
-  );
-}
-
 async function loadInstallationOperationalSummaries(env, installationIds, tenantId) {
   const ids = [...new Set(
     (installationIds || [])
@@ -1200,14 +1181,6 @@ function normalizeAssetPayload(data, options = {}) {
   };
 }
 
-function isMissingAssetsTableError(error) {
-  const message = normalizeOptionalString(error?.message, "").toLowerCase();
-  return (
-    message.includes("no such table") &&
-    (message.includes("assets") || message.includes("asset_installation_links"))
-  );
-}
-
 function parseAssetSearchQuery(searchParams) {
   return {
     code: normalizeOptionalString(searchParams.get("code"), "").toLowerCase(),
@@ -1215,34 +1188,6 @@ function parseAssetSearchQuery(searchParams) {
     status: normalizeOptionalString(searchParams.get("status"), "").toLowerCase(),
     search: normalizeOptionalString(searchParams.get("search"), "").toLowerCase(),
   };
-}
-
-function parseDateOrNull(value) {
-  if (!value) return null;
-  const parsed = new Date(String(value));
-  if (Number.isNaN(parsed.getTime())) {
-    throw new HttpError(400, "Fecha invalida en filtros.");
-  }
-  return parsed;
-}
-
-function startOfUtcDay(date) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-}
-
-function addUtcDays(date, days) {
-  const copy = new Date(date.getTime());
-  copy.setUTCDate(copy.getUTCDate() + Number(days || 0));
-  return copy;
-}
-
-function toUtcDayKey(date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function parseOptionalPositiveInt(value, label) {
-  if (value === null || value === undefined || value === "") return null;
-  return parsePositiveInt(value, label);
 }
 
 async function readJsonOrThrowBadRequest(request, message = "Payload invalido.", options = {}) {
@@ -1307,107 +1252,6 @@ async function readJsonOrThrowBadRequest(request, message = "Payload invalido.",
 
     throw error;
   }
-}
-
-function parsePageLimit(searchParams, options = {}) {
-  const fallback = Number.isInteger(options.fallback) ? options.fallback : 100;
-  const max = Number.isInteger(options.max) ? options.max : 500;
-  const requested = parseOptionalPositiveInt(searchParams.get("limit"), "limit");
-  if (requested === null) return fallback;
-  return Math.min(requested, max);
-}
-
-function encodeCursorPart(value) {
-  return encodeURIComponent(String(value ?? ""));
-}
-
-function decodeCursorPart(value) {
-  return decodeURIComponent(value);
-}
-
-function buildTimestampIdCursor(timestamp, id) {
-  return `${encodeCursorPart(timestamp)}|${encodeCursorPart(id)}`;
-}
-
-function parseTimestampIdCursor(rawCursor) {
-  const cursor = normalizeOptionalString(rawCursor, "");
-  if (!cursor) return null;
-
-  const parts = cursor.split("|");
-  if (parts.length !== 2) {
-    throw new HttpError(400, "Cursor invalido.");
-  }
-
-  let timestamp = "";
-  let idText = "";
-  try {
-    timestamp = decodeCursorPart(parts[0]);
-    idText = decodeCursorPart(parts[1]);
-  } catch {
-    throw new HttpError(400, "Cursor invalido.");
-  }
-
-  if (!timestamp || Number.isNaN(Date.parse(timestamp))) {
-    throw new HttpError(400, "Cursor invalido.");
-  }
-
-  const id = Number.parseInt(idText, 10);
-  if (!Number.isInteger(id) || id <= 0) {
-    throw new HttpError(400, "Cursor invalido.");
-  }
-
-  return { timestamp, id };
-}
-
-function buildUsernameIdCursor(username, id) {
-  return `${encodeCursorPart(username)}|${encodeCursorPart(id)}`;
-}
-
-function parseUsernameIdCursor(rawCursor) {
-  const cursor = normalizeOptionalString(rawCursor, "");
-  if (!cursor) return null;
-
-  const parts = cursor.split("|");
-  if (parts.length !== 2) {
-    throw new HttpError(400, "Cursor invalido.");
-  }
-
-  let username = "";
-  let idText = "";
-  try {
-    username = decodeCursorPart(parts[0]);
-    idText = decodeCursorPart(parts[1]);
-  } catch {
-    throw new HttpError(400, "Cursor invalido.");
-  }
-
-  if (!username) {
-    throw new HttpError(400, "Cursor invalido.");
-  }
-
-  const id = Number.parseInt(idText, 10);
-  if (!Number.isInteger(id) || id <= 0) {
-    throw new HttpError(400, "Cursor invalido.");
-  }
-
-  return { username, id };
-}
-
-function appendPaginationHeader(response, nextCursor) {
-  if (!response || !nextCursor) return response;
-  response.headers.set("X-Next-Cursor", nextCursor);
-
-  const expose = response.headers.get("Access-Control-Expose-Headers");
-  if (!expose) {
-    response.headers.set("Access-Control-Expose-Headers", "X-Next-Cursor");
-    return response;
-  }
-
-  const normalized = expose.toLowerCase();
-  if (!normalized.split(",").map((item) => item.trim()).includes("x-next-cursor")) {
-    response.headers.set("Access-Control-Expose-Headers", `${expose}, X-Next-Cursor`);
-  }
-  return response;
 }
 
 function getDriversBucketBinding(env) {
