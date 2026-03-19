@@ -3,6 +3,7 @@ import os
 import hmac
 import hashlib
 import json
+import requests
 from unittest.mock import MagicMock, patch
 
 from managers.history_manager import InstallationHistory
@@ -148,6 +149,37 @@ class TestInstallationHistory(unittest.TestCase):
 
         with self.assertRaises(ConnectionError):
             history._make_request("get", "installations")
+
+    @patch("managers.history_manager.requests.request")
+    @patch.dict(os.environ, {"DRIVER_MANAGER_DESKTOP_AUTH_MODE": "web"}, clear=False)
+    def test_make_request_web_mode_invalid_session_notifies_handler_and_requires_relogin(
+        self,
+        mock_request,
+    ):
+        mock_config = MagicMock()
+        mock_config.load_config_data.return_value = {"api_url": "https://api.example.com/"}
+        history = InstallationHistory(mock_config)
+        history.set_web_token_provider(lambda: "token-web-123")
+        notified_details = []
+        history.set_web_auth_failure_handler(notified_details.append)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.text = "unauthorized"
+        mock_response.json.return_value = {
+            "error": {"message": "Sesion web invalida o cerrada."}
+        }
+        mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "401 Client Error: Unauthorized",
+            response=mock_response,
+        )
+        mock_request.return_value = mock_response
+
+        with self.assertRaises(ConnectionError) as context:
+            history._make_request("get", "audit-logs")
+
+        self.assertIn("Inicia sesi", str(context.exception))
+        self.assertEqual(notified_details, ["Sesion web invalida o cerrada."])
 
     @patch.dict(os.environ, {"DRIVER_MANAGER_DESKTOP_AUTH_MODE": "web"}, clear=False)
     @patch.object(InstallationHistory, "_make_request")

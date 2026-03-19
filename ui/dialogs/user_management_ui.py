@@ -33,6 +33,12 @@ class UserManagementDialog(QDialog):
         
         self.init_ui()
         self.refresh_users()
+
+    def _render_not_authenticated_state(self, message=None):
+        """Mostrar estado degradado cuando no hay sesión activa."""
+        self.users_table.setRowCount(0)
+        fallback_message = message or "Inicia sesion nuevamente para continuar."
+        self.logs_text.setText(fallback_message)
     
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -137,6 +143,10 @@ class UserManagementDialog(QDialog):
     
     def refresh_users(self):
         """Actualizar tabla de usuarios"""
+        if not getattr(self.user_manager, "current_user", None):
+            self._render_not_authenticated_state()
+            return
+
         if self.user_source_mode == "web":
             self.refresh_web_users()
             return
@@ -254,7 +264,22 @@ class UserManagementDialog(QDialog):
     
     def refresh_logs(self):
         """Actualizar logs de acceso"""
+        if not getattr(self.user_manager, "current_user", None):
+            self._render_not_authenticated_state(
+                "La sesion expiro. Inicia sesion nuevamente para ver los logs."
+            )
+            return
+
         logs = self.user_manager.get_access_logs(50)
+        if not getattr(self.user_manager, "current_user", None):
+            self._render_not_authenticated_state(
+                "La sesion expiro. Inicia sesion nuevamente para ver los logs."
+            )
+            return
+
+        if not logs:
+            self.logs_text.setText("No hay logs de acceso disponibles.")
+            return
         
         log_text = ""
         for log in reversed(logs[-20:]):  # Ultimos 20

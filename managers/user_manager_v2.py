@@ -285,13 +285,14 @@ class UserManagerV2:
         self.cloud_manager = cloud_manager
         self.security_manager = security_manager
         self.local_mode = local_mode or (cloud_manager is None)
-        self.audit_api_client = audit_api_client
+        self.audit_api_client = None
         self.current_user = None
         self.current_web_token = None
         self.current_web_token_type = "Bearer"
         self._users_cache_data = None
         self._users_cache_loaded_at = 0.0
         self.auth_mode = self._resolve_auth_mode(auth_mode)
+        self.set_audit_api_client(audit_api_client)
         
         # SECURITY IMPROVEMENT (SEC-005): Account lockout manager
         self.lockout_manager = AccountLockoutManager()
@@ -317,6 +318,45 @@ class UserManagerV2:
     def set_audit_api_client(self, audit_api_client):
         """Asignar cliente API para auditoría remota (D1)."""
         self.audit_api_client = audit_api_client
+        self._bind_audit_api_client_hooks()
+
+    def _resolve_current_web_access_token(self):
+        """Resolver token web actual para clientes API que dependan del UserManager."""
+        return str(self.current_web_token or "").strip()
+
+    def _bind_audit_api_client_hooks(self):
+        """Conectar el cliente de auditoría con el estado de sesión web actual."""
+        client = self.audit_api_client
+        if client is None:
+            return
+
+        token_provider_setter = getattr(client, "set_web_token_provider", None)
+        if callable(token_provider_setter):
+            token_provider_setter(self._resolve_current_web_access_token)
+
+        auth_failure_handler_setter = getattr(client, "set_web_auth_failure_handler", None)
+        if callable(auth_failure_handler_setter):
+            auth_failure_handler_setter(self._handle_audit_api_web_auth_failure)
+
+    def _handle_audit_api_web_auth_failure(self, api_detail=""):
+        """Limpiar sesión web local cuando la API informa Bearer inválido/expirado."""
+        had_web_token = bool(self._resolve_current_web_access_token())
+        current_user = self.current_user if isinstance(self.current_user, dict) else {}
+        is_web_user = current_user.get("source") == "web"
+        if not had_web_token and not is_web_user:
+            return
+
+        username = str(current_user.get("username") or "").strip() or "unknown"
+        self.current_web_token = None
+        self.current_web_token_type = "Bearer"
+        if is_web_user:
+            self.current_user = None
+
+        self.logger.warning(
+            "Sesion web local invalidada tras 401 de API.",
+            username=username,
+            api_detail=str(api_detail or "").strip() or "N/A",
+        )
 
     def _resolve_auth_mode(self, auth_mode):
         """Resolver modo de autenticación desktop: legacy | web | auto."""
@@ -654,6 +694,51 @@ class UserManagerV2:
             pass
         text = (response.text or "").strip()
         return text or f"HTTP {response.status_code}"
+
+    def _build_current_web_auth_headers(self):
+        """Construir headers Authorization usando la sesión web actual."""
+        access_token = str(self.current_web_token or "").strip()
+        if not access_token:
+            raise AuthenticationError("No hay sesion web activa. Inicia sesion nuevamente.")
+
+        token_type = str(self.current_web_token_type or "Bearer").strip() or "Bearer"
+        return {
+            "Authorization": f"{token_type} {access_token}",
+        }
+
+    def _verify_current_web_password(self, base_url, password, context_label="super_admin"):
+        """Validar la contraseña del usuario web actual sin reloguear ni rotar la sesión."""
+        if not password:
+            raise ValidationError(f"Debes ingresar la contrasena web de {context_label}.")
+
+        headers = self._build_current_web_auth_headers()
+        response = requests.post(
+            f"{base_url}/web/auth/verify-password",
+            headers={
+                **headers,
+                "Content-Type": "application/json",
+            },
+            json={"password": password},
+            timeout=20,
+        )
+        if response.ok:
+            return headers
+
+        detail = self._extract_http_error_message(response)
+        normalized_detail = str(detail or "").strip().lower()
+        if response.status_code in (401, 403):
+            if (
+                "sesion web" in normalized_detail
+                or "token web" in normalized_detail
+                or "falta token" in normalized_detail
+            ):
+                self._handle_audit_api_web_auth_failure(detail)
+                raise AuthenticationError("La sesion web expiro. Inicia sesion nuevamente.")
+            raise AuthenticationError(f"Contrasena web de {context_label} incorrecta.")
+
+        raise ConfigurationError(
+            f"No se pudo validar la contrasena web de {context_label}. {detail}"
+        )
     
     @returns_result_tuple("initialize_system")
     def initialize_system(self, first_user_username, first_user_password):
@@ -1539,32 +1624,16 @@ class UserManagerV2:
         admin_username = self.current_user.get("username")
         if not admin_username:
             raise AuthenticationError("No hay usuario actual para autenticación web.")
-        if not admin_web_password:
-            raise ValidationError("Debes ingresar la contraseña web del super_admin.")
-
-        login_response = requests.post(
-            f"{base_url}/web/auth/login",
-            json={
-                "username": admin_username,
-                "password": admin_web_password,
-            },
-            timeout=20,
-        )
-        if not login_response.ok:
-            detail = self._extract_http_error_message(login_response)
-            raise AuthenticationError(f"Falló login web de super_admin. {detail}")
-
-        login_payload = login_response.json() if login_response.content else {}
-        admin_session = self._extract_web_auth_session(
-            login_payload,
-            admin_username,
-            "Login web de super_admin",
+        auth_headers = self._verify_current_web_password(
+            base_url,
+            admin_web_password,
+            "super_admin",
         )
 
         create_response = requests.post(
             f"{base_url}/web/auth/users",
             headers={
-                "Authorization": f"{admin_session['token_type']} {admin_session['access_token']}",
+                **auth_headers,
                 "Content-Type": "application/json",
             },
             json={
@@ -1624,26 +1693,10 @@ class UserManagerV2:
         admin_username = self.current_user.get("username")
         if not admin_username:
             raise AuthenticationError("No hay usuario actual para autenticación web.")
-        if not admin_web_password:
-            raise ValidationError("Debes ingresar la contraseña web del super_admin.")
-
-        login_response = requests.post(
-            f"{base_url}/web/auth/login",
-            json={
-                "username": admin_username,
-                "password": admin_web_password,
-            },
-            timeout=20,
-        )
-        if not login_response.ok:
-            detail = self._extract_http_error_message(login_response)
-            raise AuthenticationError(f"Falló login web de super_admin. {detail}")
-
-        login_payload = login_response.json() if login_response.content else {}
-        admin_session = self._extract_web_auth_session(
-            login_payload,
-            admin_username,
-            "Login web de super_admin",
+        auth_headers = self._verify_current_web_password(
+            base_url,
+            admin_web_password,
+            "super_admin",
         )
 
         params = {}
@@ -1654,7 +1707,7 @@ class UserManagerV2:
         users_response = requests.get(
             f"{base_url}/web/auth/users",
             headers={
-                "Authorization": f"{admin_session['token_type']} {admin_session['access_token']}",
+                **auth_headers,
             },
             params=params,
             timeout=20,
@@ -1866,7 +1919,8 @@ class UserManagerV2:
         self.logger.operation_start("get_access_logs")
         if not self.current_user:
             self.logger.warning("Attempt to get logs without authentication")
-            raise AuthenticationError("No autenticado.")
+            self.logger.operation_end("get_access_logs", success=False, reason="not_authenticated")
+            return []
         
         try:
             if self._can_use_audit_api():
@@ -1916,7 +1970,10 @@ class UserManagerV2:
             return logs[-limit:] if len(logs) > limit else logs
             
         except Exception as e:
-            self.logger.error(f"Error getting access logs: {e}", exc_info=True)
+            if not self.current_user and isinstance(e, ConnectionError):
+                self.logger.warning(f"Access logs unavailable until next login: {e}")
+            else:
+                self.logger.error(f"Error getting access logs: {e}", exc_info=True)
             return []
     
     def logout(self):

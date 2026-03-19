@@ -49,6 +49,7 @@ class InstallationHistory:
         self.api_secret = None
         self.api_tenant_id = None
         self.web_token_provider = None
+        self.web_auth_failure_handler = None
         self.allow_unsigned_requests = str(
             os.getenv("DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS", "")
         ).strip().lower() in {"1", "true", "yes", "on"}
@@ -60,6 +61,23 @@ class InstallationHistory:
     def set_web_token_provider(self, token_provider):
         """Registrar proveedor de token web (Bearer) para endpoints /web/*."""
         self.web_token_provider = token_provider
+
+    def set_web_auth_failure_handler(self, failure_handler):
+        """Registrar callback para invalidar sesión local cuando el Bearer falle con 401."""
+        self.web_auth_failure_handler = failure_handler
+
+    def _notify_web_auth_failure(self, api_detail=""):
+        """Notificar al runtime desktop que el Bearer actual quedó inválido."""
+        failure_handler = self.web_auth_failure_handler
+        if not callable(failure_handler):
+            return
+
+        try:
+            failure_handler(api_detail)
+        except Exception as error:
+            logger.warning(
+                f"No se pudo notificar la invalidez de la sesion web local: {error}"
+            )
 
     def _current_desktop_auth_mode(self):
         """Resolver modo desktop desde env o config persistida."""
@@ -632,6 +650,19 @@ class InstallationHistory:
                 )
 
                 detail_line = f"\nDetalle API: {api_detail}" if api_detail else ""
+                if use_web_bearer_mode:
+                    self._notify_web_auth_failure(api_detail)
+                    web_session_error = (
+                        "[ERROR] La sesion web de la API ya no es valida.\n\n"
+                        "Inicia sesion nuevamente para continuar."
+                        f"{detail_line}"
+                    )
+                    raise ConnectionError(web_session_error)
+                    raise ConnectionError(
+                        "âŒ La sesiÃ³n web de la API ya no es vÃ¡lida.\n\n"
+                        "Inicia sesiÃ³n nuevamente para continuar."
+                        f"{detail_line}"
+                    )
                 raise ConnectionError(
                     "❌ Autenticación fallida con la API.\n\n"
                     "Las credenciales de API pueden estar incorrectas o expiradas.\n"

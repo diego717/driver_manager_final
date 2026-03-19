@@ -9,6 +9,18 @@ from core.exceptions import CloudStorageError, SecurityError
 from managers.user_manager_v2 import UserManagerV2
 
 
+class StubAuditApiClient:
+    def __init__(self):
+        self.web_token_provider = None
+        self.web_auth_failure_handler = None
+
+    def set_web_token_provider(self, provider):
+        self.web_token_provider = provider
+
+    def set_web_auth_failure_handler(self, handler):
+        self.web_auth_failure_handler = handler
+
+
 class TestUserManagerV2(unittest.TestCase):
     def setUp(self):
         self.test_dir = Path("tests/temp_config")
@@ -138,15 +150,16 @@ class TestUserManagerV2(unittest.TestCase):
             auth_mode="web",
         )
         manager.current_user = {"username": "diegosasen", "role": "super_admin", "source": "web"}
+        manager.current_web_token = "token-current"
+        manager.current_web_token_type = "Bearer"
         manager._log_access = MagicMock()
 
-        login_response = MagicMock()
-        login_response.ok = True
-        login_response.content = b'{"access_token":"token-admin"}'
-        login_response.json.return_value = {
-            "authenticated": True,
-            "access_token": "token-admin",
-            "token_type": "Bearer",
+        verify_response = MagicMock()
+        verify_response.ok = True
+        verify_response.content = b'{"success":true}'
+        verify_response.json.return_value = {
+            "success": True,
+            "verified": True,
         }
 
         create_response = MagicMock()
@@ -154,7 +167,7 @@ class TestUserManagerV2(unittest.TestCase):
         create_response.content = b'{"ok":true}'
         create_response.json.return_value = {"ok": True}
 
-        mock_post.side_effect = [login_response, create_response]
+        mock_post.side_effect = [verify_response, create_response]
 
         success, message = manager.create_tenant_web_user(
             username="Diego",
@@ -167,8 +180,72 @@ class TestUserManagerV2(unittest.TestCase):
         self.assertTrue(success)
         self.assertIn("usuario web creado", message.lower())
         self.assertEqual(mock_post.call_count, 2)
+        verify_args, verify_kwargs = mock_post.call_args_list[0]
+        self.assertEqual(verify_args[0], "https://example.workers.dev/web/auth/verify-password")
+        self.assertEqual(verify_kwargs["headers"]["Authorization"], "Bearer token-current")
         _args, kwargs = mock_post.call_args
         self.assertIsNone(kwargs["json"]["tenant_id"])
+
+    @patch("managers.user_manager_v2.requests.get")
+    @patch("managers.user_manager_v2.requests.post")
+    def test_fetch_tenant_web_users_reuses_current_session_without_relogin(
+        self,
+        mock_post,
+        mock_get,
+    ):
+        audit_api = MagicMock()
+        audit_api._get_api_url.return_value = "https://example.workers.dev"
+        manager = UserManagerV2(
+            cloud_manager=MagicMock(),
+            security_manager=MagicMock(),
+            local_mode=False,
+            audit_api_client=audit_api,
+            auth_mode="web",
+        )
+        manager.current_user = {"username": "diegosasen", "role": "super_admin", "source": "web"}
+        manager.current_web_token = "token-current"
+        manager.current_web_token_type = "Bearer"
+
+        verify_response = MagicMock()
+        verify_response.ok = True
+        verify_response.content = b'{"success":true}'
+        verify_response.json.return_value = {
+            "success": True,
+            "verified": True,
+        }
+        mock_post.return_value = verify_response
+
+        users_response = MagicMock()
+        users_response.ok = True
+        users_response.content = b'{"success":true}'
+        users_response.json.return_value = {
+            "success": True,
+            "users": [
+                {
+                    "username": "viewer01",
+                    "role": "viewer",
+                    "tenant_id": "tenant-a",
+                    "is_active": True,
+                    "last_login_at": None,
+                    "created_at": "2026-01-01T00:00:00",
+                }
+            ],
+        }
+        mock_get.return_value = users_response
+
+        users = manager.fetch_tenant_web_users(
+            admin_web_password="AdminPass123!",
+            tenant_id="tenant-a",
+        )
+
+        self.assertEqual(len(users), 1)
+        post_args, post_kwargs = mock_post.call_args
+        self.assertEqual(post_args[0], "https://example.workers.dev/web/auth/verify-password")
+        self.assertEqual(post_kwargs["headers"]["Authorization"], "Bearer token-current")
+        get_args, get_kwargs = mock_get.call_args
+        self.assertEqual(get_args[0], "https://example.workers.dev/web/auth/users")
+        self.assertEqual(get_kwargs["headers"]["Authorization"], "Bearer token-current")
+        self.assertEqual(get_kwargs["params"], {"tenant_id": "tenant-a"})
 
     @patch("managers.user_manager_v2.requests.post")
     def test_authenticate_web_mode_invalid_credentials_skip_remote_audit_without_session(self, mock_post):
@@ -237,6 +314,38 @@ class TestUserManagerV2(unittest.TestCase):
         self.assertIsNone(manager.current_user)
         self.assertIsNone(manager.current_web_token)
         self.assertEqual(manager.current_web_token_type, "Bearer")
+
+    def test_audit_api_web_auth_failure_clears_local_web_session_state(self):
+        audit_api = StubAuditApiClient()
+        manager = UserManagerV2(
+            local_mode=True,
+            audit_api_client=audit_api,
+            auth_mode="web",
+        )
+        manager.current_user = {
+            "username": "superadmin",
+            "role": "super_admin",
+            "source": "web",
+        }
+        manager.current_web_token = "token-abc"
+        manager.current_web_token_type = "Bearer"
+
+        self.assertEqual(audit_api.web_token_provider(), "token-abc")
+
+        audit_api.web_auth_failure_handler("Sesion web invalida o cerrada.")
+
+        self.assertIsNone(manager.current_user)
+        self.assertIsNone(manager.current_web_token)
+        self.assertEqual(manager.current_web_token_type, "Bearer")
+
+    def test_get_access_logs_returns_empty_when_not_authenticated(self):
+        manager = UserManagerV2(local_mode=True)
+        manager.config_dir = self.test_dir
+        manager.logs_file = self.test_dir / "access_logs_empty_auth.json"
+
+        logs = manager.get_access_logs(limit=50)
+
+        self.assertEqual(logs, [])
 
     def test_web_mode_skips_local_initialization_flow(self):
         audit_api = MagicMock()
