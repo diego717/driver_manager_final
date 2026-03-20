@@ -271,6 +271,16 @@ export default function UploadIncidentPhotoScreen() {
       let bestUri = workingUri;
       let bestSize = await getFileSizeBytes(workingUri);
 
+      if (bestSize >= MIN_UPLOAD_PHOTO_BYTES && bestSize <= MAX_UPLOAD_PHOTO_BYTES) {
+        return {
+          uri: bestUri,
+          fileName: toJpegFileName(asset.fileName, incidentId),
+          contentType: "image/jpeg",
+          sizeBytes: bestSize,
+          isTemporary: generatedUris.includes(bestUri),
+        };
+      }
+
       for (const [index, quality] of COMPRESS_QUALITIES.entries()) {
         onProgress(`Intento ${index + 1} de ${COMPRESS_QUALITIES.length}...`);
         const compressed = await ImageManipulator.manipulateAsync(
