@@ -59,7 +59,7 @@ class TestInstallationHistory(unittest.TestCase):
 
         self.assertEqual(history.api_url, "https://api.example.com")
 
-    @patch("managers.history_manager.requests.request")
+    @patch("managers.history_request_adapter.requests.request")
     def test_make_request_success_returns_json(self, mock_request):
         mock_response = MagicMock()
         mock_response.content = b'{"ok": true}'
@@ -93,14 +93,14 @@ class TestInstallationHistory(unittest.TestCase):
         with self.assertRaises(ConnectionError):
             history._make_request("get", "installations")
 
-    @patch("managers.history_manager.requests.request")
+    @patch("managers.history_request_adapter.requests.request")
     def test_make_request_raises_connection_error(self, mock_request):
         mock_request.side_effect = Exception("boom")
 
         with self.assertRaises(ConnectionError):
             self.history._make_request("get", "installations")
 
-    @patch("managers.history_manager.requests.request")
+    @patch("managers.history_request_adapter.requests.request")
     def test_make_request_post_json_sends_utf8_bytes_payload(self, mock_request):
         mock_response = MagicMock()
         mock_response.content = b'{"ok": true}'
@@ -118,7 +118,7 @@ class TestInstallationHistory(unittest.TestCase):
         expected = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         self.assertEqual(sent_data, expected)
 
-    @patch("managers.history_manager.requests.request")
+    @patch("managers.history_request_adapter.requests.request")
     @patch.dict(os.environ, {"DRIVER_MANAGER_DESKTOP_AUTH_MODE": "web"}, clear=False)
     def test_make_request_web_mode_uses_bearer_and_web_prefix(self, mock_request):
         mock_config = MagicMock()
@@ -150,7 +150,7 @@ class TestInstallationHistory(unittest.TestCase):
         with self.assertRaises(ConnectionError):
             history._make_request("get", "installations")
 
-    @patch("managers.history_manager.requests.request")
+    @patch("managers.history_request_adapter.requests.request")
     @patch.dict(os.environ, {"DRIVER_MANAGER_DESKTOP_AUTH_MODE": "web"}, clear=False)
     def test_make_request_web_mode_invalid_session_notifies_handler_and_requires_relogin(
         self,
@@ -328,8 +328,8 @@ class TestInstallationHistory(unittest.TestCase):
         self.assertEqual(stats["total_installations"], 0)
         self.assertIn("by_brand", stats)
 
-    @patch("managers.history_manager.secrets.token_urlsafe", return_value="nonce-fixed-123")
-    @patch("managers.history_manager.time.time", return_value=1700000000)
+    @patch("managers.history_request_adapter.secrets.token_urlsafe", return_value="nonce-fixed-123")
+    @patch("managers.history_request_adapter.time.time", return_value=1700000000)
     def test_get_headers_uses_worker_canonical_signature(self, _mock_time, _mock_nonce):
         self.mock_config.load_config_data.return_value = {
             "api_url": "https://api.example.com/",

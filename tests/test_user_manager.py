@@ -78,7 +78,7 @@ class TestUserManagerV2(unittest.TestCase):
         self.assertFalse(success)
         self.assertIn("Usuario o contrase", message)
 
-    @patch("managers.user_manager_v2.requests.post")
+    @patch("managers.user_auth_provider.requests.post")
     def test_authenticate_web_mode_success(self, mock_post):
         audit_api = MagicMock()
         audit_api._get_api_url.return_value = "https://example.workers.dev"
@@ -115,7 +115,7 @@ class TestUserManagerV2(unittest.TestCase):
         self.assertEqual(manager.current_user["source"], "web")
         self.assertEqual(manager.current_web_token, "token-abc")
 
-    @patch("managers.user_manager_v2.requests.post")
+    @patch("managers.user_auth_provider.requests.post")
     def test_authenticate_web_mode_invalid_credentials(self, mock_post):
         audit_api = MagicMock()
         audit_api._get_api_url.return_value = "https://example.workers.dev"
@@ -138,7 +138,7 @@ class TestUserManagerV2(unittest.TestCase):
         self.assertFalse(success)
         self.assertIn("incorrect", message.lower())
 
-    @patch("managers.user_manager_v2.requests.post")
+    @patch("managers.user_tenant_web_service.requests.post")
     def test_create_tenant_web_user_allows_empty_tenant_id(self, mock_post):
         audit_api = MagicMock()
         audit_api._get_api_url.return_value = "https://example.workers.dev"
@@ -186,8 +186,8 @@ class TestUserManagerV2(unittest.TestCase):
         _args, kwargs = mock_post.call_args
         self.assertIsNone(kwargs["json"]["tenant_id"])
 
-    @patch("managers.user_manager_v2.requests.get")
-    @patch("managers.user_manager_v2.requests.post")
+    @patch("managers.user_tenant_web_service.requests.get")
+    @patch("managers.user_tenant_web_service.requests.post")
     def test_fetch_tenant_web_users_reuses_current_session_without_relogin(
         self,
         mock_post,
@@ -247,7 +247,7 @@ class TestUserManagerV2(unittest.TestCase):
         self.assertEqual(get_kwargs["headers"]["Authorization"], "Bearer token-current")
         self.assertEqual(get_kwargs["params"], {"tenant_id": "tenant-a"})
 
-    @patch("managers.user_manager_v2.requests.post")
+    @patch("managers.user_auth_provider.requests.post")
     def test_authenticate_web_mode_invalid_credentials_skip_remote_audit_without_session(self, mock_post):
         cloud = MagicMock()
         security = MagicMock()
@@ -285,7 +285,7 @@ class TestUserManagerV2(unittest.TestCase):
         manager._append_legacy_log_entry.assert_not_called()
         cloud.download_file_content.assert_not_called()
 
-    @patch("managers.user_manager_v2.requests.post")
+    @patch("managers.user_auth_provider.requests.post")
     def test_logout_invalidates_remote_web_session_best_effort(self, mock_post):
         audit_api = MagicMock()
         audit_api._get_api_url.return_value = "https://example.workers.dev"

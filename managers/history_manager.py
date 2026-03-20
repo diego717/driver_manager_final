@@ -6,21 +6,14 @@ SECURITY IMPROVEMENTS:
 - SEC-001: Removed hardcoded production API URL
 - SEC-003: Added API authentication with tokens
 """
-import os
-import sys
-import platform
-import hmac
-import hashlib
-import time
-import json
-import secrets
 from collections import Counter
 from datetime import datetime, timezone
-from pathlib import Path
-
-import requests
 
 from core.logger import get_logger
+from managers.history_assets_client import HistoryAssetsClient
+from managers.history_incidents_client import HistoryIncidentsClient
+from managers.history_installations_client import HistoryInstallationsClient
+from managers.history_request_adapter import HistoryRequestAdapter
 
 logger = get_logger()
 
@@ -44,79 +37,102 @@ class InstallationHistory:
             config_manager: Una instancia de ConfigManager para obtener la configuración.
         """
         self.config_manager = config_manager
-        self.api_url = None
-        self.api_token = None
-        self.api_secret = None
-        self.api_tenant_id = None
-        self.web_token_provider = None
-        self.web_auth_failure_handler = None
-        self.allow_unsigned_requests = str(
-            os.getenv("DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS", "")
-        ).strip().lower() in {"1", "true", "yes", "on"}
         self.timeout = 10
+        self.request_adapter = HistoryRequestAdapter(config_manager, timeout=self.timeout)
+        self.installations_client = HistoryInstallationsClient(
+            lambda *args, **kwargs: self._make_request(*args, **kwargs)
+        )
+        self.incidents_client = HistoryIncidentsClient(
+            lambda *args, **kwargs: self._make_request(*args, **kwargs)
+        )
+        self.assets_client = HistoryAssetsClient(
+            lambda *args, **kwargs: self._make_request(*args, **kwargs),
+            incident_normalizer=self.incidents_client.normalize_incident_lifecycle_fields,
+        )
         
         # Inicializar configuración de API
-        self._initialize_api_config()
+
+    @property
+    def api_url(self):
+        return self.request_adapter.api_url
+
+    @api_url.setter
+    def api_url(self, value):
+        self.request_adapter.api_url = value
+
+    @property
+    def api_token(self):
+        return self.request_adapter.api_token
+
+    @api_token.setter
+    def api_token(self, value):
+        self.request_adapter.api_token = value
+
+    @property
+    def api_secret(self):
+        return self.request_adapter.api_secret
+
+    @api_secret.setter
+    def api_secret(self, value):
+        self.request_adapter.api_secret = value
+
+    @property
+    def api_tenant_id(self):
+        return self.request_adapter.api_tenant_id
+
+    @api_tenant_id.setter
+    def api_tenant_id(self, value):
+        self.request_adapter.api_tenant_id = value
+
+    @property
+    def web_token_provider(self):
+        return self.request_adapter.web_token_provider
+
+    @web_token_provider.setter
+    def web_token_provider(self, value):
+        self.request_adapter.web_token_provider = value
+
+    @property
+    def web_auth_failure_handler(self):
+        return self.request_adapter.web_auth_failure_handler
+
+    @web_auth_failure_handler.setter
+    def web_auth_failure_handler(self, value):
+        self.request_adapter.web_auth_failure_handler = value
+
+    @property
+    def allow_unsigned_requests(self):
+        return self.request_adapter.allow_unsigned_requests
+
+    @allow_unsigned_requests.setter
+    def allow_unsigned_requests(self, value):
+        self.request_adapter.allow_unsigned_requests = value
 
     def set_web_token_provider(self, token_provider):
         """Registrar proveedor de token web (Bearer) para endpoints /web/*."""
-        self.web_token_provider = token_provider
+        self.request_adapter.set_web_token_provider(token_provider)
 
     def set_web_auth_failure_handler(self, failure_handler):
         """Registrar callback para invalidar sesión local cuando el Bearer falle con 401."""
-        self.web_auth_failure_handler = failure_handler
+        self.request_adapter.set_web_auth_failure_handler(failure_handler)
 
     def _notify_web_auth_failure(self, api_detail=""):
         """Notificar al runtime desktop que el Bearer actual quedó inválido."""
-        failure_handler = self.web_auth_failure_handler
-        if not callable(failure_handler):
-            return
-
-        try:
-            failure_handler(api_detail)
-        except Exception as error:
-            logger.warning(
-                f"No se pudo notificar la invalidez de la sesion web local: {error}"
-            )
+        self.request_adapter._notify_web_auth_failure(api_detail)
 
     def _current_desktop_auth_mode(self):
         """Resolver modo desktop desde env o config persistida."""
-        allowed_modes = {"legacy", "web", "auto"}
-
-        env_mode = str(os.getenv("DRIVER_MANAGER_DESKTOP_AUTH_MODE", "")).strip().lower()
-        if env_mode in allowed_modes:
-            return env_mode
-
-        config_manager = getattr(self, "config_manager", None)
-        if config_manager and hasattr(config_manager, "load_config_data"):
-            try:
-                config = config_manager.load_config_data() or {}
-            except Exception:
-                config = {}
-            config_mode = str(config.get("desktop_auth_mode", "")).strip().lower()
-            if config_mode in allowed_modes:
-                return config_mode
-
-        return "legacy"
+        return self.request_adapter._current_desktop_auth_mode()
 
     def _get_web_access_token(self):
-        provider = self.web_token_provider
-        if not callable(provider):
-            return ""
-        try:
-            return str(provider() or "").strip()
-        except Exception:
-            return ""
+        return self.request_adapter._get_web_access_token()
 
     def _should_use_web_bearer_mode(self):
-        mode = self._current_desktop_auth_mode()
-        if mode not in {"web", "auto"}:
-            return False
-        return bool(self._get_web_access_token())
+        return self.request_adapter._should_use_web_bearer_mode()
 
     def _requires_web_session(self):
         """Indicate when desktop is configured as web-only but has no active bearer session."""
-        return self._current_desktop_auth_mode() == "web" and not self._get_web_access_token()
+        return self.request_adapter._requires_web_session()
 
     def _default_statistics(self):
         """Estructura estándar de estadísticas para mantener compatibilidad."""
@@ -294,69 +310,7 @@ class InstallationHistory:
         
         SECURITY: Valida que todos los parámetros necesarios estén presentes.
         """
-        try:
-            config = self.config_manager.load_config_data()
-            desktop_auth_mode = self._current_desktop_auth_mode()
-            
-            if not config:
-                logger.warning("No configuration found for API initialization")
-                config = {}
-            
-            # Validar y cargar URL.
-            # Prioridad: env de escritorio > config.enc.
-            api_url = (
-                os.getenv("DRIVER_MANAGER_HISTORY_API_URL", "")
-                or config.get('api_url')
-                or config.get('history_api_url', '')
-            )
-            if api_url:
-                self.api_url = api_url.rstrip('/')
-                logger.info(f"API URL configured: {self.api_url[:30]}...")
-
-            # Cargar credenciales legacy HMAC.
-            # Prioridad segura: env de escritorio > config.enc.
-            self.api_token = (
-                os.getenv("DRIVER_MANAGER_API_TOKEN")
-                or config.get('api_token')
-            )
-            self.api_secret = (
-                os.getenv("DRIVER_MANAGER_API_SECRET")
-                or config.get('api_secret')
-            )
-            if self.api_token and self.api_secret:
-                logger.info("Legacy API authentication configured successfully")
-            else:
-                if desktop_auth_mode == "web":
-                    logger.info(
-                        "Desktop auth mode 'web': legacy API token/secret are not required at startup."
-                    )
-                elif desktop_auth_mode == "auto":
-                    logger.info(
-                        "Desktop auth mode 'auto': use an active web session for /web/* or "
-                        "configure legacy API token/secret for private HMAC routes."
-                    )
-                elif self.allow_unsigned_requests:
-                    logger.warning(
-                        "Legacy API authentication not configured. "
-                        "Unsigned requests enabled by DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS."
-                    )
-                else:
-                    logger.error(
-                        "Legacy API authentication not configured. "
-                        "Requests in legacy mode will be blocked until API token/secret are configured."
-                    )
-
-            self.api_tenant_id = (
-                os.getenv("DRIVER_MANAGER_API_TENANT_ID")
-                or config.get('api_tenant_id')
-                or config.get('tenant_id')
-                or None
-            )
-            if self.api_tenant_id:
-                self.api_tenant_id = str(self.api_tenant_id).strip()
-                
-        except Exception as e:
-            logger.error(f"Failed to initialize API config: {e}", exc_info=True)
+        self.request_adapter._initialize_api_config()
     
     def _get_api_url(self):
         """
@@ -371,6 +325,8 @@ class InstallationHistory:
         Raises:
             ConnectionError: Si la URL no está configurada
         """
+        return self.request_adapter._get_api_url()
+
         # Detectar entorno de testing
         if "PYTEST_CURRENT_TEST" in os.environ or "unittest" in sys.modules:
             config = self.config_manager.load_config_data()
@@ -420,6 +376,14 @@ class InstallationHistory:
         Returns:
             str: HMAC signature
         """
+        return self.request_adapter._generate_request_signature(
+            method,
+            path,
+            timestamp,
+            body_hash,
+            nonce,
+        )
+
         if not self.api_secret:
             return None
         
@@ -438,6 +402,8 @@ class InstallationHistory:
 
     def _generate_request_nonce(self):
         """Generar nonce unico por request para prevenir replay."""
+        return self.request_adapter._generate_request_nonce()
+
         return secrets.token_urlsafe(18)
     
     def _get_headers(self, method='GET', path='/', body_hash=''):
@@ -454,6 +420,8 @@ class InstallationHistory:
         Returns:
             dict: Headers con autenticación
         """
+        return self.request_adapter._get_headers(method, path, body_hash)
+
         if not body_hash:
             body_hash = self._sha256_hex(b"")
 
@@ -481,12 +449,16 @@ class InstallationHistory:
 
     def _serialize_json_body(self, body):
         """Serializar body JSON de forma determinista para hash/firma/envío."""
+        return self.request_adapter._serialize_json_body(body)
+
         if body is None:
             return ""
         return json.dumps(body, separators=(',', ':'), ensure_ascii=False)
 
     def _sha256_hex(self, raw_text):
         """Hash SHA-256 hexadecimal de texto UTF-8."""
+        return self.request_adapter._sha256_hex(raw_text)
+
         if raw_text is None:
             raw_text = ""
         if isinstance(raw_text, bytes):
@@ -530,6 +502,15 @@ class InstallationHistory:
         Raises:
             ConnectionError: Si hay error de conexión o configuración
         """
+        return self.request_adapter._make_request(
+            method,
+            endpoint,
+            params=params,
+            expect_json=expect_json,
+            extra_headers=extra_headers,
+            **kwargs,
+        )
+
         worker_url = self._get_api_url()
         
         if not worker_url:
@@ -696,24 +677,11 @@ class InstallationHistory:
         """
         installation_data = kwargs
         
-        # 1. Guardar localmente (por ahora solo log)
-        self._save_local(installation_data)
-        
-        # 2. Enviar a la nube (Cloudflare D1)
+        payload = self.installations_client.build_installation_payload(installation_data)
+        self._save_local(payload)
+
         try:
-            payload = {
-                "timestamp": installation_data.get("timestamp") or datetime.now().isoformat(),
-                "driver_brand": installation_data.get("driver_brand") or installation_data.get("brand"),
-                "driver_version": installation_data.get("driver_version") or installation_data.get("version"),
-                "status": installation_data.get("status"),
-                "client_name": installation_data.get("client_name") or installation_data.get("client", "Desconocido"),
-                "driver_description": installation_data.get("driver_description") or installation_data.get("description", ""),
-                "installation_time_seconds": installation_data.get("installation_time") or installation_data.get("time_seconds", 0),
-                "os_info": installation_data.get("os_info") or platform.system(),
-                "notes": installation_data.get("notes") or installation_data.get("error_message", "")
-            }
-            
-            self._make_request('post', 'installations', json=payload)
+            self.installations_client.create_installation(payload)
             logger.info("Installation record synced to cloud successfully")
             return True
             
@@ -733,28 +701,12 @@ class InstallationHistory:
         """
         record_data = kwargs
 
-        payload = {
-            "timestamp": record_data.get("timestamp") or datetime.now().isoformat(),
-            "driver_brand": record_data.get("driver_brand") or record_data.get("brand") or "N/A",
-            "driver_version": record_data.get("driver_version") or record_data.get("version") or "N/A",
-            "status": record_data.get("status") or "manual",
-            "client_name": record_data.get("client_name") or record_data.get("client") or "Sin cliente",
-            "driver_description": record_data.get("driver_description") or record_data.get("description") or "Registro manual",
-            "installation_time_seconds": record_data.get("installation_time_seconds")
-            or record_data.get("installation_time")
-            or record_data.get("time_seconds")
-            or 0,
-            "os_info": record_data.get("os_info") or platform.system(),
-            "notes": record_data.get("notes") or "",
-        }
-
+        payload = self.installations_client.build_manual_record_payload(record_data)
         self._save_local(payload)
 
         try:
-            response = self._make_request("post", "records", json=payload)
-            if isinstance(response, dict):
-                return True, response.get("record")
-            return True, None
+            _saved_payload, record = self.installations_client.create_manual_record(payload)
+            return True, record
         except ConnectionError as e:
             logger.warning(f"Could not create manual record in cloud: {e}")
             return False, None
@@ -797,7 +749,7 @@ class InstallationHistory:
             return []
 
         try:
-            installations = self._make_request('get', 'installations', params=params) or []
+            installations = self.installations_client.list_installations(params=params)
             return self._apply_local_filters(
                 installations,
                 limit=limit,
@@ -828,7 +780,7 @@ class InstallationHistory:
             return None
 
         try:
-            return self._make_request('get', f'installations/{normalized_record_id}')
+            return self.installations_client.get_installation_by_id(normalized_record_id)
         except ConnectionError as e:
             if "HTTP 404" in str(e):
                 logger.warning(f"Installation {normalized_record_id} not found.")
@@ -860,17 +812,11 @@ class InstallationHistory:
             return False
         
         try:
-            val_seconds = int(float(time_seconds))
-        except (ValueError, TypeError):
-            val_seconds = 0
-        
-        payload = {
-            "notes": notes,
-            "installation_time_seconds": val_seconds
-        }
-        
-        try:
-            self._make_request('put', f'installations/{normalized_record_id}', json=payload)
+            self.installations_client.update_installation_details(
+                normalized_record_id,
+                notes,
+                time_seconds,
+            )
             logger.operation_end("update_installation_details_cloud", success=True)
             return True
         except ConnectionError as e:
@@ -896,7 +842,7 @@ class InstallationHistory:
             return False
         
         try:
-            self._make_request('delete', f'installations/{normalized_record_id}')
+            self.installations_client.delete_installation(normalized_record_id)
             logger.operation_end("delete_installation_cloud", success=True)
             return True
         except ConnectionError as e:
@@ -905,39 +851,16 @@ class InstallationHistory:
 
     def _guess_image_content_type(self, file_path):
         """Determinar content type de imagen por extensión."""
-        suffix = Path(file_path).suffix.lower()
-        if suffix in (".jpg", ".jpeg"):
-            return "image/jpeg"
-        if suffix == ".png":
-            return "image/png"
-        if suffix == ".webp":
-            return "image/webp"
-        raise ValueError("Formato no soportado. Usa JPG, PNG o WEBP.")
+        return self.incidents_client.guess_image_content_type(file_path)
 
     def get_incidents_for_installation(self, installation_id):
         """Listar incidencias (con fotos) asociadas a una instalación."""
         normalized_id = self._validate_record_id(installation_id)
-        payload = self._make_request("get", f"installations/{normalized_id}/incidents")
-        if isinstance(payload, dict):
-            incidents = payload.get("incidents", []) or []
-            return [self._normalize_incident_lifecycle_fields(item) for item in incidents]
-        return []
+        return self.incidents_client.list_incidents_for_installation(normalized_id)
 
     def _normalize_incident_lifecycle_fields(self, incident):
         """Garantizar estructura estable de lifecycle para incidencias."""
-        if not isinstance(incident, dict):
-            return incident
-        normalized = dict(incident)
-        status = str(normalized.get("incident_status") or "").strip().lower()
-        if status not in {"open", "in_progress", "resolved"}:
-            status = "open"
-        normalized["incident_status"] = status
-        normalized.setdefault("status_updated_at", normalized.get("created_at"))
-        normalized.setdefault("status_updated_by", normalized.get("reporter_username"))
-        normalized.setdefault("resolved_at", None)
-        normalized.setdefault("resolved_by", None)
-        normalized.setdefault("resolution_note", None)
-        return normalized
+        return self.incidents_client.normalize_incident_lifecycle_fields(incident)
 
     def create_incident(
         self,
@@ -951,6 +874,15 @@ class InstallationHistory:
     ):
         """Crear incidencia para una instalación existente."""
         normalized_id = self._validate_record_id(installation_id)
+        payload = self.incidents_client.build_create_incident_payload(
+            note=note,
+            severity=severity,
+            reporter_username=reporter_username,
+            time_adjustment_seconds=time_adjustment_seconds,
+            apply_to_installation=apply_to_installation,
+            source=source,
+        )
+        return self.incidents_client.create_incident(normalized_id, payload)
         payload = {
             "reporter_username": str(reporter_username or "desktop"),
             "note": str(note or "").strip(),
@@ -979,6 +911,12 @@ class InstallationHistory:
     ):
         """Actualizar estado de ciclo de vida de una incidencia."""
         normalized_incident_id = self._validate_record_id(incident_id)
+        payload = self.incidents_client.build_update_incident_status_payload(
+            incident_status=incident_status,
+            resolution_note=resolution_note,
+            reporter_username=reporter_username,
+        )
+        return self.incidents_client.update_incident_status(normalized_incident_id, payload)
         normalized_status = str(incident_status or "").strip().lower()
         if normalized_status not in {"open", "in_progress", "resolved"}:
             raise ValueError("Estado de incidencia inválido. Usa open, in_progress o resolved.")
@@ -1000,6 +938,7 @@ class InstallationHistory:
     def upload_incident_photo(self, incident_id, file_path):
         """Subir foto de evidencia a una incidencia."""
         normalized_incident_id = self._validate_record_id(incident_id)
+        return self.incidents_client.upload_incident_photo(normalized_incident_id, file_path)
         file_to_upload = Path(file_path)
         if not file_to_upload.exists() or not file_to_upload.is_file():
             raise FileNotFoundError(f"No se encontró el archivo: {file_path}")
@@ -1025,6 +964,7 @@ class InstallationHistory:
     def get_photo_content(self, photo_id):
         """Descargar bytes de una foto de incidencia para mostrarla en UI."""
         normalized_photo_id = self._validate_record_id(photo_id)
+        return self.incidents_client.get_photo_content(normalized_photo_id)
         response = self._make_request(
             "get",
             f"photos/{normalized_photo_id}",
@@ -1043,6 +983,9 @@ class InstallationHistory:
         Returns:
             dict | None: Registro del asset resuelto.
         """
+        payload = self.assets_client.build_resolve_asset_payload(external_code, **kwargs)
+        return self.assets_client.resolve_asset(payload)
+
         normalized_code = str(external_code or "").strip()
         if not normalized_code:
             raise ValueError("El código externo del equipo es obligatorio.")
@@ -1082,6 +1025,14 @@ class InstallationHistory:
         Returns:
             list: equipos encontrados.
         """
+        return self.assets_client.list_assets(
+            limit=limit,
+            search=search,
+            brand=brand,
+            status=status,
+            code=code,
+        )
+
         params = {}
         if limit:
             params["limit"] = int(limit)
@@ -1111,6 +1062,7 @@ class InstallationHistory:
         """
         normalized_asset_id = self._validate_record_id(asset_id)
         try:
+            return self.assets_client.get_asset_by_id(normalized_asset_id)
             payload = self._make_request("get", f"assets/{normalized_asset_id}")
         except ConnectionError as error:
             if "HTTP 404" in str(error):
@@ -1132,9 +1084,7 @@ class InstallationHistory:
         Returns:
             dict | None: equipo persistido.
         """
-        payload = dict(kwargs or {})
-        payload["update_existing"] = True
-        return self.resolve_asset(external_code, **payload)
+        return self.assets_client.save_asset(external_code, **kwargs)
 
     def get_asset_incidents(self, asset_id, limit=100):
         """
@@ -1148,6 +1098,7 @@ class InstallationHistory:
             dict: estructura con keys asset, active_link, links, incidents.
         """
         normalized_asset_id = self._validate_record_id(asset_id)
+        return self.assets_client.get_asset_incidents(normalized_asset_id, limit=limit)
         params = {}
         if limit:
             params["limit"] = int(limit)
@@ -1180,6 +1131,7 @@ class InstallationHistory:
             bool: True si se elimino correctamente.
         """
         normalized_asset_id = self._validate_record_id(asset_id)
+        return self.assets_client.delete_asset(normalized_asset_id)
         self._make_request("delete", f"assets/{normalized_asset_id}")
         return True
 
@@ -1197,6 +1149,11 @@ class InstallationHistory:
         """
         normalized_asset_id = self._validate_record_id(asset_id)
         normalized_installation_id = self._validate_record_id(installation_id)
+        return self.assets_client.link_asset_to_installation(
+            normalized_asset_id,
+            normalized_installation_id,
+            notes=notes,
+        )
         payload = {
             "installation_id": normalized_installation_id,
             "notes": str(notes or "").strip(),
@@ -1222,12 +1179,12 @@ class InstallationHistory:
         Returns:
             tuple(dict | None, dict | None): (asset, link)
         """
-        asset = self.resolve_asset(external_code)
-        if not isinstance(asset, dict):
-            raise ConnectionError("No se pudo resolver el equipo en la API.")
-        asset_id = asset.get("id")
-        link = self.link_asset_to_installation(asset_id, installation_id, notes=notes)
-        return asset, link
+        normalized_installation_id = self._validate_record_id(installation_id)
+        return self.assets_client.associate_asset_with_installation(
+            external_code,
+            normalized_installation_id,
+            notes=notes,
+        )
     
     def get_statistics(self, start_date=None, end_date=None):
         """
@@ -1250,7 +1207,7 @@ class InstallationHistory:
             return self._default_statistics()
 
         try:
-            stats = self._make_request('get', 'statistics', params=params)
+            stats = self.installations_client.get_statistics(params=params)
             return self._normalize_statistics(stats, start_date=start_date, end_date=end_date)
         except Exception as e:
             logger.error(f"Error retrieving statistics: {e}")

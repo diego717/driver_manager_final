@@ -26,6 +26,11 @@ import requests
 
 from core.logger import get_logger
 from core.password_policy import PasswordPolicy
+from managers.user_audit_service import UserAuditService
+from managers.user_auth_provider import UserAuthProvider
+from managers.user_management_service import UserManagementService
+from managers.user_repository import UserRepository
+from managers.user_tenant_web_service import UserTenantWebService
 from core.exceptions import (
     handle_errors,
     returns_result_tuple,
@@ -291,7 +296,13 @@ class UserManagerV2:
         self.current_web_token_type = "Bearer"
         self._users_cache_data = None
         self._users_cache_loaded_at = 0.0
+        self.auth_provider = UserAuthProvider(self)
         self.auth_mode = self._resolve_auth_mode(auth_mode)
+        self.user_repository = UserRepository(self)
+        self.audit_service = UserAuditService(self)
+        self.user_management_service = UserManagementService(self)
+        self.user_tenant_web_service = UserTenantWebService(self)
+        self.password_validator = PasswordValidator
         self.set_audit_api_client(audit_api_client)
         
         # SECURITY IMPROVEMENT (SEC-005): Account lockout manager
@@ -317,429 +328,86 @@ class UserManagerV2:
 
     def set_audit_api_client(self, audit_api_client):
         """Asignar cliente API para auditoría remota (D1)."""
-        self.audit_api_client = audit_api_client
-        self._bind_audit_api_client_hooks()
+        return self.auth_provider.set_audit_api_client(audit_api_client)
 
     def _resolve_current_web_access_token(self):
         """Resolver token web actual para clientes API que dependan del UserManager."""
-        return str(self.current_web_token or "").strip()
+        return self.auth_provider._resolve_current_web_access_token()
 
     def _bind_audit_api_client_hooks(self):
         """Conectar el cliente de auditoría con el estado de sesión web actual."""
-        client = self.audit_api_client
-        if client is None:
-            return
-
-        token_provider_setter = getattr(client, "set_web_token_provider", None)
-        if callable(token_provider_setter):
-            token_provider_setter(self._resolve_current_web_access_token)
-
-        auth_failure_handler_setter = getattr(client, "set_web_auth_failure_handler", None)
-        if callable(auth_failure_handler_setter):
-            auth_failure_handler_setter(self._handle_audit_api_web_auth_failure)
+        return self.auth_provider._bind_audit_api_client_hooks()
 
     def _handle_audit_api_web_auth_failure(self, api_detail=""):
         """Limpiar sesión web local cuando la API informa Bearer inválido/expirado."""
-        had_web_token = bool(self._resolve_current_web_access_token())
-        current_user = self.current_user if isinstance(self.current_user, dict) else {}
-        is_web_user = current_user.get("source") == "web"
-        if not had_web_token and not is_web_user:
-            return
-
-        username = str(current_user.get("username") or "").strip() or "unknown"
-        self.current_web_token = None
-        self.current_web_token_type = "Bearer"
-        if is_web_user:
-            self.current_user = None
-
-        self.logger.warning(
-            "Sesion web local invalidada tras 401 de API.",
-            username=username,
-            api_detail=str(api_detail or "").strip() or "N/A",
-        )
+        return self.auth_provider._handle_audit_api_web_auth_failure(api_detail)
 
     def _resolve_auth_mode(self, auth_mode):
-        """Resolver modo de autenticación desktop: legacy | web | auto."""
-        raw_mode = auth_mode if auth_mode is not None else os.getenv("DRIVER_MANAGER_DESKTOP_AUTH_MODE", "")
-        normalized = str(raw_mode or "").strip().lower()
-
-        if not normalized:
-            return self.AUTH_MODE_LEGACY
-        if normalized in self.ALLOWED_AUTH_MODES:
-            return normalized
-
-        self.logger.warning(
-            "Modo de autenticación desktop inválido; se usa legacy.",
-            requested_mode=normalized,
-        )
-        return self.AUTH_MODE_LEGACY
+        """Resolver modo de autenticaci??n desktop: legacy | web | auto."""
+        return self.auth_provider._resolve_auth_mode(auth_mode)
 
     def _resolve_web_api_url(self):
-        """Resolver base URL para autenticación web."""
-        candidates = []
-
-        if self.audit_api_client and hasattr(self.audit_api_client, "_get_api_url"):
-            try:
-                candidates.append(self.audit_api_client._get_api_url())
-            except Exception:
-                pass
-
-        candidates.append(os.getenv("DRIVER_MANAGER_HISTORY_API_URL", ""))
-
-        if self.audit_api_client and hasattr(self.audit_api_client, "config_manager"):
-            try:
-                config_manager = self.audit_api_client.config_manager
-                if config_manager and hasattr(config_manager, "load_config_data"):
-                    config = config_manager.load_config_data() or {}
-                    candidates.append(config.get("api_url", ""))
-                    candidates.append(config.get("history_api_url", ""))
-            except Exception:
-                pass
-
-        for candidate in candidates:
-            value = str(candidate or "").strip()
-            if value:
-                return value.rstrip("/")
-
-        return ""
+        """Resolver base URL para autenticaci??n web."""
+        return self.auth_provider._resolve_web_api_url()
 
     def _should_try_web_auth(self):
-        """Determinar si este login debe intentar autenticación web."""
-        if self.auth_mode == self.AUTH_MODE_WEB:
-            return True
-        if self.auth_mode == self.AUTH_MODE_AUTO:
-            return bool(self._resolve_web_api_url())
-        return False
+        """Determinar si este login debe intentar autenticaci??n web."""
+        return self.auth_provider._should_try_web_auth()
 
     def _permissions_for_role(self, role):
-        normalized_role = str(role or "viewer").strip().lower()
-        if normalized_role == "super_admin":
-            return ["all"]
-        if normalized_role == "admin":
-            return ["read", "write"]
-        return ["read"]
+        return self.auth_provider._permissions_for_role(role)
 
     def _build_web_current_user(self, username, user_payload):
         """Normalizar usuario retornado por /web/auth/login."""
-        payload = user_payload if isinstance(user_payload, dict) else {}
-        resolved_username = str(payload.get("username") or username or "").strip()
-        role = str(payload.get("role") or "viewer").strip().lower() or "viewer"
-        if role not in ("super_admin", "admin", "viewer"):
-            role = "viewer"
-
-        return {
-            "id": payload.get("id"),
-            "username": resolved_username,
-            "role": role,
-            "tenant_id": payload.get("tenant_id"),
-            "active": bool(payload.get("is_active", True)),
-            "created_at": payload.get("created_at"),
-            "updated_at": payload.get("updated_at"),
-            "last_login": payload.get("last_login_at"),
-            "permissions": self._permissions_for_role(role),
-            "source": "web",
-        }
+        return self.auth_provider._build_web_current_user(username, user_payload)
 
     def _extract_web_auth_session(self, payload, username="", context_label="Login web"):
         """Validar el contrato oficial de sesion web emitido por /web/auth/login|bootstrap."""
-        if not isinstance(payload, dict):
-            payload = {}
-
-        if payload.get("authenticated") is False:
-            raise ConfigurationError(f"{context_label} devolvio authenticated=false.")
-
-        access_token = str(payload.get("access_token") or "").strip()
-        if not access_token:
-            raise ConfigurationError(f"{context_label} exitoso pero sin access_token.")
-
-        token_type = str(payload.get("token_type") or "Bearer").strip() or "Bearer"
-        if token_type.lower() != "bearer":
-            raise ConfigurationError(
-                f"{context_label} devolvio token_type no soportado: {token_type}."
-            )
-
-        return {
-            "access_token": access_token,
-            "token_type": "Bearer",
-            "user": self._build_web_current_user(username, payload.get("user")),
-        }
+        return self.auth_provider._extract_web_auth_session(payload, username, context_label)
 
     def _authenticate_web(self, username, password):
         """Autenticar contra /web/auth/login."""
-        base_url = self._resolve_web_api_url()
-        if not base_url:
-            raise ConfigurationError(
-                "No hay URL de API para login web. "
-                "Define DRIVER_MANAGER_HISTORY_API_URL o api_url/history_api_url en config.enc."
-            )
-
-        try:
-            response = requests.post(
-                f"{base_url}/web/auth/login",
-                json={
-                    "username": username,
-                    "password": password,
-                },
-                timeout=20,
-            )
-        except requests.RequestException as error:
-            raise ConfigurationError(f"No se pudo conectar al login web: {error}") from error
-
-        if not response.ok:
-            detail = self._extract_http_error_message(response)
-            if response.status_code in (401, 403):
-                raise AuthenticationError(
-                    "Usuario o contraseña incorrectos.",
-                    details={"username": username},
-                )
-            if response.status_code == 429:
-                raise AuthenticationError("Demasiados intentos. Intenta nuevamente más tarde.")
-            raise ConfigurationError(f"Falló login web. {detail}")
-
-        payload = response.json() if response.content else {}
-        session = self._extract_web_auth_session(payload, username, "Login web")
-        user = session["user"]
-        self.current_user = user
-        self.current_web_token = session["access_token"]
-        self.current_web_token_type = session["token_type"]
-
-        self.logger.security_event(
-            "login_success",
-            user.get("username"),
-            True,
-            {"role": user.get("role"), "source": "web"},
-        )
-        self._log_access(
-            "login_success",
-            user.get("username"),
-            True,
-            {"role": user.get("role"), "source": "web"},
-        )
-        self.logger.operation_end("authenticate", success=True, mode="web")
-        return True, "Login exitoso."
+        return self.auth_provider._authenticate_web(username, password)
 
     def _logout_web_session_best_effort(self):
         """Invalidar la sesion remota usando el mismo Bearer emitido por /web/auth/login."""
-        access_token = str(self.current_web_token or "").strip()
-        if not access_token:
-            return
-
-        base_url = self._resolve_web_api_url()
-        if not base_url:
-            return
-
-        token_type = str(self.current_web_token_type or "Bearer").strip() or "Bearer"
-        try:
-            response = requests.post(
-                f"{base_url}/web/auth/logout",
-                headers={
-                    "Authorization": f"{token_type} {access_token}",
-                },
-                timeout=10,
-            )
-        except requests.RequestException as error:
-            self.logger.warning(f"No se pudo invalidar la sesion web remota: {error}")
-            return
-
-        if not response.ok and response.status_code not in (401, 403):
-            self.logger.warning(
-                "Logout web remoto devolvio un estado inesperado.",
-                status_code=response.status_code,
-            )
+        return self.auth_provider._logout_web_session_best_effort()
 
     def _can_use_audit_api(self):
-        if self.local_mode:
-            return False
-
-        client = self.audit_api_client
-        if client is None or not hasattr(client, "_make_request"):
-            return False
-
-        mode_getter = getattr(client, "_current_desktop_auth_mode", None)
-        auth_mode = ""
-        if callable(mode_getter):
-            try:
-                auth_mode = str(mode_getter() or "").strip().lower()
-            except Exception:
-                auth_mode = ""
-
-        token_getter = getattr(client, "_get_web_access_token", None)
-        web_access_token = ""
-        if callable(token_getter):
-            try:
-                web_access_token = str(token_getter() or "").strip()
-            except Exception:
-                web_access_token = ""
-
-        if auth_mode == self.AUTH_MODE_WEB:
-            return bool(web_access_token)
-
-        if auth_mode == self.AUTH_MODE_AUTO and web_access_token:
-            return True
-
-        allow_unsigned = bool(getattr(client, "allow_unsigned_requests", False))
-        api_token = str(getattr(client, "api_token", "") or "").strip()
-        api_secret = str(getattr(client, "api_secret", "") or "").strip()
-        has_signed_auth = bool(api_token and api_secret)
-
-        if auth_mode == self.AUTH_MODE_AUTO:
-            return allow_unsigned or has_signed_auth
-
-        return allow_unsigned or has_signed_auth or auth_mode in {"", self.AUTH_MODE_LEGACY}
+        return self.audit_service._can_use_audit_api()
 
     def _should_defer_access_logging(self):
         """Skip legacy audit persistence until desktop has a usable auth context."""
-        if self.local_mode or self._can_use_audit_api():
-            return False
-
-        if self.auth_mode not in {self.AUTH_MODE_WEB, self.AUTH_MODE_AUTO}:
-            return False
-
-        if str(self.current_web_token or "").strip():
-            return False
-
-        client = self.audit_api_client
-        allow_unsigned = bool(getattr(client, "allow_unsigned_requests", False))
-        api_token = str(getattr(client, "api_token", "") or "").strip()
-        api_secret = str(getattr(client, "api_secret", "") or "").strip()
-        return not allow_unsigned and not (api_token and api_secret)
+        return self.audit_service._should_defer_access_logging()
 
     def _cache_clock(self):
         return time.monotonic()
 
     def _invalidate_users_cache(self):
-        self._users_cache_data = None
-        self._users_cache_loaded_at = 0.0
+        return self.user_repository._invalidate_users_cache()
 
     def _set_users_cache(self, users_data):
-        self._users_cache_data = copy.deepcopy(self._normalize_users_data(users_data))
-        self._users_cache_loaded_at = self._cache_clock()
+        return self.user_repository._set_users_cache(users_data)
 
     def _get_cached_users(self):
-        if self.local_mode or self._users_cache_data is None:
-            return None
-
-        age = self._cache_clock() - self._users_cache_loaded_at
-        if age > self.USERS_CACHE_TTL_SECONDS:
-            self._invalidate_users_cache()
-            return None
-
-        return copy.deepcopy(self._users_cache_data)
+        return self.user_repository._get_cached_users()
 
     def _normalize_audit_api_log_entry(self, entry):
-        """Normalizar un registro de auditoría proveniente del endpoint D1."""
-        if not isinstance(entry, dict):
-            return None
-
-        raw_details = entry.get("details")
-        details = {}
-        if isinstance(raw_details, str):
-            raw_value = raw_details.strip()
-            if raw_value:
-                try:
-                    details = json.loads(raw_value)
-                    if not isinstance(details, dict):
-                        details = {"value": details}
-                except json.JSONDecodeError:
-                    details = {"raw": raw_details}
-        elif isinstance(raw_details, dict):
-            details = raw_details
-        elif raw_details is not None:
-            details = {"value": raw_details}
-
-        raw_success = entry.get("success")
-        if isinstance(raw_success, bool):
-            success = raw_success
-        elif isinstance(raw_success, (int, float)):
-            success = int(raw_success) == 1
-        elif isinstance(raw_success, str):
-            success = raw_success.strip().lower() in ("1", "true", "yes", "ok")
-        else:
-            success = bool(raw_success)
-
-        timestamp_value = entry.get("timestamp")
-        if not timestamp_value:
-            for key, value in entry.items():
-                if not isinstance(key, str):
-                    continue
-                lowered = key.lower()
-                if lowered.startswith("timest") and "mp" in lowered:
-                    timestamp_value = value
-                    break
-
-        return {
-            "timestamp": timestamp_value,
-            "action": entry.get("action"),
-            "username": entry.get("username"),
-            "success": success,
-            "details": details,
-            "system_info": {
-                "computer_name": entry.get("computer_name"),
-                "ip": entry.get("ip_address"),
-                "platform": entry.get("platform"),
-            },
-        }
+        """Normalizar un registro de auditor??a proveniente del endpoint D1."""
+        return self.audit_service._normalize_audit_api_log_entry(entry)
 
     def _extract_http_error_message(self, response):
         """Obtener mensaje de error desde una respuesta HTTP."""
-        try:
-            payload = response.json()
-            if isinstance(payload, dict):
-                error_obj = payload.get("error")
-                if isinstance(error_obj, dict) and error_obj.get("message"):
-                    return str(error_obj.get("message"))
-                if payload.get("message"):
-                    return str(payload.get("message"))
-        except Exception:
-            pass
-        text = (response.text or "").strip()
-        return text or f"HTTP {response.status_code}"
+        return self.auth_provider._extract_http_error_message(response)
 
     def _build_current_web_auth_headers(self):
-        """Construir headers Authorization usando la sesión web actual."""
-        access_token = str(self.current_web_token or "").strip()
-        if not access_token:
-            raise AuthenticationError("No hay sesion web activa. Inicia sesion nuevamente.")
-
-        token_type = str(self.current_web_token_type or "Bearer").strip() or "Bearer"
-        return {
-            "Authorization": f"{token_type} {access_token}",
-        }
+        """Construir headers Authorization usando la sesi??n web actual."""
+        return self.auth_provider._build_current_web_auth_headers()
 
     def _verify_current_web_password(self, base_url, password, context_label="super_admin"):
-        """Validar la contraseña del usuario web actual sin reloguear ni rotar la sesión."""
-        if not password:
-            raise ValidationError(f"Debes ingresar la contrasena web de {context_label}.")
+        """Validar la contrase??a del usuario web actual sin reloguear ni rotar la sesi??n."""
+        return self.auth_provider._verify_current_web_password(base_url, password, context_label)
 
-        headers = self._build_current_web_auth_headers()
-        response = requests.post(
-            f"{base_url}/web/auth/verify-password",
-            headers={
-                **headers,
-                "Content-Type": "application/json",
-            },
-            json={"password": password},
-            timeout=20,
-        )
-        if response.ok:
-            return headers
-
-        detail = self._extract_http_error_message(response)
-        normalized_detail = str(detail or "").strip().lower()
-        if response.status_code in (401, 403):
-            if (
-                "sesion web" in normalized_detail
-                or "token web" in normalized_detail
-                or "falta token" in normalized_detail
-            ):
-                self._handle_audit_api_web_auth_failure(detail)
-                raise AuthenticationError("La sesion web expiro. Inicia sesion nuevamente.")
-            raise AuthenticationError(f"Contrasena web de {context_label} incorrecta.")
-
-        raise ConfigurationError(
-            f"No se pudo validar la contrasena web de {context_label}. {detail}"
-        )
-    
     @returns_result_tuple("initialize_system")
     def initialize_system(self, first_user_username, first_user_password):
         """
@@ -878,102 +546,11 @@ class UserManagerV2:
     
     def _load_users(self):
         """Cargar usuarios desde almacenamiento"""
-        self.logger.operation_start("_load_users")
-        try:
-            cached_data = self._get_cached_users()
-            if cached_data is not None:
-                self.logger.operation_end("_load_users", success=True, source="cache")
-                return cached_data
-
-            if self.local_mode:
-                if not self.users_file.exists():
-                    self.logger.operation_end("_load_users", success=True)
-                    return None
-                
-                with open(self.users_file, 'r', encoding='utf-8-sig') as f:
-                    data = json.load(f)
-                
-                data = self._normalize_users_data(data)
-                self.logger.operation_end("_load_users", success=True)
-                return data
-            else:
-                content = self.cloud_manager.download_file_content(self.users_file)
-                if not content:
-                    self.logger.warning("No content found for users file in cloud.", file=self.users_file)
-                    fallback_users = self._load_users_disk_fallback()
-                    if fallback_users:
-                        self.logger.warning("Usando copia local de usuarios por ausencia de archivo en nube.")
-                        self._set_users_cache(fallback_users)
-                        self.logger.operation_end("_load_users", success=True)
-                        return fallback_users
-                    self.logger.operation_end("_load_users", success=True)
-                    return None
-
-                if isinstance(content, bytes):
-                    content = content.decode('utf-8-sig')
-                elif isinstance(content, str):
-                    content = content.lstrip('\ufeff')
-                cloud_payload = json.loads(content)
-                try:
-                    data = self._decode_cloud_users_payload(cloud_payload)
-                except SecurityError as integrity_error:
-                    self.logger.error(
-                        f"Integridad invalida en payload cloud de usuarios: {integrity_error}"
-                    )
-                    raise CloudStorageError(
-                        str(integrity_error),
-                        original_error=integrity_error,
-                    ) from integrity_error
-
-                if not data or not data.get("users"):
-                    fallback_users = self._load_users_disk_fallback()
-                    if fallback_users and fallback_users.get("users"):
-                        self.logger.warning(
-                            "Recuperando base de usuarios desde copia local y subiendo a la nube."
-                        )
-                        try:
-                            self._save_users(fallback_users)
-                        except Exception as sync_error:
-                            self.logger.warning(
-                                f"No se pudo subir copia local de usuarios a la nube: {sync_error}"
-                            )
-                        data = fallback_users
-
-                if data is not None:
-                    self._set_users_cache(data)
-            
-            self.logger.operation_end("_load_users", success=True)
-            return data
-        except Exception as e:
-            self.logger.error(f"Error loading users: {e}", exc_info=True)
-            self.logger.operation_end("_load_users", success=False, reason=str(e))
-            raise CloudStorageError(f"Error loading users: {str(e)}", original_error=e)
+        return self.user_repository._load_users()
 
     def _normalize_users_data(self, users_data):
-        """Asegurar formato válido para base de usuarios."""
-        if not isinstance(users_data, dict):
-            return {"users": {}, "created_at": datetime.now().isoformat(), "version": "2.1"}
-
-        normalized = dict(users_data)
-        users = normalized.get("users")
-
-        # Compatibilidad con estructuras legacy basadas en listas.
-        if isinstance(users, list):
-            rebuilt_users = {}
-            for entry in users:
-                if isinstance(entry, dict):
-                    username = entry.get("username")
-                    if username:
-                        rebuilt_users[username] = entry
-            users = rebuilt_users
-
-        if not isinstance(users, dict):
-            users = {}
-
-        normalized["users"] = users
-        normalized.setdefault("created_at", datetime.now().isoformat())
-        normalized.setdefault("version", "2.1")
-        return normalized
+        """Asegurar formato v??lido para base de usuarios."""
+        return self.user_repository._normalize_users_data(users_data)
 
     def _decode_cloud_users_payload(self, cloud_payload):
         """
@@ -982,127 +559,26 @@ class UserManagerV2:
         Returns:
             dict | None: users_data_normalizado
         """
-        if not isinstance(cloud_payload, dict):
-            return None
-        payload_copy = dict(cloud_payload)
-
-        if self.cloud_encryption:
-            decrypted = self.cloud_encryption.decrypt_cloud_data(dict(payload_copy))
-            if isinstance(decrypted, dict) and isinstance(decrypted.get("users"), dict):
-                return self._normalize_users_data(decrypted)
-
-        has_integrity_metadata = "_hmac" in payload_copy or bool(payload_copy.get("_encrypted"))
-        if not has_integrity_metadata and isinstance(payload_copy.get("users"), dict):
-            return self._normalize_users_data(payload_copy)
-
-        raise SecurityError(
-            "Payload cloud de usuarios con integridad invalida. "
-            "No se aplicara recuperacion automatica; usa una reparacion offline/manual."
-        )
+        return self.user_repository._decode_cloud_users_payload(cloud_payload)
 
     def _load_users_disk_fallback(self):
         """Intentar recuperar usuarios desde copias locales."""
-        fallback_paths = self._candidate_users_fallback_paths()
-
-        for path in fallback_paths:
-            try:
-                if not path.exists():
-                    continue
-                with open(path, 'r', encoding='utf-8-sig') as file:
-                    data = json.load(file)
-                normalized = self._normalize_users_data(data)
-                if normalized.get("users"):
-                    self.logger.warning(f"Copia local de usuarios encontrada en: {path}")
-                    return normalized
-            except Exception as error:
-                self.logger.warning(f"No se pudo leer fallback de usuarios en {path}: {error}")
-
-        self.logger.warning("No se encontraron copias locales de usuarios para recuperacian.")
-        return None
+        return self.user_repository._load_users_disk_fallback()
 
     def _candidate_users_fallback_paths(self):
         """Construir lista de rutas posibles para recuperar users.json."""
-        candidates = []
+        return self.user_repository._candidate_users_fallback_paths()
 
-        def add_candidate(path):
-            if not path:
-                return
-            if path not in candidates:
-                candidates.append(path)
-
-        add_candidate(self.config_dir / "users.json")
-        add_candidate(Path.home() / ".driver_manager" / "users.json")
-        add_candidate(Path.home() / ".driver_manager_backup" / "users.json")
-
-        try:
-            if self.security_manager and hasattr(self.security_manager, "_get_config_dir"):
-                config_dir = self.security_manager._get_config_dir()
-                if config_dir:
-                    add_candidate(Path(config_dir) / "users.json")
-        except Exception:
-            pass
-
-        runtime_roots = [Path.cwd(), Path(__file__).resolve().parents[1]]
-        if getattr(sys, "frozen", False):
-            runtime_roots.append(Path(sys.executable).resolve().parent)
-
-        for root in runtime_roots:
-            add_candidate(root / "users.json")
-            add_candidate(root / "config" / "users.json")
-            add_candidate(root / "data" / "users.json")
-
-        return candidates
-    
     @handle_errors("_save_users", reraise=True)
     def _save_users(self, users_data):
         """Guardar usuarios en almacenamiento"""
-        self.logger.operation_start("_save_users")
-        try:
-            normalized_data = self._normalize_users_data(users_data)
-            if self.local_mode:
-                with open(self.users_file, 'w') as f:
-                    json.dump(normalized_data, f, indent=2)
-            else:
-                if self.cloud_encryption:
-                    encrypted_data = self.cloud_encryption.encrypt_cloud_data(normalized_data)
-                    content = json.dumps(encrypted_data, indent=2)
-                else:
-                    content = json.dumps(normalized_data, indent=2)
-                
-                self.cloud_manager.upload_file_content(self.users_file, content)
-
-                # Mantener caché consistente tras escritura remota.
-                self._set_users_cache(normalized_data)
-            self.logger.operation_end("_save_users", success=True)
-        except Exception as e:
-            self.logger.error(f"Error saving users: {e}", exc_info=True)
-            self.logger.operation_end("_save_users", success=False, reason=str(e))
-            raise CloudStorageError(f"Error saving users: {str(e)}", original_error=e)
+        return self.user_repository._save_users(users_data)
 
     def _normalize_logs_data(self, logs_data):
         """
-        Asegurar formato válido para logs de auditoría.
+        Asegurar formato v??lido para logs de auditor??a.
         """
-        if not isinstance(logs_data, dict):
-            self.logger.warning("Formato de logs inválido. Reinicializando estructura de logs.")
-            return {"logs": [], "created_at": datetime.now().isoformat()}
-
-        normalized = dict(logs_data)
-        logs = normalized.get("logs")
-
-        # Compatibilidad con estructuras legacy.
-        if logs is None and isinstance(normalized.get("access_logs"), list):
-            logs = normalized.get("access_logs")
-            normalized["logs"] = logs
-
-        if not isinstance(logs, list):
-            self.logger.warning("Estructura de logs corrupta o incompatible. Se usara lista vacaa.")
-            normalized["logs"] = []
-
-        if "created_at" not in normalized:
-            normalized["created_at"] = datetime.now().isoformat()
-
-        return normalized
+        return self.audit_service._normalize_logs_data(logs_data)
 
     def _decode_cloud_logs_payload(self, cloud_payload):
         """
@@ -1111,223 +587,35 @@ class UserManagerV2:
         Returns:
             tuple(dict, bool): (logs_data_normalizado, recovered_with_fallback)
         """
-        if not isinstance(cloud_payload, dict):
-            return {"logs": [], "created_at": datetime.now().isoformat()}, False
-
-        fallback_recovered = False
-        payload_copy = dict(cloud_payload)
-
-        if self.cloud_encryption:
-            decrypted = self.cloud_encryption.decrypt_cloud_data(dict(payload_copy))
-            if isinstance(decrypted, dict) and (
-                isinstance(decrypted.get("logs"), list) or
-                isinstance(decrypted.get("access_logs"), list)
-            ):
-                return self._normalize_logs_data(decrypted), fallback_recovered
-
-        # Fallback especifico para logs legacy/corruptos:
-        # intentamos rescatar campos útiles aun con HMAC inválido.
-        fallback_recovered = True
-
-        if isinstance(payload_copy.get("logs"), list) or isinstance(payload_copy.get("access_logs"), list):
-            self.logger.warning(
-                "Recuperando logs desde payload legacy sin validación HMAC completa."
-            )
-            return self._normalize_logs_data(payload_copy), fallback_recovered
-
-        encrypted_candidates = []
-        if isinstance(payload_copy.get("access_logs"), str):
-            encrypted_candidates.append(("access_logs", payload_copy.get("access_logs")))
-        if isinstance(payload_copy.get("logs"), str):
-            encrypted_candidates.append(("logs", payload_copy.get("logs")))
-
-        if self.security_manager and self.security_manager.fernet:
-            for field_name, encrypted_blob in encrypted_candidates:
-                try:
-                    decrypted_blob = self.security_manager.decrypt_data(encrypted_blob)
-                    if isinstance(decrypted_blob, list):
-                        self.logger.warning(
-                            f"Recuperación best-effort aplicada para '{field_name}' con HMAC inválido."
-                        )
-                        return self._normalize_logs_data({
-                            "logs": decrypted_blob,
-                            "created_at": payload_copy.get("created_at", datetime.now().isoformat())
-                        }), fallback_recovered
-                    if isinstance(decrypted_blob, dict):
-                        self.logger.warning(
-                            f"Recuperación best-effort aplicada para '{field_name}' en formato dict."
-                        )
-                        return self._normalize_logs_data(decrypted_blob), fallback_recovered
-                except Exception:
-                    continue
-
-        self.logger.warning("No fue posible recuperar contenido histarico de logs; se usara estructura vacaa.")
-        return self._normalize_logs_data({}), fallback_recovered
+        return self.audit_service._decode_cloud_logs_payload(cloud_payload)
 
     def _persist_logs_data(self, logs_data):
         """Persistir logs normalizados en almacenamiento local o nube."""
-        if self.local_mode:
-            temp_logs_file = self.logs_file.with_suffix(f"{self.logs_file.suffix}.tmp")
-            with open(temp_logs_file, 'w', encoding='utf-8') as f:
-                json.dump(logs_data, f, indent=2)
-            os.replace(temp_logs_file, self.logs_file)
-            return
-
-        if self.cloud_encryption:
-            encrypted_logs = self.cloud_encryption.encrypt_cloud_data(logs_data)
-            logs_content = json.dumps(encrypted_logs, indent=2)
-        else:
-            logs_content = json.dumps(logs_data, indent=2)
-
-        self.cloud_manager.upload_file_content(self.logs_file, logs_content)
+        return self.audit_service._persist_logs_data(logs_data)
 
     def _load_legacy_logs_data(self):
         """Leer logs desde almacenamiento legacy (archivo o blob), normalizando formato."""
-        logs_data = {"logs": [], "created_at": datetime.now().isoformat()}
-
-        try:
-            if self.local_mode:
-                if self.logs_file.exists():
-                    with open(self.logs_file, 'r', encoding='utf-8-sig') as f:
-                        logs_data = json.load(f)
-            else:
-                logs_content = self.cloud_manager.download_file_content(self.logs_file)
-                if logs_content:
-                    if isinstance(logs_content, bytes):
-                        logs_content = logs_content.decode('utf-8-sig')
-                    elif isinstance(logs_content, str):
-                        logs_content = logs_content.lstrip('\ufeff')
-                    cloud_payload = json.loads(logs_content)
-                    logs_data, recovered = self._decode_cloud_logs_payload(cloud_payload)
-                    if recovered:
-                        self.logger.warning("Se recuperaron logs historicos con fallback; normalizando archivo.")
-                        self._persist_logs_data(logs_data)
-        except Exception as error:
-            self.logger.warning(f"No se pudo leer logs legacy: {error}. Se usara estructura vacia.")
-
-        return self._normalize_logs_data(logs_data)
+        return self.audit_service._load_legacy_logs_data()
 
     def _log_entry_key(self, entry):
-        details_blob = json.dumps(entry.get("details"), sort_keys=True, default=str)
-        system_blob = json.dumps(entry.get("system_info"), sort_keys=True, default=str)
-        return (
-            entry.get("timestamp"),
-            entry.get("action"),
-            entry.get("username"),
-            bool(entry.get("success")),
-            details_blob,
-            system_blob,
-        )
+        return self.audit_service._log_entry_key(entry)
 
     def _merge_logs_preserving_order(self, existing_logs, additional_logs):
-        merged_logs = list(existing_logs or [])
-        seen_keys = {self._log_entry_key(item) for item in merged_logs if isinstance(item, dict)}
-
-        for entry in additional_logs or []:
-            if not isinstance(entry, dict):
-                continue
-            entry_key = self._log_entry_key(entry)
-            if entry_key in seen_keys:
-                continue
-            merged_logs.append(entry)
-            seen_keys.add(entry_key)
-
-        return merged_logs
+        return self.audit_service._merge_logs_preserving_order(existing_logs, additional_logs)
 
     def _append_legacy_log_entry(self, log_entry):
-        """Agregar log con reintentos para reducir pérdidas por escritura concurrente."""
-        target_key = self._log_entry_key(log_entry)
-
-        for attempt in range(self.LEGACY_LOG_APPEND_RETRIES):
-            try:
-                logs_data = self._load_legacy_logs_data()
-                current_logs = logs_data.get("logs", [])
-                logs_data["logs"] = self._merge_logs_preserving_order(current_logs, [log_entry])[-1000:]
-                self._persist_logs_data(logs_data)
-
-                persisted = self._load_legacy_logs_data()
-                persisted_keys = {
-                    self._log_entry_key(item)
-                    for item in persisted.get("logs", [])
-                    if isinstance(item, dict)
-                }
-                if target_key in persisted_keys:
-                    return True
-            except Exception as error:
-                self.logger.warning(
-                    f"Fallo append de log en intento {attempt + 1}/{self.LEGACY_LOG_APPEND_RETRIES}: {error}"
-                )
-
-            time.sleep(0.02 * (attempt + 1))
-
-        return False
+        """Agregar log con reintentos para reducir p??rdidas por escritura concurrente."""
+        return self.audit_service._append_legacy_log_entry(log_entry)
 
     @returns_result_tuple("repair_access_logs")
     def repair_access_logs(self):
-        """Reparar archivo de logs de auditoría (solo aplica a modo legacy)."""
-        self.logger.operation_start("repair_access_logs")
-
-        if not self.current_user or self.current_user.get("role") != "super_admin":
-            raise AuthenticationError("Solo super_admin puede reparar logs de auditoría.")
-
-        if self._can_use_audit_api():
-            self.logger.operation_end("repair_access_logs", success=True, mode="audit_api")
-            return True, "Auditoría en D1 activa. No se requiere reparación de archivo local."
-
-        logs_data = self._load_legacy_logs_data()
-        self._persist_logs_data(logs_data)
-
-        total_logs = len(logs_data.get("logs", []))
-        self.logger.operation_end("repair_access_logs", success=True, total_logs=total_logs)
-        return True, f"Logs reparados correctamente. Registros disponibles: {total_logs}"
+        """Reparar archivo de logs de auditor??a (solo aplica a modo legacy)."""
+        return self.audit_service.repair_access_logs()
 
     @handle_errors("_log_access", reraise=False, log_errors=False)
     def _log_access(self, action, username, success, details=None):
-        """Registrar acceso en auditoría (API D1 o fallback legacy)."""
-        try:
-            system_info = self._get_system_info()
-            log_entry = {
-                "timestamp": datetime.now().isoformat(),
-                "action": action,
-                "username": username,
-                "success": success,
-                "details": details,
-                "system_info": system_info,
-            }
-
-            if self._should_defer_access_logging():
-                self.logger.operation_end(
-                    "_log_access",
-                    success=True,
-                    mode="deferred_until_web_login",
-                )
-                return
-
-            if self._can_use_audit_api():
-                self.audit_api_client._make_request(
-                    "post",
-                    "audit-logs",
-                    json={
-                        "timestamp": log_entry["timestamp"],
-                        "action": action,
-                        "username": username,
-                        "success": bool(success),
-                        "details": details or {},
-                        "computer_name": system_info.get("computer_name"),
-                        "ip_address": system_info.get("ip"),
-                        "platform": system_info.get("platform"),
-                    },
-                )
-                self.logger.operation_end("_log_access", success=True, mode="audit_api")
-                return
-
-            persisted = self._append_legacy_log_entry(log_entry)
-            if not persisted:
-                self.logger.warning("No se pudo confirmar persistencia del log tras reintentos.")
-            self.logger.operation_end("_log_access", success=persisted, mode="legacy_storage")
-        except Exception as e:
-            self.logger.error(f"Critical failure logging access: {e}", exc_info=True)
-            self.logger.operation_end("_log_access", success=False, reason=str(e))
+        """Registrar acceso en auditor??a (API D1 o fallback legacy)."""
+        return self.audit_service._log_access(action, username, success, details)
 
     @returns_result_tuple("authenticate")
     def authenticate(self, username, password):
@@ -1478,352 +766,36 @@ class UserManagerV2:
     
     @returns_result_tuple("create_user")
     def create_user(self, username, password, role="admin", created_by=None, **kwargs):
-        """
-        Crear nuevo usuario con validación de contraseña robusta.
-        
-        SECURITY FIX (SEC-004): Enforces strong password policy.
-        
-        Args:
-            username: Nombre de usuario
-            password: Contraseña
-            role: Rol del usuario
-            created_by: Usuario creador
-            **kwargs: Parametros adicionales
-            
-        Returns:
-            (success: bool, message: str)
-        """
-        self.logger.operation_start("create_user", username=username, role=role)
-        current_username = self.current_user.get("username", "N/A") if self.current_user else "N/A"
-        
-        if not self.current_user or self.current_user.get("role") != "super_admin":
-            self.logger.security_event("user_creation_failed", current_username, False, {'reason': 'Insufficient permissions'})
-            raise AuthenticationError("Solo super_admin puede crear usuarios.")
-        
-        # Validar username
-        validate_min_length(username, 3, "username")
-        if not re.match(r'^[a-zA-Z0-9_-]+$', username):
-            raise ValidationError("Nombre de usuario inválido (solo letras, números, guiones y guiones bajos).", details={'username': username})
-        
-        # Validar contraseña con la política de seguridad
-        is_valid, message, score = PasswordValidator.validate_password_strength(password, username)
-        
-        if not is_valid:
-            raise ValidationError(
-                f"La contraseña no cumple con los requisitos de seguridad:\n{message}",
-                details={'username': username, 'password_score': score}
-            )
-        
-        users_data = self._load_users()
-        try:
-            if not users_data:
-                users_data = {"users": {}, "created_at": datetime.now().isoformat(), "version": "2.1"}
-            
-            if username in users_data["users"]:
-                self.logger.warning("Attempt to create duplicate user", username=username)
-                raise ValidationError("El usuario ya existe.", details={'username': username})
-            
-            # Asignar permisos segun rol
-            if role == "super_admin":
-                permissions = ["all"]
-            elif role == "admin":
-                permissions = ["read", "write"]
-            else:
-                permissions = ["read"]
-
-            tenant_id = kwargs.get("tenant_id")
-            
-            new_user = {
-                "username": username,
-                "password_hash": self._hash_password(password),
-                "password_history": [],
-                "role": role,
-                "tenant_id": tenant_id,
-                "created_at": datetime.now().isoformat(),
-                "created_by": created_by or self.current_user.get("username"),
-                "last_login": None,
-                "last_password_change": datetime.now().isoformat(),
-                "active": True,
-                "permissions": permissions,
-                "email": kwargs.get("email"),
-                "full_name": kwargs.get("full_name"),
-                "password_strength_score": score
-            }
-            
-            users_data["users"][username] = new_user
-            self._save_users(users_data)
-            
-            self.logger.security_event(
-                "user_created",
-                self.current_user.get("username"),
-                True,
-                {
-                    'new_user': username,
-                    'role': role,
-                    'password_strength': score
-                }
-            )
-            self._log_access(
-                "user_created",
-                self.current_user.get("username"),
-                True,
-                {
-                    'new_user': username,
-                    'role': role,
-                    'password_strength': score
-                }
-            )
-            self.logger.operation_end("create_user", success=True)
-            return True, f"Usuario creado exitosamente.\nFortaleza de contraseña: {score}/100"
-        
-        except (AuthenticationError, ValidationError, ConfigurationError, CloudStorageError) as e:
-            self.logger.error(f"Error creating user: {e.message}", exc_info=False, username=username, role=role, details=e.details)
-            self.logger.operation_end("create_user", success=False, reason=e.message)
-            raise
-        except Exception as e:
-            self.logger.error(f"Unexpected error creating user: {e}", exc_info=True, username=username, role=role)
-            self.logger.operation_end("create_user", success=False, reason=str(e))
-            raise
+        return self.user_management_service.create_user(
+            username,
+            password,
+            role=role,
+            created_by=created_by,
+            **kwargs,
+        )
 
     @returns_result_tuple("create_tenant_web_user")
     def create_tenant_web_user(self, username, password, role, tenant_id, admin_web_password):
-        """Crear usuario en API web usando /web/auth/users con tenant opcional."""
-        self.logger.operation_start(
-            "create_tenant_web_user",
-            username=username,
-            role=role,
-            tenant_id=tenant_id,
-        )
-
-        if not self.current_user or self.current_user.get("role") != "super_admin":
-            raise AuthenticationError("Solo super_admin puede crear usuarios por tenant.")
-
-        validate_min_length(username, 3, "username")
-        if not re.match(r'^[a-zA-Z0-9_-]+$', username):
-            raise ValidationError(
-                "Nombre de usuario inválido (solo letras, números, guiones y guiones bajos).",
-                details={'username': username},
-            )
-
-        tenant_id = str(tenant_id or "").strip()
-
-        is_valid, message, score = PasswordValidator.validate_password_strength(password, username)
-        if not is_valid:
-            raise ValidationError(
-                f"La contraseña no cumple con los requisitos de seguridad:\n{message}",
-                details={'username': username, 'password_score': score},
-            )
-
-        if not self.audit_api_client or not hasattr(self.audit_api_client, "_get_api_url"):
-            raise ConfigurationError("No hay cliente API disponible para creación por tenant.")
-
-        base_url = self.audit_api_client._get_api_url().rstrip("/")
-        if not base_url:
-            raise ConfigurationError("URL de API no configurada.")
-
-        admin_username = self.current_user.get("username")
-        if not admin_username:
-            raise AuthenticationError("No hay usuario actual para autenticación web.")
-        auth_headers = self._verify_current_web_password(
-            base_url,
+        return self.user_tenant_web_service.create_tenant_web_user(
+            username,
+            password,
+            role,
+            tenant_id,
             admin_web_password,
-            "super_admin",
-        )
-
-        create_response = requests.post(
-            f"{base_url}/web/auth/users",
-            headers={
-                **auth_headers,
-                "Content-Type": "application/json",
-            },
-            json={
-                "username": username,
-                "password": password,
-                "role": role,
-                "tenant_id": tenant_id or None,
-            },
-            timeout=20,
-        )
-        if not create_response.ok:
-            detail = self._extract_http_error_message(create_response)
-            if tenant_id:
-                raise ValidationError(
-                    f"No se pudo crear usuario web en tenant '{tenant_id}'. {detail}"
-                )
-            raise ValidationError(f"No se pudo crear usuario web. {detail}")
-
-        self._log_access(
-            "user_created_tenant_web",
-            admin_username,
-            True,
-            {
-                "new_user": username,
-                "role": role,
-                "tenant_id": tenant_id,
-                "password_strength": score,
-            },
-        )
-
-        self.logger.operation_end("create_tenant_web_user", success=True)
-        if tenant_id:
-            return True, (
-                f"Usuario web creado en tenant '{tenant_id}'.\n"
-                "Nota: este usuario se gestiona en D1/web y puede no aparecer en la lista local."
-            )
-        return True, (
-            "Usuario web creado exitosamente.\n"
-            "Nota: este usuario se autentica contra la API web y puede no aparecer en la lista local."
         )
 
     @handle_errors("fetch_tenant_web_users", reraise=True, default_return=[])
     def fetch_tenant_web_users(self, admin_web_password, tenant_id=None):
         """Listar usuarios web de D1 (opcionalmente filtrados por tenant_id)."""
-        self.logger.operation_start("fetch_tenant_web_users", tenant_id=tenant_id or "")
-
-        if not self.current_user or self.current_user.get("role") != "super_admin":
-            raise AuthenticationError("Solo super_admin puede consultar usuarios web por tenant.")
-
-        if not self.audit_api_client or not hasattr(self.audit_api_client, "_get_api_url"):
-            raise ConfigurationError("No hay cliente API disponible para consultar usuarios web.")
-
-        base_url = self.audit_api_client._get_api_url().rstrip("/")
-        if not base_url:
-            raise ConfigurationError("URL de API no configurada.")
-
-        admin_username = self.current_user.get("username")
-        if not admin_username:
-            raise AuthenticationError("No hay usuario actual para autenticación web.")
-        auth_headers = self._verify_current_web_password(
-            base_url,
+        return self.user_tenant_web_service.fetch_tenant_web_users(
             admin_web_password,
-            "super_admin",
+            tenant_id=tenant_id,
         )
 
-        params = {}
-        normalized_tenant_id = str(tenant_id or "").strip()
-        if normalized_tenant_id:
-            params["tenant_id"] = normalized_tenant_id
-
-        users_response = requests.get(
-            f"{base_url}/web/auth/users",
-            headers={
-                **auth_headers,
-            },
-            params=params,
-            timeout=20,
-        )
-        if not users_response.ok:
-            detail = self._extract_http_error_message(users_response)
-            raise ValidationError(f"No se pudo consultar usuarios web. {detail}")
-
-        payload = users_response.json() if users_response.content else {}
-        raw_users = payload.get("users") if isinstance(payload, dict) else []
-        if not isinstance(raw_users, list):
-            raw_users = []
-
-        normalized = []
-        for item in raw_users:
-            if not isinstance(item, dict):
-                continue
-            normalized.append({
-                "username": item.get("username"),
-                "role": item.get("role", "viewer"),
-                "tenant_id": item.get("tenant_id"),
-                "active": bool(item.get("is_active", True)),
-                "last_login": item.get("last_login_at"),
-                "created_at": item.get("created_at"),
-                "created_by": "web-api",
-                "source": "web",
-            })
-
-        self.logger.operation_end("fetch_tenant_web_users", success=True, count=len(normalized))
-        return normalized
-    
     @returns_result_tuple("change_password")
     def change_password(self, username, old_password, new_password):
-        """
-        Cambiar contraseña con validación y historial.
-        
-        SECURITY IMPROVEMENTS:
-        - SEC-004: Enforces strong password policy
-        - Checks password history to prevent reuse
-        
-        Args:
-            username: Usuario
-            old_password: Contraseña actual
-            new_password: Nueva contraseña
-            
-        Returns:
-            (success: bool, message: str)
-        """
-        self.logger.operation_start("change_password", username=username)
-        
-        users_data = self._load_users()
-        
-        if not users_data or username not in users_data["users"]:
-            self.logger.security_event("password_change_failed", username, False, {'reason': 'User not found'})
-            raise AuthenticationError("Usuario no encontrado.")
-        
-        user = users_data["users"][username]
-        
-        # Verificar contraseña actual
-        if not self._verify_password(old_password, user["password_hash"]):
-            self.logger.security_event("password_change_failed", username, False, {'reason': 'Wrong old password'})
-            raise AuthenticationError("Contraseña actual incorrecta.")
-        
-        # Validar nueva contraseña con la política de seguridad
-        is_valid, message, score = PasswordValidator.validate_password_strength(new_password, username)
-        
-        if not is_valid:
-            raise ValidationError(
-                f"La nueva contraseña no cumple con los requisitos:\n{message}",
-                details={'username': username, 'password_score': score}
-            )
-        
-        # SECURITY IMPROVEMENT: Verificar historial de contraseñas
-        password_history = user.get("password_history", [])
-        if not PasswordValidator.check_password_history(new_password, password_history):
-            raise ValidationError(
-                f"No puedes reutilizar una de tus últimas {PasswordValidator.PASSWORD_HISTORY_SIZE} contraseñas.\n"
-                "Por favor, elige una contraseña diferente.",
-                details={'username': username}
-            )
-        
-        # Actualizar contraseña
-        new_hash = self._hash_password(new_password)
-        
-        # Agregar hash actual al historial
-        if user["password_hash"] not in password_history:
-            password_history.append(user["password_hash"])
-        
-        # Mantener solo las últimas N contraseñas
-        if len(password_history) > PasswordValidator.PASSWORD_HISTORY_SIZE:
-            password_history = password_history[-PasswordValidator.PASSWORD_HISTORY_SIZE:]
-        
-        user["password_hash"] = new_hash
-        user["password_history"] = password_history
-        user["password_changed_at"] = datetime.now().isoformat()
-        user["last_password_change"] = datetime.now().isoformat()
-        user["password_strength_score"] = score
-        
-        users_data["users"][username] = user
-        self._save_users(users_data)
-        
-        self.logger.security_event(
-            "password_changed",
-            username,
-            True,
-            {'password_strength': score}
-        )
-        self._log_access(
-            "password_changed",
-            username,
-            True,
-            {'password_strength': score}
-        )
-        self.logger.operation_end("change_password", success=True)
-        return True, f"Contraseña cambiada exitosamente.\nFortaleza: {score}/100"
-    
+        return self.user_management_service.change_password(username, old_password, new_password)
+
     @handle_errors("get_users", reraise=True, default_return=[])
     def get_users(self):
         """Obtener lista de usuarios"""
@@ -1857,36 +829,8 @@ class UserManagerV2:
     
     @returns_result_tuple("deactivate_user")
     def deactivate_user(self, username):
-        """Desactivar usuario"""
-        self.logger.operation_start("deactivate_user", target_username=username)
-        current_username = self.current_user.get("username", "N/A") if self.current_user else "N/A"
-        
-        if not self.current_user or self.current_user.get("role") != "super_admin":
-            self.logger.security_event("user_deactivation_failed", current_username, False, {'reason': 'Insufficient permissions'})
-            raise AuthenticationError("Solo super_admin puede desactivar usuarios.")
-        
-        if username == "admin":
-            self.logger.warning("Attempt to deactivate main admin user", target_username=username)
-            raise ValidationError("No se puede desactivar el usuario admin principal.")
-        
-        users_data = self._load_users()
-        
-        if not users_data or username not in users_data["users"]:
-            self.logger.security_event("user_deactivation_failed", current_username, False, {'reason': 'User not found', 'target_username': username})
-            raise AuthenticationError("Usuario no encontrado.")
-        
-        users_data["users"][username]["active"] = False
-        users_data["users"][username]["deactivated_at"] = datetime.now().isoformat()
-        users_data["users"][username]["deactivated_by"] = self.current_user.get("username")
-        self._save_users(users_data)
-        
-        self.logger.security_event("user_deactivated", self.current_user.get("username"),
-                                   True, {'deactivated_user': username})
-        self._log_access("user_deactivated", self.current_user.get("username"),
-                                   True, {'deactivated_user': username})
-        self.logger.operation_end("deactivate_user", success=True)
-        return True, "Usuario desactivado."
-    
+        return self.user_management_service.deactivate_user(username)
+
     def unlock_user_account(self, username):
         """
         Desbloquear cuenta manualmente (solo super_admin).
@@ -1916,66 +860,8 @@ class UserManagerV2:
     @handle_errors("get_access_logs", reraise=True, default_return=[])
     def get_access_logs(self, limit=100):
         """Obtener logs de acceso"""
-        self.logger.operation_start("get_access_logs")
-        if not self.current_user:
-            self.logger.warning("Attempt to get logs without authentication")
-            self.logger.operation_end("get_access_logs", success=False, reason="not_authenticated")
-            return []
-        
-        try:
-            if self._can_use_audit_api():
-                normalized_limit = max(1, int(limit or 100))
-                rows = self.audit_api_client._make_request(
-                    "get",
-                    "audit-logs",
-                    params={"limit": normalized_limit},
-                ) or []
+        return self.audit_service.get_access_logs(limit=limit)
 
-                normalized_rows = []
-                for row in rows:
-                    normalized = self._normalize_audit_api_log_entry(row)
-                    if normalized:
-                        normalized_rows.append(normalized)
-
-                # El endpoint responde DESC; mantenemos contrato ASC para la UI.
-                normalized_rows.reverse()
-                self.logger.operation_end("get_access_logs", success=True, mode="audit_api")
-                return normalized_rows
-
-            if self.local_mode:
-                if not self.logs_file.exists():
-                    return []
-                
-                with open(self.logs_file, 'r') as f:
-                    logs_data = json.load(f)
-            else:
-                logs_content = self.cloud_manager.download_file_content(self.logs_file)
-                if not logs_content:
-                    return []
-
-                if isinstance(logs_content, bytes):
-                    logs_content = logs_content.decode('utf-8-sig')
-                elif isinstance(logs_content, str):
-                    logs_content = logs_content.lstrip('\ufeff')
-                cloud_payload = json.loads(logs_content)
-                logs_data, recovered = self._decode_cloud_logs_payload(cloud_payload)
-                if recovered:
-                    self.logger.warning("Se detecta payload legacy/corrupto en get_access_logs; persistiendo reparacian.")
-                    self._persist_logs_data(logs_data)
-
-            logs_data = self._normalize_logs_data(logs_data)
-            logs = logs_data["logs"]
-            
-            self.logger.operation_end("get_access_logs", success=True)
-            return logs[-limit:] if len(logs) > limit else logs
-            
-        except Exception as e:
-            if not self.current_user and isinstance(e, ConnectionError):
-                self.logger.warning(f"Access logs unavailable until next login: {e}")
-            else:
-                self.logger.error(f"Error getting access logs: {e}", exc_info=True)
-            return []
-    
     def logout(self):
         """Cerrar sesión"""
         self._logout_web_session_best_effort()

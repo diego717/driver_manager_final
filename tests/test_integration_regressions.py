@@ -67,7 +67,7 @@ class TestPathTraversalRegressionIntegration(unittest.TestCase):
         self.mock_config.load_config_data.return_value = {"api_url": "https://api.example.com/"}
         self.history = InstallationHistory(self.mock_config)
 
-    @patch("managers.history_manager.requests.request")
+    @patch("managers.history_request_adapter.requests.request")
     def test_malicious_record_id_is_rejected_before_building_any_request_url(self, mock_request):
         result_get = self.history.get_installation_by_id("../../audit-logs")
         result_update = self.history.update_installation_details("../../audit-logs", "nota", "1.5")
