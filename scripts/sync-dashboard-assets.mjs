@@ -11,6 +11,16 @@ const sources = {
   chart: path.join(rootDir, "node_modules", "chart.js", "dist", "chart.umd.js"),
   qr: path.join(rootDir, "dashboard-qr.js"),
   api: path.join(rootDir, "dashboard-api.js"),
+  modals: path.join(rootDir, "dashboard-modals.js"),
+  incidents: path.join(rootDir, "dashboard-incidents.js"),
+  assets: path.join(rootDir, "dashboard-assets.js"),
+  drivers: path.join(rootDir, "dashboard-drivers.js"),
+  audit: path.join(rootDir, "dashboard-audit.js"),
+  overview: path.join(rootDir, "dashboard-overview.js"),
+  realtime: path.join(rootDir, "dashboard-realtime.js"),
+  auth: path.join(rootDir, "dashboard-auth.js"),
+  navigation: path.join(rootDir, "dashboard-navigation.js"),
+  bootstrap: path.join(rootDir, "dashboard-bootstrap.js"),
   js: path.join(rootDir, "dashboard.js"),
   pwa: path.join(rootDir, "dashboard-pwa.js"),
   manifest: path.join(rootDir, "manifest.json"),
@@ -36,6 +46,22 @@ function rewriteDashboardHtml(content, versions) {
     .replace(/src="\/chart\.umd\.js(?:\?v=[^"]+)?"/g, `src="/chart.umd.js?v=${versions.chart}"`)
     .replace(/src="\/dashboard-qr\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-qr.js?v=${versions.qr}"`)
     .replace(/src="\/dashboard-api\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-api.js?v=${versions.api}"`)
+    .replace(/src="\/dashboard-modals\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-modals.js?v=${versions.modals}"`)
+    .replace(/src="\/dashboard-incidents\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-incidents.js?v=${versions.incidents}"`)
+    .replace(/src="\/dashboard-assets\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-assets.js?v=${versions.assets}"`)
+    .replace(/src="\/dashboard-drivers\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-drivers.js?v=${versions.drivers}"`)
+    .replace(/src="\/dashboard-audit\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-audit.js?v=${versions.audit}"`)
+    .replace(/src="\/dashboard-overview\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-overview.js?v=${versions.overview}"`)
+    .replace(/src="\/dashboard-realtime\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-realtime.js?v=${versions.realtime}"`)
+    .replace(/src="\/dashboard-auth\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-auth.js?v=${versions.auth}"`)
+    .replace(
+      /src="\/dashboard-navigation\.js(?:\?v=[^"]+)?"/g,
+      `src="/dashboard-navigation.js?v=${versions.navigation}"`,
+    )
+    .replace(
+      /src="\/dashboard-bootstrap\.js(?:\?v=[^"]+)?"/g,
+      `src="/dashboard-bootstrap.js?v=${versions.bootstrap}"`,
+    )
     .replace(/src="\/dashboard\.js(?:\?v=[^"]+)?"/g, `src="/dashboard.js?v=${versions.js}"`)
     .replace(/src="\/dashboard-pwa\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-pwa.js?v=${versions.pwa}"`);
 }
@@ -52,6 +78,16 @@ function rewriteServiceWorker(content, versions) {
     `/chart.umd.js?v=${versions.chart}`,
     `/dashboard-qr.js?v=${versions.qr}`,
     `/dashboard-api.js?v=${versions.api}`,
+    `/dashboard-modals.js?v=${versions.modals}`,
+    `/dashboard-incidents.js?v=${versions.incidents}`,
+    `/dashboard-assets.js?v=${versions.assets}`,
+    `/dashboard-drivers.js?v=${versions.drivers}`,
+    `/dashboard-audit.js?v=${versions.audit}`,
+    `/dashboard-overview.js?v=${versions.overview}`,
+    `/dashboard-realtime.js?v=${versions.realtime}`,
+    `/dashboard-auth.js?v=${versions.auth}`,
+    `/dashboard-navigation.js?v=${versions.navigation}`,
+    `/dashboard-bootstrap.js?v=${versions.bootstrap}`,
     `/dashboard.js?v=${versions.js}`,
     `/dashboard-pwa.js?v=${versions.pwa}`,
     `/manifest.json?v=${versions.manifest}`,
@@ -93,6 +129,16 @@ function main() {
   const chart = readFile(sources.chart);
   const qr = readFile(sources.qr);
   const api = readFile(sources.api);
+  const modals = readFile(sources.modals);
+  const incidents = readFile(sources.incidents);
+  const assets = readFile(sources.assets);
+  const drivers = readFile(sources.drivers);
+  const audit = readFile(sources.audit);
+  const overview = readFile(sources.overview);
+  const realtime = readFile(sources.realtime);
+  const auth = readFile(sources.auth);
+  const navigation = readFile(sources.navigation);
+  const bootstrap = readFile(sources.bootstrap);
   const js = readFile(sources.js);
   const pwa = readFile(sources.pwa);
   const manifest = readFile(sources.manifest);
@@ -104,6 +150,16 @@ function main() {
     chart: hashOf(chart),
     qr: hashOf(qr),
     api: hashOf(api),
+    modals: hashOf(modals),
+    incidents: hashOf(incidents),
+    assets: hashOf(assets),
+    drivers: hashOf(drivers),
+    audit: hashOf(audit),
+    overview: hashOf(overview),
+    realtime: hashOf(realtime),
+    auth: hashOf(auth),
+    navigation: hashOf(navigation),
+    bootstrap: hashOf(bootstrap),
     js: hashOf(js),
     pwa: hashOf(pwa),
     manifest: hashOf(manifest),
@@ -116,6 +172,16 @@ function main() {
       versions.chart,
       versions.qr,
       versions.api,
+      versions.modals,
+      versions.incidents,
+      versions.assets,
+      versions.drivers,
+      versions.audit,
+      versions.overview,
+      versions.realtime,
+      versions.auth,
+      versions.navigation,
+      versions.bootstrap,
       versions.js,
       versions.pwa,
       versions.manifest,
@@ -128,6 +194,16 @@ function main() {
   writeFile("chart.umd.js", chart);
   writeFile("dashboard-qr.js", qr);
   writeFile("dashboard-api.js", api);
+  writeFile("dashboard-modals.js", modals);
+  writeFile("dashboard-incidents.js", incidents);
+  writeFile("dashboard-assets.js", assets);
+  writeFile("dashboard-drivers.js", drivers);
+  writeFile("dashboard-audit.js", audit);
+  writeFile("dashboard-overview.js", overview);
+  writeFile("dashboard-realtime.js", realtime);
+  writeFile("dashboard-auth.js", auth);
+  writeFile("dashboard-navigation.js", navigation);
+  writeFile("dashboard-bootstrap.js", bootstrap);
   writeFile("dashboard.js", js);
   writeFile("manifest.json", manifest);
   writeFile("dashboard.html", rewriteDashboardHtml(html, versions));

@@ -96,15 +96,6 @@ let lastCriticalIncidentsCount = null;
 let incidentRuntimeTickerId = null;
 
 // WebSocket/SSE State
-let eventSource = null;
-let sseReconnectTimer = null;
-let sseReconnectAttempts = 0;
-let sseLastConnectAttemptAt = 0;
-let connectionStatusLastRendered = { status: '', at: 0 };
-let connectionStatusMobileBindingsReady = false;
-let connectionStatusLastScrollY = 0;
-let connectionStatusForceVisibleUntil = 0;
-let connectionStatusScrollHideTimer = null;
 const MAX_SSE_RECONNECT_ATTEMPTS = 6;
 const SSE_RECONNECT_BASE_DELAY = 2500;
 const SSE_RECONNECT_MAX_DELAY = 30000;
@@ -171,7 +162,6 @@ let currentQrLabelPreset = 'medium';
 let qrModalReadOnly = false;
 let qrModalEditUnlocked = false;
 let qrModalEditUnlockUntil = 0;
-let qrPasswordModalBusy = false;
 const QR_EDIT_UNLOCK_TTL_MS = 10 * 60 * 1000;
 const KPI_NUMBER_ANIMATION_MS = 620;
 const SECTION_TRANSITION_OUT_MS = 150;
@@ -277,148 +267,26 @@ const TOAST_TYPE_ICONS = {
     info: 'i',
 };
 const ACTIVE_KPI_ANIMATIONS = new WeakMap();
-const MODAL_LAST_FOCUSED = new Map();
 const REPORTED_SECTION_BINDING_WARNINGS = new Set();
 const NOTIFIED_SECTION_BINDING_ERRORS = new Set();
-let sectionTransitionVersion = 0;
-
-function isElementFocusable(node) {
-    if (!(node instanceof HTMLElement)) return false;
-    if (node.hasAttribute('disabled')) return false;
-    if (node.getAttribute('aria-hidden') === 'true') return false;
-    if (node.getAttribute('inert') === '' || node.getAttribute('inert') === 'true') return false;
-    return true;
-}
-
-function getModalFocusableElements(modalElement) {
-    if (!(modalElement instanceof HTMLElement)) return [];
-    return Array.from(modalElement.querySelectorAll(MODAL_FOCUSABLE_SELECTOR)).filter(isElementFocusable);
-}
-
-function getActiveModalElements() {
-    return Array.from(document.querySelectorAll('.modal.active'));
-}
-
-function getTopActiveModalElement() {
-    const activeModals = getActiveModalElements();
-    if (!activeModals.length) return null;
-    return activeModals[activeModals.length - 1];
-}
-
-function syncBodyModalOpenState() {
-    document.body.classList.toggle('modal-open', getActiveModalElements().length > 0);
-}
-
-function focusModalEntry(modalElement, preferredElement = null, { selectText = false } = {}) {
-    if (!(modalElement instanceof HTMLElement)) return;
-    const fallback = getModalFocusableElements(modalElement)[0] || null;
-    const target = preferredElement instanceof HTMLElement ? preferredElement : fallback;
-    if (!(target instanceof HTMLElement)) return;
-    target.focus();
-    if (
-        selectText
-        && typeof target.select === 'function'
-        && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)
-    ) {
-        target.select();
-    }
-}
+let dashboardModals = null;
+let dashboardIncidents = null;
+let dashboardAssets = null;
+let dashboardDrivers = null;
+let dashboardAudit = null;
+let dashboardOverview = null;
+let dashboardRealtime = null;
 
 function openAccessibleModal(modalId, options = {}) {
-    const modal = document.getElementById(modalId);
-    if (!(modal instanceof HTMLElement)) return false;
-    if (!modal.classList.contains('active')) {
-        const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-        MODAL_LAST_FOCUSED.set(modalId, activeElement);
-    }
-    modal.classList.add('active');
-    syncBodyModalOpenState();
-    focusModalEntry(modal, options.preferredElement || null, {
-        selectText: options.selectText === true,
-    });
-    return true;
+    return dashboardModals.openAccessibleModal(modalId, options);
 }
 
 function closeAccessibleModal(modalId, options = {}) {
-    const modal = document.getElementById(modalId);
-    if (!(modal instanceof HTMLElement)) return false;
-    const wasActive = modal.classList.contains('active');
-    modal.classList.remove('active');
-    syncBodyModalOpenState();
-    if (!wasActive) return false;
-    const shouldRestoreFocus = options.restoreFocus !== false;
-    const fallbackFocus = options.fallbackFocus instanceof HTMLElement ? options.fallbackFocus : null;
-    if (shouldRestoreFocus) {
-        const previousFocus = MODAL_LAST_FOCUSED.get(modalId);
-        if (previousFocus instanceof HTMLElement && document.contains(previousFocus)) {
-            previousFocus.focus();
-        } else if (fallbackFocus) {
-            fallbackFocus.focus();
-        }
-    }
-    MODAL_LAST_FOCUSED.delete(modalId);
-    return true;
-}
-
-function trapFocusInsideModal(event, modalElement) {
-    if (event.key !== 'Tab') return false;
-    const focusables = getModalFocusableElements(modalElement);
-    if (!focusables.length) {
-        event.preventDefault();
-        return true;
-    }
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
-    const active = document.activeElement;
-    if (event.shiftKey && active === first) {
-        event.preventDefault();
-        last.focus();
-        return true;
-    }
-    if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-        return true;
-    }
-    return false;
-}
-
-function closeTopActiveModal() {
-    const modal = getTopActiveModalElement();
-    if (!(modal instanceof HTMLElement)) return false;
-    const modalId = modal.id;
-    if (modalId === 'loginModal') {
-        hideLogin();
-        return true;
-    }
-    if (modalId === 'photoModal') {
-        closePhotoModal();
-        return true;
-    }
-    if (modalId === 'qrPasswordModal') {
-        if (qrPasswordModalBusy) return true;
-        closeQrPasswordModal();
-        return true;
-    }
-    if (modalId === 'qrModal') {
-        closeQrModal();
-        return true;
-    }
-    if (modalId === 'actionModal') {
-        closeActionModal();
-        return true;
-    }
-    return false;
+    return dashboardModals.closeAccessibleModal(modalId, options);
 }
 
 function handleModalKeyboardInteraction(event) {
-    const topModal = getTopActiveModalElement();
-    if (!(topModal instanceof HTMLElement)) return false;
-    if (event.key === 'Escape') {
-        event.preventDefault();
-        return closeTopActiveModal();
-    }
-    return trapFocusInsideModal(event, topModal);
+    return dashboardModals.handleModalKeyboardInteraction(event);
 }
 
 function renderContextualEmptyState(container, options = {}) {
@@ -487,6 +355,8 @@ if (!apiFactory) {
     throw new Error('No se pudo inicializar DashboardApi. Verifica la carga de /dashboard-api.js');
 }
 
+let dashboardAuth = null;
+
 const api = apiFactory({
     apiBase: API_BASE,
     getAccessToken: () => webAccessToken,
@@ -494,6 +364,10 @@ const api = apiFactory({
         webAccessToken = String(value || '');
     },
     onUnauthorized: () => {
+        if (dashboardAuth) {
+            dashboardAuth.handleUnauthorized();
+            return;
+        }
         currentUser = null;
         webAccessToken = '';
         closeSSE();
@@ -502,89 +376,265 @@ const api = apiFactory({
     },
 });
 
+dashboardModals = window.createDashboardModals({
+    api,
+    escapeHtml,
+    getCurrentQrLabelPreset: () => currentQrLabelPreset,
+    getCurrentUser: () => currentUser,
+    getQrModalEditUnlockUntil: () => qrModalEditUnlockUntil,
+    getQrModalEditUnlocked: () => qrModalEditUnlocked,
+    getQrModalReadOnly: () => qrModalReadOnly,
+    hideLogin: () => hideLogin(),
+    loadPhotoWithAuth,
+    modalFocusableSelector: MODAL_FOCUSABLE_SELECTOR,
+    normalizeAssetCodeForQr,
+    normalizeAssetFormText,
+    qrEditUnlockTtlMs: QR_EDIT_UNLOCK_TTL_MS,
+    qrMaxBrandLength: QR_MAX_BRAND_LENGTH,
+    qrMaxClientLength: QR_MAX_CLIENT_LENGTH,
+    qrMaxModelLength: QR_MAX_MODEL_LENGTH,
+    qrMaxNotesLength: QR_MAX_NOTES_LENGTH,
+    qrMaxSerialLength: QR_MAX_SERIAL_LENGTH,
+    resetQrState: () => {
+        currentQrPayload = '';
+        currentQrImageUrl = '';
+        currentQrLabelInfo = null;
+    },
+    setQrModalEditUnlockUntil: (value) => {
+        qrModalEditUnlockUntil = Number(value || 0);
+    },
+    setQrModalEditUnlocked: (value) => {
+        qrModalEditUnlocked = Boolean(value);
+    },
+    setQrModalReadOnly: (value) => {
+        qrModalReadOnly = Boolean(value);
+    },
+    showNotification,
+});
+
+dashboardIncidents = window.createDashboardIncidents({
+    api,
+    bindIncidentEstimatedDurationFields,
+    canCurrentUserEditAssets,
+    closeActionModal,
+    createMaterialIconNode,
+    escapeHtml,
+    formatDurationToHHMM,
+    formatDuration,
+    getCurrentSelectedAssetId: () => currentSelectedAssetId,
+    getCurrentSelectedInstallationId: () => currentSelectedInstallationId,
+    getCurrentUser: () => currentUser,
+    incidentChecklistPresets: INCIDENT_CHECKLIST_PRESETS,
+    incidentEstimatedDurationMaxSeconds: INCIDENT_ESTIMATED_DURATION_MAX_SECONDS,
+    incidentEstimatedDurationPresets: INCIDENT_ESTIMATED_DURATION_PRESETS,
+    incidentStatusLabel,
+    loadAssetDetail,
+    loadInstallations,
+    loadPhotoWithAuth,
+    normalizeIncidentChecklistItems,
+    normalizeIncidentStatus,
+    normalizeSeverity,
+    openActionConfirmModal,
+    openActionModal,
+    parseStrictInteger,
+    readIncidentEstimatedDurationFromModal,
+    recordAttentionStateIconName,
+    renderContextualEmptyState,
+    requireActiveSession,
+    resolveIncidentEstimatedDurationSeconds,
+    resolveIncidentRealDurationSeconds,
+    resolveIncidentRuntimeStartMs,
+    ensureIncidentRuntimeTicker,
+    setActionModalError,
+    setCurrentSelectedInstallationId: (value) => {
+        currentSelectedInstallationId = value;
+    },
+    setElementTextWithMaterialIcon,
+    showNotification,
+    viewPhoto,
+});
+
+dashboardAssets = window.createDashboardAssets({
+    api,
+    appendIncidentCard: (...args) => dashboardIncidents.appendIncidentCard(...args),
+    canCurrentUserEditAssets,
+    closeActionModal,
+    createIncidentForAsset: (...args) => dashboardIncidents.createIncidentForAsset(...args),
+    deriveAssetAttentionMetaFromIncidents: (...args) => dashboardIncidents.deriveAssetAttentionMetaFromIncidents(...args),
+    escapeHtml,
+    getCurrentSelectedAssetId: () => currentSelectedAssetId,
+    makeTableRowKeyboardAccessible,
+    normalizeAssetStatusLabel,
+    normalizeIncidentStatus,
+    openActionConfirmModal,
+    openAssetLinkModal,
+    parseStrictInteger,
+    renderContextualEmptyState,
+    requireActiveSession,
+    setCurrentAssetsData: (value) => {
+        currentAssetsData = Array.isArray(value) ? value : [];
+    },
+    setCurrentSelectedAssetId: (value) => {
+        currentSelectedAssetId = Number.isInteger(value) && value > 0 ? value : null;
+    },
+    setElementTextWithMaterialIcon,
+    showAssetQrModal: (asset) => {
+        showQrModal({ type: 'asset', asset, readOnly: true });
+        generateQrPreview({
+            assetData: {
+                external_code: normalizeAssetCodeForQr(asset?.external_code || ''),
+                brand: normalizeAssetFormText(asset?.brand, QR_MAX_BRAND_LENGTH),
+                model: normalizeAssetFormText(asset?.model, QR_MAX_MODEL_LENGTH),
+                serial_number: normalizeAssetFormText(asset?.serial_number, QR_MAX_SERIAL_LENGTH),
+                client_name: normalizeAssetFormText(asset?.client_name, QR_MAX_CLIENT_LENGTH),
+                notes: normalizeAssetFormText(asset?.notes, QR_MAX_NOTES_LENGTH),
+            },
+        });
+    },
+    showNotification,
+    sortAssetIncidentsByPriority: (...args) => dashboardIncidents.sortAssetIncidentsByPriority(...args),
+});
+
+dashboardDrivers = window.createDashboardDrivers({
+    api,
+    closeActionModal,
+    getSelectedDriverFile: () => selectedDriverFile,
+    openActionConfirmModal,
+    renderContextualEmptyState,
+    requireActiveSession,
+    setCurrentDriversData: (value) => {
+        currentDriversData = Array.isArray(value) ? value : [];
+    },
+    setSelectedDriverFile: (value) => {
+        selectedDriverFile = value || null;
+    },
+    showNotification,
+});
+
+dashboardAudit = window.createDashboardAudit({
+    api,
+    renderContextualEmptyState,
+    requireActiveSession,
+});
+
+dashboardOverview = window.createDashboardOverview({
+    activeKpiAnimations: ACTIVE_KPI_ANIMATIONS,
+    allowedTrendRangeDays: TREND_RANGE_ALLOWED_DAYS,
+    api,
+    createManualRecord: () => createManualRecordFromWeb(),
+    getCharts: () => charts,
+    getConnectionStatus,
+    getCurrentTrendRangeDays: () => currentTrendRangeDays,
+    getCurrentUser: () => currentUser,
+    getLastCriticalIncidentsCount: () => lastCriticalIncidentsCount,
+    isChartAvailable,
+    kpiNumberAnimationMs: KPI_NUMBER_ANIMATION_MS,
+    renderContextualEmptyState,
+    requireActiveSession,
+    setCurrentTrendRangeDays: (value) => {
+        currentTrendRangeDays = Number.isInteger(value) ? value : currentTrendRangeDays;
+    },
+    setElementTextWithMaterialIcon,
+    setLastCriticalIncidentsCount: (value) => {
+        lastCriticalIncidentsCount = Number.isInteger(value) ? value : null;
+    },
+    setNotificationBadgeCount,
+    validateSectionBindings,
+});
+
+dashboardRealtime = window.createDashboardRealtime({
+    activeSections: SSE_ACTIVE_SECTIONS,
+    apiBase: API_BASE,
+    baseReconnectDelayMs: SSE_RECONNECT_BASE_DELAY,
+    connectionStatusDedupMs: CONNECTION_STATUS_DEDUP_MS,
+    getActiveSectionName,
+    getCurrentInstallationsData: () => currentInstallationsData,
+    getCurrentTrendRangeDays: () => currentTrendRangeDays,
+    getCurrentUser: () => currentUser,
+    handleRealtimeIncident: (incident) => dashboardIncidents.handleRealtimeIncident(incident),
+    handleRealtimeIncidentStatusUpdate: (incident) => dashboardIncidents.handleRealtimeIncidentStatusUpdate(incident),
+    isSectionActive: (section) => document.getElementById(section + 'Section')?.classList.contains('active') === true,
+    loadDashboard,
+    maxReconnectAttempts: MAX_SSE_RECONNECT_ATTEMPTS,
+    maxReconnectDelayMs: SSE_RECONNECT_MAX_DELAY,
+    minConnectGapMs: SSE_MIN_CONNECT_GAP_MS,
+    normalizeRecordAttentionState,
+    renderBrandChart,
+    renderInstallationsTable,
+    renderSuccessChart,
+    renderTrendChart,
+    setCurrentInstallationsData: (value) => {
+        currentInstallationsData = Array.isArray(value) ? value : [];
+    },
+    showNotification,
+    syncHeaderDelight,
+    updateStats,
+});
+
+dashboardAuth = window.createDashboardAuth({
+    api,
+    clearSessionState: () => {
+        currentUser = null;
+        webAccessToken = '';
+    },
+    clearWebAccessToken: () => {
+        webAccessToken = '';
+    },
+    closeAccessibleModal,
+    closeHeaderOverflowMenu,
+    closeMobileNavPanel,
+    closeSSE,
+    getActiveSectionName,
+    getConnectionStatus,
+    getCurrentUser: () => currentUser,
+    loadDashboard,
+    openAccessibleModal,
+    resetDataViews: () => {
+        currentInstallationsData = [];
+        currentSelectedInstallationId = null;
+        currentAssetsData = [];
+        currentSelectedAssetId = null;
+    },
+    setCurrentUser: (user) => {
+        currentUser = user;
+    },
+    setNotificationBadgeCount,
+    showNotification,
+    syncHeaderPrimaryAction,
+    syncMobileNavMoreState,
+    syncSSEForCurrentContext,
+});
+
 function showLogin() {
-    resetProtectedViews();
-    syncRoleBasedNavigationAccess();
-    const usernameField = document.getElementById('loginUsername');
-    openAccessibleModal('loginModal', { preferredElement: usernameField });
+    return dashboardAuth.showLogin();
 }
 
 function hideLogin() {
-    closeAccessibleModal('loginModal');
-    document.getElementById('loginError').textContent = '';
+    return dashboardAuth.hideLogin();
 }
 
 function resetProtectedViews() {
-    const ids = [
-        'recentInstallations',
-        'installationsTable',
-        'assetsTable',
-        'assetDetail',
-        'incidentsList',
-        'auditLogs',
-        'resultsCount',
-        'assetsResultsCount',
-    ];
-    ids.forEach((id) => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.innerHTML = '<p class="loading">Inicia sesión para ver información.</p>';
-    });
-    currentInstallationsData = [];
-    currentSelectedInstallationId = null;
-    currentAssetsData = [];
-    currentSelectedAssetId = null;
-    closeHeaderOverflowMenu();
-    closeMobileNavPanel();
-    syncRoleBasedNavigationAccess();
-    updateSettingsSummary();
-    syncMobileNavMoreState(getActiveSectionName() || 'dashboard');
-    syncHeaderPrimaryAction(getActiveSectionName() || 'dashboard');
-    setNotificationBadgeCount(0);
+    return dashboardAuth.resetProtectedViews();
 }
 
 function hasActiveSession() {
-    return Boolean(currentUser && currentUser.username);
+    return dashboardAuth.hasActiveSession();
 }
 
 function requireActiveSession() {
-    if (hasActiveSession()) return true;
-    showLogin();
-    return false;
+    return dashboardAuth.requireActiveSession();
 }
 
 function canCurrentUserAccessAudit() {
-    const role = String(currentUser?.role || '').toLowerCase();
-    return role === 'admin' || role === 'super_admin';
+    return dashboardAuth.canCurrentUserAccessAudit();
 }
 
 function syncRoleBasedNavigationAccess() {
-    const auditLink = document.querySelector('.nav-links a[data-section="audit"]');
-    const shouldShowAudit = canCurrentUserAccessAudit();
-    if (auditLink) {
-        const parent = auditLink.closest('li');
-        if (parent) {
-            parent.classList.toggle('is-hidden', !shouldShowAudit);
-        }
-    }
-    const mobileAuditBtn = document.getElementById('mobileNavAuditBtn');
-    if (mobileAuditBtn) {
-        mobileAuditBtn.classList.toggle('is-hidden', !shouldShowAudit);
-    }
+    return dashboardAuth.syncRoleBasedNavigationAccess();
 }
 
 function syncMobileNavContext() {
-    const username = String(currentUser?.username || 'Usuario');
-    const role = String(currentUser?.role || 'admin');
-    const initial = (username || 'U').charAt(0).toUpperCase();
-
-    const mobileUsernameEl = document.getElementById('mobileNavUsername');
-    const mobileRoleEl = document.getElementById('mobileNavRole');
-    const mobileInitialEl = document.getElementById('mobileNavInitial');
-
-    if (mobileUsernameEl) mobileUsernameEl.textContent = username;
-    if (mobileRoleEl) mobileRoleEl.textContent = role;
-    if (mobileInitialEl) mobileInitialEl.textContent = initial;
+    return dashboardAuth.syncMobileNavContext();
 }
 
 function syncMobileNavMoreState(section) {
@@ -674,45 +724,15 @@ function setNotificationBadgeCount(count) {
 }
 
 function updateSettingsSyncLabel(status = 'paused') {
-    const labelEl = document.getElementById('settingsSyncStatus');
-    if (!labelEl) return;
-    const normalized = ['connected', 'disconnected', 'reconnecting', 'paused', 'failed'].includes(status)
-        ? status
-        : 'paused';
-    const labels = {
-        connected: 'Conectado en tiempo real',
-        disconnected: 'Conexión interrumpida',
-        reconnecting: 'Reconectando',
-        paused: 'Sincronización en pausa',
-        failed: 'Sin enlace en tiempo real',
-    };
-    labelEl.textContent = labels[normalized] || labels.paused;
+    return dashboardAuth.updateSettingsSyncLabel(status);
 }
 
 function updateSettingsSummary() {
-    const usernameEl = document.getElementById('settingsUsername');
-    const roleEl = document.getElementById('settingsRole');
-    if (usernameEl) {
-        usernameEl.textContent = String(currentUser?.username || '-');
-    }
-    if (roleEl) {
-        roleEl.textContent = String(currentUser?.role || '-');
-    }
-    syncMobileNavContext();
-    updateSettingsSyncLabel(connectionStatusLastRendered?.status || 'paused');
+    return dashboardAuth.updateSettingsSummary();
 }
 
 function applyAuthenticatedUser(user) {
-    currentUser = user;
-    document.getElementById('username').textContent = user.username || 'Usuario';
-    document.getElementById('userRole').textContent = user.role || 'admin';
-    const initial = (user.username || 'U').charAt(0).toUpperCase();
-    const avatarEl = document.getElementById('userInitial');
-    if (avatarEl) avatarEl.textContent = initial;
-    syncRoleBasedNavigationAccess();
-    updateSettingsSummary();
-    syncMobileNavMoreState(getActiveSectionName() || 'dashboard');
-    syncHeaderPrimaryAction(getActiveSectionName() || 'dashboard');
+    return dashboardAuth.applyAuthenticatedUser(user);
 }
 
 function normalizeSeverity(input) {
@@ -728,136 +748,20 @@ function parseStrictInteger(rawValue) {
     return Number.isInteger(parsed) ? parsed : null;
 }
 
-let actionModalSubmitHandler = null;
-let actionModalSubmitBusy = false;
-let actionModalEventsBound = false;
+function closeActionModal(force = false) {
+    return dashboardModals.closeActionModal(force);
+}
 
 function setActionModalError(message = '') {
-    const errorEl = document.getElementById('actionModalError');
-    if (!errorEl) return;
-    errorEl.textContent = String(message || '');
-}
-
-function setActionModalBusy(isBusy) {
-    actionModalSubmitBusy = Boolean(isBusy);
-    const submitBtn = document.getElementById('actionModalSubmitBtn');
-    const cancelBtn = document.getElementById('actionModalCancelBtn');
-    if (submitBtn) {
-        const defaultLabel = submitBtn.dataset.defaultLabel || 'Guardar';
-        submitBtn.disabled = actionModalSubmitBusy;
-        submitBtn.textContent = actionModalSubmitBusy ? 'Procesando...' : defaultLabel;
-    }
-    if (cancelBtn) {
-        cancelBtn.disabled = actionModalSubmitBusy;
-    }
-}
-
-function closeActionModal(force = false) {
-    if (actionModalSubmitBusy && !force) return;
-    closeAccessibleModal('actionModal');
-    setActionModalError('');
-    actionModalSubmitHandler = null;
+    return dashboardModals.setActionModalError(message);
 }
 
 function openActionModal(config = {}) {
-    const modal = document.getElementById('actionModal');
-    const titleEl = document.getElementById('actionModalTitle');
-    const subtitleEl = document.getElementById('actionModalSubtitle');
-    const fieldsEl = document.getElementById('actionModalFields');
-    const submitBtn = document.getElementById('actionModalSubmitBtn');
-    if (!modal || !titleEl || !subtitleEl || !fieldsEl || !submitBtn) return false;
-
-    titleEl.textContent = String(config.title || 'Acción');
-
-    const subtitle = String(config.subtitle || '').trim();
-    subtitleEl.textContent = subtitle;
-    subtitleEl.classList.toggle('is-hidden', subtitle.length === 0);
-
-    fieldsEl.innerHTML = String(config.fieldsHtml || '');
-
-    const submitLabel = String(config.submitLabel || 'Guardar');
-    submitBtn.dataset.defaultLabel = submitLabel;
-    submitBtn.textContent = submitLabel;
-
-    setActionModalError('');
-    setActionModalBusy(false);
-    actionModalSubmitHandler = typeof config.onSubmit === 'function' ? config.onSubmit : null;
-
-    const preferredFocusId = String(config.focusId || '').trim();
-    const preferredElement = preferredFocusId ? document.getElementById(preferredFocusId) : null;
-    openAccessibleModal('actionModal', { preferredElement });
-
-    return true;
+    return dashboardModals.openActionModal(config);
 }
 
 function openActionConfirmModal(config = {}) {
-    const confirmCheckboxId = 'actionModalConfirmCheckbox';
-    const title = String(config.title || 'Confirmar acción').trim() || 'Confirmar acción';
-    const subtitle = String(config.subtitle || '').trim();
-    const submitLabel = String(config.submitLabel || 'Confirmar').trim() || 'Confirmar';
-    const acknowledgementText = String(config.acknowledgementText || 'Confirmo esta acción.').trim()
-        || 'Confirmo esta acción.';
-    const missingConfirmationMessage = String(
-        config.missingConfirmationMessage || 'Debes confirmar la acción para continuar.',
-    ).trim() || 'Debes confirmar la acción para continuar.';
-    const focusId = String(config.focusId || confirmCheckboxId).trim() || confirmCheckboxId;
-    const onSubmit = typeof config.onSubmit === 'function' ? config.onSubmit : async () => {};
-
-    return openActionModal({
-        title,
-        subtitle,
-        submitLabel,
-        focusId,
-        fieldsHtml: `
-            <label class="action-checkbox" for="${confirmCheckboxId}">
-                <input type="checkbox" id="${confirmCheckboxId}">
-                <span>${escapeHtml(acknowledgementText)}</span>
-            </label>
-        `,
-        onSubmit: async () => {
-            const confirmed = document.getElementById(confirmCheckboxId)?.checked === true;
-            if (!confirmed) {
-                setActionModalError(missingConfirmationMessage);
-                return;
-            }
-            await onSubmit();
-        },
-    });
-}
-
-function bindActionModalEvents() {
-    if (actionModalEventsBound) return;
-
-    document.querySelector('#actionModal .close')?.addEventListener('click', () => {
-        closeActionModal();
-    });
-
-    document.getElementById('actionModalCancelBtn')?.addEventListener('click', () => {
-        closeActionModal();
-    });
-
-    document.getElementById('actionModal')?.addEventListener('click', (event) => {
-        if (event.target !== event.currentTarget) return;
-        closeActionModal();
-    });
-
-    document.getElementById('actionModalForm')?.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        if (actionModalSubmitBusy) return;
-        if (typeof actionModalSubmitHandler !== 'function') return;
-
-        setActionModalError('');
-        try {
-            setActionModalBusy(true);
-            await actionModalSubmitHandler();
-        } catch (error) {
-            setActionModalError(error?.message || 'No se pudo completar la acción.');
-        } finally {
-            setActionModalBusy(false);
-        }
-    });
-
-    actionModalEventsBound = true;
+    return dashboardModals.openActionConfirmModal(config);
 }
 
 function createManualRecordFromWeb() {
@@ -925,210 +829,11 @@ function createManualRecordFromWeb() {
 }
 
 function openIncidentModal(options = {}) {
-    const parsedInstallationId = parseStrictInteger(options.installationId);
-    const defaultInstallationId = Number.isInteger(parsedInstallationId) && parsedInstallationId > 0
-        ? String(parsedInstallationId)
-        : '';
-    const defaultNote = String(options.note || '').trim();
-    const defaultSeverity = normalizeSeverity(options.severity || 'medium');
-    const parsedAdjustment = parseStrictInteger(options.timeAdjustment);
-    const parsedEstimatedDuration = parseStrictInteger(options.estimatedDurationSeconds);
-    let defaultEstimatedDurationSeconds = 0;
-    if (Number.isInteger(parsedEstimatedDuration) && parsedEstimatedDuration >= 0) {
-        defaultEstimatedDurationSeconds = Math.min(
-            parsedEstimatedDuration,
-            INCIDENT_ESTIMATED_DURATION_MAX_SECONDS,
-        );
-    } else if (Number.isInteger(parsedAdjustment) && parsedAdjustment >= 0) {
-        defaultEstimatedDurationSeconds = Math.min(
-            parsedAdjustment,
-            INCIDENT_ESTIMATED_DURATION_MAX_SECONDS,
-        );
-    }
-    const defaultApply = options.applyToInstallation === true;
-    const numericAssetId = parseStrictInteger(options.assetId);
-    const activeInstallationId = parseStrictInteger(options.activeInstallationId);
-    const isAssetContext = Number.isInteger(numericAssetId) && numericAssetId > 0;
-
-    const title = isAssetContext
-        ? `Nueva incidencia para equipo #${numericAssetId}`
-        : 'Nueva incidencia';
-
-    const subtitle = isAssetContext
-        ? 'Completa detalle y severidad. El registro se resolvera automaticamente si no lo indicas.'
-        : 'Completa detalle, severidad y tiempo estimado.';
-    const installationLabel = isAssetContext
-        ? 'ID de registro (opcional)'
-        : 'ID de registro';
-    const installationPlaceholder = isAssetContext
-        ? 'Opcional. Se usa vinculo activo o se crea contexto automatico'
-        : 'Ej: 245';
-
-    const estimatedPresetOptions = INCIDENT_ESTIMATED_DURATION_PRESETS.map((preset) => `
-        <option value="${preset.seconds}">${escapeHtml(preset.label)}</option>
-    `).join('');
-
-    const modalOpened = openActionModal({
-        title,
-        subtitle,
-        submitLabel: 'Crear incidencia',
-        focusId: 'actionIncidentNote',
-        fieldsHtml: `
-            <div class="action-modal-grid">
-                <div class="input-group">
-                    <label for="actionIncidentInstallationId">${installationLabel}</label>
-                    <input type="text" id="actionIncidentInstallationId" value="${escapeHtml(defaultInstallationId)}" autocomplete="off" placeholder="${escapeHtml(installationPlaceholder)}">
-                </div>
-                <div class="input-group">
-                    <label for="actionIncidentSeverity">Severidad</label>
-                    <select id="actionIncidentSeverity">
-                        <option value="low" ${defaultSeverity === 'low' ? 'selected' : ''}>low</option>
-                        <option value="medium" ${defaultSeverity === 'medium' ? 'selected' : ''}>medium</option>
-                        <option value="high" ${defaultSeverity === 'high' ? 'selected' : ''}>high</option>
-                        <option value="critical" ${defaultSeverity === 'critical' ? 'selected' : ''}>critical</option>
-                    </select>
-                </div>
-                <div class="input-group">
-                    <label for="actionIncidentEstimatedPreset">Tiempo estimado</label>
-                    <select id="actionIncidentEstimatedPreset">
-                        ${estimatedPresetOptions}
-                        <option value="__custom__">Personalizado (HH:MM)</option>
-                    </select>
-                </div>
-                <div class="input-group is-hidden" id="actionIncidentEstimatedCustomWrap">
-                    <label for="actionIncidentEstimatedCustom">Tiempo personalizado (HH:MM)</label>
-                    <input type="text" id="actionIncidentEstimatedCustom" value="${escapeHtml(formatDurationToHHMM(defaultEstimatedDurationSeconds))}" autocomplete="off" placeholder="Ej: 01:30">
-                </div>
-                <div class="input-group full-width">
-                    <label for="actionIncidentNote">Detalle de la incidencia</label>
-                    <textarea id="actionIncidentNote" rows="4" placeholder="Describe el problema y el contexto">${escapeHtml(defaultNote)}</textarea>
-                </div>
-            </div>
-            <label class="action-checkbox" for="actionIncidentApplyToRecord">
-                <input type="checkbox" id="actionIncidentApplyToRecord" ${defaultApply ? 'checked' : ''}>
-                <span>Aplicar nota y tiempo al registro de instalacion.</span>
-            </label>
-        `,
-        onSubmit: async () => {
-            const installationRaw = String(
-                document.getElementById('actionIncidentInstallationId')?.value || '',
-            ).trim();
-            const targetInstallationId = installationRaw ? parseStrictInteger(installationRaw) : null;
-
-            if (installationRaw && (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0)) {
-                setActionModalError('El ID de registro debe ser un entero positivo cuando se informa.');
-                return;
-            }
-            if (!isAssetContext && (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0)) {
-                setActionModalError('El ID de registro debe ser un entero positivo.');
-                return;
-            }
-
-            const note = String(document.getElementById('actionIncidentNote')?.value || '').trim();
-            if (!note) {
-                setActionModalError('La incidencia requiere una nota.');
-                return;
-            }
-
-            const estimatedDurationResult = readIncidentEstimatedDurationFromModal();
-            if (estimatedDurationResult.error) {
-                setActionModalError(estimatedDurationResult.error);
-                return;
-            }
-            const estimatedDurationSeconds = estimatedDurationResult.seconds;
-
-            const severity = normalizeSeverity(
-                document.getElementById('actionIncidentSeverity')?.value || 'medium',
-            );
-            const applyToInstallation = document.getElementById('actionIncidentApplyToRecord')?.checked === true;
-            const payload = {
-                note,
-                reporter_username: currentUser?.username || 'web_user',
-                time_adjustment_seconds: estimatedDurationSeconds,
-                estimated_duration_seconds: estimatedDurationSeconds,
-                severity,
-                source: 'web',
-                apply_to_installation: applyToInstallation,
-            };
-
-            let result;
-            let resolvedInstallationId = Number.isInteger(targetInstallationId) ? targetInstallationId : null;
-
-            if (isAssetContext) {
-                if (
-                    Number.isInteger(resolvedInstallationId)
-                    && resolvedInstallationId > 0
-                    && (
-                        !Number.isInteger(activeInstallationId)
-                        || activeInstallationId <= 0
-                        || activeInstallationId !== resolvedInstallationId
-                    )
-                ) {
-                    await api.linkAssetToInstallation(numericAssetId, {
-                        installation_id: resolvedInstallationId,
-                        notes: 'Vinculo creado desde modulo Equipos',
-                    });
-                }
-                result = await api.createAssetIncident(numericAssetId, {
-                    ...payload,
-                    installation_id: resolvedInstallationId,
-                });
-                const apiInstallationId = parseStrictInteger(
-                    result?.installation_id ?? result?.incident?.installation_id,
-                );
-                if (Number.isInteger(apiInstallationId) && apiInstallationId > 0) {
-                    resolvedInstallationId = apiInstallationId;
-                }
-            } else {
-                result = await api.createIncident(targetInstallationId, payload);
-                resolvedInstallationId = targetInstallationId;
-            }
-
-            closeActionModal(true);
-            const incidentId = Number(result?.incident?.id);
-            showNotification(
-                Number.isInteger(incidentId) && incidentId > 0 && Number.isInteger(resolvedInstallationId) && resolvedInstallationId > 0
-                    ? `Incidencia creada (#${incidentId}) en registro #${resolvedInstallationId}`
-                    : Number.isInteger(incidentId) && incidentId > 0
-                        ? `Incidencia creada (#${incidentId})`
-                        : 'Incidencia creada',
-                'success',
-            );
-
-            if (isAssetContext) {
-                await loadAssetDetail(numericAssetId, { keepSelection: true });
-            } else if (Number.isInteger(resolvedInstallationId) && resolvedInstallationId > 0) {
-                await showIncidentsForInstallation(resolvedInstallationId);
-            }
-            await loadInstallations();
-        },
-    });
-
-    if (modalOpened) {
-        bindIncidentEstimatedDurationFields(defaultEstimatedDurationSeconds);
-    }
+    return dashboardIncidents.openIncidentModal(options);
 }
-
 function createIncidentFromWeb(installationId, options = {}) {
-    if (!requireActiveSession()) return;
-    const targetId = parseStrictInteger(installationId);
-    const numericAssetId = parseStrictInteger(options.assetId);
-
-    if (
-        (!Number.isInteger(targetId) || targetId <= 0)
-        && (!Number.isInteger(numericAssetId) || numericAssetId <= 0)
-    ) {
-        showNotification('installation_id invalido para crear incidencia.', 'error');
-        return;
-    }
-
-    openIncidentModal({
-        installationId: Number.isInteger(targetId) && targetId > 0 ? targetId : '',
-        assetId: numericAssetId,
-        activeInstallationId: parseStrictInteger(options.activeInstallationId),
-    });
+    return dashboardIncidents.createIncidentFromWeb(installationId, options);
 }
-
 function openAssetLinkModal(options = {}) {
     const knownAssetId = parseStrictInteger(options.assetId);
     const parsedInstallationId = parseStrictInteger(options.installationId);
@@ -1281,566 +986,43 @@ async function openAssetLookupFromWeb() {
 }
 
 async function selectAndUploadIncidentPhoto(incidentId, installationId, options = {}) {
-    const targetIncidentId = Number.parseInt(String(incidentId), 10);
-    if (!Number.isInteger(targetIncidentId) || targetIncidentId <= 0) {
-        showNotification('incident_id invalido para subir foto.', 'error');
-        return;
-    }
-    const targetInstallationId = parseStrictInteger(installationId);
-    const targetAssetId = parseStrictInteger(options.assetId);
-
-    const picker = document.createElement('input');
-    picker.className = 'hidden-file-picker';
-    picker.type = 'file';
-    picker.accept = 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp';
-    document.body.appendChild(picker);
-
-    picker.addEventListener('change', async () => {
-        const file = picker.files?.[0];
-        picker.remove();
-        if (!file) return;
-
-        try {
-            await api.uploadIncidentPhoto(targetIncidentId, file);
-            showNotification(`Foto subida a incidencia #${targetIncidentId}`, 'success');
-            if (Number.isInteger(targetInstallationId) && targetInstallationId > 0) {
-                await showIncidentsForInstallation(targetInstallationId);
-            } else if (Number.isInteger(targetAssetId) && targetAssetId > 0) {
-                await loadAssetDetail(targetAssetId, { keepSelection: true });
-            }
-        } catch (err) {
-            showNotification(`No se pudo subir foto: ${err.message || err}`, 'error');
-        }
-    }, { once: true });
-
-    picker.click();
+    return dashboardIncidents.selectAndUploadIncidentPhoto(incidentId, installationId, options);
 }
-
 function updateStats(stats) {
-    const criticalCount = Number(stats?.incident_critical_active_count) || 0;
-    const inProgressCount = Number(stats?.incident_in_progress_count) || 0;
-    const outsideSlaCount = Number(stats?.incident_outside_sla_count) || 0;
-    const slaMinutes = Number(stats?.incident_sla_minutes) || 30;
-
-    animateNumber('kpiCriticalIncidentsValue', criticalCount);
-    animateNumber('kpiInProgressIncidentsValue', inProgressCount);
-    animateNumber('kpiOutsideSlaIncidentsValue', outsideSlaCount);
-
-    const syncClockEl = document.getElementById('kpiLastSyncTimeValue');
-    if (syncClockEl) {
-        syncClockEl.textContent = new Date().toLocaleTimeString('es-ES', {
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-        });
-    }
-
-    const criticalMetaEl = document.getElementById('kpiCriticalMeta');
-    if (criticalMetaEl) {
-        if (lastCriticalIncidentsCount === null) {
-            criticalMetaEl.textContent = 'Sin cambios';
-        } else {
-            const delta = criticalCount - lastCriticalIncidentsCount;
-            criticalMetaEl.textContent = delta > 0
-                ? `↑ +${delta}`
-                : delta < 0
-                    ? `↓ ${delta}`
-                    : 'Sin cambios';
-        }
-    }
-    lastCriticalIncidentsCount = criticalCount;
-
-    const inProgressMetaEl = document.getElementById('kpiInProgressMeta');
-    if (inProgressMetaEl) {
-        inProgressMetaEl.textContent = inProgressCount > 10 ? 'Revisar' : 'Normal';
-    }
-
-    const slaMetaEl = document.getElementById('kpiSlaMeta');
-    if (slaMetaEl) {
-        slaMetaEl.textContent = outsideSlaCount > 0
-            ? `Revisar (${slaMinutes} min)`
-            : `OK (${slaMinutes} min)`;
-    }
-
-    const syncMetaEl = document.getElementById('kpiSyncMeta');
-    if (syncMetaEl) {
-        const syncStatus = connectionStatusLastRendered?.status || 'paused';
-        syncMetaEl.textContent = syncStatus === 'connected' ? 'OK' : 'Sincronizando';
-    }
-
-    setNotificationBadgeCount(criticalCount + outsideSlaCount);
+    return dashboardOverview.updateStats(stats);
 }
 
 function prefersReducedMotion() {
-    return (
-        typeof window !== 'undefined' &&
-        typeof window.matchMedia === 'function' &&
-        window.matchMedia('(prefers-reduced-motion: reduce)').matches === true
-    );
-}
-
-function countFractionDigits(value) {
-    const normalized = String(value);
-    const fraction = normalized.split('.')[1];
-    if (!fraction) return 0;
-    return Math.min(2, fraction.length);
-}
-
-function parseMetricDescriptor(value) {
-    if (typeof value === 'number' && Number.isFinite(value)) {
-        return {
-            isNumeric: true,
-            prefix: '',
-            suffix: '',
-            target: value,
-            decimals: countFractionDigits(value),
-            fallbackText: String(value),
-        };
-    }
-
-    const textValue = String(value ?? '').trim();
-    if (!textValue) {
-        return { isNumeric: false, fallbackText: '' };
-    }
-
-    const metricMatch = textValue.match(/^([^\d-]*)(-?\d+(?:[.,]\d+)?)(.*)$/u);
-    if (!metricMatch) {
-        return { isNumeric: false, fallbackText: textValue };
-    }
-
-    const numericToken = metricMatch[2];
-    const target = Number.parseFloat(numericToken.replace(',', '.'));
-    if (!Number.isFinite(target)) {
-        return { isNumeric: false, fallbackText: textValue };
-    }
-
-    const decimalToken = numericToken.split(/[.,]/)[1] || '';
-    return {
-        isNumeric: true,
-        prefix: metricMatch[1],
-        suffix: metricMatch[3],
-        target,
-        decimals: Math.min(2, decimalToken.length),
-        fallbackText: textValue,
-    };
-}
-
-function formatMetricNumber(value, decimals) {
-    return value.toLocaleString('es-ES', {
-        minimumFractionDigits: decimals,
-        maximumFractionDigits: decimals,
-    });
-}
-
-function setMetricDisplay(element, descriptor, numericValue) {
-    const formattedNumber = formatMetricNumber(numericValue, descriptor.decimals);
-    element.textContent = `${descriptor.prefix}${formattedNumber}${descriptor.suffix}`;
-}
-
-function cancelMetricAnimation(element) {
-    const activeAnimation = ACTIVE_KPI_ANIMATIONS.get(element);
-    if (typeof activeAnimation === 'number') {
-        cancelAnimationFrame(activeAnimation);
-    }
-    ACTIVE_KPI_ANIMATIONS.delete(element);
+    return dashboardOverview.prefersReducedMotion();
 }
 
 function animateNumber(elementId, value) {
-    const element = document.getElementById(elementId);
-    if (!element) return;
-
-    const descriptor = parseMetricDescriptor(value);
-    element.classList.remove('number-animate');
-    void element.offsetWidth;
-    element.classList.add('number-animate');
-
-    if (!descriptor.isNumeric) {
-        cancelMetricAnimation(element);
-        element.textContent = descriptor.fallbackText;
-        delete element.dataset.metricNumericValue;
-        return;
-    }
-
-    const target = descriptor.target;
-    const previousValue = Number.parseFloat(element.dataset.metricNumericValue || '');
-    const startValue = Number.isFinite(previousValue) ? previousValue : 0;
-
-    cancelMetricAnimation(element);
-
-    if (prefersReducedMotion() || Math.abs(target - startValue) < 0.01) {
-        setMetricDisplay(element, descriptor, target);
-        element.dataset.metricNumericValue = String(target);
-        return;
-    }
-
-    const animationStart = performance.now();
-    const tick = (now) => {
-        const elapsed = now - animationStart;
-        const progress = Math.min(1, elapsed / KPI_NUMBER_ANIMATION_MS);
-        const easedProgress = 1 - Math.pow(1 - progress, 4);
-        const currentValue = startValue + (target - startValue) * easedProgress;
-
-        setMetricDisplay(element, descriptor, currentValue);
-
-        if (progress < 1) {
-            const rafId = requestAnimationFrame(tick);
-            ACTIVE_KPI_ANIMATIONS.set(element, rafId);
-            return;
-        }
-
-        setMetricDisplay(element, descriptor, target);
-        element.dataset.metricNumericValue = String(target);
-        ACTIVE_KPI_ANIMATIONS.delete(element);
-    };
-
-    const initialRafId = requestAnimationFrame(tick);
-    ACTIVE_KPI_ANIMATIONS.set(element, initialRafId);
+    return dashboardOverview.animateNumber(elementId, value);
 }
 
 // Chart rendering functions
 function renderSuccessChart(stats) {
-    if (!isChartAvailable()) return;
-    const ctx = document.getElementById('successChart').getContext('2d');
-    
-    if (charts.success) {
-        charts.success.destroy();
-    }
-    
-    const success = stats.successful_installations || 0;
-    const failed = stats.failed_installations || 0;
-    const total = stats.total_installations || 1;
-    const other = total - success - failed;
-    
-    charts.success = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: ['?xito', 'Fallido', 'Otro'],
-            datasets: [{
-                data: [success, failed, Math.max(0, other)],
-                backgroundColor: [
-                    'rgba(16, 185, 129, 0.8)',
-                    'rgba(239, 68, 68, 0.8)',
-                    'rgba(148, 163, 184, 0.3)'
-                ],
-                borderColor: [
-                    'rgba(16, 185, 129, 1)',
-                    'rgba(239, 68, 68, 1)',
-                    'rgba(148, 163, 184, 0.5)'
-                ],
-                borderWidth: 2,
-                hoverOffset: 4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: {
-                        padding: 15,
-                        usePointStyle: true,
-                        pointStyle: 'circle'
-                    }
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            const label = context.label || '';
-                            const value = context.parsed || 0;
-                            const percentage = ((value / total) * 100).toFixed(1);
-                            return `${label}: ${value} (${percentage}%)`;
-                        }
-                    }
-                }
-            },
-            cutout: '65%'
-        }
-    });
+    return dashboardOverview.renderSuccessChart(stats);
 }
 
 function renderBrandChart(stats) {
-    if (!isChartAvailable()) return;
-    const ctx = document.getElementById('brandChart').getContext('2d');
-    
-    if (charts.brand) {
-        charts.brand.destroy();
-    }
-    
-    const brands = Object.entries(stats.by_brand || {})
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 6);
-    
-    if (brands.length === 0) {
-        brands.push(['Sin datos', 1]);
-    }
-    
-    const colors = [
-        'rgba(6, 182, 212, 0.8)',
-        'rgba(139, 92, 246, 0.8)',
-        'rgba(16, 185, 129, 0.8)',
-        'rgba(245, 158, 11, 0.8)',
-        'rgba(239, 68, 68, 0.8)',
-        'rgba(59, 130, 246, 0.8)'
-    ];
-    
-    charts.brand = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: brands.map(b => b[0]),
-            datasets: [{
-                label: 'Registros',
-                data: brands.map(b => b[1]),
-                backgroundColor: colors,
-                borderColor: colors.map(c => c.replace('0.8', '1')),
-                borderWidth: 2,
-                borderRadius: 6,
-                borderSkipped: false
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: false
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    grid: {
-                        color: 'rgba(71, 85, 105, 0.3)'
-                    },
-                    ticks: {
-                        precision: 0
-                    }
-                },
-                x: {
-                    grid: {
-                        display: false
-                    }
-                }
-            }
-        }
-    });
-}
-
-function normalizeTrendRangeDays(daysCandidate) {
-    const parsed = Number.parseInt(String(daysCandidate ?? ''), 10);
-    if (!Number.isInteger(parsed) || !TREND_RANGE_ALLOWED_DAYS.has(parsed)) {
-        return 7;
-    }
-    return parsed;
-}
-
-function syncTrendRangeToggleUI() {
-    const buttons = document.querySelectorAll('.chart-toggle button[data-trend-range]');
-    buttons.forEach((button) => {
-        const range = normalizeTrendRangeDays(button.dataset.trendRange);
-        const isActive = range === currentTrendRangeDays;
-        button.classList.toggle('active', isActive);
-        button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-    });
+    return dashboardOverview.renderBrandChart(stats);
 }
 
 function setupTrendRangeToggle() {
-    const buttons = document.querySelectorAll('.chart-toggle button[data-trend-range]');
-    if (!buttons.length) return;
-    syncTrendRangeToggleUI();
-    buttons.forEach((button) => {
-        if (button.dataset.boundTrendToggle === '1') return;
-        button.dataset.boundTrendToggle = '1';
-        button.addEventListener('click', async () => {
-            if (!requireActiveSession()) return;
-            const selectedDays = normalizeTrendRangeDays(button.dataset.trendRange);
-            if (selectedDays === currentTrendRangeDays) return;
-            currentTrendRangeDays = selectedDays;
-            syncTrendRangeToggleUI();
-            await renderTrendChart(currentTrendRangeDays);
-        });
-    });
+    return dashboardOverview.setupTrendRangeToggle();
 }
 
 async function renderTrendChart(days = currentTrendRangeDays) {
-    if (!isChartAvailable()) return;
-    const canvas = document.getElementById('trendChart');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const normalizedDays = normalizeTrendRangeDays(days);
-    currentTrendRangeDays = normalizedDays;
-    syncTrendRangeToggleUI();
-
-    if (charts.trend) {
-        charts.trend.destroy();
-    }
-    
-    try {
-        const trendResponse = await api.getTrendData({ days: normalizedDays });
-        const trendPoints = Array.isArray(trendResponse?.points) ? trendResponse.points : [];
-
-        const labels = [];
-        const data = [];
-
-        if (trendPoints.length > 0) {
-            for (const point of trendPoints) {
-                const rawDate = typeof point?.date === 'string' ? point.date : '';
-                const date = rawDate ? new Date(rawDate + 'T00:00:00Z') : null;
-                if (normalizedDays === 1) {
-                    labels.push('Últimas 24h');
-                } else {
-                    labels.push(
-                        date && !Number.isNaN(date.getTime())
-                            ? date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' })
-                            : rawDate || 'N/A'
-                    );
-                }
-                data.push(Number(point?.total_installations) || 0);
-            }
-        } else {
-            const today = new Date();
-            for (let i = normalizedDays - 1; i >= 0; i--) {
-                const date = new Date(today);
-                date.setDate(date.getDate() - i);
-                labels.push(
-                    normalizedDays === 1
-                        ? 'Últimas 24h'
-                        : date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' })
-                );
-                data.push(0);
-            }
-        }
-        
-        charts.trend = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: normalizedDays === 1 ? 'Registros (24h)' : 'Registros (7d)',
-                    data: data,
-                    borderColor: 'rgba(6, 182, 212, 1)',
-                    backgroundColor: 'rgba(6, 182, 212, 0.1)',
-                    borderWidth: 3,
-                    fill: true,
-                    tension: 0.4,
-                    pointBackgroundColor: 'rgba(6, 182, 212, 1)',
-                    pointBorderColor: '#fff',
-                    pointBorderWidth: 2,
-                    pointRadius: 5,
-                    pointHoverRadius: 7
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: {
-                    intersect: false,
-                    mode: 'index'
-                },
-                plugins: {
-                    legend: {
-                        display: false
-                    }
-                },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        grid: {
-                            color: 'rgba(71, 85, 105, 0.3)'
-                        },
-                        ticks: {
-                            precision: 0
-                        }
-                    },
-                    x: {
-                        grid: {
-                            display: false
-                        }
-                    }
-                }
-            }
-        });
-    } catch (err) {
-        console.error('Error rendering trend chart:', err);
-    }
+    return dashboardOverview.renderTrendChart(days);
 }
 
 async function loadDashboard() {
-    if (!requireActiveSession()) return;
-    validateSectionBindings('dashboard', { notify: true });
-    try {
-        const stats = await api.getStatistics();
-        updateStats(stats);
-        
-        // Render charts
-        renderSuccessChart(stats);
-        renderBrandChart(stats);
-        await renderTrendChart(currentTrendRangeDays);
-        
-        const installations = await api.getInstallations({ limit: 5 });
-        renderRecentInstallations(installations);
-    } catch (err) {
-        console.error('Error cargando dashboard:', err);
-    }
+    return dashboardOverview.loadDashboard();
 }
 
 function renderRecentInstallations(installations) {
-    const container = document.getElementById('recentInstallations');
-    container.replaceChildren();
-
-    if (!installations || !installations.length) {
-        renderContextualEmptyState(container, {
-            title: 'Aún no hay registros recientes',
-            description: 'Cuando se genere actividad operativa, aparecerá aquí.',
-            actionLabel: currentUser && currentUser.role !== 'viewer' ? 'Crear registro manual' : '',
-            onAction: () => createManualRecordFromWeb(),
-            tone: 'info',
-        });
-        return;
-    }
-
-    const table = document.createElement('table');
-    const thead = document.createElement('thead');
-    const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'Atencion', 'Fecha'].forEach(label => {
-        const th = document.createElement('th');
-        th.textContent = label;
-        headerRow.appendChild(th);
-    });
-    thead.appendChild(headerRow);
-
-    const tbody = document.createElement('tbody');
-
-    installations.forEach(inst => {
-        const row = document.createElement('tr');
-
-        const idCell = document.createElement('td');
-        const strong = document.createElement('strong');
-        strong.textContent = `#${inst.id ?? 'N/A'}`;
-        idCell.appendChild(strong);
-
-        const clientCell = document.createElement('td');
-        clientCell.textContent = inst.client_name || 'N/A';
-
-        const brandCell = document.createElement('td');
-        brandCell.textContent = inst.driver_brand || 'N/A';
-
-        const attentionCell = document.createElement('td');
-        const attentionBadge = document.createElement('span');
-        const attentionMeta = buildRecordAttentionBadge(inst);
-        attentionBadge.className = `badge ${attentionMeta.stateClass}`;
-        setElementTextWithMaterialIcon(attentionBadge, attentionMeta.iconName, attentionMeta.label);
-        attentionCell.appendChild(attentionBadge);
-
-        const dateCell = document.createElement('td');
-        dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
-
-        row.append(idCell, clientCell, brandCell, attentionCell, dateCell);
-        tbody.appendChild(row);
-    });
-
-    table.append(thead, tbody);
-    container.appendChild(table);
+    return dashboardOverview.renderRecentInstallations(installations);
 }
 
 // Advanced Filters Functions
@@ -2122,46 +1304,19 @@ function formatDuration(value) {
 }
 
 function normalizeRecordAttentionState(value) {
-    const normalized = String(value || '').trim().toLowerCase();
-    if (normalized === 'critical' || normalized === 'in_progress' || normalized === 'open' || normalized === 'resolved') {
-        return normalized;
-    }
-    return 'clear';
+    return dashboardOverview.normalizeRecordAttentionState(value);
 }
 
 function recordAttentionStateLabel(value) {
-    const normalized = normalizeRecordAttentionState(value);
-    if (normalized === 'critical') return 'Crítica';
-    if (normalized === 'in_progress') return 'En curso';
-    if (normalized === 'open') return 'Abierta';
-    if (normalized === 'resolved') return 'Resuelta';
-    return 'Sin incidencias';
+    return dashboardOverview.recordAttentionStateLabel(value);
 }
 
 function recordAttentionStateIconName(value) {
-    const normalized = normalizeRecordAttentionState(value);
-    if (normalized === 'critical') return 'error';
-    if (normalized === 'in_progress') return 'pending';
-    if (normalized === 'open') return 'report_problem';
-    if (normalized === 'resolved') return 'check_circle';
-    return 'radio_button_unchecked';
+    return dashboardOverview.recordAttentionStateIconName(value);
 }
 
 function buildRecordAttentionBadge(record) {
-    const state = normalizeRecordAttentionState(record?.attention_state);
-    const activeCount = Number(record?.incident_active_count || 0);
-    const resolvedCount = Number(record?.incident_resolved_count || 0);
-    let countLabel = '';
-    if (state === 'resolved' && resolvedCount > 0) {
-        countLabel = ` (${resolvedCount})`;
-    } else if (activeCount > 0) {
-        countLabel = ` (${activeCount})`;
-    }
-    return {
-        stateClass: `attention-${state}`,
-        iconName: recordAttentionStateIconName(state),
-        label: `${recordAttentionStateLabel(state)}${countLabel}`,
-    };
+    return dashboardOverview.buildRecordAttentionBadge(record);
 }
 
 // Export Functions
@@ -2660,20 +1815,8 @@ function renderInstallationsTable(installations) {
 }
 
 async function showIncidentsForInstallation(installationId) {
-    if (!requireActiveSession()) return;
-    currentSelectedInstallationId = Number.parseInt(String(installationId), 10);
-    const container = document.getElementById('incidentsList');
-    document.querySelector('[data-section="incidents"]').click();
-    container.innerHTML = '<p class="loading">Cargando incidencias...</p>';
-    
-    try {
-        const data = await api.getIncidents(installationId);
-        renderIncidents(data.incidents || [], installationId);
-    } catch (err) {
-        container.innerHTML = '<p class="error">Error cargando incidencias</p>';
-    }
+    return dashboardIncidents.showIncidentsForInstallation(installationId);
 }
-
 function normalizeAssetStatusLabel(status) {
     const normalized = String(status || '').trim().toLowerCase();
     if (!normalized) return 'active';
@@ -2723,1399 +1866,82 @@ function normalizeIncidentChecklistItems(value) {
     return [];
 }
 
-function createIncidentHighlightChip(text, tone = 'neutral') {
-    const chip = document.createElement('span');
-    chip.className = 'incident-highlight-chip';
-    chip.dataset.tone = tone;
-    chip.textContent = text;
-    return chip;
-}
-
-function appendIncidentHighlights(parent, incident, options = {}) {
-    const highlights = document.createElement('div');
-    highlights.className = 'incident-highlights';
-
-    const installationId = parseStrictInteger(options.installationId ?? incident?.installation_id);
-    const assetId = parseStrictInteger(options.assetId ?? incident?.asset_id);
-    const statusValue = normalizeIncidentStatus(incident?.incident_status);
-    const estimatedDurationSeconds = resolveIncidentEstimatedDurationSeconds(incident);
-    const realDurationSeconds = resolveIncidentRealDurationSeconds(incident);
-
-    highlights.appendChild(
-        createIncidentHighlightChip(
-            `Tiempo estimado: ${formatDuration(estimatedDurationSeconds)}`,
-            estimatedDurationSeconds > 0 ? 'accent' : 'neutral',
-        ),
-    );
-
-    if (Number.isInteger(realDurationSeconds) && realDurationSeconds >= 0) {
-        const runtimeChip = createIncidentHighlightChip(
-            `Tiempo real: ${formatDuration(realDurationSeconds)}${statusValue === 'in_progress' ? ' (en curso)' : ''}`,
-            statusValue === 'resolved' ? 'resolved' : statusValue,
-        );
-        if (statusValue === 'in_progress') {
-            const runtimeStartMs = resolveIncidentRuntimeStartMs(incident);
-            if (Number.isFinite(runtimeStartMs) && runtimeStartMs > 0) {
-                runtimeChip.dataset.runtimeLive = '1';
-                runtimeChip.dataset.runtimeStartMs = String(runtimeStartMs);
-                ensureIncidentRuntimeTicker();
-            }
-        }
-        highlights.appendChild(runtimeChip);
-    }
-
-    highlights.appendChild(
-        createIncidentHighlightChip(
-            Number.isInteger(installationId) && installationId > 0
-                ? `Registro #${installationId}`
-                : 'Registro: auto/contexto',
-            'info',
-        ),
-    );
-
-    if (Number.isInteger(assetId) && assetId > 0) {
-        highlights.appendChild(
-            createIncidentHighlightChip(
-                `Equipo #${assetId}`,
-                options.assetTone || 'neutral',
-            ),
-        );
-    }
-
-    parent.appendChild(highlights);
-}
-
-function formatIncidentCreatedAtText(value) {
-    return value
-        ? `Creada: ${new Date(value).toLocaleString('es-ES')}`
-        : 'Creada: -';
-}
-
-function appendIncidentResolutionSummary(parent, incident) {
-    const statusValue = normalizeIncidentStatus(incident?.incident_status);
-    const resolutionNote = String(incident?.resolution_note || '').trim();
-    if (!resolutionNote && statusValue !== 'resolved') return;
-
-    const resolutionPanel = document.createElement('div');
-    resolutionPanel.className = 'incident-resolution-panel';
-    resolutionPanel.dataset.status = statusValue;
-
-    const resolutionHeader = document.createElement('div');
-    resolutionHeader.className = 'incident-resolution-header';
-
-    const resolutionLabel = document.createElement('small');
-    resolutionLabel.className = 'asset-muted';
-    resolutionLabel.textContent = 'Resolución';
-
-    const resolutionState = document.createElement('span');
-    resolutionState.className = 'incident-resolution-state';
-    setElementTextWithMaterialIcon(
-        resolutionState,
-        statusValue === 'resolved' ? 'verified' : 'pending_actions',
-        statusValue === 'resolved' ? 'Cierre registrado' : 'Pendiente de cierre',
-    );
-
-    resolutionHeader.append(resolutionLabel, resolutionState);
-
-    const resolutionBody = document.createElement('p');
-    resolutionBody.className = 'incident-resolution-text';
-    resolutionBody.textContent = resolutionNote || 'Incidencia marcada como resuelta sin nota de resolución.';
-
-    resolutionPanel.append(resolutionHeader, resolutionBody);
-
-    const metaParts = [];
-    if (incident?.resolved_at) {
-        metaParts.push(`Resuelta: ${new Date(incident.resolved_at).toLocaleString('es-ES')}`);
-    }
-    const resolvedBy = String(incident?.resolved_by || incident?.status_updated_by || '').trim();
-    if (resolvedBy) {
-        metaParts.push(`por ${resolvedBy}`);
-    }
-    if (metaParts.length) {
-        const resolutionMeta = document.createElement('small');
-        resolutionMeta.className = 'incident-resolution-meta';
-        resolutionMeta.textContent = metaParts.join(' · ');
-        resolutionPanel.appendChild(resolutionMeta);
-    }
-
-    parent.appendChild(resolutionPanel);
-}
-
-function decorateIncidentActionButton(button, actionKey, label, iconName) {
-    if (!(button instanceof HTMLElement)) return;
-    button.classList.add('incident-action-btn');
-    button.dataset.action = String(actionKey || 'custom').trim() || 'custom';
-    setElementTextWithMaterialIcon(button, iconName, label);
-}
-
-function buildIncidentStatusUpdateOptions(incident, options = {}) {
-    const updateOptions = {};
-    const installationCandidate = options.installationId ?? incident?.installation_id;
-    const parsedInstallationId = parseStrictInteger(installationCandidate);
-    if (Number.isInteger(parsedInstallationId) && parsedInstallationId > 0) {
-        updateOptions.installationId = parsedInstallationId;
-    }
-
-    const parsedAssetId = parseStrictInteger(options.assetId);
-    if (Number.isInteger(parsedAssetId) && parsedAssetId > 0) {
-        updateOptions.assetId = parsedAssetId;
-    }
-    return updateOptions;
-}
-
-async function refreshIncidentContext(options = {}) {
-    const parsedAssetId = parseStrictInteger(options.assetId);
-    if (Number.isInteger(parsedAssetId) && parsedAssetId > 0) {
-        await loadAssetDetail(parsedAssetId, { keepSelection: true });
-        return;
-    }
-
-    const parsedInstallationId = parseStrictInteger(options.installationId);
-    if (Number.isInteger(parsedInstallationId) && parsedInstallationId > 0) {
-        await showIncidentsForInstallation(parsedInstallationId);
-        return;
-    }
-
-    const activeAssetsSection = document.getElementById('assetsSection')?.classList.contains('active');
-    const activeIncidentsSection = document.getElementById('incidentsSection')?.classList.contains('active');
-
-    if (activeAssetsSection && Number.isInteger(currentSelectedAssetId) && currentSelectedAssetId > 0) {
-        await loadAssetDetail(currentSelectedAssetId, { keepSelection: true });
-        return;
-    }
-
-    if (activeIncidentsSection && Number.isInteger(currentSelectedInstallationId) && currentSelectedInstallationId > 0) {
-        await showIncidentsForInstallation(currentSelectedInstallationId);
-        return;
-    }
-
-    if (Number.isInteger(currentSelectedInstallationId) && currentSelectedInstallationId > 0) {
-        await showIncidentsForInstallation(currentSelectedInstallationId);
-        return;
-    }
-
-    if (Number.isInteger(currentSelectedAssetId) && currentSelectedAssetId > 0) {
-        await loadAssetDetail(currentSelectedAssetId, { keepSelection: true });
-    }
-}
-
-function parseChecklistItemsFromMultiline(value) {
-    return String(value || '')
-        .split('\n')
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0);
-}
-
-function dedupeChecklistItems(values) {
-    const result = [];
-    const seen = new Set();
-    for (const rawValue of values || []) {
-        const item = String(rawValue || '').trim();
-        if (!item || seen.has(item)) continue;
-        seen.add(item);
-        result.push(item);
-        if (result.length >= 30) break;
-    }
-    return result;
-}
-
 async function updateIncidentEvidenceFromWeb(incident, options = {}) {
-    if (!requireActiveSession()) return;
-    const incidentId = parseStrictInteger(incident?.id);
-    if (!Number.isInteger(incidentId) || incidentId <= 0) {
-        showNotification('Incidencia invalida para actualizar evidencia.', 'error');
-        return;
-    }
-    if (!canCurrentUserEditAssets()) {
-        showNotification('Solo admin/super_admin puede actualizar evidencia.', 'warning');
-        return;
-    }
-
-    const currentChecklist = normalizeIncidentChecklistItems(incident?.checklist_items);
-    const currentEvidenceNote = String(incident?.evidence_note || '').trim();
-    const selectedPresetItems = currentChecklist.filter((item) => INCIDENT_CHECKLIST_PRESETS.includes(item));
-    const customChecklistItems = currentChecklist.filter((item) => !INCIDENT_CHECKLIST_PRESETS.includes(item));
-
-    const presetChecklistHtml = INCIDENT_CHECKLIST_PRESETS.map((label, index) => {
-        const checked = selectedPresetItems.includes(label) ? 'checked' : '';
-        return `
-            <label class="action-checkbox" for="actionIncidentChecklistPreset-${index}">
-                <input type="checkbox" id="actionIncidentChecklistPreset-${index}" name="actionIncidentChecklistPreset" value="${escapeHtml(label)}" ${checked}>
-                <span>${escapeHtml(label)}</span>
-            </label>
-        `;
-    }).join('');
-
-    openActionModal({
-        title: `Evidencia incidencia #${incidentId}`,
-        subtitle: 'Actualiza checklist y nota operativa en el registro de evidencia.',
-        submitLabel: 'Guardar evidencia',
-        focusId: 'actionIncidentEvidenceNote',
-        fieldsHtml: `
-            <div class="input-group">
-                <label>Checklist sugerido</label>
-                <div class="incident-checklist-grid">
-                    ${presetChecklistHtml}
-                </div>
-            </div>
-            <div class="input-group">
-                <label for="actionIncidentChecklistCustom">Checklist adicional (una linea por item)</label>
-                <textarea id="actionIncidentChecklistCustom" rows="3" placeholder="Ej: Foto del serial\nValidacion con supervisor">${escapeHtml(customChecklistItems.join('\n'))}</textarea>
-            </div>
-            <div class="input-group">
-                <label for="actionIncidentEvidenceNote">Nota operativa</label>
-                <textarea id="actionIncidentEvidenceNote" rows="4" placeholder="Resumen operativo de evidencia">${escapeHtml(currentEvidenceNote)}</textarea>
-            </div>
-        `,
-        onSubmit: async () => {
-            const selectedPresets = Array.from(
-                document.querySelectorAll('input[name="actionIncidentChecklistPreset"]:checked'),
-            ).map((input) => String(input.value || '').trim());
-            const customItems = parseChecklistItemsFromMultiline(
-                document.getElementById('actionIncidentChecklistCustom')?.value,
-            );
-            const checklistItems = dedupeChecklistItems([...selectedPresets, ...customItems]);
-            const evidenceNote = String(
-                document.getElementById('actionIncidentEvidenceNote')?.value || '',
-            ).trim();
-
-            if (!checklistItems.length && !evidenceNote) {
-                setActionModalError('Debes cargar checklist o nota operativa.');
-                return;
-            }
-
-            await api.updateIncidentEvidence(incidentId, {
-                checklist_items: checklistItems,
-                evidence_note: evidenceNote || null,
-            });
-            closeActionModal(true);
-            showNotification(`Evidencia actualizada en incidencia #${incidentId}`, 'success');
-            await refreshIncidentContext(options);
-        },
-    });
+    return dashboardIncidents.updateIncidentEvidenceFromWeb(incident, options);
 }
-
-function appendIncidentStatusActions(parent, incident, options = {}) {
-    const statusActions = document.createElement('div');
-    statusActions.className = 'incident-actions';
-    const incidentStatus = normalizeIncidentStatus(incident.incident_status);
-    const canUpdateIncident = canCurrentUserEditAssets();
-    const updateOptions = buildIncidentStatusUpdateOptions(incident, options);
-    const actionDefinitions = {
-        open: { label: 'Abrir', icon: 'radio_button_checked' },
-        in_progress: { label: 'En curso', icon: 'pending_actions' },
-        resolved: { label: 'Resolver', icon: 'task_alt' },
-    };
-
-    const makeStatusBtn = (statusValue) => {
-        const actionMeta = actionDefinitions[statusValue] || { label: statusValue, icon: '' };
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'btn-secondary';
-        decorateIncidentActionButton(button, statusValue, actionMeta.label, actionMeta.icon);
-        button.dataset.current = incidentStatus === statusValue ? 'true' : 'false';
-        button.disabled = !canUpdateIncident || incidentStatus === statusValue;
-        if (!canUpdateIncident) {
-            button.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
-        }
-        button.addEventListener('click', () => {
-            void updateIncidentStatusFromWeb(incident, statusValue, updateOptions);
-        });
-        return button;
-    };
-
-    const evidenceBtn = document.createElement('button');
-    evidenceBtn.type = 'button';
-    evidenceBtn.className = 'btn-secondary';
-    decorateIncidentActionButton(evidenceBtn, 'evidence', 'Evidencia', 'fact_check');
-    evidenceBtn.disabled = !canUpdateIncident;
-    if (!canUpdateIncident) {
-        evidenceBtn.title = 'Solo admin/super_admin puede actualizar evidencia';
-    }
-    evidenceBtn.addEventListener('click', () => {
-        void updateIncidentEvidenceFromWeb(incident, updateOptions);
-    });
-
-    statusActions.append(
-        makeStatusBtn('open'),
-        makeStatusBtn('in_progress'),
-        makeStatusBtn('resolved'),
-        evidenceBtn,
-    );
-    parent.appendChild(statusActions);
-    return statusActions;
-}
-
-function appendIncidentUploadPhotoAction(parent, incident, installationId, options = {}) {
-    const uploadPhotoBtn = document.createElement('button');
-    uploadPhotoBtn.type = 'button';
-    uploadPhotoBtn.className = 'btn-secondary';
-    const iconName = String(options.icon || '').trim();
-    const buttonLabel = String(options.label || 'Subir foto');
-    decorateIncidentActionButton(
-        uploadPhotoBtn,
-        'photo',
-        buttonLabel,
-        iconName || 'add_a_photo',
-    );
-    uploadPhotoBtn.classList.add('incident-upload-btn');
-    uploadPhotoBtn.addEventListener('click', () => {
-        void selectAndUploadIncidentPhoto(incident.id, installationId, {
-            assetId: parseStrictInteger(options.assetId),
-        });
-    });
-    parent.appendChild(uploadPhotoBtn);
-}
-
-async function appendIncidentPhotosGrid(parent, photos, options = {}) {
-    if (!Array.isArray(photos) || photos.length === 0) return;
-    const photosGrid = document.createElement('div');
-    photosGrid.className = 'photos-grid';
-
-    for (const photo of photos) {
-        const photoId = parseStrictInteger(photo?.id);
-        if (!Number.isInteger(photoId) || photoId <= 0) continue;
-        const photoUrl = await loadPhotoWithAuth(photoId);
-        if (!photoUrl) continue;
-
-        const image = document.createElement('img');
-        image.src = photoUrl;
-        image.className = 'photo-thumb';
-        image.alt = 'Foto de incidencia';
-        if (options.attachPhotoIdDataset === true) {
-            image.dataset.photoId = String(photoId);
-        }
-        image.addEventListener('click', () => viewPhoto(photoId));
-        photosGrid.appendChild(image);
-    }
-
-    if (photosGrid.childElementCount > 0) {
-        parent.appendChild(photosGrid);
-    }
-}
-
 async function updateIncidentStatusFromWeb(incident, targetStatus, options = {}) {
-    if (!requireActiveSession()) return;
-    const incidentId = Number.parseInt(String(incident?.id), 10);
-    if (!Number.isInteger(incidentId) || incidentId <= 0) {
-        showNotification('Incidencia invalida para actualizar estado.', 'error');
-        return;
-    }
-
-    const normalizedStatus = normalizeIncidentStatus(targetStatus);
-    const currentStatus = normalizeIncidentStatus(incident?.incident_status);
-    const applyStatusUpdate = async (resolutionNote = '') => {
-        try {
-            await api.updateIncidentStatus(incidentId, {
-                incident_status: normalizedStatus,
-                resolution_note: resolutionNote,
-                reporter_username: currentUser?.username || 'web_user',
-            });
-            showNotification(
-                `Incidencia #${incidentId} actualizada a "${incidentStatusLabel(normalizedStatus)}".`,
-                'success',
-            );
-            await refreshIncidentContext(options);
-        } catch (err) {
-            showNotification(`No se pudo actualizar estado: ${err.message || err}`, 'error');
-        }
-    };
-
-    if (normalizedStatus === 'resolved') {
-        const defaultNote = String(incident?.resolution_note || '').trim();
-        openActionModal({
-            title: `Resolver incidencia #${incidentId}`,
-            subtitle: 'Agrega una nota de resolución opcional antes de cerrar la incidencia.',
-            submitLabel: 'Resolver incidencia',
-            focusId: 'actionIncidentResolutionNote',
-            fieldsHtml: `
-                <div class="input-group">
-                    <label for="actionIncidentResolutionNote">Nota de resolución (opcional)</label>
-                    <textarea id="actionIncidentResolutionNote" rows="4" placeholder="Resumen de la solucion aplicada">${escapeHtml(defaultNote)}</textarea>
-                </div>
-            `,
-            onSubmit: async () => {
-                const resolutionNote = String(
-                    document.getElementById('actionIncidentResolutionNote')?.value || '',
-                ).trim();
-                await applyStatusUpdate(resolutionNote);
-                closeActionModal(true);
-            },
-        });
-        return;
-    }
-
-    if (currentStatus === 'resolved' && normalizedStatus !== 'resolved') {
-        const targetStatusLabel = incidentStatusLabel(normalizedStatus);
-        openActionConfirmModal({
-            title: `Reabrir incidencia #${incidentId}`,
-            subtitle: `La incidencia volverá al flujo activo y pasará a "${targetStatusLabel}".`,
-            submitLabel: `Cambiar a ${targetStatusLabel}`,
-            acknowledgementText: `Confirmo que quiero reabrir esta incidencia y moverla a "${targetStatusLabel}".`,
-            missingConfirmationMessage: 'Debes confirmar la reapertura para continuar.',
-            onSubmit: async () => {
-                await applyStatusUpdate('');
-                closeActionModal(true);
-            },
-        });
-        return;
-    }
-
-    await applyStatusUpdate('');
+    return dashboardIncidents.updateIncidentStatusFromWeb(incident, targetStatus, options);
 }
-
-async function loadAssets() {
-    if (!requireActiveSession()) return;
-    const tableContainer = document.getElementById('assetsTable');
-    const resultsCount = document.getElementById('assetsResultsCount');
-    const searchInput = document.getElementById('assetsSearchInput');
-    if (!tableContainer) return;
-
-    tableContainer.innerHTML = '<p class="loading">Cargando equipos...</p>';
-    if (resultsCount) {
-        resultsCount.innerHTML = '<span class="loading">Buscando...</span>';
-    }
-
-    try {
-        const search = String(searchInput?.value || '').trim();
-        const params = { limit: 200 };
-        if (search) {
-            params.search = search;
-        }
-
-        const response = await api.getAssets(params);
-        const assets = Array.isArray(response?.items) ? response.items : [];
-        currentAssetsData = assets;
-        renderAssetsTable(assets);
-
-        if (resultsCount) {
-            const count = assets.length;
-            resultsCount.innerHTML = `Mostrando <span class="count">${count}</span> equipo${count !== 1 ? 's' : ''}`;
-        }
-
-        if (currentSelectedAssetId) {
-            const selectedAsset = assets.find((item) => Number(item.id) === Number(currentSelectedAssetId));
-            if (selectedAsset) {
-                await loadAssetDetail(selectedAsset.id, { keepSelection: true });
-            }
-        }
-    } catch (err) {
-        tableContainer.innerHTML = '<p class="error">Error cargando equipos</p>';
-        if (resultsCount) {
-            resultsCount.textContent = 'Error al cargar';
-        }
-    }
+function deriveAssetAttentionMetaFromIncidents(incidents) {
+    return dashboardIncidents.deriveAssetAttentionMetaFromIncidents(incidents);
 }
-
-function formatDriverSize(bytes, sizeMb) {
-    const numericBytes = Number(bytes);
-    if (Number.isFinite(numericBytes) && numericBytes > 0) {
-        if (numericBytes >= 1024 * 1024) {
-            return `${(numericBytes / (1024 * 1024)).toFixed(2)} MB`;
-        }
-        return `${(numericBytes / 1024).toFixed(1)} KB`;
-    }
-    const numericMb = Number(sizeMb);
-    if (Number.isFinite(numericMb) && numericMb > 0) {
-        return `${numericMb.toFixed(2)} MB`;
-    }
-    return 'N/A';
+function sortAssetIncidentsByPriority(incidents) {
+    return dashboardIncidents.sortAssetIncidentsByPriority(incidents);
 }
-
-function updateDriverSelectedFileLabel() {
-    const label = document.getElementById('driversSelectedFileLabel');
-    if (!label) return;
-    if (!selectedDriverFile) {
-        label.textContent = 'Sin archivo seleccionado';
-        return;
-    }
-    label.textContent = `${selectedDriverFile.name} (${formatDriverSize(selectedDriverFile.size, null)})`;
+async function createIncidentForAsset(assetId) {
+    return dashboardIncidents.createIncidentForAsset(assetId);
 }
-
-async function loadDrivers() {
-    if (!requireActiveSession()) return;
-    const tableContainer = document.getElementById('driversTable');
-    const resultsCount = document.getElementById('driversResultsCount');
-    if (!tableContainer) return;
-
-    tableContainer.innerHTML = '<p class="loading">Cargando drivers...</p>';
-    if (resultsCount) {
-        resultsCount.innerHTML = '<span class="loading">Buscando...</span>';
-    }
-
-    try {
-        const response = await api.getDrivers({ limit: 200 });
-        const items = Array.isArray(response?.items) ? response.items : [];
-        currentDriversData = items;
-        renderDriversTable(items);
-
-        if (resultsCount) {
-            const count = items.length;
-            resultsCount.innerHTML = `Mostrando <span class="count">${count}</span> driver${count !== 1 ? 's' : ''}`;
-        }
-    } catch (err) {
-        tableContainer.replaceChildren();
-        renderContextualEmptyState(tableContainer, {
-            title: 'No se pudieron cargar los drivers',
-            description: 'Intenta nuevamente en unos segundos.',
-            actionLabel: 'Reintentar',
-            onAction: () => loadDrivers(),
-            tone: 'warning',
-        });
-        if (resultsCount) {
-            resultsCount.textContent = 'Error al cargar';
-        }
-    }
+async function appendIncidentCard(parent, incident, options = {}) {
+    return dashboardIncidents.appendIncidentCard(parent, incident, options);
 }
-
-function renderDriversTable(drivers) {
-    const container = document.getElementById('driversTable');
-    if (!container) return;
-    container.replaceChildren();
-
-    if (!drivers || !drivers.length) {
-        renderContextualEmptyState(container, {
-            title: 'Todavía no hay drivers cargados',
-            description: 'Sube el primer paquete para habilitar instalaciónes por marca y versión.',
-            actionLabel: 'Subir primer driver',
-            onAction: () => document.getElementById('driverPickFileBtn')?.click(),
-            tone: 'info',
-        });
-        return;
-    }
-
-    const table = document.createElement('table');
-    const thead = document.createElement('thead');
-    const headerRow = document.createElement('tr');
-    ['Marca', 'Versión', 'Archivo', 'Tamaño', 'Subido', 'Acciónes'].forEach((label) => {
-        const th = document.createElement('th');
-        th.textContent = label;
-        headerRow.appendChild(th);
-    });
-    thead.appendChild(headerRow);
-
-    const tbody = document.createElement('tbody');
-    for (const driver of drivers) {
-        const row = document.createElement('tr');
-
-        const brandCell = document.createElement('td');
-        brandCell.textContent = driver.brand || '-';
-
-        const versionCell = document.createElement('td');
-        versionCell.textContent = driver.version || '-';
-
-        const fileCell = document.createElement('td');
-        fileCell.textContent = driver.filename || '-';
-
-        const sizeCell = document.createElement('td');
-        sizeCell.textContent = formatDriverSize(driver.size_bytes, driver.size_mb);
-
-        const uploadedCell = document.createElement('td');
-        uploadedCell.textContent = driver.last_modified
-            ? String(driver.last_modified)
-            : (driver.uploaded ? new Date(driver.uploaded).toLocaleString('es-ES') : '-');
-
-        const actionsCell = document.createElement('td');
-        const downloadBtn = document.createElement('button');
-        downloadBtn.type = 'button';
-        downloadBtn.className = 'btn-secondary table-action-btn';
-        downloadBtn.textContent = 'Descargar';
-        downloadBtn.addEventListener('click', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const key = String(driver.key || '').trim();
-            if (!key) return;
-            window.open(`/web/drivers/download?key=${encodeURIComponent(key)}`, '_blank', 'noopener');
-        });
-
-        const deleteBtn = document.createElement('button');
-        deleteBtn.type = 'button';
-        deleteBtn.className = 'btn-secondary table-action-btn';
-        deleteBtn.textContent = 'Eliminar';
-        deleteBtn.classList.add('spaced-action-btn');
-        deleteBtn.addEventListener('click', async (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const key = String(driver.key || '').trim();
-            if (!key) return;
-            const driverLabel = String(`${driver.brand || ''} ${driver.version || ''}`).trim() || 'sin nombre';
-            openActionConfirmModal({
-                title: 'Eliminar driver',
-                subtitle: `Confirma la eliminación de ${driverLabel}. Esta acción no se puede deshacer.`,
-                submitLabel: 'Eliminar driver',
-                acknowledgementText: 'Entiendo que este driver sera eliminado permanentemente.',
-                missingConfirmationMessage: 'Debes confirmar la eliminación para continuar.',
-                onSubmit: async () => {
-                    await api.deleteDriver(key);
-                    closeActionModal(true);
-                    showNotification('Driver eliminado', 'success');
-                    await loadDrivers();
-                },
-            });
-        });
-
-        actionsCell.append(downloadBtn, deleteBtn);
-
-        row.append(brandCell, versionCell, fileCell, sizeCell, uploadedCell, actionsCell);
-        tbody.appendChild(row);
-    }
-
-    table.append(thead, tbody);
-    container.appendChild(table);
-}
-
-async function uploadDriverFromWeb() {
-    if (!requireActiveSession()) return;
-    const brandInput = document.getElementById('driverBrandInput');
-    const versionInput = document.getElementById('driverVersionInput');
-    const descriptionInput = document.getElementById('driverDescriptionInput');
-    const uploadBtn = document.getElementById('driverUploadBtn');
-    const brand = String(brandInput?.value || '').trim();
-    const version = String(versionInput?.value || '').trim();
-    const description = String(descriptionInput?.value || '').trim();
-
-    if (!brand) {
-        showNotification('La marca es obligatoria.', 'error');
-        return;
-    }
-    if (!version) {
-        showNotification('La versión es obligatoria.', 'error');
-        return;
-    }
-    if (!selectedDriverFile) {
-        showNotification('Selecciona un archivo para subir.', 'error');
-        return;
-    }
-
-    const previousText = uploadBtn?.textContent || '';
-    if (uploadBtn) {
-        uploadBtn.disabled = true;
-        uploadBtn.textContent = 'Subiendo...';
-    }
-
-    try {
-        await api.uploadDriver(selectedDriverFile, {
-            brand,
-            version,
-            description
-        });
-        showNotification(`Driver ${brand} ${version} subido correctamente.`, 'success');
-        selectedDriverFile = null;
-        if (descriptionInput) descriptionInput.value = '';
-        if (versionInput) versionInput.value = '';
-        if (brandInput) brandInput.value = '';
-        updateDriverSelectedFileLabel();
-        await loadDrivers();
-    } catch (err) {
-        showNotification(`No se pudo subir driver: ${err.message || err}`, 'error');
-    } finally {
-        if (uploadBtn) {
-            uploadBtn.disabled = false;
-            uploadBtn.textContent = previousText || 'Subir driver';
-        }
-    }
+async function loadAssetDetail(assetId, options = {}) {
+    return dashboardAssets.loadAssetDetail(assetId, options);
 }
 
 function formatAssetUpdatedMeta(rawValue) {
-    const parsedMs = Date.parse(String(rawValue || ''));
-    if (!Number.isFinite(parsedMs)) {
-        return { relative: '-', absolute: '-' };
-    }
-    const absolute = new Date(parsedMs).toLocaleString('es-ES');
-    const diffSeconds = Math.max(0, Math.floor((Date.now() - parsedMs) / 1000));
-    if (diffSeconds < 60) return { relative: 'hace instantes', absolute };
-    if (diffSeconds < 3600) return { relative: `hace ${Math.floor(diffSeconds / 60)} min`, absolute };
-    if (diffSeconds < 86400) return { relative: `hace ${Math.floor(diffSeconds / 3600)} h`, absolute };
-    return { relative: `hace ${Math.floor(diffSeconds / 86400)} d`, absolute };
+    return dashboardAssets.formatAssetUpdatedMeta(rawValue);
 }
 
 function resolveAssetOperationalStateMeta(rawStatus) {
-    const normalized = String(rawStatus || '').trim().toLowerCase();
-    if (normalized === 'active') return { label: 'Operativo', toneClass: 'asset-active' };
-    if (normalized === 'maintenance') return { label: 'Mantenimiento', toneClass: 'asset-maintenance' };
-    if (normalized === 'inactive') return { label: 'Inactivo', toneClass: 'asset-inactive' };
-    if (normalized === 'retired') return { label: 'Retirado', toneClass: 'asset-retired' };
-    return { label: normalizeAssetStatusLabel(rawStatus), toneClass: 'unknown' };
-}
-
-function deriveAssetAttentionMetaFromIncidents(incidents) {
-    const values = Array.isArray(incidents) ? incidents : [];
-    const activeIncidents = values.filter(
-        (incident) => normalizeIncidentStatus(incident?.incident_status) !== 'resolved',
-    );
-    if (!activeIncidents.length) {
-        return {
-            state: 'clear',
-            label: 'Sin incidencias activas',
-            badgeClass: 'attention-clear',
-            iconName: recordAttentionStateIconName('clear'),
-        };
-    }
-
-    const hasCritical = activeIncidents.some(
-        (incident) => normalizeSeverity(incident?.severity) === 'critical',
-    );
-    if (hasCritical) {
-        return {
-            state: 'critical',
-            label: `Critica (${activeIncidents.length})`,
-            badgeClass: 'attention-critical',
-            iconName: recordAttentionStateIconName('critical'),
-        };
-    }
-
-    const hasInProgress = activeIncidents.some(
-        (incident) => normalizeIncidentStatus(incident?.incident_status) === 'in_progress',
-    );
-    if (hasInProgress) {
-        return {
-            state: 'in_progress',
-            label: `En curso (${activeIncidents.length})`,
-            badgeClass: 'attention-in_progress',
-            iconName: recordAttentionStateIconName('in_progress'),
-        };
-    }
-
-    return {
-        state: 'open',
-        label: `Abiertas (${activeIncidents.length})`,
-        badgeClass: 'attention-open',
-        iconName: recordAttentionStateIconName('open'),
-    };
-}
-
-function sortAssetIncidentsByPriority(incidents) {
-    const values = Array.isArray(incidents) ? [...incidents] : [];
-    const statusRank = { in_progress: 0, open: 1, resolved: 2 };
-    const severityRank = { critical: 0, high: 1, medium: 2, low: 3 };
-    const parseTime = (value) => {
-        const parsed = Date.parse(String(value || ''));
-        return Number.isFinite(parsed) ? parsed : 0;
-    };
-
-    values.sort((left, right) => {
-        const leftStatus = normalizeIncidentStatus(left?.incident_status);
-        const rightStatus = normalizeIncidentStatus(right?.incident_status);
-        const byStatus = (statusRank[leftStatus] ?? 9) - (statusRank[rightStatus] ?? 9);
-        if (byStatus !== 0) return byStatus;
-
-        const leftSeverity = normalizeSeverity(left?.severity);
-        const rightSeverity = normalizeSeverity(right?.severity);
-        const bySeverity = (severityRank[leftSeverity] ?? 9) - (severityRank[rightSeverity] ?? 9);
-        if (bySeverity !== 0) return bySeverity;
-
-        return parseTime(right?.created_at) - parseTime(left?.created_at);
-    });
-    return values;
-}
-
-function renderAssetsTable(assets) {
-    const container = document.getElementById('assetsTable');
-    if (!container) return;
-    container.replaceChildren();
-
-    if (!assets || !assets.length) {
-        renderContextualEmptyState(container, {
-            title: 'No hay equipos registrados',
-            description: 'Crea un equipo con QR para asociarlo a registros o incidencias.',
-            actionLabel: 'Nuevo equipo + QR',
-            onAction: () => document.getElementById('assetsCreateQrBtn')?.click(),
-            tone: 'info',
-        });
-        return;
-    }
-
-    const table = document.createElement('table');
-    const thead = document.createElement('thead');
-    const headerRow = document.createElement('tr');
-    ['Equipo', 'Cliente', 'Estado', 'Actualizado', 'Acciones'].forEach((label) => {
-        const th = document.createElement('th');
-        th.textContent = label;
-        headerRow.appendChild(th);
-    });
-    thead.appendChild(headerRow);
-
-    const tbody = document.createElement('tbody');
-    for (const asset of assets) {
-        const row = document.createElement('tr');
-        row.dataset.assetId = String(asset.id || '');
-
-        const equipmentCell = document.createElement('td');
-        const equipmentWrap = document.createElement('div');
-        equipmentWrap.className = 'asset-table-equipment';
-        const equipmentTitle = document.createElement('strong');
-        equipmentTitle.className = 'asset-table-title';
-        equipmentTitle.textContent = asset.external_code || `#${asset.id ?? 'N/A'}`;
-        const equipmentMeta = document.createElement('small');
-        equipmentMeta.className = 'asset-table-meta';
-        const metaSegments = [asset.brand || '-', asset.model || '-', asset.serial_number || '-'];
-        equipmentMeta.textContent = metaSegments.join(' | ');
-        equipmentWrap.append(equipmentTitle, equipmentMeta);
-        equipmentCell.appendChild(equipmentWrap);
-
-        const clientCell = document.createElement('td');
-        const clientWrap = document.createElement('div');
-        clientWrap.className = 'asset-table-client';
-        const clientTitle = document.createElement('strong');
-        clientTitle.className = 'asset-table-title';
-        clientTitle.textContent = asset.client_name || '-';
-        const clientMeta = document.createElement('small');
-        clientMeta.className = 'asset-table-meta';
-        clientMeta.textContent = `ID #${asset.id ?? 'N/A'}`;
-        clientWrap.append(clientTitle, clientMeta);
-        clientCell.appendChild(clientWrap);
-
-        const statusCell = document.createElement('td');
-        const statusBadge = document.createElement('span');
-        const stateMeta = resolveAssetOperationalStateMeta(asset.status);
-        statusBadge.className = `badge ${stateMeta.toneClass}`;
-        statusBadge.textContent = stateMeta.label;
-        statusCell.appendChild(statusBadge);
-
-        const updatedCell = document.createElement('td');
-        const updatedWrap = document.createElement('div');
-        updatedWrap.className = 'asset-table-updated';
-        const updatedMeta = formatAssetUpdatedMeta(asset.updated_at);
-        const updatedRelative = document.createElement('strong');
-        updatedRelative.className = 'asset-table-title';
-        updatedRelative.textContent = updatedMeta.relative;
-        const updatedAbsolute = document.createElement('small');
-        updatedAbsolute.className = 'asset-table-meta';
-        updatedAbsolute.textContent = updatedMeta.absolute;
-        updatedWrap.append(updatedRelative, updatedAbsolute);
-        updatedCell.appendChild(updatedWrap);
-
-        const actionsCell = document.createElement('td');
-        actionsCell.className = 'asset-table-actions';
-
-        const detailBtn = document.createElement('button');
-        detailBtn.type = 'button';
-        detailBtn.className = 'btn-secondary table-action-btn';
-        detailBtn.textContent = 'Detalle';
-        detailBtn.addEventListener('click', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            void loadAssetDetail(asset.id);
-        });
-
-        const incidentBtn = document.createElement('button');
-        incidentBtn.type = 'button';
-        incidentBtn.className = 'btn-secondary table-action-btn';
-        incidentBtn.textContent = 'Incidencia';
-        incidentBtn.classList.add('spaced-action-btn');
-        incidentBtn.addEventListener('click', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            void createIncidentForAsset(asset.id);
-        });
-
-        actionsCell.append(detailBtn, incidentBtn);
-
-        row.append(equipmentCell, clientCell, statusCell, updatedCell, actionsCell);
-        row.addEventListener('click', () => {
-            void loadAssetDetail(asset.id);
-        });
-        makeTableRowKeyboardAccessible(
-            row,`Abrir detalle del equipo ${asset.external_code || `#${asset.id}`}`,
-        );
-        tbody.appendChild(row);
-    }
-
-    table.append(thead, tbody);
-    container.appendChild(table);
-}
-
-async function createIncidentForAsset(assetId) {
-    if (!requireActiveSession()) return;
-    const numericAssetId = Number.parseInt(String(assetId), 10);
-    if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
-        showNotification('asset_id invalido.', 'error');
-        return;
-    }
-
-    try {
-        const detail = await api.getAssetIncidents(numericAssetId, { limit: 1 });
-        const activeInstallationId = Number(detail?.active_link?.installation_id);
-        createIncidentFromWeb(activeInstallationId, {
-            assetId: numericAssetId,
-            activeInstallationId,
-        });
-    } catch (err) {
-        showNotification(`No se pudo crear incidencia del equipo: ${err.message || err}`, 'error');
-    }
-}
-
-async function linkAssetFromDetail(assetId) {
-    if (!requireActiveSession()) return;
-    const numericAssetId = Number.parseInt(String(assetId), 10);
-    if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
-        showNotification('asset_id invalido.', 'error');
-        return;
-    }
-    openAssetLinkModal({
-        assetId: numericAssetId,
-        notes: 'Vinculo manual desde detalle de equipo',
-    });
-}
-
-async function updateAssetStatusFromWeb(assetOrId, nextStatus) {
-    if (!requireActiveSession()) return;
-    if (!canCurrentUserEditAssets()) {
-        showNotification('Solo admin/super_admin puede cambiar estado de equipos.', 'warning');
-        return;
-    }
-
-    const rawId = typeof assetOrId === 'object' && assetOrId !== null
-        ? assetOrId.id
-        : assetOrId;
-    const numericAssetId = Number.parseInt(String(rawId), 10);
-    if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
-        showNotification('asset_id invalido.', 'error');
-        return;
-    }
-
-    const normalizedStatus = String(nextStatus || '').trim().toLowerCase();
-    const allowedStatuses = new Set(['active', 'inactive', 'retired', 'maintenance']);
-    if (!allowedStatuses.has(normalizedStatus)) {
-        showNotification('Estado de equipo invalido.', 'error');
-        return;
-    }
-
-    const rawCode = typeof assetOrId === 'object' && assetOrId !== null
-        ? assetOrId.external_code
-        : '';
-    const assetLabel = String(rawCode || `#${numericAssetId}`).trim() || `#${numericAssetId}`;
-    const isReactivation = normalizedStatus === 'active';
-
-    openActionConfirmModal({
-        title: isReactivation ? 'Reactivar equipo' : 'Dar de baja equipo',
-        subtitle: isReactivation
-            ? `Confirma la reactivacion del equipo ${assetLabel}.`
-            : `Confirma la baja logica del equipo ${assetLabel}. Podra reactivarse luego.`,
-        submitLabel: isReactivation ? 'Reactivar equipo' : 'Dar de baja',
-        acknowledgementText: isReactivation
-            ? 'Entiendo que este equipo volvera a estado activo.'
-            : 'Entiendo que este equipo quedara fuera de operacion.',
-        missingConfirmationMessage: 'Debes confirmar la accion para continuar.',
-        onSubmit: async () => {
-            await api.updateAsset(numericAssetId, { status: normalizedStatus });
-            closeActionModal(true);
-            showNotification(
-                isReactivation ? 'Equipo reactivado correctamente.' : 'Equipo dado de baja correctamente.',
-                'success',
-            );
-            await loadAssets();
-        },
-    });
-}
-
-async function deleteAssetFromWeb(assetOrId) {
-    if (!requireActiveSession()) return;
-    if (!canCurrentUserEditAssets()) {
-        showNotification('Solo admin/super_admin puede eliminar equipos.', 'warning');
-        return;
-    }
-
-    const rawId = typeof assetOrId === 'object' && assetOrId !== null
-        ? assetOrId.id
-        : assetOrId;
-    const numericAssetId = Number.parseInt(String(rawId), 10);
-    if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
-        showNotification('asset_id invalido.', 'error');
-        return;
-    }
-
-    const rawCode = typeof assetOrId === 'object' && assetOrId !== null
-        ? assetOrId.external_code
-        : '';
-    const assetLabel = String(rawCode || `#${numericAssetId}`).trim() || `#${numericAssetId}`;
-
-    openActionConfirmModal({
-        title: 'Eliminar equipo',
-        subtitle: `Confirma la eliminacion del equipo ${assetLabel}. Esta accion no se puede deshacer.`,
-        submitLabel: 'Eliminar equipo',
-        acknowledgementText: 'Entiendo que este equipo sera eliminado permanentemente.',
-        missingConfirmationMessage: 'Debes confirmar la eliminacion para continuar.',
-        onSubmit: async () => {
-            await api.deleteAsset(numericAssetId);
-            closeActionModal(true);
-            if (Number(currentSelectedAssetId) === numericAssetId) {
-                currentSelectedAssetId = null;
-                const detailContainer = document.getElementById('assetDetail');
-                if (detailContainer) {
-                    detailContainer.innerHTML = '<p class="loading">Selecciona un equipo para ver detalle.</p>';
-                }
-            }
-            showNotification('Equipo eliminado correctamente.', 'success');
-            await loadAssets();
-        },
-    });
-}
-
-async function loadAssetDetail(assetId, options = {}) {
-    if (!requireActiveSession()) return;
-    const numericAssetId = Number.parseInt(String(assetId), 10);
-    if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
-        return;
-    }
-    currentSelectedAssetId = numericAssetId;
-
-    const detailContainer = document.getElementById('assetDetail');
-    if (detailContainer && !options.keepSelection) {
-        detailContainer.innerHTML = '<p class="loading">Cargando detalle del equipo...</p>';
-    }
-
-    try {
-        const data = await api.getAssetIncidents(numericAssetId, { limit: 150 });
-        await renderAssetDetail(data);
-    } catch (err) {
-        if (detailContainer) {
-            detailContainer.innerHTML = `<p class="error">${escapeHtml(err.message || String(err))}</p>`;
-        }
-    }
-}
-
-function createAssetDetailMetaItem(label, value) {
-    const item = document.createElement('div');
-    item.className = 'asset-meta-item';
-    const title = document.createElement('small');
-    title.textContent = label;
-    const content = document.createElement('strong');
-    content.textContent = String(value || '-').trim() || '-';
-    item.append(title, content);
-    return item;
-}
-
-function appendIncidentEvidenceSummary(parent, incident) {
-    const evidenceWrap = document.createElement('div');
-    evidenceWrap.className = 'incident-evidence-block';
-
-    const checklistTitle = document.createElement('small');
-    checklistTitle.className = 'asset-muted';
-    checklistTitle.textContent = 'Checklist de evidencia';
-    evidenceWrap.appendChild(checklistTitle);
-
-    const checklistItems = normalizeIncidentChecklistItems(incident?.checklist_items);
-    if (checklistItems.length) {
-        const checklistList = document.createElement('div');
-        checklistList.className = 'incident-checklist-list';
-        for (const item of checklistItems) {
-            checklistList.appendChild(createIncidentHighlightChip(item, 'info'));
-        }
-        evidenceWrap.appendChild(checklistList);
-    } else {
-        const checklistEmpty = document.createElement('small');
-        checklistEmpty.className = 'asset-muted';
-        checklistEmpty.textContent = 'Sin checklist cargado';
-        evidenceWrap.appendChild(checklistEmpty);
-    }
-
-    const evidenceNote = String(incident?.evidence_note || '').trim();
-    if (evidenceNote) {
-        const noteLine = document.createElement('small');
-        noteLine.className = 'asset-muted incident-meta-line';
-        noteLine.textContent = `Nota operativa: ${evidenceNote}`;
-        evidenceWrap.appendChild(noteLine);
-    }
-
-    parent.appendChild(evidenceWrap);
-}
-
-async function appendIncidentCard(parent, incident, options = {}) {
-    const incidentCard = document.createElement('div');
-    const statusValue = normalizeIncidentStatus(incident?.incident_status);
-    const severityValue = normalizeSeverity(incident?.severity || 'medium');
-    incidentCard.className = 'incident-card incident-card-detailed';
-    incidentCard.dataset.status = statusValue;
-    incidentCard.dataset.severity = severityValue;
-
-    const incidentHeader = document.createElement('div');
-    incidentHeader.className = 'incident-header';
-
-    const headingBlock = document.createElement('div');
-    headingBlock.className = 'incident-card-heading';
-
-    const leftMeta = document.createElement('div');
-    leftMeta.className = 'incident-card-header-left';
-
-    const severityBadge = document.createElement('span');
-    severityBadge.className = `badge ${severityValue}`;
-    setElementTextWithMaterialIcon(
-        severityBadge,
-        getSeverityIconName(incident?.severity),
-        String(incident?.severity || 'medium').toUpperCase(),
-    );
-
-    const statusBadge = document.createElement('span');
-    statusBadge.className = `badge attention-${statusValue}`;
-    setElementTextWithMaterialIcon(
-        statusBadge,
-        recordAttentionStateIconName(statusValue),
-        incidentStatusLabel(statusValue),
-    );
-
-    const incidentId = parseStrictInteger(incident?.id);
-    const incidentRef = document.createElement('small');
-    incidentRef.className = 'asset-muted';
-    incidentRef.textContent = Number.isInteger(incidentId) && incidentId > 0
-        ? `Inc #${incidentId}`
-        : 'Incidencia';
-
-    leftMeta.append(severityBadge, statusBadge, incidentRef);
-    headingBlock.appendChild(leftMeta);
-
-    if (options.showReporter === true) {
-        const reporter = document.createElement('small');
-        reporter.className = 'incident-reporter-line';
-        reporter.textContent = 'por ';
-        const reporterStrong = document.createElement('strong');
-        reporterStrong.textContent = String(incident?.reporter_username || 'desconocido').trim() || 'desconocido';
-        reporter.appendChild(reporterStrong);
-        headingBlock.appendChild(reporter);
-    }
-
-    const createdAt = document.createElement('small');
-    createdAt.className = 'asset-muted';
-    createdAt.textContent = formatIncidentCreatedAtText(incident?.created_at);
-    incidentHeader.append(headingBlock, createdAt);
-    incidentCard.appendChild(incidentHeader);
-
-    const note = document.createElement('p');
-    note.className = 'incident-note-text';
-    note.textContent = String(incident?.note || '').trim() || 'Sin detalle operativo.';
-    incidentCard.appendChild(note);
-
-    appendIncidentHighlights(incidentCard, incident, {
-        installationId: parseStrictInteger(options.installationId ?? incident?.installation_id),
-        assetId: options.includeAssetChip === true ? parseStrictInteger(options.assetId ?? incident?.asset_id) : null,
-        assetTone: options.assetTone || 'neutral',
-    });
-
-    appendIncidentEvidenceSummary(incidentCard, incident);
-    appendIncidentResolutionSummary(incidentCard, incident);
-
-    const actions = appendIncidentStatusActions(incidentCard, incident, {
-        assetId: parseStrictInteger(options.assetId),
-        installationId: parseStrictInteger(options.installationId ?? incident?.installation_id),
-    });
-    appendIncidentUploadPhotoAction(actions, incident, options.installationId ?? incident.installation_id, {
-        label: options.uploadLabel || 'Subir foto',
-        icon: options.uploadIcon || 'add_a_photo',
-        assetId: parseStrictInteger(options.assetId),
-    });
-    await appendIncidentPhotosGrid(incidentCard, incident.photos, {
-        attachPhotoIdDataset: options.attachPhotoIdDataset === true,
-    });
-    parent.appendChild(incidentCard);
+    return dashboardAssets.resolveAssetOperationalStateMeta(rawStatus);
 }
 
 async function renderAssetDetail(data) {
-    const container = document.getElementById('assetDetail');
-    if (!container) return;
-    container.replaceChildren();
+    return dashboardAssets.renderAssetDetail(data);
+}
 
-    const asset = data?.asset;
-    if (!asset) {
-        const message = document.createElement('p');
-        message.className = 'loading';
-        message.textContent = 'No hay detalle disponible para este equipo.';
-        container.appendChild(message);
-        return;
-    }
+async function loadAssets() {
+    return dashboardAssets.loadAssets();
+}
 
-    const incidents = sortAssetIncidentsByPriority(data?.incidents);
-    const activeIncidents = incidents.filter(
-        (incident) => normalizeIncidentStatus(incident?.incident_status) !== 'resolved',
-    );
-    const resolvedIncidents = incidents.filter(
-        (incident) => normalizeIncidentStatus(incident?.incident_status) === 'resolved',
-    );
-    const stateMeta = resolveAssetOperationalStateMeta(asset.status);
-    const attentionMeta = deriveAssetAttentionMetaFromIncidents(incidents);
-    const updatedMeta = formatAssetUpdatedMeta(asset.updated_at);
+function formatDriverSize(bytes, sizeMb) {
+    return dashboardDrivers.formatDriverSize(bytes, sizeMb);
+}
 
-    const summary = document.createElement('section');
-    summary.className = 'asset-detail-summary';
+function updateDriverSelectedFileLabel() {
+    return dashboardDrivers.updateDriverSelectedFileLabel();
+}
 
-    const summaryTop = document.createElement('div');
-    summaryTop.className = 'asset-detail-summary-top';
+function setSelectedDriverFile(file) {
+    return dashboardDrivers.setSelectedDriverFile(file);
+}
 
-    const identity = document.createElement('div');
-    identity.className = 'asset-detail-identity';
-    const code = document.createElement('h4');
-    code.className = 'asset-detail-code';
-    code.textContent = asset.external_code || `#${asset.id || '-'}`;
-    const subtitle = document.createElement('p');
-    subtitle.className = 'asset-muted';
-    subtitle.textContent = `${asset.brand || '-'} ${asset.model || '-'}`.trim();
-    identity.append(code, subtitle);
+async function loadDrivers() {
+    return dashboardDrivers.loadDrivers();
+}
 
-    const badges = document.createElement('div');
-    badges.className = 'asset-detail-badges';
-    const statusBadge = document.createElement('span');
-    statusBadge.className = `badge ${stateMeta.toneClass}`;
-    statusBadge.textContent = stateMeta.label;
-    const attentionBadge = document.createElement('span');
-    attentionBadge.className = `badge ${attentionMeta.badgeClass}`;
-    setElementTextWithMaterialIcon(attentionBadge, attentionMeta.iconName, attentionMeta.label);
-    badges.append(statusBadge, attentionBadge);
-    summaryTop.append(identity, badges);
-    summary.appendChild(summaryTop);
+function renderDriversTable(drivers) {
+    return dashboardDrivers.renderDriversTable(drivers);
+}
 
-    const metaGrid = document.createElement('div');
-    metaGrid.className = 'asset-meta-grid';
-    metaGrid.append(
-        createAssetDetailMetaItem('Cliente', asset.client_name || '-'),
-        createAssetDetailMetaItem('Serie', asset.serial_number || '-'),
-        createAssetDetailMetaItem('Actualizado', `${updatedMeta.relative} | ${updatedMeta.absolute}`),
-        createAssetDetailMetaItem('ID interno', `#${asset.id || '-'}`),
-    );
-    summary.appendChild(metaGrid);
-    container.appendChild(summary);
+async function uploadDriverFromWeb() {
+    return dashboardDrivers.uploadDriverFromWeb();
+}
 
-    const activeLink = data?.active_link;
-    const activeLinkBanner = document.createElement('div');
-    activeLinkBanner.className = 'asset-active-link-banner';
-    if (activeLink?.installation_id) {
-        activeLinkBanner.textContent =
-            `Instalacion activa #${activeLink.installation_id}` +
-            (activeLink.installation_client_name ? ` | ${activeLink.installation_client_name}` : '');
-    } else {
-        activeLinkBanner.textContent = 'Sin instalacion activa vinculada';
-    }
-    container.appendChild(activeLinkBanner);
+function renderAssetsTable(assets) {
+    return dashboardAssets.renderAssetsTable(assets);
+}
 
-    const toolbar = document.createElement('div');
-    toolbar.className = 'asset-detail-toolbar';
+async function linkAssetFromDetail(assetId) {
+    return dashboardAssets.linkAssetFromDetail(assetId);
+}
 
-    const createIncidentBtn = document.createElement('button');
-    createIncidentBtn.type = 'button';
-    createIncidentBtn.className = 'btn-primary';
-    createIncidentBtn.textContent = 'Crear incidencia';
-    createIncidentBtn.addEventListener('click', () => {
-        void createIncidentForAsset(asset.id);
-    });
+async function updateAssetStatusFromWeb(assetOrId, nextStatus) {
+    return dashboardAssets.updateAssetStatusFromWeb(assetOrId, nextStatus);
+}
 
-    const linkBtn = document.createElement('button');
-    linkBtn.type = 'button';
-    linkBtn.className = 'btn-secondary';
-    linkBtn.textContent = 'Vincular instalacion';
-    linkBtn.addEventListener('click', () => {
-        void linkAssetFromDetail(asset.id);
-    });
-
-    const qrBtn = document.createElement('button');
-    qrBtn.type = 'button';
-    qrBtn.className = 'btn-secondary';
-    qrBtn.textContent = 'Ver QR';
-    qrBtn.addEventListener('click', () => {
-        showQrModal({ type: 'asset', asset, readOnly: true });
-        generateQrPreview({
-            assetData: {
-                external_code: normalizeAssetCodeForQr(asset.external_code || ''),
-                brand: normalizeAssetFormText(asset.brand, QR_MAX_BRAND_LENGTH),
-                model: normalizeAssetFormText(asset.model, QR_MAX_MODEL_LENGTH),
-                serial_number: normalizeAssetFormText(asset.serial_number, QR_MAX_SERIAL_LENGTH),
-                client_name: normalizeAssetFormText(asset.client_name, QR_MAX_CLIENT_LENGTH),
-                notes: normalizeAssetFormText(asset.notes, QR_MAX_NOTES_LENGTH),
-            },
-        });
-    });
-    toolbar.append(createIncidentBtn, linkBtn, qrBtn);
-
-    if (canCurrentUserEditAssets()) {
-        const normalizedStatus = String(asset.status || '').trim().toLowerCase();
-        const isInactiveAsset = normalizedStatus === 'inactive' || normalizedStatus === 'retired';
-
-        const statusBtn = document.createElement('button');
-        statusBtn.type = 'button';
-        statusBtn.className = 'btn-secondary';
-        statusBtn.textContent = isInactiveAsset ? 'Reactivar equipo' : 'Dar de baja equipo';
-        statusBtn.addEventListener('click', () => {
-            void updateAssetStatusFromWeb(asset, isInactiveAsset ? 'active' : 'retired');
-        });
-
-        const deleteBtn = document.createElement('button');
-        deleteBtn.type = 'button';
-        deleteBtn.className = 'btn-secondary';
-        deleteBtn.textContent = 'Eliminar equipo';
-        deleteBtn.addEventListener('click', () => {
-            void deleteAssetFromWeb(asset);
-        });
-        toolbar.append(statusBtn, deleteBtn);
-    }
-    container.appendChild(toolbar);
-
-    const links = Array.isArray(data?.links) ? data.links : [];
-    if (links.length > 0) {
-        const linksHistory = document.createElement('details');
-        linksHistory.className = 'asset-links-history';
-        const linksSummary = document.createElement('summary');
-        linksSummary.textContent = `Historial de asociaciones (${links.length})`;
-        linksHistory.appendChild(linksSummary);
-
-        const linksList = document.createElement('div');
-        linksList.className = 'asset-links-list';
-        for (const link of links) {
-            const pill = document.createElement('div');
-            pill.className = 'asset-link-item';
-            const state = link.unlinked_at ? 'historial' : 'activa';
-            const text =
-                `Instalacion #${link.installation_id} (${state})` +
-                (link.installation_client_name ? ` | ${link.installation_client_name}` : '') +
-                (link.linked_at ? ` | vinculada: ${new Date(link.linked_at).toLocaleString('es-ES')}` : '');
-            pill.textContent = text;
-            linksList.appendChild(pill);
-        }
-        linksHistory.appendChild(linksList);
-        container.appendChild(linksHistory);
-    }
-
-    const incidentsSection = document.createElement('section');
-    incidentsSection.className = 'asset-incidents-section';
-    const incidentsTitle = document.createElement('h4');
-    incidentsTitle.textContent = `Incidencias activas (${activeIncidents.length})`;
-    incidentsSection.appendChild(incidentsTitle);
-
-    if (!incidents.length) {
-        const emptyIncident = document.createElement('p');
-        emptyIncident.className = 'asset-muted';
-        emptyIncident.textContent = 'No hay incidencias registradas para este equipo.';
-        incidentsSection.appendChild(emptyIncident);
-    } else if (!activeIncidents.length) {
-        const noActive = document.createElement('p');
-        noActive.className = 'asset-muted';
-        noActive.textContent = 'No hay incidencias activas. Revisa el historial para ver resueltas.';
-        incidentsSection.appendChild(noActive);
-    } else {
-        const activeWrap = document.createElement('div');
-        activeWrap.className = 'incidents-grid';
-        for (const incident of activeIncidents) {
-            await appendIncidentCard(activeWrap, incident, {
-                assetId: parseStrictInteger(asset.id),
-            });
-        }
-        incidentsSection.appendChild(activeWrap);
-    }
-    container.appendChild(incidentsSection);
-
-    if (resolvedIncidents.length) {
-        const resolvedDetails = document.createElement('details');
-        resolvedDetails.className = 'asset-incidents-history';
-        const resolvedSummary = document.createElement('summary');
-        resolvedSummary.textContent = `Resueltas (${resolvedIncidents.length})`;
-        resolvedDetails.appendChild(resolvedSummary);
-
-        const resolvedWrap = document.createElement('div');
-        resolvedWrap.className = 'incidents-grid asset-incidents-history-grid';
-        for (const incident of resolvedIncidents) {
-            await appendIncidentCard(resolvedWrap, incident, {
-                assetId: parseStrictInteger(asset.id),
-            });
-        }
-        resolvedDetails.appendChild(resolvedWrap);
-        container.appendChild(resolvedDetails);
-    }
+async function deleteAssetFromWeb(assetOrId) {
+    return dashboardAssets.deleteAssetFromWeb(assetOrId);
 }
 
 async function loadPhotoWithAuth(photoId) {
@@ -4144,92 +1970,50 @@ async function loadPhotoWithAuth(photoId) {
 }
 
 async function renderIncidents(incidents, installationId) {
-    const container = document.getElementById('incidentsList');
-    container.replaceChildren();
-
-    const header = document.createElement('div');
-    header.className = 'incidents-header';
-    header.classList.add('incidents-header');
-
-    const heading = document.createElement('h3');
-    const headingIcon = document.createElement('span');
-    headingIcon.className = 'material-symbols-outlined icon-inline-sm';
-    headingIcon.setAttribute('aria-hidden', 'true');
-    headingIcon.textContent = 'warning';
-    heading.replaceChildren(headingIcon, document.createTextNode(` Incidencias de Registro #${installationId}`));
-
-    const backButton = document.createElement('button');
-    backButton.type = 'button';
-    backButton.className = 'btn-secondary';
-    const backIcon = document.createElement('span');
-    backIcon.className = 'material-symbols-outlined icon-inline-sm';
-    backIcon.setAttribute('aria-hidden', 'true');
-    backIcon.textContent = 'arrow_back';
-    backButton.replaceChildren(backIcon, document.createTextNode(' Volver'));
-    backButton.addEventListener('click', () => {
-        document.querySelector('[data-section="installations"]')?.click();
-    });
-
-    const createIncidentBtn = document.createElement('button');
-    createIncidentBtn.type = 'button';
-    createIncidentBtn.className = 'btn-primary';
-    const createIcon = document.createElement('span');
-    createIcon.className = 'material-symbols-outlined icon-inline-sm';
-    createIcon.setAttribute('aria-hidden', 'true');
-    createIcon.textContent = 'add_circle';
-    createIncidentBtn.replaceChildren(createIcon, document.createTextNode(' Crear incidencia'));
-    createIncidentBtn.addEventListener('click', () => {
-        void createIncidentFromWeb(installationId);
-    });
-
-    const actions = document.createElement('div');
-    actions.className = 'incidents-header-actions';
-    actions.append(createIncidentBtn, backButton);
-
-    header.append(heading, actions);
-    container.appendChild(header);
-
-    if (!incidents || !incidents.length) {
-        renderContextualEmptyState(container, {
-            title: 'Sin incidencias para este registro',
-            description: 'Si detectas un problema, crea la primera incidencia desde aquí.',
-            actionLabel: 'Crear incidencia',
-            onAction: () => createIncidentBtn.click(),
-            tone: 'neutral',
-        });
-        return;
-    }
-
-    for (const inc of incidents) {
-        await appendIncidentCard(container, inc, {
-            installationId: Number.parseInt(String(installationId), 10),
-            assetId: parseStrictInteger(inc?.asset_id),
-            includeAssetChip: true,
-            assetTone: 'accent',
-            showReporter: true,
-            attachPhotoIdDataset: true,
-            uploadLabel: 'Subir foto',
-            uploadIcon: 'add_a_photo',
-        });
-    }
+    return dashboardIncidents.renderIncidents(incidents, installationId);
 }
-
 async function viewPhoto(photoId) {
-    const img = document.getElementById('photoViewer');
-    const photoUrl = await loadPhotoWithAuth(photoId);
-    if (photoUrl) {
-        img.src = photoUrl;
-        const closeButton = document.querySelector('#photoModal .close');
-        openAccessibleModal('photoModal', { preferredElement: closeButton });
-    }
+    return dashboardModals.viewPhoto(photoId);
+}
+function closePhotoModal() {
+    return dashboardModals.closePhotoModal();
+}
+function canCurrentUserEditAssets() {
+    return dashboardModals.canCurrentUserEditAssets();
+}
+function isQrEditSessionActive() {
+    return dashboardModals.isQrEditSessionActive();
+}
+function getQrEditSessionRemainingMs() {
+    return dashboardModals.getQrEditSessionRemainingMs();
+}
+function applyQrModalAccessState() {
+    return dashboardModals.applyQrModalAccessState();
+}
+function openQrPasswordModal() {
+    return dashboardModals.openQrPasswordModal();
+}
+function closeQrPasswordModal(options = {}) {
+    return dashboardModals.closeQrPasswordModal(options);
+}
+async function confirmQrEditUnlockFromModal() {
+    return dashboardModals.confirmQrEditUnlockFromModal();
+}
+function setQrError(message = '') {
+    return dashboardModals.setQrError(message);
+}
+function applyQrTypeMeta() {
+    return dashboardModals.applyQrTypeMeta();
+}
+function resetQrPreview() {
+    return dashboardModals.resetQrPreview();
+}
+function showQrModal(options = {}) {
+    return dashboardModals.showQrModal(options);
 }
 
-function closePhotoModal() {
-    const image = document.getElementById('photoViewer');
-    if (image instanceof HTMLImageElement) {
-        image.removeAttribute('src');
-    }
-    closeAccessibleModal('photoModal');
+function closeQrModal() {
+    return dashboardModals.closeQrModal();
 }
 
 function normalizeAssetCodeForQr(rawValue) {
@@ -4246,152 +2030,6 @@ function normalizeAssetFormText(rawValue, maxLength) {
         .slice(0, maxLength);
 }
 
-function canCurrentUserEditAssets() {
-    const role = String(currentUser?.role || '').toLowerCase();
-    return role === 'admin' || role === 'super_admin';
-}
-
-function isQrEditSessionActive() {
-    return Number.isFinite(qrModalEditUnlockUntil) && qrModalEditUnlockUntil > Date.now();
-}
-
-function getQrEditSessionRemainingMs() {
-    return Math.max(0, qrModalEditUnlockUntil - Date.now());
-}
-
-function setQrAssetInputsDisabled(disabled) {
-    const inputIds = [
-        'qrAssetCodeInput',
-        'qrAssetBrandInput',
-        'qrAssetModelInput',
-        'qrAssetSerialInput',
-        'qrAssetClientInput',
-        'qrAssetNotesInput',
-    ];
-    inputIds.forEach((id) => {
-        const element = document.getElementById(id);
-        if (element) {
-            element.disabled = Boolean(disabled);
-            element.toggleAttribute('readonly', Boolean(disabled));
-        }
-    });
-}
-
-function applyQrModalAccessState() {
-    const selectedType = document.querySelector('input[name="qrType"]:checked')?.value || 'asset';
-    const saveBtn = document.getElementById('qrSaveAssetBtn');
-    const enableEditBtn = document.getElementById('qrEnableEditBtn');
-    const qrTypeRadios = document.querySelectorAll('input[name="qrType"]');
-    const isAssetType = selectedType === 'asset';
-    const hasTimedUnlock = isQrEditSessionActive();
-    if (qrModalReadOnly) {
-        qrModalEditUnlocked = hasTimedUnlock;
-    } else if (canCurrentUserEditAssets()) {
-        qrModalEditUnlocked = true;
-    } else {
-        qrModalEditUnlocked = false;
-    }
-    const isReadOnlyAssetView = qrModalReadOnly && isAssetType && !qrModalEditUnlocked;
-    const canEdit = canCurrentUserEditAssets();
-
-    qrTypeRadios.forEach((radio) => {
-        radio.disabled = Boolean(qrModalReadOnly);
-    });
-
-    setQrAssetInputsDisabled(isReadOnlyAssetView);
-
-    if (saveBtn) {
-        const shouldShowSave = isAssetType && (!qrModalReadOnly || qrModalEditUnlocked);
-        saveBtn.classList.toggle('is-hidden', !shouldShowSave);
-        saveBtn.disabled = !shouldShowSave;
-    }
-
-    if (enableEditBtn) {
-        const shouldShowEnableEdit = isReadOnlyAssetView && canEdit;
-        enableEditBtn.classList.toggle('is-hidden', !shouldShowEnableEdit);
-        enableEditBtn.disabled = !shouldShowEnableEdit;
-    }
-
-    const helper = document.getElementById('qrAssetHelper');
-    if (helper) {
-        if (isReadOnlyAssetView && canEdit) {
-            helper.textContent = 'Modo solo lectura. Para editar, usa "Habilitar edición" y confirma tu contraseña.';
-        } else if (isReadOnlyAssetView && !canEdit) {
-            helper.textContent = 'Modo solo lectura. Solo admin/super_admin pueden editar este equipo.';
-        } else if (qrModalReadOnly && qrModalEditUnlocked && hasTimedUnlock) {
-            const minutesLeft = Math.max(1, Math.ceil(getQrEditSessionRemainingMs() / 60000));
-            helper.textContent = `Edicion habilitada temporalmente (${minutesLeft} min restantes).`;
-        } else {
-            helper.textContent = 'Requisitos: marca o modelo, y número de serie. El código externo se genera automáticamente desde serie si queda vacío.';
-        }
-    }
-}
-
-async function verifyCurrentUserPassword(password) {
-    const candidate = String(password || '');
-    if (!candidate.trim()) {
-        throw new Error('Debes ingresar tu contraseña.');
-    }
-
-    await api.request('/web/auth/verify-password', {
-        method: 'POST',
-        body: JSON.stringify({
-            password: candidate
-        })
-    });
-}
-
-function setQrPasswordModalError(message = '') {
-    const errorEl = document.getElementById('qrPasswordError');
-    if (!errorEl) return;
-    errorEl.textContent = message || '';
-}
-
-function setQrPasswordModalBusy(isBusy) {
-    qrPasswordModalBusy = Boolean(isBusy);
-    const confirmBtn = document.getElementById('qrPasswordConfirmBtn');
-    const cancelBtn = document.getElementById('qrPasswordCancelBtn');
-    const input = document.getElementById('qrPasswordInput');
-    if (confirmBtn) confirmBtn.disabled = qrPasswordModalBusy;
-    if (cancelBtn) cancelBtn.disabled = qrPasswordModalBusy;
-    if (input) input.disabled = qrPasswordModalBusy;
-}
-
-function openQrPasswordModal() {
-    const modal = document.getElementById('qrPasswordModal');
-    const input = document.getElementById('qrPasswordInput');
-    if (!modal || !input) return;
-    setQrPasswordModalBusy(false);
-    setQrPasswordModalError('');
-    input.value = '';
-    openAccessibleModal('qrPasswordModal', { preferredElement: input, selectText: true });
-}
-
-function closeQrPasswordModal(options = {}) {
-    closeAccessibleModal('qrPasswordModal', { restoreFocus: options.restoreFocus !== false });
-    setQrPasswordModalBusy(false);
-    setQrPasswordModalError('');
-}
-
-async function confirmQrEditUnlockFromModal() {
-    if (qrPasswordModalBusy) return;
-    const input = document.getElementById('qrPasswordInput');
-    const password = String(input?.value || '');
-    try {
-        setQrPasswordModalBusy(true);
-        await verifyCurrentUserPassword(password);
-        qrModalEditUnlocked = true;
-        qrModalEditUnlockUntil = Date.now() + QR_EDIT_UNLOCK_TTL_MS;
-        applyQrModalAccessState();
-        closeQrPasswordModal();
-        setQrError('');
-        showNotification('Edicion habilitada por 10 minutos.', 'success');
-    } catch (error) {
-        setQrPasswordModalBusy(false);
-        setQrPasswordModalError(error?.message || 'No se pudo validar la contraseña.');
-    }
-}
-
 function readAssetFormData() {
     const codeInput = document.getElementById('qrAssetCodeInput');
     const brandInput = document.getElementById('qrAssetBrandInput');
@@ -4400,7 +2038,7 @@ function readAssetFormData() {
     const clientInput = document.getElementById('qrAssetClientInput');
     const notesInput = document.getElementById('qrAssetNotesInput');
     if (!codeInput || !brandInput || !modelInput || !serialInput || !clientInput || !notesInput) {
-        throw new Error('Formulario QR incompleto. Recarga la página.');
+        throw new Error('Formulario QR incompleto. Recarga la pagina.');
     }
 
     const brand = normalizeAssetFormText(brandInput.value, QR_MAX_BRAND_LENGTH);
@@ -4413,14 +2051,14 @@ function readAssetFormData() {
         throw new Error('Debes ingresar al menos marca o modelo.');
     }
     if (!serialNumber) {
-        throw new Error('El número de serie es obligatorio para la etiqueta.');
+        throw new Error('El numero de serie es obligatorio para la etiqueta.');
     }
 
     const explicitCode = normalizeAssetCodeForQr(codeInput.value);
     const fallbackCode = normalizeAssetCodeForQr(serialNumber);
     const externalCode = explicitCode || fallbackCode;
     if (!externalCode) {
-        throw new Error('No se pudo construir un código externo de equipo.');
+        throw new Error('No se pudo construir un codigo externo de equipo.');
     }
 
     return {
@@ -4433,54 +2071,6 @@ function readAssetFormData() {
     };
 }
 
-function setQrError(message = '') {
-    const errorEl = document.getElementById('qrError');
-    if (!errorEl) return;
-    errorEl.textContent = message || '';
-}
-
-function applyQrTypeMeta() {
-    const selectedType = document.querySelector('input[name="qrType"]:checked')?.value || 'asset';
-    const installationFields = document.getElementById('qrInstallationFields');
-    const assetFields = document.getElementById('qrAssetFields');
-    const presetContainer = document.getElementById('qrLabelPresetContainer');
-    if (selectedType === 'installation') {
-        installationFields?.classList.remove('is-hidden');
-        assetFields?.classList.add('is-hidden');
-        presetContainer?.classList.add('is-hidden');
-    } else {
-        installationFields?.classList.add('is-hidden');
-        assetFields?.classList.remove('is-hidden');
-        presetContainer?.classList.remove('is-hidden');
-    }
-    const helperText = document.getElementById('qrHelperText');
-    if (helperText) {
-        helperText.textContent = 'Formato recomendado para mobile: dm://installation/{id}.';
-    }
-    applyQrModalAccessState();
-}
-
-function resetQrPreview() {
-    currentQrPayload = '';
-    currentQrImageUrl = '';
-    currentQrLabelInfo = null;
-    const preview = document.getElementById('qrPreview');
-    const previewImage = document.getElementById('qrPreviewImage');
-    const payloadText = document.getElementById('qrPayloadText');
-    const detailsText = document.getElementById('qrDetailsText');
-    const copyBtn = document.getElementById('qrCopyBtn');
-    const downloadBtn = document.getElementById('qrDownloadBtn');
-    const printBtn = document.getElementById('qrPrintBtn');
-
-    if (preview) preview.classList.add('is-hidden');
-    if (previewImage) previewImage.removeAttribute('src');
-    if (payloadText) payloadText.textContent = '';
-    if (detailsText) detailsText.textContent = '';
-    if (copyBtn) copyBtn.disabled = true;
-    if (downloadBtn) downloadBtn.disabled = true;
-    if (printBtn) printBtn.disabled = true;
-}
-
 function getQrLabelPresetConfig() {
     const select = document.getElementById('qrLabelPresetSelect');
     const selected = String(select?.value || currentQrLabelPreset || 'medium').toLowerCase();
@@ -4488,102 +2078,6 @@ function getQrLabelPresetConfig() {
         ? selected
         : 'medium';
     return QR_LABEL_PRESETS[currentQrLabelPreset];
-}
-
-function buildQrPayload(qrType, rawValue, assetData = null) {
-    if (qrType === 'installation') {
-        const installationId = Number.parseInt(String(rawValue || '').trim(), 10);
-        if (!Number.isInteger(installationId) || installationId <= 0) {
-            throw new Error('El ID de registro debe ser un entero positivo.');
-        }
-        return `dm://installation/${encodeURIComponent(String(installationId))}`;
-    }
-
-    const assetCode = normalizeAssetCodeForQr(assetData?.external_code || rawValue);
-    if (!assetCode) {
-        throw new Error('El código de equipo es obligatorio.');
-    }
-    return `dm://asset/${encodeURIComponent(assetCode)}`;
-}
-
-function buildQrImageUrl(payload) {
-    const qrGenerator = window.DMQR;
-    if (!qrGenerator || typeof qrGenerator.createPngDataUrl !== 'function') {
-        throw new Error('Generador QR no disponible. Recarga la página e intenta de nuevo.');
-    }
-
-    return qrGenerator.createPngDataUrl(payload, {
-        sizePx: QR_PREVIEW_SIZE_PX,
-        marginModules: 2,
-        ecc: 'M'
-    });
-}
-
-function sanitizeFileNamePart(value, fallback = 'codigo') {
-    const normalized = String(value || '')
-        .trim()
-        .replace(/\s+/g, '-')
-        .replace(/[^a-zA-Z0-9._-]/g, '_')
-        .slice(0, 64);
-    return normalized || fallback;
-}
-
-function buildQrDownloadFileName(qrType, rawValue, assetData = null) {
-    if (qrType === 'installation') {
-        const numeric = Number.parseInt(String(rawValue || '').trim(), 10);
-        const suffix = Number.isInteger(numeric) && numeric > 0 ? String(numeric) : 'id';
-        return `qr-installacion-${suffix}.png`;
-    }
-    const code = assetData?.external_code || rawValue;
-    return `qr-equipo-${sanitizeFileNamePart(code, 'asset')}.png`;
-}
-
-function showQrModal(options = {}) {
-    const modal = document.getElementById('qrModal');
-    const valueInput = document.getElementById('qrValueInput');
-    const codeInput = document.getElementById('qrAssetCodeInput');
-    const brandInput = document.getElementById('qrAssetBrandInput');
-    const modelInput = document.getElementById('qrAssetModelInput');
-    const serialInput = document.getElementById('qrAssetSerialInput');
-    const clientInput = document.getElementById('qrAssetClientInput');
-    const notesInput = document.getElementById('qrAssetNotesInput');
-    const presetSelect = document.getElementById('qrLabelPresetSelect');
-    const type = options.type === 'installation' ? 'installation' : 'asset';
-    const value = String(options.value || '');
-    const asset = options.asset && typeof options.asset === 'object' ? options.asset : {};
-    qrModalReadOnly = Boolean(options.readOnly);
-    qrModalEditUnlocked = false;
-    const radio = document.querySelector(`input[name="qrType"][value="${type}"]`);
-    if (!modal || !valueInput || !radio) return;
-
-    radio.checked = true;
-    valueInput.value = value;
-    if (codeInput) codeInput.value = normalizeAssetCodeForQr(asset.external_code || value);
-    if (brandInput) brandInput.value = normalizeAssetFormText(asset.brand, QR_MAX_BRAND_LENGTH);
-    if (modelInput) modelInput.value = normalizeAssetFormText(asset.model, QR_MAX_MODEL_LENGTH);
-    if (serialInput) serialInput.value = normalizeAssetFormText(asset.serial_number, QR_MAX_SERIAL_LENGTH);
-    if (clientInput) clientInput.value = normalizeAssetFormText(asset.client_name, QR_MAX_CLIENT_LENGTH);
-    if (notesInput) notesInput.value = normalizeAssetFormText(asset.notes, QR_MAX_NOTES_LENGTH);
-    if (presetSelect) {
-        presetSelect.value = currentQrLabelPreset;
-    }
-    applyQrTypeMeta();
-    applyQrModalAccessState();
-    resetQrPreview();
-    setQrError('');
-    const preferredElement = type === 'installation'
-        ? valueInput
-        : (document.getElementById('qrAssetSerialInput') || valueInput);
-    openAccessibleModal('qrModal', { preferredElement, selectText: true });
-}
-
-function closeQrModal() {
-    closeQrPasswordModal({ restoreFocus: false });
-    closeAccessibleModal('qrModal');
-    qrModalReadOnly = false;
-    qrModalEditUnlocked = false;
-    setQrError('');
-    resetQrPreview();
 }
 
 function formatQrDetailsText(qrType, rawValue, assetData = null) {
@@ -4620,6 +2114,56 @@ function buildQrPreviewInput() {
         rawValue: assetData.external_code,
         assetData,
     };
+}
+
+function buildQrPayload(qrType, rawValue, assetData = null) {
+    if (qrType === 'installation') {
+        const installationId = Number.parseInt(String(rawValue || '').trim(), 10);
+        if (!Number.isInteger(installationId) || installationId <= 0) {
+            throw new Error('El ID de instalacion debe ser un entero positivo.');
+        }
+        return `dm://installation/${encodeURIComponent(String(installationId))}`;
+    }
+
+    const assetCode = normalizeAssetCodeForQr(
+        assetData?.external_code || rawValue,
+    );
+    if (!assetCode) {
+        throw new Error('El codigo de equipo es obligatorio.');
+    }
+    return `dm://asset/${encodeURIComponent(assetCode)}`;
+}
+
+function buildQrImageUrl(payload) {
+    const qrEngine = window.DMQR;
+    if (!qrEngine || typeof qrEngine.createPngDataUrl !== 'function') {
+        throw new Error('Motor QR no disponible. Recarga la pagina.');
+    }
+    return qrEngine.createPngDataUrl(payload, {
+        sizePx: QR_PREVIEW_SIZE_PX,
+        ecc: 'M',
+        marginModules: 2,
+    });
+}
+
+function normalizeQrFilenameSegment(value, fallback = 'codigo') {
+    const normalized = String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+    return normalized || fallback;
+}
+
+function buildQrDownloadFileName(qrType, rawValue, assetData = null) {
+    if (qrType === 'installation') {
+        const installationId = Number.parseInt(String(rawValue || '').trim(), 10);
+        return `qr-instalacion-${Number.isInteger(installationId) && installationId > 0 ? installationId : 'manual'}.png`;
+    }
+
+    const assetCode = normalizeAssetCodeForQr(assetData?.external_code || rawValue);
+    return `qr-equipo-${normalizeQrFilenameSegment(assetCode, 'manual')}.png`;
 }
 
 function generateQrPreview(options = {}) {
@@ -4960,125 +2504,11 @@ async function printQrLabel() {
 }
 
 async function loadAuditLogs() {
-    if (!requireActiveSession()) return;
-    const container = document.getElementById('auditLogs');
-    container.innerHTML = '<p class="loading">Cargando logs...</p>';
-    
-    try {
-        const logs = await api.getAuditLogs();
-        renderAuditLogs(logs);
-    } catch (err) {
-        container.replaceChildren();
-        renderContextualEmptyState(container, {
-            title: 'No se pudieron cargar los logs',
-            description: 'Reintenta para validar el estado de auditoría.',
-            actionLabel: 'Reintentar',
-            onAction: () => loadAuditLogs(),
-            tone: 'warning',
-        });
-    }
+    return dashboardAudit.loadAuditLogs();
 }
 
 function renderAuditLogs(logs) {
-    const container = document.getElementById('auditLogs');
-    const actionFilter = document.getElementById('auditActionFilter')?.value;
-    container.replaceChildren();
-    
-    if (!logs || !logs.length) {
-        renderContextualEmptyState(container, {
-            title: 'Aún no hay logs de auditoría',
-            description: 'Cuando se registren eventos de acceso u operaciones, aparecerán aquí.',
-            actionLabel: 'Actualizar',
-            onAction: () => loadAuditLogs(),
-            tone: 'neutral',
-        });
-        return;
-    }
-    
-    let filteredLogs = logs;
-    if (actionFilter) {
-        filteredLogs = logs.filter(log => log.action === actionFilter);
-    }
-    
-    if (filteredLogs.length === 0) {
-        renderContextualEmptyState(container, {
-            title: 'No hay eventos para ese filtro',
-            description: 'Prueba otro tipo de acción o limpia el filtro actual.',
-            actionLabel: 'Quitar filtro',
-            onAction: () => {
-                const actionFilterSelect = document.getElementById('auditActionFilter');
-                if (actionFilterSelect) {
-                    actionFilterSelect.value = '';
-                }
-                renderAuditLogs(logs);
-            },
-            tone: 'neutral',
-        });
-        return;
-    }
-
-    const table = document.createElement('table');
-    const thead = document.createElement('thead');
-    const headerRow = document.createElement('tr');
-    ['Fecha', 'Acción', 'Usuario', 'Estado', 'Detalles'].forEach(label => {
-        const th = document.createElement('th');
-        th.textContent = label;
-        headerRow.appendChild(th);
-    });
-    thead.appendChild(headerRow);
-
-    const tbody = document.createElement('tbody');
-
-    filteredLogs.forEach(log => {
-        const successIcon = log.success ? 'OK' : 'X';
-        const successClass = log.success ? 'success' : 'failed';
-        
-        let details = '-';
-        if (log.details) {
-            try {
-                const parsed = typeof log.details === 'string' ? JSON.parse(log.details) : log.details;
-                details = Object.entries(parsed)
-                    .map(([k, v]) => `${k}: ${v}`)
-                    .slice(0, 2)
-                    .join(', ');
-                if (details.length > 50) details = details.substring(0, 50) + '...';
-            } catch {
-                details = String(log.details).substring(0, 50);
-            }
-        }
-        
-        const row = document.createElement('tr');
-
-        const dateCell = document.createElement('td');
-        dateCell.textContent = new Date(log.timestamp).toLocaleString('es-ES');
-
-        const actionCell = document.createElement('td');
-        const actionCode = document.createElement('code');
-        actionCode.className = 'audit-action-code';
-        actionCode.textContent = log.action || '-';
-        actionCell.appendChild(actionCode);
-
-        const userCell = document.createElement('td');
-        const userStrong = document.createElement('strong');
-        userStrong.textContent = log.username || '-';
-        userCell.appendChild(userStrong);
-
-        const statusCell = document.createElement('td');
-        const badge = document.createElement('span');
-        badge.className = `badge ${successClass}`;
-        badge.textContent = successIcon;
-        statusCell.appendChild(badge);
-
-        const detailsCell = document.createElement('td');
-        detailsCell.className = 'audit-details-cell';
-        detailsCell.textContent = details;
-
-        row.append(dateCell, actionCell, userCell, statusCell, detailsCell);
-        tbody.appendChild(row);
-    });
-
-    table.append(thead, tbody);
-    container.appendChild(table);
+    return dashboardAudit.renderAuditLogs(logs);
 }
 
 function getCurrentShiftLabel(now = new Date()) {
@@ -5131,7 +2561,7 @@ function syncHeaderDelight(section, explicitStatus = null) {
     const pulseText = document.getElementById('opsPulseText');
     if (!pulse || !pulseText) return;
 
-    const fallbackStatus = connectionStatusLastRendered?.status || 'paused';
+    const fallbackStatus = getConnectionStatus();
     const status = explicitStatus ?? fallbackStatus;
     pulse.dataset.state = status;
     pulseText.textContent = buildOpsPulseText(status, normalizedSection);
@@ -5312,115 +2742,33 @@ function validateAllSectionBindings() {
     });
 }
 
+const dashboardNavigation = window.createDashboardNavigation({
+    loadAssets,
+    loadAuditLogs,
+    loadDrivers,
+    loadInstallations,
+    prefersReducedMotion,
+    sectionTransitionOutMs: SECTION_TRANSITION_OUT_MS,
+    syncSSEForCurrentContext,
+    updatePageTitleForSection,
+    validateSectionBindings,
+});
+
 function runSectionLoaders(section) {
-    validateSectionBindings(section, { notify: true });
-    if (section === 'installations') loadInstallations();
-    if (section === 'assets') loadAssets();
-    if (section === 'drivers') loadDrivers();
-    if (section === 'audit') loadAuditLogs();
+    return dashboardNavigation.runSectionLoaders(section);
 }
 
 function navigateToSectionByKey(section) {
-    const link = document.querySelector(`.nav-links a[data-section="${section}"]`);
-    if (link instanceof HTMLElement) {
-        link.click();
-        return true;
-    }
-    return false;
+    return dashboardNavigation.navigateToSectionByKey(section);
 }
 
 async function activateSection(section) {
-    const nextSection = document.getElementById(section + 'Section');
-    if (!nextSection) return;
-
-    const currentSection = document.querySelector('.section.active');
-    const transitionId = ++sectionTransitionVersion;
-
-    if (!currentSection || currentSection === nextSection || prefersReducedMotion()) {
-        document.querySelectorAll('.section').forEach((sectionNode) => {
-            sectionNode.classList.remove('active', 'is-transitioning-out');
-        });
-        nextSection.classList.add('active');
-        updatePageTitleForSection(section);
-        runSectionLoaders(section);
-        syncSSEForCurrentContext();
-        return;
-    }
-
-    currentSection.classList.add('is-transitioning-out');
-    currentSection.classList.remove('active');
-
-    await new Promise((resolve) => {
-        setTimeout(resolve, SECTION_TRANSITION_OUT_MS);
-    });
-
-    if (transitionId !== sectionTransitionVersion) {
-        return;
-    }
-
-    currentSection.classList.remove('is-transitioning-out');
-    document.querySelectorAll('.section').forEach((sectionNode) => {
-        if (sectionNode !== nextSection) {
-            sectionNode.classList.remove('active', 'is-transitioning-out');
-        }
-    });
-    nextSection.classList.add('active');
-    updatePageTitleForSection(section);
-    runSectionLoaders(section);
-    syncSSEForCurrentContext();
+    return dashboardNavigation.activateSection(section);
 }
 
 // Event Listeners
-document.getElementById('loginForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const username = document.getElementById('loginUsername').value;
-    const password = document.getElementById('loginPassword').value;
-    
-    try {
-        const result = await api.login(username, password);
-        webAccessToken = '';
-        applyAuthenticatedUser(result.user);
-        
-        hideLogin();
-        loadDashboard();
-        syncSSEForCurrentContext(true);
-        
-        // Show success notification
-        showNotification('Bienvenido, ' + result.user.username + '!', 'success');
-    } catch (err) {
-        document.getElementById('loginError').textContent = 'Credenciales inválidas';
-        document.getElementById('loginPassword').value = '';
-    }
-});
+dashboardAuth.bindSessionUi();
 
-document.getElementById('logoutBtn').addEventListener('click', async () => {
-    try {
-        await api.logout();
-    } catch (err) {
-        console.error('Error during logout:', err);
-    }
-    currentUser = null;
-    webAccessToken = '';
-    closeSSE();
-    resetProtectedViews();
-    showLogin();
-    showNotification('Sesión cerrada', 'info');
-});
-
-document.getElementById('refreshBtn').addEventListener('click', () => {
-    if (!requireActiveSession()) return;
-    const btn = document.getElementById('refreshBtn');
-    if (btn) {
-        const spinTarget = btn.querySelector('.material-symbols-outlined') || btn;
-        spinTarget.classList.add('btn-spin-once');
-        setTimeout(() => {
-            spinTarget.classList.remove('btn-spin-once');
-        }, 520);
-    }
-    
-    loadDashboard();
-    showNotification('Dashboard actualizado', 'info');
-});
 
 document.getElementById('headerPrimaryActionBtn')?.addEventListener('click', () => {
     const btn = document.getElementById('headerPrimaryActionBtn');
@@ -5480,9 +2828,6 @@ document.getElementById('settingsOpenAuditBtn')?.addEventListener('click', () =>
     navigateToSectionByKey('audit');
 });
 
-document.getElementById('settingsLogoutBtn')?.addEventListener('click', () => {
-    document.getElementById('logoutBtn')?.click();
-});
 
 document.getElementById('applyFilters').addEventListener('click', () => {
     if (!requireActiveSession()) return;
@@ -5518,8 +2863,7 @@ document.getElementById('driverPickFileBtn')?.addEventListener('click', () => {
 document.getElementById('driverFileInput')?.addEventListener('change', (event) => {
     const input = event.target;
     const nextFile = input?.files?.[0] || null;
-    selectedDriverFile = nextFile;
-    updateDriverSelectedFileLabel();
+    setSelectedDriverFile(nextFile);
 });
 
 document.getElementById('driverUploadBtn')?.addEventListener('click', () => {
@@ -5546,16 +2890,7 @@ document.getElementById('auditActionFilter').addEventListener('change', () => {
     loadAuditLogs();
 });
 
-document.querySelector('#photoModal .close').addEventListener('click', () => {
-    closePhotoModal();
-});
-
-// Close modal on outside click
-document.getElementById('photoModal').addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) {
-        closePhotoModal();
-    }
-});
+dashboardModals.bindSharedModalUi();
 
 document.querySelectorAll('input[name="qrType"]').forEach((radio) => {
     radio.addEventListener('change', () => {
@@ -5629,32 +2964,6 @@ document.getElementById('qrModal').addEventListener('click', (e) => {
     }
 });
 
-document.querySelector('#qrPasswordModal .close')?.addEventListener('click', () => {
-    closeQrPasswordModal();
-});
-
-document.getElementById('qrPasswordCancelBtn')?.addEventListener('click', () => {
-    closeQrPasswordModal();
-});
-
-document.getElementById('qrPasswordConfirmBtn')?.addEventListener('click', () => {
-    void confirmQrEditUnlockFromModal();
-});
-
-document.getElementById('qrPasswordInput')?.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
-    void confirmQrEditUnlockFromModal();
-});
-
-document.getElementById('qrPasswordModal')?.addEventListener('click', (event) => {
-    if (event.target !== event.currentTarget) return;
-    if (qrPasswordModalBusy) return;
-    closeQrPasswordModal();
-});
-
-bindActionModalEvents();
-
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
     if (handleModalKeyboardInteraction(e)) {
@@ -5722,418 +3031,88 @@ function showNotification(message, type = 'info') {
 
 // WebSocket/SSE Functions
 function getActiveSectionName() {
-    const activeSection = document.querySelector('.section.active');
-    if (!activeSection?.id) return '';
-    return activeSection.id.replace(/Section$/, '');
+    return dashboardNavigation.getActiveSectionName();
+}
+
+function getConnectionStatus() {
+    return dashboardRealtime ? dashboardRealtime.getConnectionStatus() : 'paused';
 }
 
 function canUseRealtimeNow() {
-    if (!currentUser) return false;
-    if (document.visibilityState !== 'visible') return false;
-    const activeSection = getActiveSectionName();
-    return SSE_ACTIVE_SECTIONS.has(activeSection);
+    return dashboardRealtime.canUseRealtimeNow();
 }
 
 function scheduleSSEReconnect(preferredDelayMs = null) {
-    if (!canUseRealtimeNow()) {
-        return;
-    }
-
-    if (sseReconnectAttempts >= MAX_SSE_RECONNECT_ATTEMPTS) {
-        console.error('[SSE] Max reconnection attempts reached');
-        updateConnectionStatus('failed');
-        showNotification('Conexión en tiempo real perdida. Recarga la página para reconectar.', 'error');
-        return;
-    }
-
-    sseReconnectAttempts++;
-    const exponentialDelay = Math.min(
-        SSE_RECONNECT_MAX_DELAY,
-        SSE_RECONNECT_BASE_DELAY * Math.pow(2, sseReconnectAttempts - 1)
-    );
-    const normalizedPreferredDelay = Number.isFinite(preferredDelayMs) && preferredDelayMs > 0
-        ? Math.min(preferredDelayMs, SSE_RECONNECT_MAX_DELAY)
-        : exponentialDelay;
-    const jitterMs = Math.floor(Math.random() * 600);
-    const delayMs = Math.max(SSE_RECONNECT_BASE_DELAY, normalizedPreferredDelay) + jitterMs;
-
-    console.log(
-        `[SSE] Reconnecting in ${delayMs}ms... Attempt ${sseReconnectAttempts}/${MAX_SSE_RECONNECT_ATTEMPTS}`
-    );
-    updateConnectionStatus('reconnecting');
-
-    if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
-    sseReconnectTimer = setTimeout(() => {
-        initSSE();
-    }, delayMs);
+    return dashboardRealtime.scheduleSSEReconnect(preferredDelayMs);
 }
 
 function syncSSEForCurrentContext(forceReconnect = false) {
-    if (!canUseRealtimeNow()) {
-        closeSSE();
-        updateConnectionStatus('paused');
-        return;
-    }
-
-    if (forceReconnect || !eventSource) {
-        initSSE();
-    }
-}
-
-function initSSE() {
-    if (!canUseRealtimeNow()) {
-        closeSSE();
-        return;
-    }
-
-    const now = Date.now();
-    if (now - sseLastConnectAttemptAt < SSE_MIN_CONNECT_GAP_MS) {
-        scheduleSSEReconnect(SSE_MIN_CONNECT_GAP_MS);
-        return;
-    }
-    sseLastConnectAttemptAt = now;
-
-    if (sseReconnectTimer) {
-        clearTimeout(sseReconnectTimer);
-        sseReconnectTimer = null;
-    }
-    if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-    }
-
-    try {
-        const sseUrl = `${API_BASE}/web/events`;
-        eventSource = new EventSource(sseUrl, { withCredentials: true });
-
-        eventSource.onopen = () => {
-            console.log('[SSE] Connection established');
-            sseReconnectAttempts = 0;
-            updateConnectionStatus('connected');
-        };
-
-        eventSource.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                handleSSEMessage(data);
-            } catch (err) {
-                console.error('[SSE] Error parsing message:', err);
-            }
-        };
-
-        eventSource.onerror = (err) => {
-            console.error('[SSE] Connection error:', err);
-            if (eventSource) {
-                eventSource.close();
-                eventSource = null;
-            }
-
-            if (!canUseRealtimeNow()) {
-                updateConnectionStatus('paused');
-                return;
-            }
-
-            updateConnectionStatus('disconnected');
-            scheduleSSEReconnect();
-        };
-    } catch (err) {
-        console.error('[SSE] Error initializing:', err);
-        scheduleSSEReconnect();
-    }
+    return dashboardRealtime.syncSSEForCurrentContext(forceReconnect);
 }
 
 function handleSSEMessage(data) {
-    switch (data.type) {
-        case 'connected':
-            console.log('[SSE]', data.message);
-            showNotification('Conectado en tiempo real', 'success');
-            break;
-
-        case 'installation_created':
-            handleRealtimeInstallation(data.installation);
-            break;
-
-        case 'installation_updated':
-            handleRealtimeInstallationUpdate(data.installation);
-            break;
-
-        case 'installation_deleted':
-            handleRealtimeInstallationDeleted(data.installation);
-            break;
-
-        case 'incident_created':
-            handleRealtimeIncident(data.incident);
-            break;
-
-        case 'incident_status_updated':
-            handleRealtimeIncidentStatusUpdate(data.incident);
-            break;
-
-        case 'stats_update':
-            handleRealtimeStatsUpdate(data.statistics);
-            break;
-
-        case 'reconnect':
-            console.log('[SSE] Server requested reconnect');
-            if (eventSource) {
-                eventSource.close();
-                eventSource = null;
-            }
-            scheduleSSEReconnect(Number(data?.reconnect_after_ms) || 1000);
-            break;
-
-        case 'ping':
-            break;
-
-        default:
-            console.log('[SSE] Unknown message type:', data.type);
-    }
+    return dashboardRealtime.handleSSEMessage(data);
 }
 
 function handleRealtimeInstallation(installation) {
-    // Add to current data if on installations page
-    if (currentInstallationsData && document.getElementById('installationsSection')?.classList.contains('active')) {
-        currentInstallationsData.unshift(installation);
-        renderInstallationsTable(currentInstallationsData.slice(0, 50));
-        
-        // Update results count
-        const resultsCount = document.getElementById('resultsCount');
-        if (resultsCount) {
-            const count = currentInstallationsData.length;
-            resultsCount.innerHTML = `Mostrando <span class="count">${Math.min(count, 50)}</span> de <span class="count">${count}</span> resultado${count !== 1 ? 's' : ''}`;
-        }
-    }
-    
-    // Show notification
-    const attentionState = normalizeRecordAttentionState(installation?.attention_state);
-    const statusIcon = attentionState === 'critical'
-        ? 'CRIT'
-        : attentionState === 'in_progress'
-            ? 'CURSO'
-            : attentionState === 'open'
-                ? 'ABIERTA'
-                : 'REG';
-    showNotification(`${statusIcon} Nuevo registro: ${installation.client_name || 'Sin cliente'}`, 'info');
-    
-    // Refresh dashboard stats if on dashboard
-    if (document.getElementById('dashboardSection')?.classList.contains('active')) {
-        setTimeout(() => {
-            loadDashboard();
-        }, 1000);
-    }
+    return dashboardRealtime.handleRealtimeInstallation(installation);
 }
 
 function handleRealtimeInstallationUpdate(installation) {
-    // Update in current data if present
-    if (currentInstallationsData) {
-        const index = currentInstallationsData.findIndex(i => i.id === installation.id);
-        if (index !== -1) {
-            currentInstallationsData[index] = installation;
-            if (document.getElementById('installationsSection')?.classList.contains('active')) {
-                renderInstallationsTable(currentInstallationsData);
-            }
-        }
-    }
+    return dashboardRealtime.handleRealtimeInstallationUpdate(installation);
 }
 
 function handleRealtimeInstallationDeleted(installation) {
-    if (!installation || !installation.id) return;
-    if (currentInstallationsData) {
-        currentInstallationsData = currentInstallationsData.filter((i) => i.id !== installation.id);
-        if (document.getElementById('installationsSection')?.classList.contains('active')) {
-            renderInstallationsTable(currentInstallationsData);
-        }
-    }
-    showNotification(`Registro #${installation.id} eliminado`, 'info');
+    return dashboardRealtime.handleRealtimeInstallationDeleted(installation);
 }
 
 function handleRealtimeIncident(incident) {
-    const severityIcon = incident.severity === 'critical' ? 'CRIT' : incident.severity === 'high' ? 'ALTA' : 'WARN';
-    showNotification(`${severityIcon} Nueva incidencia en registro #${incident.installation_id}`, 'warning');
+    return dashboardRealtime.handleRealtimeIncident(incident);
 }
 
 function handleRealtimeIncidentStatusUpdate(incident) {
-    if (!incident || !incident.id) return;
-    showNotification(
-        `Incidencia #${incident.id} ahora est? "${incidentStatusLabel(incident.incident_status)}".`,
-        'info',
-    );
-
-    const activeIncidentsSection = document.getElementById('incidentsSection')?.classList.contains('active');
-    const activeAssetsSection = document.getElementById('assetsSection')?.classList.contains('active');
-
-    if (activeIncidentsSection && currentSelectedInstallationId) {
-        void showIncidentsForInstallation(currentSelectedInstallationId);
-    }
-    if (activeAssetsSection && currentSelectedAssetId) {
-        void loadAssetDetail(currentSelectedAssetId, { keepSelection: true });
-    }
+    return dashboardRealtime.handleRealtimeIncidentStatusUpdate(incident);
 }
 
 function handleRealtimeStatsUpdate(stats) {
-    if (document.getElementById('dashboardSection')?.classList.contains('active')) {
-        updateStats(stats);
-        // Refresh charts with animation
-        renderSuccessChart(stats);
-        renderBrandChart(stats);
-        void renderTrendChart(currentTrendRangeDays);
-    }
-}
-
-function isMobileDashboardViewport() {
-    return window.matchMedia('(max-width: 768px)').matches;
-}
-
-function applyConnectionStatusVisualState(indicator) {
-    if (!indicator) return;
-    const hiddenByScroll = indicator.dataset.hiddenByScroll === '1';
-    const dimmed = indicator.dataset.dimmed === '1';
-    const canReconnect = indicator.dataset.canReconnect === '1';
-
-    indicator.classList.toggle('is-hidden-by-scroll', hiddenByScroll);
-    indicator.classList.toggle('is-dimmed', !hiddenByScroll && dimmed);
-    indicator.classList.toggle('is-reconnectable', !hiddenByScroll && canReconnect);
-}
-
-function ensureConnectionStatusMobileBindings() {
-    if (connectionStatusMobileBindingsReady) return;
-    connectionStatusMobileBindingsReady = true;
-    connectionStatusLastScrollY = window.scrollY || 0;
-
-    window.addEventListener('scroll', () => {
-        const indicator = document.getElementById('connectionStatus');
-        if (!indicator || !isMobileDashboardViewport()) return;
-
-        const now = Date.now();
-        if (now < connectionStatusForceVisibleUntil) return;
-
-        const currentScrollY = window.scrollY || 0;
-        const deltaY = currentScrollY - connectionStatusLastScrollY;
-        connectionStatusLastScrollY = currentScrollY;
-        if (Math.abs(deltaY) < 12) return;
-
-        const shouldHide = deltaY > 0 && currentScrollY > 24;
-        indicator.dataset.hiddenByScroll = shouldHide ? '1' : '0';
-        applyConnectionStatusVisualState(indicator);
-    }, { passive: true });
-
-    window.addEventListener('resize', () => {
-        const indicator = document.getElementById('connectionStatus');
-        if (!indicator) return;
-        if (!isMobileDashboardViewport()) {
-            indicator.dataset.hiddenByScroll = '0';
-            applyConnectionStatusVisualState(indicator);
-        }
-    });
-
-    document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState !== 'visible') return;
-        const indicator = document.getElementById('connectionStatus');
-        if (!indicator) return;
-        indicator.dataset.hiddenByScroll = '0';
-        applyConnectionStatusVisualState(indicator);
-    });
+    return dashboardRealtime.handleRealtimeStatsUpdate(stats);
 }
 
 function updateConnectionStatus(status) {
-    const now = Date.now();
-    if (
-        connectionStatusLastRendered.status === status &&
-        (now - connectionStatusLastRendered.at) < CONNECTION_STATUS_DEDUP_MS
-    ) {
-        return;
-    }
-
-    connectionStatusLastRendered = { status, at: now };
-
-    const normalizedStatus = ['connected', 'disconnected', 'reconnecting', 'paused', 'failed'].includes(status)
-        ? status
-        : 'disconnected';
-
-    const existingIndicator = document.getElementById('connectionStatus');
-    if (existingIndicator) {
-        existingIndicator.remove();
-    }
-
-    syncHeaderDelight(getActiveSectionName() || 'dashboard', normalizedStatus);
+    return dashboardRealtime.updateConnectionStatus(status);
 }
+
 function closeSSE() {
-    if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-    }
-    if (sseReconnectTimer) {
-        clearTimeout(sseReconnectTimer);
-        sseReconnectTimer = null;
-    }
-    if (connectionStatusScrollHideTimer) {
-        clearTimeout(connectionStatusScrollHideTimer);
-        connectionStatusScrollHideTimer = null;
-    }
-    connectionStatusLastRendered = { status: '', at: 0 };
-    connectionStatusForceVisibleUntil = 0;
-    const indicator = document.getElementById('connectionStatus');
-    if (indicator) {
-        indicator.remove();
-    }
+    return dashboardRealtime.closeSSE();
 }
 
 // Initialize
-async function init() {
-    // Bind UI interactions first so controls work even if session bootstrap is slow.
-    setupAdvancedFilters();
-    setupExportButtons();
-    setupThemeToggle();
-    setupHeaderOverflowMenu();
-    setupMobileNavPanel();
-    setupTrendRangeToggle();
-    const initialSection = getActiveSectionName() || 'dashboard';
-    syncHeaderDelight(initialSection, 'paused');
-    syncMobileNavContext();
-    syncMobileNavMoreState(initialSection);
-    syncHeaderPrimaryAction(initialSection);
-    validateAllSectionBindings();
+const dashboardBootstrap = window.createDashboardBootstrap({
+    api,
+    applyAuthenticatedUser,
+    closeSSE,
+    forceLoginOnOpen: FORCE_LOGIN_ON_OPEN,
+    getActiveSectionName,
+    hideLogin,
+    loadDashboard,
+    resetToLoggedOutState: () => dashboardAuth.resetToLoggedOutState(),
+    setupAdvancedFilters,
+    setupExportButtons,
+    setupHeaderOverflowMenu,
+    setupMobileNavPanel,
+    setupThemeToggle,
+    setupTrendRangeToggle,
+    syncHeaderDelight,
+    syncHeaderPrimaryAction,
+    syncMobileNavContext,
+    syncMobileNavMoreState,
+    syncSSEForCurrentContext,
+    updateConnectionStatus,
+    validateAllSectionBindings,
+});
 
-    try {
-        if (FORCE_LOGIN_ON_OPEN) {
-            try {
-                await api.logout();
-            } catch (_err) {
-                // Ignorar si no había sesión activa.
-            }
-            currentUser = null;
-            webAccessToken = '';
-            closeSSE();
-            resetProtectedViews();
-            showLogin();
-        } else {
-            const me = await api.getMe();
-            applyAuthenticatedUser(me);
-            hideLogin();
-            loadDashboard();
-            syncSSEForCurrentContext(true);
-        }
-    } catch (err) {
-        console.error('Error validating session:', err);
-        currentUser = null;
-        closeSSE();
-        resetProtectedViews();
-        showLogin();
-    }
-    
-    // Handle page visibility changes to suspend/reconnect SSE.
-    document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
-            console.log('[SSE] Page visible, reconnecting...');
-            syncSSEForCurrentContext(true);
-            return;
-        }
-        closeSSE();
-        updateConnectionStatus('paused');
-    });
-    
-    // Close SSE on page unload
-    window.addEventListener('beforeunload', closeSSE);
+async function init() {
+    return dashboardBootstrap.init();
 }
 
 
@@ -6217,3 +3196,6 @@ function setupThemeToggle() {
 }
 
 init();
+
+
+

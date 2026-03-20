@@ -32,6 +32,11 @@ test("GET /web/dashboard returns versioned static dashboard and strict CSP", asy
 
   const scripts = extractExternalScripts(html);
   assert.ok(scripts.some((src) => /^\/chart\.umd\.js\?v=[a-f0-9]{10}$/.test(src)));
+  assert.ok(scripts.some((src) => /^\/dashboard-modals\.js\?v=[a-f0-9]{10}$/.test(src)));
+  assert.ok(scripts.some((src) => /^\/dashboard-incidents\.js\?v=[a-f0-9]{10}$/.test(src)));
+  assert.ok(scripts.some((src) => /^\/dashboard-auth\.js\?v=[a-f0-9]{10}$/.test(src)));
+  assert.ok(scripts.some((src) => /^\/dashboard-navigation\.js\?v=[a-f0-9]{10}$/.test(src)));
+  assert.ok(scripts.some((src) => /^\/dashboard-bootstrap\.js\?v=[a-f0-9]{10}$/.test(src)));
   assert.ok(scripts.some((src) => /^\/dashboard\.js\?v=[a-f0-9]{10}$/.test(src)));
   assert.ok(scripts.some((src) => /^\/dashboard-pwa\.js\?v=[a-f0-9]{10}$/.test(src)));
   assert.match(html, /href="\/dashboard\.css\?v=[a-f0-9]{10}"/);

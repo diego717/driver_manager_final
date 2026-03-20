@@ -4,15 +4,14 @@ import json
 import gc
 import re
 import os
-import html
 from pathlib import Path
 from datetime import datetime, timedelta
 
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QTabWidget, QProgressBar, QMessageBox, QListWidgetItem, QLabel, QPushButton,
-                             QDialog, QGroupBox, QLineEdit, QInputDialog, QFileDialog, QTextEdit)
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget,
+                             QTabWidget, QProgressBar, QMessageBox, QListWidgetItem,
+                             QDialog, QGroupBox, QLineEdit, QInputDialog, QFileDialog)
 from PyQt6.QtCore import Qt, QObject, pyqtSignal, QRunnable, QThreadPool
-from PyQt6.QtGui import QFont, QPixmap, QIcon
+from PyQt6.QtGui import QFont
 
 # Importar módulos personalizados
 from managers.cloud_manager import CloudflareR2Manager
@@ -27,9 +26,51 @@ from managers.web_driver_manager import WebDriverManager
 from handlers.event_handlers import EventHandlers
 from handlers.report_handlers import ReportHandlers
 from managers.user_manager_v2 import UserManagerV2
-from ui.dialogs.user_management_ui import UserManagementDialog, LoginDialog
+from ui.dialogs.user_management_ui import UserManagementDialog
 from ui.dialogs.qr_generator_dialog import QrGeneratorDialog
 from ui.dialogs.asset_management_dialog import AssetManagementDialog
+from ui.main_window_bootstrap import (
+    build_main_window_ui,
+    initialize_manager_state,
+    initialize_window_handlers,
+)
+from ui.main_window_connections import setup_main_window_connections
+from ui.main_window_incidents import (
+    apply_incidents_filters as apply_incidents_filters_helper,
+    build_photo_thumbnail_icon,
+    create_incident_for_record as create_incident_for_record_helper,
+    create_incident_from_incidents_view as create_incident_from_incidents_view_helper,
+    format_incident_datetime_label,
+    handle_incident_item_changed,
+    handle_incidents_installation_changed,
+    handle_thumbnail_failed,
+    handle_thumbnail_loaded,
+    incident_severity_label,
+    incident_status_label,
+    normalize_incident_status,
+    normalize_record_attention_state,
+    open_photo_viewer,
+    queue_thumbnail_load,
+    record_attention_icon,
+    record_attention_label,
+    refresh_incidents_view as refresh_incidents_view_helper,
+    render_incident_detail_html,
+    select_incident_photo,
+    show_incident_details,
+    show_incidents_for_selected_record as show_incidents_for_selected_record_helper,
+    update_selected_incident_status as update_selected_incident_status_helper,
+    upload_photo_for_incident,
+    upload_photo_for_selected_incident as upload_photo_for_selected_incident_helper,
+    view_selected_incident_photo as view_selected_incident_photo_helper,
+)
+from ui.main_window_session import (
+    apply_navigation_access_control,
+    current_user_role,
+    handle_tab_changed,
+    is_user_authenticated,
+    run_admin_logout,
+    run_login_dialog,
+)
 from ui.ui_components import DriversTab, HistoryTab, AdminTab, EditInstallationDialog
 from ui.theme_manager import ThemeManager
 from core.config_manager import ConfigManager
@@ -331,76 +372,17 @@ class MainWindow(QMainWindow):
 
     def _init_managers(self):
         """Inicializar todos los managers"""
-        
-        self.cloud_manager = None
-        self.history_manager = None
-        self.web_driver_manager = None
-        # Reusar la misma instancia de seguridad del ConfigManager para compartir
-        # clave maestra/fernet ya inicializados al cargar config.enc.
-        self.security_manager = self.config_manager.security
-        self.theme_manager = ThemeManager()  # Gestor de temas
-        self.user_manager = None  # Se inicializará después de cloud_manager
-        self.installer = DriverInstaller()
-        self.history = InstallationHistory(self.config_manager)
-        self._sync_history_web_token_provider()
-        self.report_gen = ReportGenerator(self.history)
-        self.is_authenticated = False
-        self.is_admin = False
-        self.installation_start_time = None
-        self._audit_logs_repair_attempted = False
-        self._photo_thumbnail_cache = {}
-        self._thumbnail_inflight = set()
-        self._thumbnail_item_map = {}
-        self._thumbnail_pool = QThreadPool.globalInstance()
-        
-        # Cache local
-        if PORTABLE_MODE and PORTABLE_CONFIG:
-            try:
-                self.cache_dir = get_cache_dir()
-                logger.info(f"Usando caché portable: {self.cache_dir}")
-            except:
-                self.cache_dir = Path.home() / ".driver_manager" / "cache"
-        else:
-            self.cache_dir = Path.home() / ".driver_manager" / "cache"
-        
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        initialize_manager_state(
+            self,
+            portable_mode=PORTABLE_MODE,
+            portable_config=PORTABLE_CONFIG,
+            get_cache_dir=get_cache_dir if 'get_cache_dir' in globals() else None,
+            logger=logger,
+        )
     
     def _init_ui(self):
         """Inicializar interfaz de usuario"""
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
-        
-        # Header
-        header = QLabel("🖨️ SiteOps - Impresoras de Tarjetas")
-        header.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        main_layout.addWidget(header)
-        
-        # Tabs
-        self.tabs = QTabWidget()
-        main_layout.addWidget(self.tabs)
-        
-        # Crear tabs usando los componentes refactorizados
-        self.drivers_tab = DriversTab(self)
-        self.drivers_tab_index = self.tabs.addTab(self.drivers_tab, "📦 Drivers Disponibles")
-        
-        self.history_tab = HistoryTab(self)
-        self.history_tab_index = self.tabs.addTab(self.history_tab, "📊 Historial y Reportes")
-
-        self.incidents_tab = self.history_tab.incidents_widget
-        self.incidents_tab_index = self.tabs.addTab(self.incidents_tab, "⚠️ Incidencias")
-
-        self.admin_tab = AdminTab(self)
-        self.admin_tab_index = self.tabs.addTab(self.admin_tab, "🔐 Administración")
-        
-        # Status bar
-        self.statusBar().showMessage("Listo para operar")
-        
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        main_layout.addWidget(self.progress_bar)
+        build_main_window_ui(self)
 
     def _show_status_hint(self, message, level="info", timeout_ms=4200):
         """Mostrar feedback breve en la barra de estado con tono contextual."""
@@ -415,237 +397,27 @@ class MainWindow(QMainWindow):
     
     def _init_handlers(self):
         """Inicializar manejadores"""
-        self.download_manager = DownloadManager(self)
-        self.event_handlers = EventHandlers(self)
-        self.report_handlers = ReportHandlers(self)
+        initialize_window_handlers(self)
         
     def _setup_connections(self):
         """Configurar conexiones de señales"""
-        # Drivers tab
-        self.drivers_tab.brand_filter.currentTextChanged.connect(self.filter_drivers)
-        self.drivers_tab.drivers_list.itemDoubleClicked.connect(self.event_handlers.on_driver_double_click)
-        self.drivers_tab.drivers_list.itemSelectionChanged.connect(self.event_handlers.on_driver_selected)
-        self.drivers_tab.download_btn.clicked.connect(self.event_handlers.download_driver)
-        self.drivers_tab.install_btn.clicked.connect(self.event_handlers.download_and_install)
-        if hasattr(self.drivers_tab, "refresh_btn"):
-            self.drivers_tab.refresh_btn.clicked.connect(self.refresh_drivers_list)
-        if hasattr(self.drivers_tab, "generate_qr_btn"):
-            self.drivers_tab.generate_qr_btn.clicked.connect(self.show_qr_generator_dialog)
-        if hasattr(self.drivers_tab, "associate_asset_btn"):
-            self.drivers_tab.associate_asset_btn.clicked.connect(self.show_asset_link_dialog)
-        if hasattr(self.drivers_tab, "manage_assets_btn"):
-            self.drivers_tab.manage_assets_btn.clicked.connect(self.show_asset_management_dialog)
-        
-        # History tab
-        self.history_tab.history_view_combo.currentTextChanged.connect(self.on_history_view_changed)
-        self.history_tab.history_list.currentItemChanged.connect(self._on_history_item_changed)
-        self.history_tab.create_manual_button.clicked.connect(self.create_manual_history_record)
-        self.history_tab.edit_button.clicked.connect(self.show_edit_installation_dialog)
-        if hasattr(self.history_tab, "view_incidents_button"):
-            self.history_tab.view_incidents_button.clicked.connect(self.show_incidents_for_selected_record)
-        if hasattr(self.history_tab, "incidents_installations_list"):
-            self.history_tab.incidents_installations_list.currentItemChanged.connect(
-                self._on_incidents_installation_changed
-            )
-        if hasattr(self.history_tab, "incidents_list"):
-            self.history_tab.incidents_list.currentItemChanged.connect(self._on_incident_item_changed)
-        if hasattr(self.history_tab, "incident_photos_list"):
-            self.history_tab.incident_photos_list.itemDoubleClicked.connect(
-                lambda _item: self.view_selected_incident_photo()
-            )
-            self.history_tab.incident_photos_list.currentItemChanged.connect(
-                lambda current, _previous=None: self.history_tab.view_incident_photo_btn.setEnabled(current is not None)
-            )
-        if hasattr(self.history_tab, "refresh_incidents_view_btn"):
-            self.history_tab.refresh_incidents_view_btn.clicked.connect(self.refresh_incidents_view)
-        if hasattr(self.history_tab, "apply_incidents_filters_btn"):
-            self.history_tab.apply_incidents_filters_btn.clicked.connect(self.apply_incidents_filters)
-        if hasattr(self.history_tab, "incidents_severity_filter"):
-            self.history_tab.incidents_severity_filter.currentTextChanged.connect(
-                lambda _value: self.apply_incidents_filters()
-            )
-        if hasattr(self.history_tab, "incidents_period_filter"):
-            self.history_tab.incidents_period_filter.currentTextChanged.connect(
-                lambda _value: self.apply_incidents_filters()
-            )
-        if hasattr(self.history_tab, "create_incident_btn"):
-            self.history_tab.create_incident_btn.clicked.connect(self.create_incident_from_incidents_view)
-        if hasattr(self.history_tab, "upload_incident_photo_btn"):
-            self.history_tab.upload_incident_photo_btn.clicked.connect(self.upload_photo_for_selected_incident)
-        if hasattr(self.history_tab, "view_incident_photo_btn"):
-            self.history_tab.view_incident_photo_btn.clicked.connect(self.view_selected_incident_photo)
-        if hasattr(self.history_tab, "incident_mark_open_btn"):
-            self.history_tab.incident_mark_open_btn.clicked.connect(
-                lambda: self.update_selected_incident_status("open")
-            )
-        if hasattr(self.history_tab, "incident_mark_progress_btn"):
-            self.history_tab.incident_mark_progress_btn.clicked.connect(
-                lambda: self.update_selected_incident_status("in_progress")
-            )
-        if hasattr(self.history_tab, "incident_mark_resolved_btn"):
-            self.history_tab.incident_mark_resolved_btn.clicked.connect(
-                lambda: self.update_selected_incident_status("resolved")
-            )
-
-        # Conexiones para la pestaña de gestion de registros
-        self.history_tab.management_history_list.currentItemChanged.connect(
-            lambda item: self.history_tab.delete_selected_btn.setEnabled(
-                item is not None and self.user_manager and self.user_manager.is_super_admin()
-            )
-        )
-        self.history_tab.delete_selected_btn.clicked.connect(self.delete_selected_history_record)
-        
-        # Conectar botón actualizar del historial
-        for widget in self.history_tab.findChildren(QPushButton):
-            if "Actualizar" in widget.text() and "Generar" not in widget.text():
-                widget.clicked.connect(self.refresh_current_history_view)
-        
-        # Admin tab
-        self.admin_tab.login_btn.clicked.connect(self.show_login_dialog)
-        self.admin_tab.logout_btn.clicked.connect(self.on_admin_logout)
-        self.tabs.currentChanged.connect(self._on_tab_changed)
-        
-        # Conectar botones de visibilidad en admin tab
-        self.admin_tab.show_account_btn.clicked.connect(
-            lambda: self.event_handlers.toggle_visibility(
-                self.admin_tab.admin_account_id_input, 
-                self.admin_tab.show_account_btn
-            )
-        )
-        self.admin_tab.show_access_btn.clicked.connect(
-            lambda: self.event_handlers.toggle_visibility(
-                self.admin_tab.admin_access_key_input, 
-                self.admin_tab.show_access_btn
-            )
-        )
-        self.admin_tab.show_secret_btn.clicked.connect(
-            lambda: self.event_handlers.toggle_visibility(
-                self.admin_tab.admin_secret_key_input, 
-                self.admin_tab.show_secret_btn
-            )
-        )
-        if hasattr(self.admin_tab, "show_api_token_btn"):
-            self.admin_tab.show_api_token_btn.clicked.connect(
-                lambda: self.event_handlers.toggle_visibility(
-                    self.admin_tab.admin_api_token_input,
-                    self.admin_tab.show_api_token_btn
-                )
-            )
-        if hasattr(self.admin_tab, "show_api_secret_btn"):
-            self.admin_tab.show_api_secret_btn.clicked.connect(
-                lambda: self.event_handlers.toggle_visibility(
-                    self.admin_tab.admin_api_secret_input,
-                    self.admin_tab.show_api_secret_btn
-                )
-            )
-        
-        # CONEXIONES FALTANTES - Admin tab botones R2
-        # Buscar y conectar botones por texto
-        for widget in self.admin_tab.findChildren(QPushButton):
-            if "Guardar Configuración R2" in widget.text():
-                widget.clicked.connect(self.event_handlers.save_r2_config)
-            elif "Probar Conexión" in widget.text():
-                widget.clicked.connect(self.test_r2_connection)
-            elif "❌ Eliminar Seleccionado" in widget.text():
-                widget.clicked.connect(self.delete_driver)
-            elif "Gestionar Usuarios" in widget.text():
-                widget.clicked.connect(self.show_user_management)
-            elif "Cambiar Contraseña" in widget.text():
-                widget.clicked.connect(self.event_handlers.change_admin_password)
-            elif "Limpiar Caché" in widget.text():
-                widget.clicked.connect(self.event_handlers.clear_cache)
-        
-        # Conectar botones de subida en DriversTab
-        for widget in self.drivers_tab.findChildren(QPushButton):
-            if "📁 Seleccionar Archivo" in widget.text():
-                widget.clicked.connect(self.select_driver_file)
-            elif "☁️ Subir a la Nube" in widget.text():
-                widget.clicked.connect(self.upload_driver)
-        
-        # Conectar selector de tema
-        if hasattr(self.admin_tab, 'theme_combo'):
-            self.admin_tab.theme_combo.currentTextChanged.connect(self.change_theme)
-            # Establecer tema actual
-            current_theme = "Oscuro" if self.theme_manager.get_current_theme() == "dark" else "Claro"
-            self.admin_tab.theme_combo.setCurrentText(current_theme)
-        
-        # History tab - reportes
-        if hasattr(self.history_tab, "daily_report_btn"):
-            self.history_tab.daily_report_btn.clicked.connect(
-                self.report_handlers.generate_daily_report_simple
-            )
-        if hasattr(self.history_tab, "monthly_report_btn"):
-            self.history_tab.monthly_report_btn.clicked.connect(
-                self.report_handlers.generate_monthly_report_simple
-            )
-        if hasattr(self.history_tab, "yearly_report_btn"):
-            self.history_tab.yearly_report_btn.clicked.connect(
-                self.report_handlers.generate_yearly_report_simple
-            )
-        if hasattr(self.history_tab, "report_month_combo"):
-            self.history_tab.report_month_combo.currentIndexChanged.connect(
-                lambda _idx: self.report_handlers.refresh_reports_preview()
-            )
-        if hasattr(self.history_tab, "report_year_combo"):
-            self.history_tab.report_year_combo.currentIndexChanged.connect(
-                lambda _idx: self.report_handlers.refresh_reports_preview()
-            )
-        
-        self._apply_navigation_access_control()
+        setup_main_window_connections(self)
 
     def _is_user_authenticated(self):
         """Retornar si hay una sesión autenticada activa."""
-        if not self.is_authenticated:
-            return False
-        if not self.user_manager:
-            return False
-        return bool(self.user_manager.current_user)
+        return is_user_authenticated(self)
 
     def _current_user_role(self):
         """Obtener rol actual de usuario autenticado."""
-        if not self.user_manager or not self.user_manager.current_user:
-            return ""
-        return str(self.user_manager.current_user.get("role") or "").strip().lower()
+        return current_user_role(self)
 
     def _apply_navigation_access_control(self):
         """Aplicar acceso a tabs y acciones según estado de sesión/rol."""
-        can_access_protected_tabs = self._is_user_authenticated()
-
-        self.tabs.setTabEnabled(self.drivers_tab_index, can_access_protected_tabs)
-        self.tabs.setTabEnabled(self.history_tab_index, can_access_protected_tabs)
-        self.tabs.setTabEnabled(self.incidents_tab_index, can_access_protected_tabs)
-        self.tabs.setTabEnabled(self.admin_tab_index, True)
-
-        role = self._current_user_role() if can_access_protected_tabs else ""
-        can_edit_history = role in ("admin", "super_admin")
-
-        if hasattr(self.history_tab, "create_manual_button"):
-            self.history_tab.create_manual_button.setEnabled(can_edit_history)
-        if hasattr(self.history_tab, "create_incident_btn"):
-            self.history_tab.create_incident_btn.setEnabled(False)
-        if hasattr(self.history_tab, "upload_incident_photo_btn"):
-            self.history_tab.upload_incident_photo_btn.setEnabled(False)
-        if hasattr(self.history_tab, "incident_mark_open_btn"):
-            self.history_tab.incident_mark_open_btn.setEnabled(False)
-        if hasattr(self.history_tab, "incident_mark_progress_btn"):
-            self.history_tab.incident_mark_progress_btn.setEnabled(False)
-        if hasattr(self.history_tab, "incident_mark_resolved_btn"):
-            self.history_tab.incident_mark_resolved_btn.setEnabled(False)
-
-        if not can_access_protected_tabs and self.tabs.currentIndex() != self.admin_tab_index:
-            self.tabs.setCurrentIndex(self.admin_tab_index)
-            self.statusBar().showMessage("Inicia sesión para acceder a Drivers y Registros.", 5000)
+        apply_navigation_access_control(self)
 
     def _on_tab_changed(self, tab_index):
         """Evitar navegación a tabs deshabilitados."""
-        if tab_index < 0:
-            return
-        if self.tabs.isTabEnabled(tab_index):
-            if tab_index == getattr(self, "incidents_tab_index", -1):
-                self.refresh_incidents_view()
-            return
-        self.tabs.setCurrentIndex(self.admin_tab_index)
-        self.statusBar().showMessage("Debes iniciar sesión para acceder a este menú.", 4000)
+        handle_tab_changed(self, tab_index)
     
     def load_config_data(self):
         """Cargar configuración desde archivo"""
@@ -937,655 +709,64 @@ class MainWindow(QMainWindow):
         return sign * (hours * 3600 + minutes * 60 + seconds)
 
     def _normalize_incident_status(self, raw_value):
-        """Normalizar estado de incidencia a valores permitidos."""
-        status = str(raw_value or "").strip().lower()
-        if status in {"open", "in_progress", "resolved"}:
-            return status
-        return "open"
+        return normalize_incident_status(self, raw_value)
 
     def _incident_status_label(self, raw_value):
-        """Etiqueta amigable para estado de incidencia."""
-        normalized = self._normalize_incident_status(raw_value)
-        if normalized == "in_progress":
-            return "En curso"
-        if normalized == "resolved":
-            return "Resuelta"
-        return "Abierta"
+        return incident_status_label(self, raw_value)
 
     def _format_incident_datetime_label(self, raw_value):
-        """Formatear fecha/hora de incidencia en hora local legible."""
-        dt = self._parse_incident_datetime(raw_value)
-        if dt is None:
-            return str(raw_value or "-")
-        return dt.strftime("%d/%m/%Y %H:%M")
+        return format_incident_datetime_label(self, raw_value)
 
     def _incident_severity_label(self, raw_value):
-        """Etiqueta corta para severidad."""
-        value = str(raw_value or "medium").strip().lower()
-        labels = {
-            "critical": "Crítica",
-            "high": "Alta",
-            "medium": "Media",
-            "low": "Baja",
-        }
-        return labels.get(value, str(raw_value or "Media").strip().title() or "Media")
-
-    def _incident_detail_chip(self, text, background, text_color, border):
-        """Construir chip HTML para el resumen de incidencia."""
-        return (
-            f"<td style=\"padding:6px 10px;background:{background};color:{text_color};"
-            f"border:1px solid {border};font-weight:600;white-space:nowrap;\">"
-            f"{html.escape(str(text))}</td>"
-        )
-
-    def _incident_detail_meta_row(self, label, value):
-        """Fila HTML para pares label/value del detalle."""
-        safe_label = html.escape(str(label))
-        safe_value = html.escape(str(value if value not in (None, "") else "-"))
-        return (
-            "<tr>"
-            f"<td width=\"132\" valign=\"top\" style=\"padding:0 12px 8px 0;font-weight:600;\">{safe_label}</td>"
-            f"<td valign=\"top\" style=\"padding:0 0 8px 0;\">{safe_value}</td>"
-            "</tr>"
-        )
+        return incident_severity_label(self, raw_value)
 
     def _render_incident_detail_html(self, incident):
-        """Renderizar detalle de incidencia en un formato más cercano a la web."""
-        colors = self.theme_manager.get_theme_colors() if self.theme_manager else {
-            "surface_raised": "#ffffff",
-            "surface": "#f7f9fc",
-            "surface_alt": "#e6ebf2",
-            "border": "#c7d0db",
-            "text_primary": "#16202c",
-            "text_secondary": "#4d5d70",
-            "accent_soft": "rgba(31, 91, 147, 0.14)",
-            "accent": "#1f5b93",
-            "panel_info": "rgba(43, 106, 166, 0.12)",
-            "panel_success": "rgba(47, 125, 82, 0.13)",
-            "panel_warning": "rgba(139, 90, 28, 0.15)",
-            "panel_error": "rgba(167, 66, 52, 0.14)",
-            "success": "#2f7d52",
-            "warning": "#8b5a1c",
-            "error": "#a74234",
-        }
-
-        photos = incident.get("photos") or []
-        incident_id = incident.get("id")
-        record_id = incident.get("installation_id")
-        incident_status = self._normalize_incident_status(incident.get("incident_status"))
-        severity = str(incident.get("severity") or "medium").strip().lower()
-        status_label = self._incident_status_label(incident_status)
-        severity_label = self._incident_severity_label(severity)
-        raw_adjustment = self._coerce_seconds(incident.get("time_adjustment_seconds"), allow_negative=True)
-        note = str(incident.get("note") or "").strip()
-        resolution_note = str(incident.get("resolution_note") or "").strip()
-        evidence_note = str(incident.get("evidence_note") or "").strip()
-
-        status_tones = {
-            "open": (colors["panel_info"], colors["text_primary"], colors["accent"]),
-            "in_progress": (colors["panel_warning"], colors["text_primary"], colors["warning"]),
-            "resolved": (colors["panel_success"], colors["text_primary"], colors["success"]),
-        }
-        severity_tones = {
-            "critical": (colors["panel_error"], colors["text_primary"], colors["error"]),
-            "high": (colors["panel_warning"], colors["text_primary"], colors["warning"]),
-            "medium": (colors["accent_soft"], colors["text_primary"], colors["accent"]),
-            "low": (colors["surface_alt"], colors["text_secondary"], colors["border"]),
-        }
-        status_bg, status_fg, status_border = status_tones.get(
-            incident_status, status_tones["open"]
-        )
-        severity_bg, severity_fg, severity_border = severity_tones.get(
-            severity, severity_tones["medium"]
-        )
-
-        chips = [
-            self._incident_detail_chip(f"Inc #{incident_id}", colors["surface_alt"], colors["text_primary"], colors["border"]),
-            self._incident_detail_chip(f"Estado: {status_label}", status_bg, status_fg, status_border),
-            self._incident_detail_chip(f"Severidad: {severity_label}", severity_bg, severity_fg, severity_border),
-            self._incident_detail_chip(f"Registro #{record_id}", colors["surface_alt"], colors["text_secondary"], colors["border"]),
-            self._incident_detail_chip(f"Fotos: {len(photos)}", colors["surface_alt"], colors["text_secondary"], colors["border"]),
-        ]
-        if raw_adjustment:
-            chips.append(
-                self._incident_detail_chip(
-                    f"Tiempo: {self._format_duration(raw_adjustment)}",
-                    colors["accent_soft"],
-                    colors["text_primary"],
-                    colors["accent"],
-                )
-            )
-
-        chip_rows = []
-        for index in range(0, len(chips), 3):
-            chip_rows.append(f"<tr>{''.join(chips[index:index + 3])}</tr>")
-
-        context_rows = [
-            self._incident_detail_meta_row("Reportado por", incident.get("reporter_username") or "-"),
-            self._incident_detail_meta_row("Origen", incident.get("source") or "-"),
-            self._incident_detail_meta_row("Creada", self._format_incident_datetime_label(incident.get("created_at"))),
-        ]
-        if incident.get("status_updated_at"):
-            context_rows.append(
-                self._incident_detail_meta_row(
-                    "Cambio de estado",
-                    f"{self._format_incident_datetime_label(incident.get('status_updated_at'))} · {incident.get('status_updated_by') or '-'}",
-                )
-            )
-        if incident.get("resolved_at"):
-            context_rows.append(
-                self._incident_detail_meta_row(
-                    "Resuelta",
-                    f"{self._format_incident_datetime_label(incident.get('resolved_at'))} · {incident.get('resolved_by') or '-'}",
-                )
-            )
-
-        timing_rows = [
-            self._incident_detail_meta_row("Estado actual", status_label),
-            self._incident_detail_meta_row("Severidad", severity_label),
-            self._incident_detail_meta_row(
-                "Ajuste de tiempo",
-                f"{self._format_duration(raw_adjustment)} ({raw_adjustment}s)",
-            ),
-        ]
-        actual_duration = incident.get("actual_duration_seconds")
-        if actual_duration not in (None, ""):
-            timing_rows.append(
-                self._incident_detail_meta_row(
-                    "Tiempo real",
-                    self._format_duration(actual_duration),
-                )
-            )
-        estimated_duration = incident.get("estimated_duration_seconds")
-        if estimated_duration not in (None, ""):
-            timing_rows.append(
-                self._incident_detail_meta_row(
-                    "Tiempo estimado",
-                    self._format_duration(estimated_duration),
-                )
-            )
-
-        optional_sections = []
-        if evidence_note:
-            optional_sections.append(
-                "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"margin-top:12px;\">"
-                "<tr><td>"
-                f"<div style=\"font-size:11px;font-weight:700;color:{colors['text_secondary']};margin-bottom:6px;\">"
-                "NOTA OPERATIVA</div>"
-                f"<table width=\"100%\" cellspacing=\"0\" cellpadding=\"12\" "
-                f"style=\"background:{colors['surface']};border:1px solid {colors['border']};\">"
-                f"<tr><td style=\"line-height:1.5;\">{html.escape(evidence_note)}</td></tr></table>"
-                "</td></tr></table>"
-            )
-        if resolution_note:
-            optional_sections.append(
-                "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"margin-top:12px;\">"
-                "<tr><td>"
-                f"<div style=\"font-size:11px;font-weight:700;color:{colors['text_secondary']};margin-bottom:6px;\">"
-                "RESOLUCIÓN</div>"
-                f"<table width=\"100%\" cellspacing=\"0\" cellpadding=\"12\" "
-                f"style=\"background:{colors['panel_success']};border:1px solid {colors['success']};\">"
-                f"<tr><td style=\"line-height:1.5;\">{html.escape(resolution_note)}</td></tr></table>"
-                "</td></tr></table>"
-            )
-
-        safe_note = html.escape(note or "Sin nota registrada.").replace("\n", "<br>")
-        return f"""
-        <div style="font-family:'Segoe UI Variable Text','Segoe UI',sans-serif;color:{colors['text_primary']};">
-            <table cellspacing="6" cellpadding="0" style="margin-bottom:10px;">
-                {''.join(chip_rows)}
-            </table>
-            <table width="100%" cellspacing="0" cellpadding="0" style="margin-bottom:12px;">
-                <tr>
-                    <td>
-                        <table width="100%" cellspacing="0" cellpadding="14"
-                               style="background:{colors['surface_raised']};border:1px solid {colors['border']};">
-                            <tr>
-                                <td>
-                                    <div style="font-size:11px;font-weight:700;color:{colors['text_secondary']};margin-bottom:8px;">
-                                        RESUMEN
-                                    </div>
-                                    <div style="font-size:14px;line-height:1.55;">{safe_note}</div>
-                                </td>
-                            </tr>
-                        </table>
-                    </td>
-                </tr>
-            </table>
-            <table width="100%" cellspacing="10" cellpadding="0">
-                <tr>
-                    <td width="50%" valign="top">
-                        <table width="100%" cellspacing="0" cellpadding="14"
-                               style="background:{colors['surface_raised']};border:1px solid {colors['border']};">
-                            <tr>
-                                <td>
-                                    <div style="font-size:11px;font-weight:700;color:{colors['text_secondary']};margin-bottom:8px;">
-                                        CONTEXTO
-                                    </div>
-                                    <table width="100%" cellspacing="0" cellpadding="0">
-                                        {''.join(context_rows)}
-                                    </table>
-                                </td>
-                            </tr>
-                        </table>
-                    </td>
-                    <td width="50%" valign="top">
-                        <table width="100%" cellspacing="0" cellpadding="14"
-                               style="background:{colors['surface_raised']};border:1px solid {colors['border']};">
-                            <tr>
-                                <td>
-                                    <div style="font-size:11px;font-weight:700;color:{colors['text_secondary']};margin-bottom:8px;">
-                                        ESTADO Y TIEMPOS
-                                    </div>
-                                    <table width="100%" cellspacing="0" cellpadding="0">
-                                        {''.join(timing_rows)}
-                                    </table>
-                                </td>
-                            </tr>
-                        </table>
-                    </td>
-                </tr>
-            </table>
-            {''.join(optional_sections)}
-        </div>
-        """
+        return render_incident_detail_html(self, incident)
 
     def _normalize_record_attention_state(self, raw_value):
-        """Normalizar estado operativo del registro según incidencias."""
-        state = str(raw_value or "").strip().lower()
-        if state in {"clear", "open", "in_progress", "resolved", "critical"}:
-            return state
-        return "clear"
+        return normalize_record_attention_state(self, raw_value)
 
     def _record_attention_label(self, raw_value):
-        """Etiqueta amigable para el estado operativo del registro."""
-        normalized = self._normalize_record_attention_state(raw_value)
-        if normalized == "critical":
-            return "Crítica"
-        if normalized == "in_progress":
-            return "En curso"
-        if normalized == "open":
-            return "Abierta"
-        if normalized == "resolved":
-            return "Resuelta"
-        return "Sin incidencias"
+        return record_attention_label(self, raw_value)
 
     def _record_attention_icon(self, raw_value):
-        """Icono corto para el estado operativo del registro."""
-        normalized = self._normalize_record_attention_state(raw_value)
-        if normalized == "critical":
-            return "!"
-        if normalized == "in_progress":
-            return "~"
-        if normalized == "open":
-            return "*"
-        if normalized == "resolved":
-            return "+"
-        return "-"
+        return record_attention_icon(self, raw_value)
 
     def apply_incidents_filters(self):
-        """Aplicar filtros sobre incidencias de la instalación seleccionada."""
-        if not hasattr(self.history_tab, "incidents_installations_list"):
-            return
-        current_installation = self.history_tab.incidents_installations_list.currentItem()
-        self._on_incidents_installation_changed(current_installation)
+        apply_incidents_filters_helper(self)
 
     def _build_photo_thumbnail_icon(self, photo_id):
-        """Obtener miniatura desde caché, sin bloquear UI."""
-        return self._photo_thumbnail_cache.get(photo_id)
-
-    def _icon_from_photo_bytes(self, photo_bytes):
-        """Crear QIcon thumbnail a partir de bytes de imagen."""
-        pixmap = QPixmap()
-        if not pixmap.loadFromData(photo_bytes):
-            return None
-        thumb = pixmap.scaled(
-            96,
-            72,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        return QIcon(thumb)
+        return build_photo_thumbnail_icon(self, photo_id)
 
     def _queue_thumbnail_load(self, photo_id):
-        """Encolar descarga de miniatura si no está en caché ni en curso."""
-        if photo_id in self._photo_thumbnail_cache:
-            return
-        if photo_id in self._thumbnail_inflight:
-            return
-
-        self._thumbnail_inflight.add(photo_id)
-        worker = _ThumbnailWorker(self.history, photo_id)
-        worker.signals.loaded.connect(self._on_thumbnail_loaded)
-        worker.signals.failed.connect(self._on_thumbnail_failed)
-        self._thumbnail_pool.start(worker)
+        queue_thumbnail_load(self, photo_id, worker_cls=_ThumbnailWorker)
 
     def _on_thumbnail_loaded(self, photo_id, photo_bytes):
-        """Aplicar miniatura descargada en segundo plano."""
-        self._thumbnail_inflight.discard(photo_id)
-        icon = self._icon_from_photo_bytes(photo_bytes)
-        if icon is None:
-            return
-
-        self._photo_thumbnail_cache[photo_id] = icon
-        item = self._thumbnail_item_map.get(photo_id)
-        if item is None:
-            return
-
-        try:
-            if self.history_tab.incident_photos_list.row(item) >= 0:
-                item.setIcon(icon)
-        except Exception:
-            # Si la lista cambió mientras cargaba la miniatura, no hacemos nada.
-            pass
+        handle_thumbnail_loaded(self, photo_id, photo_bytes)
 
     def _on_thumbnail_failed(self, photo_id, _error):
-        """Liberar estado de tareas fallidas para permitir reintento."""
-        self._thumbnail_inflight.discard(photo_id)
+        handle_thumbnail_failed(self, photo_id, _error)
 
     def refresh_incidents_view(self, preferred_record_id=None):
-        """Cargar instalaciones para la vista de incidencias."""
-        if not hasattr(self.history_tab, "incidents_installations_list"):
-            return
-
-        current_item = self.history_tab.incidents_installations_list.currentItem()
-        if preferred_record_id is None and current_item is not None:
-            current_data = current_item.data(Qt.ItemDataRole.UserRole)
-            if isinstance(current_data, dict):
-                preferred_record_id = current_data.get("id")
-
-        limit_text = self.history_tab.incidents_installations_limit.currentText()
-        limit = self._parse_limit_from_text(limit_text, default=25)
-
-        self.history_tab.incidents_installations_list.clear()
-        self.history_tab.incidents_list.clear()
-        self.history_tab.incident_photos_list.clear()
-        self._thumbnail_item_map.clear()
-        self.history_tab.incident_detail.clear()
-        self.history_tab.upload_incident_photo_btn.setEnabled(False)
-        self.history_tab.view_incident_photo_btn.setEnabled(False)
-        if hasattr(self.history_tab, "incident_mark_open_btn"):
-            self.history_tab.incident_mark_open_btn.setEnabled(False)
-            self.history_tab.incident_mark_progress_btn.setEnabled(False)
-            self.history_tab.incident_mark_resolved_btn.setEnabled(False)
-        if hasattr(self.history_tab, "create_incident_btn"):
-            self.history_tab.create_incident_btn.setEnabled(False)
-
-        try:
-            installations = self.history.get_installations(limit=limit)
-        except Exception as e:
-            self.history_tab.incident_detail.setText(f"Error cargando registros: {e}")
-            return
-
-        selected_item = None
-        for inst in installations:
-            timestamp_raw = inst.get("timestamp")
-            date_str = str(timestamp_raw or "")
-            try:
-                date_str = datetime.fromisoformat(str(timestamp_raw)).strftime("%d/%m/%Y %H:%M")
-            except Exception:
-                pass
-
-            record_id = inst.get("id")
-            brand = inst.get("driver_brand") or "N/A"
-            version = inst.get("driver_version") or "N/A"
-            client = inst.get("client_name") or "Sin cliente"
-            text = f"#{record_id} {date_str} - {brand} v{version} ({client})"
-            attention_label = self._record_attention_label(inst.get("attention_state"))
-            attention_icon = self._record_attention_icon(inst.get("attention_state"))
-            active_incidents = self._coerce_seconds(inst.get("incident_active_count"), allow_negative=False)
-            if active_incidents > 0:
-                text += f" | {attention_icon} {attention_label} ({active_incidents})"
-            else:
-                text += f" | {attention_icon} {attention_label}"
-
-            item = QListWidgetItem(text)
-            item.setData(Qt.ItemDataRole.UserRole, inst)
-            self.history_tab.incidents_installations_list.addItem(item)
-
-            if preferred_record_id is not None and record_id == preferred_record_id:
-                selected_item = item
-
-        if selected_item is not None:
-            self.history_tab.incidents_installations_list.setCurrentItem(selected_item)
-        elif self.history_tab.incidents_installations_list.count() > 0:
-            self.history_tab.incidents_installations_list.setCurrentRow(0)
-        else:
-            self.history_tab.incident_detail.setText("No hay registros para mostrar en este rango.")
+        refresh_incidents_view_helper(self, preferred_record_id=preferred_record_id)
 
     def _on_incidents_installation_changed(self, current, _previous=None):
-        """Recargar incidencias cuando cambia la instalación seleccionada."""
-        self.history_tab.incidents_list.clear()
-        self.history_tab.incident_photos_list.clear()
-        self._thumbnail_item_map.clear()
-        self.history_tab.incident_detail.clear()
-        self.history_tab.upload_incident_photo_btn.setEnabled(False)
-        self.history_tab.view_incident_photo_btn.setEnabled(False)
-
-        has_installation = current is not None
-        if hasattr(self.history_tab, "create_incident_btn"):
-            self.history_tab.create_incident_btn.setEnabled(has_installation and self.is_admin)
-        if not has_installation:
-            return
-
-        installation = current.data(Qt.ItemDataRole.UserRole)
-        if not isinstance(installation, dict):
-            return
-
-        record_id = installation.get("id")
-        if record_id is None:
-            return
-
-        try:
-            incidents = self.history.get_incidents_for_installation(record_id)
-        except Exception as e:
-            self.history_tab.incident_detail.setText(f"Error cargando incidencias: {e}")
-            return
-
-        severity_filter = "todas"
-        if hasattr(self.history_tab, "incidents_severity_filter"):
-            severity_filter = str(self.history_tab.incidents_severity_filter.currentText() or "Todas").strip().lower()
-
-        period_days = None
-        if hasattr(self.history_tab, "incidents_period_filter"):
-            period_days = self._period_days_from_text(self.history_tab.incidents_period_filter.currentText())
-
-        cutoff = None
-        if period_days is not None:
-            cutoff = datetime.now() - timedelta(days=period_days)
-
-        filtered_incidents = []
-        for incident in incidents:
-            incident_severity = str(incident.get("severity") or "").strip().lower()
-            if severity_filter != "todas" and incident_severity != severity_filter:
-                continue
-
-            if cutoff is not None:
-                incident_dt = self._parse_incident_datetime(incident.get("created_at"))
-                if incident_dt is None or incident_dt < cutoff:
-                    continue
-
-            filtered_incidents.append(incident)
-            incident_id = incident.get("id")
-            severity = str(incident.get("severity") or "N/A").upper()
-            status_label = self._incident_status_label(incident.get("incident_status"))
-            created_at = str(incident.get("created_at") or "")
-            note_preview = (incident.get("note") or "").strip().replace("\n", " ")
-            if len(note_preview) > 80:
-                note_preview = note_preview[:77] + "..."
-            text = f"#{incident_id} [{severity}/{status_label}] {created_at} - {note_preview or 'Sin nota'}"
-            item = QListWidgetItem(text)
-            item.setData(Qt.ItemDataRole.UserRole, incident)
-            self.history_tab.incidents_list.addItem(item)
-
-        if self.history_tab.incidents_list.count() > 0:
-            self.history_tab.incidents_list.setCurrentRow(0)
-        else:
-            if incidents and not filtered_incidents:
-                self.history_tab.incident_detail.setText(
-                    "No hay incidencias que coincidan con los filtros actuales."
-                )
-            else:
-                self.history_tab.incident_detail.setText(
-                    f"No hay incidencias para el registro #{record_id}."
-                )
+        handle_incidents_installation_changed(self, current, _previous)
 
     def _on_incident_item_changed(self, current, _previous=None):
-        """Actualizar detalle y fotos según la incidencia seleccionada."""
-        self.history_tab.incident_photos_list.clear()
-        self._thumbnail_item_map.clear()
-        self.history_tab.view_incident_photo_btn.setEnabled(False)
-        self.history_tab.upload_incident_photo_btn.setEnabled(current is not None and self.is_admin)
-        if hasattr(self.history_tab, "incident_mark_open_btn"):
-            self.history_tab.incident_mark_open_btn.setEnabled(False)
-        if hasattr(self.history_tab, "incident_mark_progress_btn"):
-            self.history_tab.incident_mark_progress_btn.setEnabled(False)
-        if hasattr(self.history_tab, "incident_mark_resolved_btn"):
-            self.history_tab.incident_mark_resolved_btn.setEnabled(False)
-
-        if current is None:
-            self.history_tab.incident_detail.clear()
-            return
-
-        incident = current.data(Qt.ItemDataRole.UserRole)
-        if not isinstance(incident, dict):
-            self.history_tab.incident_detail.clear()
-            return
-
-        incident_status = self._normalize_incident_status(incident.get("incident_status"))
-        photos = incident.get("photos") or []
-        self.history_tab.incident_detail.setHtml(self._render_incident_detail_html(incident))
-        if self.is_admin and hasattr(self.history_tab, "incident_mark_open_btn"):
-            self.history_tab.incident_mark_open_btn.setEnabled(incident_status != "open")
-            self.history_tab.incident_mark_progress_btn.setEnabled(incident_status != "in_progress")
-            self.history_tab.incident_mark_resolved_btn.setEnabled(incident_status != "resolved")
-
-        for photo in photos:
-            photo_id = photo.get("id")
-            file_name = photo.get("file_name") or f"photo_{photo_id}"
-            content_type = photo.get("content_type") or "image/*"
-            label = f"#{photo_id} - {file_name} ({content_type})"
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, photo)
-            if photo_id is not None:
-                icon = self._build_photo_thumbnail_icon(photo_id)
-                if icon is not None:
-                    item.setIcon(icon)
-                else:
-                    self._queue_thumbnail_load(photo_id)
-                self._thumbnail_item_map[photo_id] = item
-            created_at = photo.get("created_at")
-            if created_at:
-                item.setToolTip(f"Fecha: {created_at}")
-            self.history_tab.incident_photos_list.addItem(item)
-
-        if self.history_tab.incident_photos_list.count() > 0:
-            self.history_tab.incident_photos_list.setCurrentRow(0)
-            self.history_tab.view_incident_photo_btn.setEnabled(True)
+        handle_incident_item_changed(self, current, _previous, worker_cls=_ThumbnailWorker)
 
     def create_incident_from_incidents_view(self):
-        """Crear incidencia usando la instalación seleccionada en el panel."""
-        if not self.is_admin:
-            QMessageBox.warning(self, "Acceso denegado", "Debes iniciar sesión como administrador.")
-            return
-
-        current_installation = self.history_tab.incidents_installations_list.currentItem()
-        if current_installation is None:
-            QMessageBox.warning(self, "Atención", "Selecciona un registro primero.")
-            return
-
-        installation = current_installation.data(Qt.ItemDataRole.UserRole)
-        record_id = installation.get("id") if isinstance(installation, dict) else None
-        if record_id is None:
-            QMessageBox.warning(self, "Error", "No se pudo obtener el ID de registro.")
-            return
-
-        self.create_incident_for_record(record_id)
+        create_incident_from_incidents_view_helper(self)
 
     def upload_photo_for_selected_incident(self):
-        """Subir foto para la incidencia seleccionada en el panel."""
-        if not self.is_admin:
-            QMessageBox.warning(self, "Acceso denegado", "Debes iniciar sesión como administrador.")
-            return
-
-        current_incident = self.history_tab.incidents_list.currentItem()
-        if current_incident is None:
-            QMessageBox.warning(self, "Atención", "Selecciona una incidencia primero.")
-            return
-
-        incident = current_incident.data(Qt.ItemDataRole.UserRole)
-        incident_id = incident.get("id") if isinstance(incident, dict) else None
-        if incident_id is None:
-            QMessageBox.warning(self, "Error", "No se pudo obtener el ID de incidencia.")
-            return
-
-        self._upload_photo_for_incident(incident_id)
-        current_installation = self.history_tab.incidents_installations_list.currentItem()
-        self._on_incidents_installation_changed(current_installation)
+        upload_photo_for_selected_incident_helper(self)
 
     def update_selected_incident_status(self, new_status):
-        """Actualizar estado lifecycle de la incidencia seleccionada."""
-        if not self.is_admin:
-            QMessageBox.warning(self, "Acceso denegado", "Debes iniciar sesión como administrador.")
-            return
-
-        current_incident = self.history_tab.incidents_list.currentItem()
-        if current_incident is None:
-            QMessageBox.warning(self, "Atención", "Selecciona una incidencia primero.")
-            return
-
-        incident = current_incident.data(Qt.ItemDataRole.UserRole)
-        incident_id = incident.get("id") if isinstance(incident, dict) else None
-        if incident_id is None:
-            QMessageBox.warning(self, "Error", "No se pudo obtener el ID de incidencia.")
-            return
-
-        resolution_note = ""
-        if new_status == "resolved":
-            resolution_note, ok = QInputDialog.getMultiLineText(
-                self,
-                "Resolver incidencia",
-                "Nota de resolución (opcional):",
-                str((incident or {}).get("resolution_note") or ""),
-            )
-            if not ok:
-                return
-
-        reporter = "desktop"
-        if self.user_manager and self.user_manager.current_user:
-            reporter = self.user_manager.current_user.get("username", "desktop")
-
-        try:
-            self.history.update_incident_status(
-                incident_id=incident_id,
-                incident_status=new_status,
-                resolution_note=resolution_note,
-                reporter_username=reporter,
-            )
-            QMessageBox.information(
-                self,
-                "Estado actualizado",
-                f"Incidencia #{incident_id} actualizada a {self._incident_status_label(new_status)}.",
-            )
-            current_installation = self.history_tab.incidents_installations_list.currentItem()
-            self._on_incidents_installation_changed(current_installation)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"No se pudo actualizar el estado:\n{e}")
+        update_selected_incident_status_helper(self, new_status)
 
     def view_selected_incident_photo(self):
-        """Abrir la foto seleccionada en el visor."""
-        current_photo = self.history_tab.incident_photos_list.currentItem()
-        if current_photo is None:
-            QMessageBox.information(self, "Sin foto", "Selecciona una foto de la lista.")
-            return
-
-        photo = current_photo.data(Qt.ItemDataRole.UserRole)
-        photo_id = photo.get("id") if isinstance(photo, dict) else None
-        if photo_id is None:
-            QMessageBox.warning(self, "Error", "No se pudo obtener el ID de la foto.")
-            return
-
-        self._open_photo_viewer(photo_id, current_photo.text())
+        view_selected_incident_photo_helper(self)
 
     def _update_management_stats(self):
         """Actualizar estadísticas y logs en la vista de gestión de registros"""
@@ -1811,239 +992,22 @@ class MainWindow(QMainWindow):
                 )
 
     def show_incidents_for_selected_record(self):
-        """Navegar al panel de incidencias con el registro seleccionado."""
-        selected_items = self.history_tab.history_list.selectedItems()
-        if not selected_items:
-            QMessageBox.warning(self, "Atención", "Selecciona un registro del historial primero.")
-            return
-
-        record_id = selected_items[0].data(Qt.ItemDataRole.UserRole)
-        if record_id is None:
-            QMessageBox.warning(self, "Error", "No se pudo obtener el ID del registro.")
-            return
-
-        if hasattr(self, "incidents_tab_index"):
-            self.tabs.setCurrentIndex(self.incidents_tab_index)
-        self.refresh_incidents_view(preferred_record_id=record_id)
+        show_incidents_for_selected_record_helper(self)
 
     def create_incident_for_record(self, record_id):
-        """Crear una incidencia nueva para un registro existente."""
-        if not self.is_admin:
-            QMessageBox.warning(self, "Acceso denegado", "Debes iniciar sesión como administrador.")
-            return
-
-        self._show_status_hint(
-            f"Creando incidencia para el registro #{record_id}.",
-            "info",
-            4200,
-        )
-
-        note, ok = QInputDialog.getMultiLineText(
-            self,
-            f"Nueva incidencia para registro #{record_id}",
-            "Detalle de la incidencia:",
-            "",
-        )
-        if not ok:
-            return
-        note = (note or "").strip()
-        if not note:
-            QMessageBox.warning(self, "Atención", "La incidencia requiere un detalle.")
-            return
-
-        severity, ok = QInputDialog.getItem(
-            self,
-            "Severidad",
-            "Selecciona severidad:",
-            ["low", "medium", "high", "critical"],
-            1,
-            False,
-        )
-        if not ok:
-            return
-
-        adjust_text, ok = QInputDialog.getText(
-            self,
-            "Ajuste de tiempo",
-            "Duración a ajustar (ej: -90, 5m, 1h30m):",
-            text="0",
-        )
-        if not ok:
-            return
-
-        try:
-            time_adjustment = self._parse_duration_input_seconds(adjust_text)
-        except ValueError:
-            QMessageBox.warning(
-                self,
-                "Error",
-                "Formato inválido. Usa segundos enteros o formato 5m / 1h30m / -2m.",
-            )
-            return
-
-        apply_item, ok = QInputDialog.getItem(
-            self,
-            "Aplicar a registro",
-            "¿Aplicar nota/tiempo al registro?",
-            ["No", "Sí"],
-            0,
-            False,
-        )
-        if not ok:
-            return
-
-        reporter = "desktop"
-        if self.user_manager and self.user_manager.current_user:
-            reporter = self.user_manager.current_user.get("username", "desktop")
-
-        try:
-            incident = self.history.create_incident(
-                installation_id=record_id,
-                note=note,
-                severity=severity,
-                reporter_username=reporter,
-                time_adjustment_seconds=time_adjustment,
-                apply_to_installation=(apply_item == "Sí"),
-                source="desktop",
-            )
-            incident_id = incident.get("id") if isinstance(incident, dict) else None
-            msg = "Incidencia creada correctamente."
-            if incident_id:
-                msg += f"\nID: {incident_id}"
-            QMessageBox.information(self, "Éxito", msg)
-            self._show_status_hint(
-                "Incidencia registrada y listas actualizadas.",
-                "success",
-                5000,
-            )
-            self.refresh_history_view()
-            if hasattr(self.history_tab, "incidents_installations_list"):
-                self.refresh_incidents_view(preferred_record_id=record_id)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"No se pudo crear la incidencia:\n{e}")
-            self._show_status_hint(
-                "No se pudo crear la incidencia. Revisa los datos e intenta nuevamente.",
-                "error",
-                5000,
-            )
+        create_incident_for_record_helper(self, record_id)
 
     def _show_incident_details(self, incident):
-        """Mostrar detalle de incidencia en una ventana simple."""
-        details_dialog = QDialog(self)
-        details_dialog.setWindowTitle(f"Incidencia #{incident.get('id')}")
-        details_dialog.resize(760, 560)
-        details_dialog.setStyleSheet(self.theme_manager.generate_stylesheet())
-
-        layout = QVBoxLayout(details_dialog)
-        details_view = QTextEdit()
-        details_view.setReadOnly(True)
-        details_view.setHtml(self._render_incident_detail_html(incident))
-        layout.addWidget(details_view)
-
-        close_btn = QPushButton("Cerrar")
-        close_btn.clicked.connect(details_dialog.accept)
-        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
-
-        details_dialog.exec()
+        show_incident_details(self, incident)
 
     def _select_incident_photo(self, incident):
-        """Elegir y abrir una foto de incidencia."""
-        photos = incident.get("photos") or []
-        if not photos:
-            QMessageBox.information(self, "Sin fotos", "Esta incidencia no tiene fotos asociadas.")
-            return
-
-        choices = []
-        photo_map = {}
-        for photo in photos:
-            photo_id = photo.get("id")
-            file_name = photo.get("file_name") or f"photo_{photo_id}"
-            content_type = photo.get("content_type") or "image/*"
-            choice = f"#{photo_id} - {file_name} ({content_type})"
-            choices.append(choice)
-            photo_map[choice] = photo
-
-        selected_photo, ok = QInputDialog.getItem(
-            self,
-            f"Fotos de incidencia #{incident.get('id')}",
-            "Selecciona foto:",
-            choices,
-            0,
-            False,
-        )
-        if not ok:
-            return
-
-        photo = photo_map.get(selected_photo)
-        photo_id = photo.get("id") if photo else None
-        if photo_id is None:
-            QMessageBox.warning(self, "Error", "No se pudo obtener el ID de la foto.")
-            return
-        self._open_photo_viewer(photo_id, selected_photo)
+        select_incident_photo(self, incident)
 
     def _open_photo_viewer(self, photo_id, title):
-        """Descargar y mostrar foto de incidencia."""
-        try:
-            photo_bytes, _content_type = self.history.get_photo_content(photo_id)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"No se pudo descargar la foto #{photo_id}:\n{e}")
-            return
-
-        pixmap = QPixmap()
-        if not pixmap.loadFromData(photo_bytes):
-            QMessageBox.warning(
-                self,
-                "Formato no soportado",
-                "No se pudo renderizar la imagen en el visor de Qt.",
-            )
-            return
-
-        viewer = QDialog(self)
-        viewer.setWindowTitle(f"Foto {title}")
-        viewer.resize(920, 700)
-
-        layout = QVBoxLayout(viewer)
-        image_label = QLabel()
-        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        image_label.setPixmap(
-            pixmap.scaled(
-                880,
-                620,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
-        layout.addWidget(image_label)
-
-        close_btn = QPushButton("Cerrar")
-        close_btn.clicked.connect(viewer.accept)
-        layout.addWidget(close_btn)
-        viewer.exec()
+        open_photo_viewer(self, photo_id, title)
 
     def _upload_photo_for_incident(self, incident_id):
-        """Subir foto a una incidencia existente."""
-        if incident_id is None:
-            QMessageBox.warning(self, "Error", "Incidencia inválida.")
-            return
-
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            f"Subir foto a incidencia #{incident_id}",
-            "",
-            "Imágenes (*.jpg *.jpeg *.png *.webp)",
-        )
-        if not file_path:
-            return
-
-        try:
-            photo = self.history.upload_incident_photo(incident_id, file_path)
-            photo_id = photo.get("id") if isinstance(photo, dict) else None
-            msg = "Foto subida correctamente."
-            if photo_id:
-                msg += f"\nID: {photo_id}"
-            QMessageBox.information(self, "Éxito", msg)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"No se pudo subir la foto:\n{e}")
+        upload_photo_for_incident(self, incident_id)
 
     def refresh_audit_logs(self):
         """Actualizar la lista de logs de auditoría"""
@@ -2338,264 +1302,11 @@ class MainWindow(QMainWindow):
 
     def show_login_dialog(self):
         """Mostrar diálogo de inicio de sesión"""
-        logger.operation_start("show_login_dialog")
-        
-        if not self.cloud_manager:
-            # Intentar levantar conexión usando configuración cifrada existente.
-            try:
-                self.init_cloud_connection()
-            except Exception as e:
-                logger.warning(f"No se pudo inicializar cloud_manager desde configuración: {e}")
-        
-        # Inicializar user_manager si no existe
-        desired_local_mode = self.cloud_manager is None
-        desired_auth_mode = self._resolve_desktop_auth_mode()
-        if (
-            not self.user_manager
-            or bool(getattr(self.user_manager, "local_mode", False)) != desired_local_mode
-            or str(getattr(self.user_manager, "auth_mode", "legacy")).lower() != desired_auth_mode
-        ):
-            try:
-                if not self.history_manager:
-                    self.history_manager = InstallationHistory(self.config_manager)
-                    self._sync_history_web_token_provider()
-                self.user_manager = UserManagerV2(
-                    self.cloud_manager,
-                    self.security_manager,
-                    local_mode=desired_local_mode,
-                    audit_api_client=self.history_manager,
-                    auth_mode=desired_auth_mode,
-                )
-            except Exception as e:
-                logger.error(f"Error inicializando user_manager: {e}", exc_info=True)
-                logger.operation_end("show_login_dialog", success=False, reason=str(e))
-                QMessageBox.warning(self, "Error", f"Error inicializando sistema de usuarios: {str(e)}")
-                return
-        elif (not self.user_manager.local_mode and
-              not getattr(self.user_manager, "audit_api_client", None)):
-            if not self.history_manager:
-                self.history_manager = InstallationHistory(self.config_manager)
-                self._sync_history_web_token_provider()
-            self.user_manager.set_audit_api_client(self.history_manager)
-
-        if self.cloud_manager is None:
-            auth_mode = getattr(self.user_manager, "auth_mode", "legacy")
-            if auth_mode in ("web", "auto"):
-                self.statusBar().showMessage(
-                    "ℹ️ Sin conexión directa a R2: login en modo web habilitado.",
-                    6000,
-                )
-            else:
-                QMessageBox.information(
-                    self,
-                    "Modo Seguro sin Nube",
-                    "No hay conexión Cloudflare R2 activa.\n\n"
-                    "Debes autenticarte como super_admin para configurar credenciales R2."
-                )
-
-        try:
-            if self.user_manager.needs_initialization():
-                logger.warning("No hay base de usuarios disponible. Iniciando configuración inicial.")
-                QMessageBox.information(
-                    self,
-                    "Configuración inicial requerida",
-                    "No se encontró una base de usuarios válida.\n\n"
-                    "Se abrirá el asistente para crear el primer super administrador."
-                )
-                self._show_setup_wizard(self.user_manager, exit_on_cancel=False)
-
-                if self.user_manager.needs_initialization():
-                    logger.warning("Login cancelado: el sistema sigue sin base de usuarios.")
-                    return
-        except Exception as e:
-            logger.error(f"No se pudo evaluar inicialización de usuarios: {e}", exc_info=True)
-            QMessageBox.warning(
-                self,
-                "Error de inicialización",
-                f"No se pudo validar la base de usuarios: {e}"
-            )
-            return
-        
-        # Mostrar diálogo de login
-        dialog = LoginDialog(self.user_manager, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            user = self.user_manager.current_user
-            user_role = user.get('role')
-            username = user.get('username')
-            
-            logger.security_event(
-                event_type="admin_panel_access",
-                username=username,
-                success=True,
-                details={'role': user_role},
-                severity='INFO'
-            )
-            
-            self.is_authenticated = True
-            self.is_admin = user_role in ["admin", "super_admin"]
-            self._apply_navigation_access_control()
-            self.tabs.setCurrentIndex(self.drivers_tab_index)
-
-            # Mostrar sección de subida en DriversTab si es admin
-            self.drivers_tab.toggle_upload_section(self.is_admin)
-
-            self.admin_tab.auth_status.setText(f"🔓 {username} ({user_role})")
-            self.admin_tab.login_btn.setVisible(False)
-            self.admin_tab.logout_btn.setVisible(True)
-            self.admin_tab.admin_content.setVisible(True)
-            
-            # Actualizar visibilidad del warning en HistoryTab si existe
-            if hasattr(self.history_tab, 'warning'):
-                self.history_tab.warning.setVisible(not self.is_admin)
-
-            # ========================================
-            # Logica de permisos por rol
-            # ========================================
-            
-            if user_role == "super_admin":
-                logger.info(f"Configurando panel para super_admin: {username}")
-                web_auth_context = self._is_web_auth_context()
-
-                # Super admin: acceso completo al panel
-                # 1. Mostrar TODAS las secciones incluyendo Cloudflare R2
-                for widget in self.admin_tab.findChildren(QGroupBox):
-                    if web_auth_context and "Cloudflare R2" in widget.title():
-                        widget.setVisible(False)
-                        logger.debug("Sección R2 oculta para contexto web")
-                    else:
-                        widget.setVisible(True)
-                        logger.debug(f"GroupBox visible: {widget.title()}")
-                
-                # 2. Mostrar botón de gestión de usuarios
-                if hasattr(self.admin_tab, 'user_mgmt_btn'):
-                    self.admin_tab.user_mgmt_btn.setVisible(True)
-                    logger.debug("Botón gestión usuarios visible")
-                
-                # 3. Mostrar todos los botones operativos
-                for widget in self.admin_tab.findChildren(QPushButton):
-                    # Mostrar botones de operaciones
-                    if any(text in widget.text() for text in ["Seleccionar Archivo", "Subir a la Nube", "Eliminar Seleccionado"]):
-                        widget.setVisible(True)
-                        logger.debug(f"Botón visible para super_admin: {widget.text()}")
-                    # También botones de R2
-                    if any(text in widget.text() for text in ["Guardar Configuración R2", "Probar Conexión"]):
-                        widget.setVisible(not web_auth_context)
-                        if web_auth_context:
-                            logger.debug(f"Botón R2 oculto para contexto web: {widget.text()}")
-                        else:
-                            logger.debug(f"Botón R2 visible para super_admin: {widget.text()}")
-                
-                # 4. Mostrar campos de entrada para subir drivers
-                for widget in self.admin_tab.findChildren(QLineEdit):
-                    placeholder = (widget.placeholderText() or "").lower()
-                    if not placeholder:
-                        continue
-
-                    is_driver_field = "driver" in placeholder
-                    is_r2_field = any(text in placeholder for text in ["account", "key", "bucket"])
-
-                    if is_driver_field:
-                        widget.setVisible(True)
-                        logger.debug(f"Campo visible: {widget.placeholderText()}")
-                    elif is_r2_field:
-                        widget.setVisible(not web_auth_context)
-                        if web_auth_context:
-                            logger.debug(f"Campo R2 oculto para contexto web: {widget.placeholderText()}")
-                        else:
-                            logger.debug(f"Campo visible: {widget.placeholderText()}")
-                
-                # 5. IMPORTANTE: Cargar credenciales R2 en los campos
-                if not web_auth_context:
-                    logger.info("Cargando credenciales R2 para super_admin")
-                    self.event_handlers.load_r2_config_to_admin_panel()
-
-                    logger.security_event(
-                        event_type="r2_credentials_accessed",
-                        username=username,
-                        success=True,
-                        details={'action': 'view_credentials'},
-                        severity='WARNING'
-                    )
-                else:
-                    self.statusBar().showMessage(
-                        "ℹ️ Sesión web activa: configuración R2 no requerida para iniciar sesión.",
-                        5000,
-                    )
-                
-            elif user_role == "admin":
-                logger.info(f"Configurando panel para admin: {username}")
-                
-                # Admin: puede operar drivers sin ver credenciales R2
-                # 1. OCULTAR sección de Cloudflare R2
-                for widget in self.admin_tab.findChildren(QGroupBox):
-                    if "Cloudflare R2" in widget.title():
-                        widget.setVisible(False)
-                        logger.debug("Sección R2 OCULTA para admin")
-                    else:
-                        widget.setVisible(True)
-                
-                # 2. Mostrar botones de eliminar drivers
-                for widget in self.admin_tab.findChildren(QPushButton):
-                    if "Eliminar Seleccionado" in widget.text():
-                        widget.setVisible(True)
-                    # OCULTAR botones de configurar R2
-                    if any(text in widget.text() for text in ["Guardar Configuración R2", "Probar Conexión"]):
-                        widget.setVisible(False)
-                
-                # 3. Mostrar campos para subir drivers
-                for widget in self.admin_tab.findChildren(QLineEdit):
-                    if widget.placeholderText() and "driver" in widget.placeholderText().lower():
-                        widget.setVisible(True)
-                    if widget.placeholderText() and any(text in widget.placeholderText().lower() for text in ["account", "key", "bucket"]):
-                        widget.setVisible(False)
-                
-                # 4. NO cargar credenciales R2
-                logger.info("Admin NO tiene acceso a credenciales R2")
-                
-            else:  # viewer
-                logger.info(f"Configurando panel para viewer: {username}")
-                
-                # ❌ VIEWER: Solo lectura
-                # Ocultar secciones sensibles
-                for widget in self.admin_tab.findChildren(QGroupBox):
-                    widget.setVisible(False)
-                
-                # Ocultar botones de edición de drivers y config R2
-                for widget in self.admin_tab.findChildren(QPushButton):
-                    if any(text in widget.text() for text in ["Eliminar Seleccionado", "Guardar Configuración", "Probar Conexión"]):
-                        widget.setVisible(False)
-                
-                # Ocultar campos de entrada sensibles
-                for widget in self.admin_tab.findChildren(QLineEdit):
-                    if widget.placeholderText() and any(text in widget.placeholderText().lower() for text in ["driver", "account", "key", "bucket"]):
-                        widget.setVisible(False)
-                
-                logger.info("Viewer: solo lectura, sin acceso a panel admin")
-
-            self._sync_history_web_token_provider()
-            # Refrescar lista usando backend activo (web/legacy) tras login.
-            self.refresh_drivers_list()
-            
-            # Cargar lista de drivers para admin/super_admin
-            if hasattr(self, 'all_drivers') and user_role in ["admin", "super_admin"]:
-                self.event_handlers.update_admin_drivers_list(self.all_drivers)
-                logger.debug(f"Lista de drivers cargada para {user_role}")
-            
-            # Actualizar la vista de logs de auditoría
-            self.refresh_audit_logs()
-            
-            logger.operation_end("show_login_dialog", success=True, role=user_role)
-        else:
-            logger.info("Login cancelado por usuario")
-            logger.operation_end("show_login_dialog", success=False, reason="cancelled")
+        run_login_dialog(self, logger=logger)
 
     def on_admin_logout(self):
         """Manejar cierre de sesión y actualizar UI"""
-        self.event_handlers.admin_logout()
-        self._sync_history_web_token_provider()
-        self.drivers_tab.toggle_upload_section(False)
-        self._apply_navigation_access_control()
-        self.refresh_drivers_list()
+        run_admin_logout(self)
     
     def show_user_management(self):
         """Mostrar diálogo de gestión de usuarios"""

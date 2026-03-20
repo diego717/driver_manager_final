@@ -150,6 +150,17 @@ const DASHBOARD_ASSET_PATHS = {
   "dashboard.css": "/dashboard.css",
   "chart.umd.js": "/chart.umd.js",
   "dashboard-qr.js": "/dashboard-qr.js",
+  "dashboard-api.js": "/dashboard-api.js",
+  "dashboard-modals.js": "/dashboard-modals.js",
+  "dashboard-incidents.js": "/dashboard-incidents.js",
+  "dashboard-assets.js": "/dashboard-assets.js",
+  "dashboard-drivers.js": "/dashboard-drivers.js",
+  "dashboard-audit.js": "/dashboard-audit.js",
+  "dashboard-overview.js": "/dashboard-overview.js",
+  "dashboard-realtime.js": "/dashboard-realtime.js",
+  "dashboard-auth.js": "/dashboard-auth.js",
+  "dashboard-navigation.js": "/dashboard-navigation.js",
+  "dashboard-bootstrap.js": "/dashboard-bootstrap.js",
   "dashboard.js": "/dashboard.js",
   "dashboard-pwa.js": "/dashboard-pwa.js",
   "manifest.json": "/manifest.json",
@@ -178,6 +189,17 @@ function dashboardAssetContentType(assetPath) {
   if (
     assetPath === "/chart.umd.js" ||
     assetPath === "/dashboard-qr.js" ||
+    assetPath === "/dashboard-api.js" ||
+    assetPath === "/dashboard-modals.js" ||
+    assetPath === "/dashboard-incidents.js" ||
+    assetPath === "/dashboard-assets.js" ||
+    assetPath === "/dashboard-drivers.js" ||
+    assetPath === "/dashboard-audit.js" ||
+    assetPath === "/dashboard-overview.js" ||
+    assetPath === "/dashboard-realtime.js" ||
+    assetPath === "/dashboard-auth.js" ||
+    assetPath === "/dashboard-navigation.js" ||
+    assetPath === "/dashboard-bootstrap.js" ||
     assetPath === "/dashboard.js" ||
     assetPath === "/dashboard-pwa.js" ||
     assetPath === "/sw.js"

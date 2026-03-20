@@ -309,3 +309,19 @@ test("incident cards avoid repeating low-priority metadata already shown in chip
     0,
   );
 });
+
+test("qr preview builds payload and image url for installation codes", async () => {
+  const { dom } = await setupDashboardApp();
+  const { window } = dom;
+  const { document } = window;
+
+  window.showQrModal({ type: "installation", value: "42" });
+  document.querySelector('input[name="qrType"][value="installation"]').checked = true;
+  document.getElementById("qrValueInput").value = "42";
+  window.generateQrPreview();
+  await flushDashboardTasks();
+
+  assert.equal(document.getElementById("qrPayloadText").textContent, "dm://installation/42");
+  assert.match(document.getElementById("qrPreviewImage").src, /^data:image\//);
+  assert.equal(document.getElementById("qrDownloadBtn").dataset.filename, "qr-instalacion-42.png");
+});

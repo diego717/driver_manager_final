@@ -4,11 +4,21 @@
     "chart": "74401d738d",
     "qr": "d8de215faf",
     "api": "79074def03",
-    "js": "e235c6c6b6",
+    "modals": "2339ca15d8",
+    "incidents": "fb9b05e499",
+    "assets": "0586023f62",
+    "drivers": "d4b073868d",
+    "audit": "f6a8c58478",
+    "overview": "a7b85b0b52",
+    "realtime": "1481ce57aa",
+    "auth": "3e1ec8b9ae",
+    "navigation": "13eac20df6",
+    "bootstrap": "d41f5f1a45",
+    "js": "74b8237e30",
     "pwa": "55b84aa40e",
     "manifest": "9130a5f920",
     "sw": "4c87568cf6",
     "materialSymbolsFont": "ee7248184b",
-    "build": "f58d0dca05"
+    "build": "259d7e2e30"
   }
 }

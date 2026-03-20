@@ -250,10 +250,65 @@ function installBrowserShims(window, fetchImpl) {
 
 function runPublicDashboardScripts(dom) {
   const context = dom.getInternalVMContext();
+  const qrScript = new vm.Script(readPublicTextAsset("dashboard-qr.js"), {
+    filename: "public/dashboard-qr.js",
+  });
+  qrScript.runInContext(context);
+
   const apiScript = new vm.Script(readPublicTextAsset("dashboard-api.js"), {
     filename: "public/dashboard-api.js",
   });
   apiScript.runInContext(context);
+
+  const modalsScript = new vm.Script(readPublicTextAsset("dashboard-modals.js"), {
+    filename: "public/dashboard-modals.js",
+  });
+  modalsScript.runInContext(context);
+
+  const incidentsScript = new vm.Script(readPublicTextAsset("dashboard-incidents.js"), {
+    filename: "public/dashboard-incidents.js",
+  });
+  incidentsScript.runInContext(context);
+
+  const assetsScript = new vm.Script(readPublicTextAsset("dashboard-assets.js"), {
+    filename: "public/dashboard-assets.js",
+  });
+  assetsScript.runInContext(context);
+
+  const driversScript = new vm.Script(readPublicTextAsset("dashboard-drivers.js"), {
+    filename: "public/dashboard-drivers.js",
+  });
+  driversScript.runInContext(context);
+
+  const auditScript = new vm.Script(readPublicTextAsset("dashboard-audit.js"), {
+    filename: "public/dashboard-audit.js",
+  });
+  auditScript.runInContext(context);
+
+  const overviewScript = new vm.Script(readPublicTextAsset("dashboard-overview.js"), {
+    filename: "public/dashboard-overview.js",
+  });
+  overviewScript.runInContext(context);
+
+  const realtimeScript = new vm.Script(readPublicTextAsset("dashboard-realtime.js"), {
+    filename: "public/dashboard-realtime.js",
+  });
+  realtimeScript.runInContext(context);
+
+  const authScript = new vm.Script(readPublicTextAsset("dashboard-auth.js"), {
+    filename: "public/dashboard-auth.js",
+  });
+  authScript.runInContext(context);
+
+  const navigationScript = new vm.Script(readPublicTextAsset("dashboard-navigation.js"), {
+    filename: "public/dashboard-navigation.js",
+  });
+  navigationScript.runInContext(context);
+
+  const bootstrapScript = new vm.Script(readPublicTextAsset("dashboard-bootstrap.js"), {
+    filename: "public/dashboard-bootstrap.js",
+  });
+  bootstrapScript.runInContext(context);
 
   const dashboardScript = new vm.Script(readPublicTextAsset("dashboard.js"), {
     filename: "public/dashboard.js",

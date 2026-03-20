@@ -1750,6 +1750,18 @@ test("Dashboard assets include hardened security headers", async () => {
     "https://worker.example/web/dashboard",
     "https://worker.example/web/dashboard.css",
     "https://worker.example/web/chart.umd.js",
+    "https://worker.example/web/dashboard-qr.js",
+    "https://worker.example/web/dashboard-api.js",
+    "https://worker.example/web/dashboard-modals.js",
+    "https://worker.example/web/dashboard-incidents.js",
+    "https://worker.example/web/dashboard-assets.js",
+    "https://worker.example/web/dashboard-drivers.js",
+    "https://worker.example/web/dashboard-audit.js",
+    "https://worker.example/web/dashboard-overview.js",
+    "https://worker.example/web/dashboard-realtime.js",
+    "https://worker.example/web/dashboard-auth.js",
+    "https://worker.example/web/dashboard-navigation.js",
+    "https://worker.example/web/dashboard-bootstrap.js",
     "https://worker.example/web/dashboard.js",
     "https://worker.example/web/dashboard-pwa.js",
     "https://worker.example/web/manifest.json",
@@ -1771,6 +1783,18 @@ test("Dashboard assets include hardened security headers", async () => {
     if (
       url.endsWith("/web/dashboard.css") ||
       url.endsWith("/web/chart.umd.js") ||
+      url.endsWith("/web/dashboard-qr.js") ||
+      url.endsWith("/web/dashboard-api.js") ||
+      url.endsWith("/web/dashboard-modals.js") ||
+      url.endsWith("/web/dashboard-incidents.js") ||
+      url.endsWith("/web/dashboard-assets.js") ||
+      url.endsWith("/web/dashboard-drivers.js") ||
+      url.endsWith("/web/dashboard-audit.js") ||
+      url.endsWith("/web/dashboard-overview.js") ||
+      url.endsWith("/web/dashboard-realtime.js") ||
+      url.endsWith("/web/dashboard-auth.js") ||
+      url.endsWith("/web/dashboard-navigation.js") ||
+      url.endsWith("/web/dashboard-bootstrap.js") ||
       url.endsWith("/web/dashboard.js")
     ) {
       const bodyText = await response.text();
