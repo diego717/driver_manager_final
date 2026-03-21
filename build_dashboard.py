@@ -7,9 +7,6 @@ Combina dashboard.css y dashboard.js en un solo HTML embebido.
 from __future__ import annotations
 
 import re
-import sys
-
-
 def read_file(path: str) -> str:
     with open(path, "r", encoding="utf-8") as f:
         return f.read()

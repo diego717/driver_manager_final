@@ -23,6 +23,7 @@ import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import SectionCard from "@/src/components/SectionCard";
 import StatusChip from "@/src/components/StatusChip";
+import SyncStatusBanner from "@/src/components/SyncStatusBanner";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
@@ -311,6 +312,8 @@ export default function WorkTabScreen() {
           </View>
         </View>
       </ScreenHero>
+
+      <SyncStatusBanner />
 
       <View style={styles.topActionsRow}>
         <TouchableOpacity

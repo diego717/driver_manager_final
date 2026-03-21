@@ -37,7 +37,7 @@ class MasterPasswordVault:
         else:
             local_app_data = os.getenv("LOCALAPPDATA")
             if local_app_data:
-                base_dir = Path(local_app_data) / "DriverManager"
+                base_dir = Path(local_app_data) / "SiteOps"
             else:
                 base_dir = Path.home() / ".driver_manager"
             self.store_file = base_dir / ".master_password_vault.json"
@@ -136,7 +136,7 @@ class MasterPasswordVault:
 
         ok = crypt32.CryptProtectData(
             ctypes.byref(in_blob),
-            "Driver Manager Master Password",
+            "SiteOps Master Password",
             ctypes.byref(entropy_blob),
             None,
             None,

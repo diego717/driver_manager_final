@@ -2296,7 +2296,7 @@ var qrcode = function() {
     return qrcode;
 }));
 
-// Driver Manager wrapper for browser-side/offline QR rendering.
+// SiteOps wrapper for browser-side/offline QR rendering.
 (function attachDriverManagerQrGenerator(globalScope) {
   if (!globalScope || typeof globalScope.qrcode !== 'function') {
     return;

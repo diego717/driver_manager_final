@@ -34,6 +34,21 @@ class TestHistoryIncidentsClient(unittest.TestCase):
         self.assertEqual(incidents[0]["status_updated_by"], "desktop")
         self.request.assert_called_once_with("get", "installations/55/incidents")
 
+    def test_list_incidents_keeps_paused_status(self):
+        self.request.return_value = {
+            "incidents": [
+                {
+                    "id": 9,
+                    "incident_status": "paused",
+                    "created_at": "2026-03-20T08:00:00",
+                }
+            ]
+        }
+
+        incidents = self.client.list_incidents_for_installation(77)
+
+        self.assertEqual(incidents[0]["incident_status"], "paused")
+
     def test_build_create_incident_payload_requires_note(self):
         with self.assertRaises(ValueError):
             self.client.build_create_incident_payload("")
@@ -41,7 +56,7 @@ class TestHistoryIncidentsClient(unittest.TestCase):
     def test_create_and_update_incident_delegate_to_request(self):
         self.request.side_effect = [
             {"incident": {"id": 7, "incident_status": "open"}},
-            {"incident": {"id": 7, "incident_status": "resolved"}},
+            {"incident": {"id": 7, "incident_status": "paused"}},
         ]
 
         created = self.client.create_incident(
@@ -50,11 +65,11 @@ class TestHistoryIncidentsClient(unittest.TestCase):
         )
         updated = self.client.update_incident_status(
             7,
-            self.client.build_update_incident_status_payload("resolved", "ok"),
+            self.client.build_update_incident_status_payload("paused", "ok"),
         )
 
         self.assertEqual(created["incident_status"], "open")
-        self.assertEqual(updated["incident_status"], "resolved")
+        self.assertEqual(updated["incident_status"], "paused")
         self.assertEqual(self.request.call_count, 2)
 
     def test_upload_incident_photo_sends_binary_and_headers(self):

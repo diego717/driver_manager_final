@@ -1,12 +1,22 @@
 """
-Cliente de dominio para incidencias y fotos asociadas.
+Domain client for incidents and related evidence photos.
 """
+
+from __future__ import annotations
 
 from pathlib import Path
 
+from managers.history_domain_rules import (
+    IMAGE_TOO_SMALL_MESSAGE,
+    UNSUPPORTED_IMAGE_FORMAT_MESSAGE,
+    normalize_incident_status,
+    normalize_required_note,
+    validate_incident_status,
+)
+
 
 class HistoryIncidentsClient:
-    """Cliente liviano para endpoints de incidencias/fotos."""
+    """Thin client for incident and photo endpoints."""
 
     def __init__(self, request_func):
         self._request = request_func
@@ -14,11 +24,11 @@ class HistoryIncidentsClient:
     def normalize_incident_lifecycle_fields(self, incident):
         if not isinstance(incident, dict):
             return incident
+
         normalized = dict(incident)
-        status = str(normalized.get("incident_status") or "").strip().lower()
-        if status not in {"open", "in_progress", "resolved"}:
-            status = "open"
-        normalized["incident_status"] = status
+        normalized["incident_status"] = normalize_incident_status(
+            normalized.get("incident_status"),
+        )
         normalized.setdefault("status_updated_at", normalized.get("created_at"))
         normalized.setdefault("status_updated_by", normalized.get("reporter_username"))
         normalized.setdefault("resolved_at", None)
@@ -34,7 +44,7 @@ class HistoryIncidentsClient:
             return "image/png"
         if suffix == ".webp":
             return "image/webp"
-        raise ValueError("Formato no soportado. Usa JPG, PNG o WEBP.")
+        raise ValueError(UNSUPPORTED_IMAGE_FORMAT_MESSAGE)
 
     def list_incidents_for_installation(self, normalized_installation_id):
         payload = self._request("get", f"installations/{normalized_installation_id}/incidents")
@@ -52,17 +62,14 @@ class HistoryIncidentsClient:
         apply_to_installation=False,
         source="desktop",
     ):
-        payload = {
+        return {
             "reporter_username": str(reporter_username or "desktop"),
-            "note": str(note or "").strip(),
+            "note": normalize_required_note(note),
             "severity": str(severity or "medium"),
             "time_adjustment_seconds": int(time_adjustment_seconds or 0),
             "apply_to_installation": bool(apply_to_installation),
             "source": str(source or "desktop"),
         }
-        if not payload["note"]:
-            raise ValueError("La incidencia requiere una nota/descripciÃ³n.")
-        return payload
 
     def create_incident(self, normalized_installation_id, payload):
         result = self._request(
@@ -80,10 +87,7 @@ class HistoryIncidentsClient:
         resolution_note="",
         reporter_username="desktop",
     ):
-        normalized_status = str(incident_status or "").strip().lower()
-        if normalized_status not in {"open", "in_progress", "resolved"}:
-            raise ValueError("Estado de incidencia invÃ¡lido. Usa open, in_progress o resolved.")
-
+        normalized_status = validate_incident_status(incident_status)
         return {
             "incident_status": normalized_status,
             "resolution_note": str(resolution_note or "").strip(),
@@ -103,12 +107,12 @@ class HistoryIncidentsClient:
     def upload_incident_photo(self, normalized_incident_id, file_path):
         file_to_upload = Path(file_path)
         if not file_to_upload.exists() or not file_to_upload.is_file():
-            raise FileNotFoundError(f"No se encontrÃ³ el archivo: {file_path}")
+            raise FileNotFoundError(f"No se encontro el archivo: {file_path}")
 
         content_type = self.guess_image_content_type(file_to_upload)
         binary_data = file_to_upload.read_bytes()
         if len(binary_data) < 1024:
-            raise ValueError("La imagen es demasiado pequeÃ±a o estÃ¡ corrupta.")
+            raise ValueError(IMAGE_TOO_SMALL_MESSAGE)
 
         result = self._request(
             "post",

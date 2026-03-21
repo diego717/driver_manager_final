@@ -32,8 +32,8 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-url",
-        default=os.getenv("WORKER_URL", os.getenv("DRIVER_MANAGER_HISTORY_API_URL", "")).strip(),
-        help="Worker base URL. Required if not set in WORKER_URL or DRIVER_MANAGER_HISTORY_API_URL.",
+        default=os.getenv("DRIVER_MANAGER_HISTORY_API_URL", "").strip(),
+        help="Worker base URL. Required if not set in DRIVER_MANAGER_HISTORY_API_URL.",
     )
     parser.add_argument("--admin-user", required=True, help="Web admin/super_admin username")
     parser.add_argument("--admin-pass", required=True, help="Web admin/super_admin password")
@@ -59,7 +59,7 @@ def _parse_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
     if not str(args.base_url).strip():
-        parser.error("Real cleanup requiere --base-url o la variable WORKER_URL/DRIVER_MANAGER_HISTORY_API_URL.")
+        parser.error("Real cleanup requiere --base-url o la variable DRIVER_MANAGER_HISTORY_API_URL.")
     if not args.dry_run and not args.yes:
         parser.error("Real cleanup requires --yes (or use --dry-run).")
     return args

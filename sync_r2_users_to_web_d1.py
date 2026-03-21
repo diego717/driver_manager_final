@@ -192,8 +192,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Sync R2 users.json into Worker D1 web_users.")
     parser.add_argument(
         "--api-base-url",
-        default=os.getenv("DRIVER_MANAGER_HISTORY_API_URL", os.getenv("WORKER_URL", "")).strip(),
-        help="Worker base URL. Required if not set in DRIVER_MANAGER_HISTORY_API_URL or WORKER_URL.",
+        default=os.getenv("DRIVER_MANAGER_HISTORY_API_URL", "").strip(),
+        help="Worker base URL. Required if not set in DRIVER_MANAGER_HISTORY_API_URL.",
     )
     parser.add_argument("--admin-username", default="", help="Web admin username for /web/auth/login")
     parser.add_argument(
@@ -231,7 +231,7 @@ def main() -> int:
 
     api_base_url = args.api_base_url.strip().rstrip("/")
     if not api_base_url:
-        print("ERROR: API base URL is empty. Use --api-base-url or DRIVER_MANAGER_HISTORY_API_URL/WORKER_URL.")
+        print("ERROR: API base URL is empty. Use --api-base-url or DRIVER_MANAGER_HISTORY_API_URL.")
         return 1
 
     access_token = args.access_token.strip()

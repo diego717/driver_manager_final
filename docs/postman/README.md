@@ -7,7 +7,7 @@
 ## Import
 1. Open Postman.
 2. `Import` -> select both JSON files.
-3. Choose environment: `Driver Manager - Incidents v1 (Template)`.
+3. Choose environment: `SiteOps - Incidents v1 (Template)`.
 
 ## Set Variables
 1. `base_url`: your Worker URL.

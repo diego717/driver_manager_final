@@ -1,22 +1,22 @@
 """
-Cliente de dominio para assets y sus asociaciones.
+Domain client for assets and installation links.
 """
+
+from __future__ import annotations
+
+from managers.history_domain_rules import normalize_required_asset_code
 
 
 class HistoryAssetsClient:
-    """Cliente liviano para endpoints de assets."""
+    """Thin client for asset endpoints."""
 
     def __init__(self, request_func, incident_normalizer=None):
         self._request = request_func
         self._normalize_incident = incident_normalizer or (lambda item: item)
 
     def build_resolve_asset_payload(self, external_code, **kwargs):
-        normalized_code = str(external_code or "").strip()
-        if not normalized_code:
-            raise ValueError("El cÃ³digo externo del equipo es obligatorio.")
-
         payload = {
-            "external_code": normalized_code,
+            "external_code": normalize_required_asset_code(external_code),
         }
         for key in (
             "brand",

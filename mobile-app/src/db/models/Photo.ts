@@ -2,11 +2,14 @@ import { Model } from '@nozbe/watermelondb'
 import { field, text, readonly, date, relation, writer } from '@nozbe/watermelondb/decorators'
 import Relation from '@nozbe/watermelondb/Relation'
 import Incident from './Incident'
+import type { LocalSyncStatus } from './Incident'
 
 export default class Photo extends Model {
   static table = 'photos'
 
   @relation('incidents', 'incident_id') incident!: Relation<Incident>
+
+  // Core fields
   @text('r2_key') r2Key!: string | null
   @text('file_name') fileName!: string
   @text('content_type') contentType!: string
@@ -14,9 +17,18 @@ export default class Photo extends Model {
   @text('sha256') sha256!: string | null
   @readonly @date('created_at') createdAt!: Date
 
+  // Legacy sync fields
   @field('is_synced') isSynced!: boolean
   @text('local_path') localPath!: string
   @field('remote_id') remoteId!: number | null
+
+  // Offline sync v2 — prefixed to avoid WMDb base class clash
+  @text('local_id') localId!: string
+  @field('remote_photo_id') remotePhotoId!: number | null
+  @text('sync_status') localSyncStatus!: LocalSyncStatus
+  @field('sync_attempts') syncAttempts!: number
+  @text('last_sync_error') lastSyncError!: string | null
+  @text('client_request_id') clientRequestId!: string
 
   @writer async markAsSynced(remoteId: number, r2Key: string, sha256: string) {
     await this.update(photo => {
@@ -24,6 +36,21 @@ export default class Photo extends Model {
       photo.remoteId = remoteId
       photo.r2Key = r2Key
       photo.sha256 = sha256
+      photo.localSyncStatus = 'synced'
+      photo.lastSyncError = null
+    })
+  }
+
+  @writer async markLocalSyncStatus(status: LocalSyncStatus, error?: string) {
+    await this.update(photo => {
+      photo.localSyncStatus = status
+      if (status === 'failed') {
+        photo.syncAttempts = photo.syncAttempts + 1
+        photo.lastSyncError = error ?? null
+      } else if (status === 'synced') {
+        photo.isSynced = true
+        photo.lastSyncError = null
+      }
     })
   }
 }

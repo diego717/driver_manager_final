@@ -1,8 +1,8 @@
-# Driver Manager
+# SiteOps
 
 [![Tests](https://github.com/diego717/driver_manager_final/actions/workflows/tests.yml/badge.svg)](https://github.com/diego717/driver_manager_final/actions/workflows/tests.yml)
 
-Driver Manager es un monorepo con tres componentes:
+SiteOps es un monorepo con tres componentes:
 
 - App de escritorio en Python/PyQt6 para gestion de drivers y historial.
 - API en Cloudflare Workers (D1 + R2) para instalaciones e incidencias.
@@ -75,7 +75,12 @@ Detalles: ver [Mobile app (Expo)](#mobile-app-expo) y [APK Android con EAS (reco
 - `migrations/0002_incidents_v1.sql`: migracion de incidencias y fotos.
 - `docs/incidents-v1.openapi.yaml`: contrato OpenAPI.
 - `docs/postman/`: coleccion y entorno de Postman.
+- `docs/auth-modes.md`: referencia operativa de autenticacion.
+- `docs/secure-deploy.md`: guia corta de deploy seguro.
+- `docs/operational-recovery.md`: recovery operativo y fallos comunes.
 - `docs/multi-tenant-rollout.md`: plan de rollout multiempresa (tenant, roles, R2 y limites).
+- `docs/tenant-request-flow.md`: flujo corto de tenant end-to-end.
+- `docs/release-checklist.md`: checklist tecnico de release.
 - `docs/operational-differentiation-implementation.md`: plan de implementacion para workflow+SLA, offline Android, tablero web y push critico.
 
 ## Requisitos
@@ -525,6 +530,14 @@ CI (`.github/workflows/tests.yml`) ejecuta los mismos comandos oficiales: `pytho
 - Postman quick start: `docs/postman/README.md`
 - Coleccion: `docs/postman/incidents-v1.postman_collection.json`
 - Environment template: `docs/postman/incidents-v1.postman_environment.json`
+
+## Documentacion operativa
+
+- Auth modes: `docs/auth-modes.md`
+- Deploy seguro: `docs/secure-deploy.md`
+- Recovery operativo: `docs/operational-recovery.md`
+- Flujo de tenants: `docs/tenant-request-flow.md`
+- Checklist de release: `docs/release-checklist.md`
 
 ## Seguridad
 

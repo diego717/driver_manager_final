@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Cloudflare Worker API for Driver Manager with D1 database",
+  "description": "Cloudflare Worker API for SiteOps with D1 database",
   "main": "worker.js",
   "scripts": {
     "security:verify-deploy": "node scripts/verify-security-deploy-config.mjs",

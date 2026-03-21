@@ -15,17 +15,17 @@ import {
   resolveAssetByExternalCode,
 } from "@/src/api/assets";
 import { extractApiError } from "@/src/api/client";
-import {
-  createIncident,
-  listInstallations,
-} from "@/src/api/incidents";
+import { listInstallations } from "@/src/api/incidents";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import SectionCard from "@/src/components/SectionCard";
 import StatusChip from "@/src/components/StatusChip";
+import SyncStatusBanner from "@/src/components/SyncStatusBanner";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
+import { enqueueCreateIncident, registerIncidentExecutors } from "@/src/services/sync/incident-outbox-service";
+import { runSync } from "@/src/services/sync/sync-runner";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { getStoredWebAccessUsername } from "@/src/storage/secure";
 import { useAppPalette } from "@/src/theme/palette";
@@ -34,6 +34,21 @@ import {
   type IncidentSeverity,
   type InstallationRecord,
 } from "@/src/types/api";
+
+// Register sync executor once
+registerIncidentExecutors();
+
+/** Lightweight connectivity probe — no extra dependencies needed */
+async function isOnline(): Promise<boolean> {
+  try {
+    const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? "";
+    if (!apiBase) return true; // assume online if no base configured
+    await fetch(`${apiBase}/health`, { method: "HEAD", signal: AbortSignal.timeout(3000) });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const MIN_TOUCH_TARGET_SIZE = 44;
 
@@ -184,17 +199,32 @@ export default function CreateIncidentScreen() {
 
     try {
       setSubmitting(true);
-      const response = await createIncident(installationId, {
+
+      // ── Local-first: save to WatermelonDB and enqueue a sync job ──
+      const { localId } = await enqueueCreateIncident({
+        installationId,
         note: note.trim(),
-        reporter_username: reporterUsername.trim() || "mobile_user",
-        time_adjustment_seconds: 0,
+        reporterUsername: reporterUsername.trim() || "mobile_user",
+        timeAdjustmentSeconds: 0,
         severity,
         source: "mobile",
-        apply_to_installation: false,
       });
 
-      let assetLinkWarning = "";
-      if (assetExternalCode.trim()) {
+      setLastCreatedIncidentId(localId as unknown as number); // localId used for navigation
+      setNote("");
+
+      // ── Connectivity-aware feedback ──
+      const online = await isOnline();
+      if (online) {
+        notify("success", "Incidencia guardada. Sincronizando con el servidor...");
+        // Non-blocking flush — the engine has a re-entrancy guard
+        runSync();
+      } else {
+        notify("info" as InlineFeedbackTone, "Incidencia guardada en el dispositivo. Pendiente de sincronizar.");
+      }
+
+      // Asset link (best-effort, only if online and a code was provided)
+      if (online && assetExternalCode.trim()) {
         try {
           let resolvedAssetId = assetRecordId;
           if (!resolvedAssetId || resolvedAssetId <= 0) {
@@ -205,32 +235,18 @@ export default function CreateIncidentScreen() {
             }
             resolvedAssetId = resolvedId;
           }
-
           await linkAssetToInstallation(
             resolvedAssetId,
             installationId,
-            `Vinculado al crear incidencia #${response.incident.id} desde mobile`,
+            `Vinculado al crear incidencia (${localId}) desde mobile`,
           );
         } catch (linkError) {
-          assetLinkWarning = extractApiError(linkError);
+          const warn = extractApiError(linkError);
+          notify("warning", `Incidencia guardada, pero no se pudo vincular el equipo: ${warn}`);
         }
       }
-
-      setLastCreatedIncidentId(response.incident.id);
-      setNote("");
-      if (assetLinkWarning) {
-        notify(
-          "warning",
-          `Incidencia #${response.incident.id} creada. El caso quedo abierto, pero no se pudo confirmar la vinculacion del equipo: ${assetLinkWarning}`,
-        );
-      } else {
-        notify(
-          "success",
-          `Incidencia #${response.incident.id} creada dentro del caso #${installationId}.`,
-        );
-      }
     } catch (error) {
-      notify("error", `No se pudo crear la incidencia: ${extractApiError(error)}`);
+      notify("error", `Error al guardar la incidencia: ${extractApiError(error)}`);
     } finally {
       setSubmitting(false);
     }
@@ -328,6 +344,8 @@ export default function CreateIncidentScreen() {
       {feedbackMessage ? (
         <InlineFeedback message={feedbackMessage.message} tone={feedbackMessage.tone} />
       ) : null}
+
+      <SyncStatusBanner />
 
       <SectionCard
         title="Caso listo"
@@ -472,20 +490,20 @@ export default function CreateIncidentScreen() {
       {lastCreatedIncidentId ? (
         <SectionCard
           title="Siguiente paso"
-          description="La incidencia ya existe. Ahora toca completar la evidencia y el seguimiento."
+          description="La incidencia esta guardada. Avanza al backlog del caso o carga evidencia cuando tengas red."
         >
           <TouchableOpacity
             style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
             onPress={() =>
               router.push(
-                `/incident/upload?incidentId=${lastCreatedIncidentId}&installationId=${installationId}` as never,
+                `/work?installationId=${installationId}` as never,
               )
             }
             accessibilityRole="button"
-            accessibilityLabel="Abrir el flujo de evidencia para la incidencia creada"
+            accessibilityLabel="Ver backlog del caso"
           >
             <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
-              Cargar evidencia
+              Ver backlog del caso
             </Text>
           </TouchableOpacity>
         </SectionCard>

@@ -3,11 +3,8 @@ Asistente de Configuración Inicial de Usuario
 Guía al usuario en la creación del primer super_admin
 """
 
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QLineEdit, QPushButton, QWizard, QWizardPage,
-                             QMessageBox, QProgressBar)
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QPixmap
+from PyQt6.QtWidgets import QDialog, QLabel, QLineEdit, QMessageBox, QProgressBar, QVBoxLayout, QWizard, QWizardPage
+from PyQt6.QtGui import QFont
 import re
 from core.password_policy import PasswordPolicy
 
@@ -17,7 +14,7 @@ class WelcomePage(QWizardPage):
     
     def __init__(self):
         super().__init__()
-        self.setTitle("🎉 Bienvenido a SiteOps")
+        self.setTitle("Bienvenido a SiteOps")
         
         layout = QVBoxLayout()
         
@@ -61,7 +58,7 @@ class AdminAccountPage(QWizardPage):
     
     def __init__(self):
         super().__init__()
-        self.setTitle("👤 Crear Cuenta de Super Administrador")
+        self.setTitle("Crear cuenta de super administrador")
         self.setSubTitle("Esta será la cuenta principal con todos los privilegios")
         
         layout = QVBoxLayout()
@@ -251,7 +248,7 @@ class SecurityPage(QWizardPage):
     
     def __init__(self):
         super().__init__()
-        self.setTitle("🔒 Configuración de Seguridad")
+        self.setTitle("Configuracion de seguridad")
         self.setSubTitle("Ajusta las opciones de seguridad del sistema")
         
         layout = QVBoxLayout()
@@ -309,7 +306,7 @@ class CompletePage(QWizardPage):
     
     def __init__(self):
         super().__init__()
-        self.setTitle("✅ Configuración Completa")
+        self.setTitle("Configuracion completa")
         
         layout = QVBoxLayout()
         
@@ -385,8 +382,8 @@ class UserSetupWizard(QWizard):
         self.addPage(self.complete_page)
         
         # Botones personalizados
-        self.setButtonText(QWizard.WizardButton.NextButton, "Siguiente →")
-        self.setButtonText(QWizard.WizardButton.BackButton, "← Atrás")
+        self.setButtonText(QWizard.WizardButton.NextButton, "Siguiente >")
+        self.setButtonText(QWizard.WizardButton.BackButton, "< Atras")
         self.setButtonText(QWizard.WizardButton.FinishButton, "Finalizar")
         self.setButtonText(QWizard.WizardButton.CancelButton, "Cancelar")
         
@@ -437,8 +434,8 @@ if __name__ == "__main__":
     user_data = show_user_setup_wizard()
     
     if user_data:
-        print(f"✅ Usuario creado: {user_data['username']}")
+        print(f"OK: Usuario creado: {user_data['username']}")
     else:
-        print("❌ Configuración cancelada")
+        print("ERROR: Configuracion cancelada")
     
     sys.exit()

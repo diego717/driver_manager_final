@@ -21,6 +21,11 @@ import { extractApiError, getApiBaseUrl, normalizeApiBaseUrl } from "@/src/api/c
 import { listInstallations } from "@/src/api/incidents";
 import { loginWebSession, logoutWebSession, readStoredWebSession } from "@/src/api/webAuth";
 import {
+  authenticateWithBiometrics,
+  getBiometricAvailability,
+} from "@/src/services/biometric";
+import { getBiometricEnabled, setBiometricEnabled } from "@/src/storage/app-preferences";
+import {
   clearStoredApiBaseUrl,
   getStoredApiBaseUrl,
   setStoredApiBaseUrl,
@@ -105,6 +110,7 @@ export default function ApiSettingsScreen() {
   const [webSigningIn, setWebSigningIn] = useState(false);
   const [webClearing, setWebClearing] = useState(false);
   const [changingTheme, setChangingTheme] = useState(false);
+  const [changingBiometric, setChangingBiometric] = useState(false);
 
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [webLoginUsername, setWebLoginUsername] = useState("");
@@ -116,6 +122,9 @@ export default function ApiSettingsScreen() {
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [loginSectionY, setLoginSectionY] = useState(0);
+  const [biometricEnabled, setBiometricEnabledState] = useState(false);
+  const [biometricAvailable, setBiometricAvailableState] = useState(false);
+  const [biometricLabel, setBiometricLabel] = useState("biometria");
 
   const [baseUrlFromStorage, setBaseUrlFromStorage] = useState(false);
   const requestedFocus = useMemo(
@@ -207,12 +216,19 @@ export default function ApiSettingsScreen() {
         getStoredApiBaseUrl(),
         readStoredWebSession(),
       ]);
+      const [storedBiometricEnabled, biometricAvailability] = await Promise.all([
+        getBiometricEnabled(),
+        getBiometricAvailability(),
+      ]);
 
       setApiBaseUrl(storedBaseUrl ?? getApiBaseUrl());
       setBaseUrlFromStorage(Boolean(storedBaseUrl));
       setWebSessionExpiresAt(webSession.expiresAt);
       setWebSessionUsername(webSession.username);
       setWebSessionRole(webSession.role);
+      setBiometricEnabledState(storedBiometricEnabled);
+      setBiometricAvailableState(biometricAvailability.isAvailable);
+      setBiometricLabel(biometricAvailability.biometricLabel);
       await refreshSharedWebSessionState();
     } catch (error) {
       notify("Error", `No se pudo cargar configuracion: ${extractApiError(error)}`);
@@ -383,6 +399,55 @@ export default function ApiSettingsScreen() {
     void onChangeThemeMode(enabled ? "dark" : "light");
   };
 
+  const onToggleBiometric = async (enabled: boolean) => {
+    if (changingBiometric || loading || saving || testing || webSigningIn || webClearing || changingTheme) {
+      return;
+    }
+
+    if (enabled && !biometricAvailable) {
+      notify(
+        "Biometria no disponible",
+        "Este dispositivo no tiene biometria configurada o la app no pudo validarla.",
+      );
+      return;
+    }
+
+    try {
+      setChangingBiometric(true);
+      if (enabled) {
+        const authResult = await authenticateWithBiometrics({
+          allowDeviceFallback: true,
+          promptMessage: "Confirma la biometria para activar el bloqueo",
+          cancelLabel: "Cancelar",
+          fallbackLabel: "Usar codigo",
+        });
+
+        if (!authResult.success) {
+          setBiometricEnabledState(false);
+          notify(
+            "Activacion cancelada",
+            authResult.error || `No se pudo validar con ${biometricLabel}.`,
+          );
+          return;
+        }
+      }
+
+      await setBiometricEnabled(enabled);
+      setBiometricEnabledState(enabled);
+      notify(
+        "Seguridad local actualizada",
+        enabled
+          ? `La app pedira ${biometricLabel} al volver al primer plano.`
+          : "La biometria local quedo desactivada.",
+        { showAlert: false },
+      );
+    } catch (error) {
+      notify("Error", extractApiError(error));
+    } finally {
+      setChangingBiometric(false);
+    }
+  };
+
   if (loading) {
     return (
       <View style={[styles.loadingContainer, { backgroundColor: palette.screenBg }]}>
@@ -486,10 +551,52 @@ export default function ApiSettingsScreen() {
           <Text style={[styles.themeCurrentText, { color: palette.textMuted }]}>Tema aplicado: {themeSummary}</Text>
         </View>
 
+        <View style={[styles.themePanel, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
+          <View style={styles.cardHeader}>
+            <Text style={[styles.sectionCardTitle, { color: palette.title }]}>Seguridad local</Text>
+            <Text style={[styles.sectionHint, { color: palette.textMuted }]}>
+              Protege la app al volver al primer plano.
+            </Text>
+          </View>
+
+          <View style={styles.themeRow}>
+            <View style={styles.themeRowText}>
+              <Text style={[styles.themeRowTitle, { color: palette.title }]}>Bloqueo con biometria</Text>
+              <Text style={[styles.themeRowHint, { color: palette.textMuted }]}>
+                {biometricAvailable
+                  ? `Usar ${biometricLabel} o codigo del dispositivo al retomar la app`
+                  : "No hay biometria disponible o configurada en este dispositivo"}
+              </Text>
+            </View>
+            <Switch
+              value={biometricEnabled}
+              onValueChange={(nextValue) => {
+                void onToggleBiometric(nextValue);
+              }}
+              disabled={
+                !biometricAvailable ||
+                changingBiometric ||
+                loading ||
+                saving ||
+                testing ||
+                webSigningIn ||
+                webClearing ||
+                changingTheme
+              }
+              thumbColor={biometricEnabled ? palette.primaryButtonBg : palette.textMuted}
+              trackColor={{ false: palette.themeChipBorder, true: palette.chipSelectedBg }}
+            />
+          </View>
+
+          <Text style={[styles.themeCurrentText, { color: palette.textMuted }]}>
+            Estado: {biometricEnabled ? "activado" : "desactivado"}
+          </Text>
+        </View>
+
         <TouchableOpacity
           style={[styles.detailsToggle, { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder }]}
           onPress={() => setShowTechnicalDetails((current) => !current)}
-          disabled={loading || saving || testing || webSigningIn || webClearing || changingTheme}
+          disabled={loading || saving || testing || webSigningIn || webClearing || changingTheme || changingBiometric}
         >
           <Text style={[styles.detailsToggleText, { color: palette.secondaryText }]}>
             {showTechnicalDetails ? "Ocultar detalles tecnicos" : "Mostrar detalles tecnicos"}
@@ -510,6 +617,9 @@ export default function ApiSettingsScreen() {
             </Text>
             <Text style={[styles.sourceText, { color: palette.textMuted }]}>
               Tema: {mode} ({resolvedScheme})
+            </Text>
+            <Text style={[styles.sourceText, { color: palette.textMuted }]}>
+              Biometria: {biometricEnabled ? "activada" : "desactivada"} ({biometricAvailable ? biometricLabel : "no disponible"})
             </Text>
           </View>
         ) : null}
@@ -543,7 +653,7 @@ export default function ApiSettingsScreen() {
                 saving && styles.buttonDisabled,
               ]}
               onPress={onSave}
-              disabled={saving || changingTheme}
+              disabled={saving || changingTheme || changingBiometric}
             >
               {saving ? (
                 <ActivityIndicator color="#ffffff" />
@@ -560,6 +670,7 @@ export default function ApiSettingsScreen() {
               ]}
               onPress={onTestConnection}
               disabled={!hasWebSession || testing || saving || webSigningIn || webClearing || changingTheme}
+              
             >
               {testing ? (
                 <ActivityIndicator color={palette.secondaryText} />
@@ -616,7 +727,7 @@ export default function ApiSettingsScreen() {
                 webSigningIn && styles.buttonDisabled,
               ]}
               onPress={onWebSignIn}
-              disabled={webSigningIn || saving || testing || webClearing || changingTheme}
+              disabled={webSigningIn || saving || testing || webClearing || changingTheme || changingBiometric}
             >
               {webSigningIn ? (
                 <ActivityIndicator color={palette.secondaryText} />
@@ -632,7 +743,7 @@ export default function ApiSettingsScreen() {
                 webClearing && styles.buttonDisabled,
               ]}
               onPress={onClearWebSession}
-              disabled={webClearing || saving || testing || webSigningIn || changingTheme}
+              disabled={webClearing || saving || testing || webSigningIn || changingTheme || changingBiometric}
             >
               {webClearing ? (
                 <ActivityIndicator color={palette.warningText} />
@@ -653,8 +764,8 @@ export default function ApiSettingsScreen() {
               { backgroundColor: palette.warningBg },
               saving && styles.buttonDisabled,
             ]}
-            onPress={onResetToEnv}
-            disabled={saving || testing || webSigningIn || webClearing || changingTheme}
+              onPress={onResetToEnv}
+            disabled={saving || testing || webSigningIn || webClearing || changingTheme || changingBiometric}
           >
             <Text style={[styles.warningButtonText, { color: palette.warningText }]}>
               Restablecer URL a .env

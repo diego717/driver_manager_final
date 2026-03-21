@@ -3,6 +3,9 @@ import { field, text, readonly, date, children, writer } from '@nozbe/watermelon
 import { Associations } from '@nozbe/watermelondb/Model'
 import Photo from './Photo'
 
+/** Our app-specific sync state — named to avoid clash with WMDb's own SyncStatus */
+export type LocalSyncStatus = 'pending' | 'syncing' | 'failed' | 'synced'
+
 export default class Incident extends Model {
   static table = 'incidents'
 
@@ -10,6 +13,7 @@ export default class Incident extends Model {
     photos: { type: 'has_many', foreignKey: 'incident_id' },
   }
 
+  // Core fields
   @field('installation_id') installationId!: number
   @field('reporter_username') reporterUsername!: string
   @text('note') note!: string
@@ -17,9 +21,18 @@ export default class Incident extends Model {
   @field('severity') severity!: string
   @field('source') source!: string
   @readonly @date('created_at') createdAt!: Date
-  
+
+  // Legacy sync (kept for compatibility)
   @field('is_synced') isSynced!: boolean
   @field('remote_id') remoteId!: number | null
+
+  // Offline sync v2  — field name prefixed with 'local' to avoid WMDb clash
+  @text('local_id') localId!: string
+  @field('remote_installation_id') remoteInstallationId!: number | null
+  @text('sync_status') localSyncStatus!: LocalSyncStatus
+  @field('sync_attempts') syncAttempts!: number
+  @text('last_sync_error') lastSyncError!: string | null
+  @text('client_request_id') clientRequestId!: string
 
   @children('photos') photos!: Photo[]
 
@@ -31,6 +44,10 @@ export default class Incident extends Model {
       photo.contentType = contentType
       photo.sizeBytes = size
       photo.isSynced = false
+      photo.localSyncStatus = 'pending'
+      photo.syncAttempts = 0
+      photo.clientRequestId = ''
+      photo.localId = ''
     })
     return newPhoto
   }
@@ -39,6 +56,22 @@ export default class Incident extends Model {
     await this.update(incident => {
       incident.isSynced = true
       incident.remoteId = remoteId
+      incident.localSyncStatus = 'synced'
+      incident.syncAttempts = 0
+      incident.lastSyncError = null
+    })
+  }
+
+  @writer async markLocalSyncStatus(status: LocalSyncStatus, error?: string) {
+    await this.update(incident => {
+      incident.localSyncStatus = status
+      if (status === 'failed') {
+        incident.syncAttempts = incident.syncAttempts + 1
+        incident.lastSyncError = error ?? null
+      } else if (status === 'synced') {
+        incident.isSynced = true
+        incident.lastSyncError = null
+      }
     })
   }
 }

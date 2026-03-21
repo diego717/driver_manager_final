@@ -2,6 +2,7 @@ import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { ThemeProvider } from "@react-navigation/native";
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
+import * as Network from "expo-network";
 import * as SplashScreen from "expo-splash-screen";
 import React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -43,6 +44,29 @@ export const unstable_settings = {
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
+
+let syncBootstrapAttempted = false;
+
+async function bootstrapSyncInfrastructure(): Promise<null | (() => void)> {
+  if (syncBootstrapAttempted) {
+    const { runSync } = await import("@/src/services/sync/sync-runner");
+    return runSync;
+  }
+
+  try {
+    const [{ registerIncidentExecutors }, { runSync }] = await Promise.all([
+      import("@/src/services/sync/incident-outbox-service"),
+      import("@/src/services/sync/sync-runner"),
+    ]);
+    registerIncidentExecutors();
+    syncBootstrapAttempted = true;
+    return runSync;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[sync] bootstrap skipped: ${message}`);
+    return null;
+  }
+}
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
@@ -94,6 +118,14 @@ export function RootLayoutNav() {
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const bootScaleAnim = useRef(new Animated.Value(1)).current;
   const bootOpacityAnim = useRef(new Animated.Value(0.88)).current;
+  const networkReachableRef = useRef<boolean | null>(null);
+
+  const triggerSync = useCallback(() => {
+    void (async () => {
+      const runSync = await bootstrapSyncInfrastructure();
+      runSync?.();
+    })();
+  }, []);
 
   const triggerBiometricUnlock = useCallback(async (allowDeviceFallback: boolean) => {
     setAuthenticating(true);
@@ -165,8 +197,13 @@ export function RootLayoutNav() {
 
   useEffect(() => {
     let mounted = true;
+    let initFinished = false;
+    const finishInitialization = () => {
+      initFinished = true;
+      clearTimeout(initGuardTimeout);
+    };
     const initGuardTimeout = setTimeout(() => {
-      if (!mounted) return;
+      if (!mounted || initFinished) return;
       setAppLocked(true);
       setLockError(
         "No se pudo inicializar la seguridad biometrica. Reintenta para desbloquear.",
@@ -181,8 +218,10 @@ export function RootLayoutNav() {
         setBiometricEnabled(biometricEnabled);
 
         if (!biometricEnabled) {
+          finishInitialization();
           setAppLocked(false);
           setBiometricAvailable(false);
+          setLockInitializing(false);
           return;
         }
 
@@ -192,11 +231,13 @@ export function RootLayoutNav() {
         setBiometricLabel(availability.biometricLabel);
         setBiometricAvailable(availability.isAvailable);
         if (!availability.isAvailable) {
+          finishInitialization();
           setAppLocked(false);
           setLockInitializing(false);
           return;
         }
 
+        finishInitialization();
         setAppLocked(true);
         setLockInitializing(false);
         setTimeout(() => {
@@ -205,6 +246,7 @@ export function RootLayoutNav() {
         }, 180);
       } catch (caughtError) {
         if (!mounted) return;
+        finishInitialization();
         setAppLocked(true);
         setBiometricAvailable(false);
         setLockError(
@@ -218,6 +260,7 @@ export function RootLayoutNav() {
 
     return () => {
       mounted = false;
+      initFinished = true;
       clearTimeout(initGuardTimeout);
     };
   }, [triggerBiometricUnlock]);
@@ -236,13 +279,15 @@ export function RootLayoutNav() {
         setAppLocked(true);
         setLockError(null);
         void triggerBiometricUnlock(false);
+        // App-resume sync trigger (runs after biometric lockscreen clears)
+        triggerSync();
       }
     });
 
     return () => {
       subscription.remove();
     };
-  }, [biometricAvailable, biometricEnabled, lockInitializing, triggerBiometricUnlock]);
+  }, [biometricAvailable, biometricEnabled, lockInitializing, triggerBiometricUnlock, triggerSync]);
 
   useEffect(() => {
     if (!notifications.error) return;
@@ -250,8 +295,44 @@ export function RootLayoutNav() {
   }, [notifications.error]);
 
   useEffect(() => {
+    let mounted = true;
+    let subscription: { remove: () => void } | null = null;
+
+    const toReachable = (state: Network.NetworkState): boolean =>
+      Boolean(state.isConnected && state.isInternetReachable !== false);
+
+    void (async () => {
+      try {
+        const initialState = await Network.getNetworkStateAsync();
+        if (!mounted) return;
+        networkReachableRef.current = toReachable(initialState);
+
+        subscription = Network.addNetworkStateListener((state) => {
+          const previousReachable = networkReachableRef.current;
+          const nextReachable = toReachable(state);
+          networkReachableRef.current = nextReachable;
+
+          if (previousReachable === false && nextReachable) {
+            triggerSync();
+          }
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[sync] network listener unavailable: ${message}`);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+      subscription?.remove();
+    };
+  }, [triggerSync]);
+
+  useEffect(() => {
     void refreshSharedWebSessionState({ showLoader: true });
-  }, []);
+    // Startup sync trigger — flush any pending jobs from previous sessions
+    triggerSync();
+  }, [triggerSync]);
 
   return (
     <ThemeProvider value={navigationTheme}>

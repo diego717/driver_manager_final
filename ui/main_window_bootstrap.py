@@ -57,7 +57,7 @@ def initialize_manager_state(
         try:
             cache_dir = get_cache_dir()
             if logger:
-                logger.info(f"Usando caché portable: {cache_dir}")
+                logger.info(f"Usando cache portable: {cache_dir}")
         except Exception:
             cache_dir = default_home / ".driver_manager" / "cache"
 
@@ -74,7 +74,7 @@ def build_main_window_ui(window):
     window.setCentralWidget(central_widget)
     main_layout = QVBoxLayout(central_widget)
 
-    header = QLabel("🖨️ SiteOps - Impresoras de Tarjetas")
+    header = QLabel("SiteOps - Impresoras de Tarjetas")
     header.setFont(QFont("Arial", 16, QFont.Weight.Bold))
     header.setAlignment(Qt.AlignmentFlag.AlignCenter)
     main_layout.addWidget(header)
@@ -83,16 +83,16 @@ def build_main_window_ui(window):
     main_layout.addWidget(window.tabs)
 
     window.drivers_tab = DriversTab(window)
-    window.drivers_tab_index = window.tabs.addTab(window.drivers_tab, "📦 Drivers Disponibles")
+    window.drivers_tab_index = window.tabs.addTab(window.drivers_tab, "Drivers disponibles")
 
     window.history_tab = HistoryTab(window)
-    window.history_tab_index = window.tabs.addTab(window.history_tab, "📊 Historial y Reportes")
+    window.history_tab_index = window.tabs.addTab(window.history_tab, "Historial y reportes")
 
     window.incidents_tab = window.history_tab.incidents_widget
-    window.incidents_tab_index = window.tabs.addTab(window.incidents_tab, "⚠️ Incidencias")
+    window.incidents_tab_index = window.tabs.addTab(window.incidents_tab, "Incidencias")
 
     window.admin_tab = AdminTab(window)
-    window.admin_tab_index = window.tabs.addTab(window.admin_tab, "🔐 Administración")
+    window.admin_tab_index = window.tabs.addTab(window.admin_tab, "Administracion")
 
     window.statusBar().showMessage("Listo para operar")
 

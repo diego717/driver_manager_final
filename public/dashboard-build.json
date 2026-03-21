@@ -3,7 +3,7 @@
     "css": "4d5d50e899",
     "chart": "74401d738d",
     "jsqr": "bc40c8a151",
-    "qr": "d8de215faf",
+    "qr": "961179b0a2",
     "api": "fca7e69a5d",
     "scan": "69c1c05efd",
     "modals": "d032aa0069",
@@ -21,6 +21,6 @@
     "manifest": "9130a5f920",
     "sw": "4c87568cf6",
     "materialSymbolsFont": "ee7248184b",
-    "build": "81606129d1"
+    "build": "5e15c60aa9"
   }
 }

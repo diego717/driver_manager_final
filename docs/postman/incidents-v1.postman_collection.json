@@ -1,7 +1,7 @@
 {
   "info": {
     "_postman_id": "8f2f26df-0f37-4f73-963a-1a89f6f1f3e0",
-    "name": "Driver Manager - Incidents v1",
+    "name": "SiteOps - Incidents v1",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "description": "Colección mínima para probar endpoints v1 de incidencias y fotos."
   },

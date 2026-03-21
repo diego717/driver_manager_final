@@ -45,7 +45,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--api-base-url",
-        default=os.getenv("DRIVER_MANAGER_HISTORY_API_URL", os.getenv("WORKER_URL", "")),
+        default=os.getenv("DRIVER_MANAGER_HISTORY_API_URL", ""),
         help="Optional Worker base URL to persist as api_url/history_api_url.",
     )
     parser.add_argument(

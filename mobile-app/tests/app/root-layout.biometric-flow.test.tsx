@@ -34,6 +34,34 @@ const webSessionStoreMocks = vi.hoisted(() => ({
   refreshSharedWebSessionState: vi.fn(async () => false),
 }));
 
+const syncRunnerMocks = vi.hoisted(() => ({
+  runSync: vi.fn(),
+}));
+
+const networkMocks = vi.hoisted(() => ({
+  listener: null as null | ((state: {
+    isConnected?: boolean | null;
+    isInternetReachable?: boolean | null;
+  }) => void),
+  getNetworkStateAsync: vi.fn(async () => ({
+    isConnected: true,
+    isInternetReachable: true,
+  })),
+  addNetworkStateListener: vi.fn((cb: (state: {
+    isConnected?: boolean | null;
+    isInternetReachable?: boolean | null;
+  }) => void) => {
+    networkMocks.listener = cb;
+    return {
+      remove: () => {
+        if (networkMocks.listener === cb) {
+          networkMocks.listener = null;
+        }
+      },
+    };
+  }),
+}));
+
 const originalModuleLoad = (Module as any)._load as (...args: any[]) => unknown;
 (Module as any)._load = function patchedLoad(request: string, parent: unknown, isMain: boolean) {
   if (request.endsWith(".png")) {
@@ -126,6 +154,8 @@ vi.mock("expo-splash-screen", () => ({
   hideAsync: vi.fn(async () => undefined),
 }));
 
+vi.mock("expo-network", () => networkMocks);
+
 vi.mock("@/src/theme/theme-preference", () => ({
   ThemePreferenceProvider: ({ children }: any) => React.createElement(React.Fragment, null, children),
   useThemePreference: () => ({
@@ -165,6 +195,10 @@ vi.mock("@/src/services/biometric", () => biometricMocks);
 vi.mock("@/src/storage/app-preferences", () => appPreferencesMocks);
 vi.mock("@/src/hooks/useNotifications", () => notificationsHookMocks);
 vi.mock("@/src/session/web-session-store", () => webSessionStoreMocks);
+vi.mock("@/src/services/sync/incident-outbox-service", () => ({
+  registerIncidentExecutors: vi.fn(),
+}));
+vi.mock("@/src/services/sync/sync-runner", () => syncRunnerMocks);
 
 import { RootLayoutNav } from "@/app/_layout";
 
@@ -184,6 +218,11 @@ describe("critical integration flow: biometric lock lifecycle", () => {
     vi.clearAllMocks();
     appStateRef.current = "active";
     appStateRef.listener = null;
+    networkMocks.listener = null;
+    networkMocks.getNetworkStateAsync.mockResolvedValue({
+      isConnected: true,
+      isInternetReachable: true,
+    });
   });
 
   it("locks when app returns to foreground and unlocks after successful biometric auth", async () => {
@@ -242,6 +281,33 @@ describe("critical integration flow: biometric lock lifecycle", () => {
     expect(
       treeRef.current?.root.findAll((node: any) => node.type === "BiometricLockScreenMock"),
     ).toHaveLength(0);
+    treeRef.current?.unmount();
+  });
+
+  it("triggers sync when connectivity is restored", async () => {
+    appPreferencesMocks.getBiometricEnabled.mockResolvedValue(false);
+
+    const treeRef: { current: { unmount: () => void } | null } = { current: null };
+    await act(async () => {
+      treeRef.current = create(<RootLayoutNav />);
+    });
+    await flushAsync();
+
+    expect(syncRunnerMocks.runSync).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      networkMocks.listener?.({
+        isConnected: false,
+        isInternetReachable: false,
+      });
+      networkMocks.listener?.({
+        isConnected: true,
+        isInternetReachable: true,
+      });
+      await Promise.resolve();
+    });
+
+    expect(syncRunnerMocks.runSync).toHaveBeenCalledTimes(2);
     treeRef.current?.unmount();
   });
 });

@@ -286,6 +286,8 @@ class AssetManagementDialog(QDialog):
             incident_status = str(incident.get("incident_status") or "open").strip().lower()
             if incident_status == "in_progress":
                 status_label = "EN CURSO"
+            elif incident_status == "paused":
+                status_label = "PAUSADA"
             elif incident_status == "resolved":
                 status_label = "RESUELTA"
             else:

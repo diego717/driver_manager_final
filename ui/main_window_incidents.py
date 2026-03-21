@@ -14,18 +14,18 @@ from PyQt6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
 )
+from managers.history_domain_rules import normalize_incident_status as normalize_domain_incident_status
 
 def normalize_incident_status(_window, raw_value):
-    status = str(raw_value or "").strip().lower()
-    if status in {"open", "in_progress", "resolved"}:
-        return status
-    return "open"
+    return normalize_domain_incident_status(raw_value)
 
 
 def incident_status_label(window, raw_value):
     normalized = normalize_incident_status(window, raw_value)
     if normalized == "in_progress":
         return "En curso"
+    if normalized == "paused":
+        return "Pausada"
     if normalized == "resolved":
         return "Resuelta"
     return "Abierta"
@@ -102,6 +102,7 @@ def render_incident_detail_html(window, incident):
     status_tones = {
         "open": (colors["panel_info"], colors["text_primary"], colors["accent"]),
         "in_progress": (colors["panel_warning"], colors["text_primary"], colors["warning"]),
+        "paused": (colors["surface_alt"], colors["text_primary"], colors["border"]),
         "resolved": (colors["panel_success"], colors["text_primary"], colors["success"]),
     }
     severity_tones = {
@@ -236,7 +237,7 @@ def render_incident_detail_html(window, incident):
 
 def normalize_record_attention_state(_window, raw_value):
     state = str(raw_value or "").strip().lower()
-    if state in {"clear", "open", "in_progress", "resolved", "critical"}:
+    if state in {"clear", "open", "in_progress", "paused", "resolved", "critical"}:
         return state
     return "clear"
 
@@ -247,6 +248,8 @@ def record_attention_label(window, raw_value):
         return "Crítica"
     if normalized == "in_progress":
         return "En curso"
+    if normalized == "paused":
+        return "Pausada"
     if normalized == "open":
         return "Abierta"
     if normalized == "resolved":
@@ -260,6 +263,8 @@ def record_attention_icon(window, raw_value):
         return "!"
     if normalized == "in_progress":
         return "~"
+    if normalized == "paused":
+        return "="
     if normalized == "open":
         return "*"
     if normalized == "resolved":

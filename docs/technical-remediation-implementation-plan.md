@@ -493,8 +493,9 @@ Cerrar lo que quede como deuda residual despues de estabilizar arquitectura y se
 - [x] Fuente unica de verdad para dashboard
 - [ ] `worker.js` modularizado por dominios
 - [ ] `MainWindow`, `UserManagerV2`, `InstallationHistory` desacoplados
-- [ ] URLs productivas removidas como defaults en scripts
-- [ ] Naming de producto unificado
+- [x] URLs productivas removidas como defaults en scripts
+- [x] Naming de producto unificado
+- [x] Checklist de release tecnico agregado
 
 ---
 

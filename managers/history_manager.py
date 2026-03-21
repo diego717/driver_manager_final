@@ -883,24 +883,6 @@ class InstallationHistory:
             source=source,
         )
         return self.incidents_client.create_incident(normalized_id, payload)
-        payload = {
-            "reporter_username": str(reporter_username or "desktop"),
-            "note": str(note or "").strip(),
-            "severity": str(severity or "medium"),
-            "time_adjustment_seconds": int(time_adjustment_seconds or 0),
-            "apply_to_installation": bool(apply_to_installation),
-            "source": str(source or "desktop"),
-        }
-        if not payload["note"]:
-            raise ValueError("La incidencia requiere una nota/descripción.")
-        result = self._make_request(
-            "post",
-            f"installations/{normalized_id}/incidents",
-            json=payload,
-        )
-        if isinstance(result, dict):
-            return self._normalize_incident_lifecycle_fields(result.get("incident"))
-        return None
 
     def update_incident_status(
         self,
@@ -917,60 +899,16 @@ class InstallationHistory:
             reporter_username=reporter_username,
         )
         return self.incidents_client.update_incident_status(normalized_incident_id, payload)
-        normalized_status = str(incident_status or "").strip().lower()
-        if normalized_status not in {"open", "in_progress", "resolved"}:
-            raise ValueError("Estado de incidencia inválido. Usa open, in_progress o resolved.")
-
-        payload = {
-            "incident_status": normalized_status,
-            "resolution_note": str(resolution_note or "").strip(),
-            "reporter_username": str(reporter_username or "desktop"),
-        }
-        result = self._make_request(
-            "patch",
-            f"incidents/{normalized_incident_id}/status",
-            json=payload,
-        )
-        if isinstance(result, dict):
-            return self._normalize_incident_lifecycle_fields(result.get("incident"))
-        return None
 
     def upload_incident_photo(self, incident_id, file_path):
         """Subir foto de evidencia a una incidencia."""
         normalized_incident_id = self._validate_record_id(incident_id)
         return self.incidents_client.upload_incident_photo(normalized_incident_id, file_path)
-        file_to_upload = Path(file_path)
-        if not file_to_upload.exists() or not file_to_upload.is_file():
-            raise FileNotFoundError(f"No se encontró el archivo: {file_path}")
-
-        content_type = self._guess_image_content_type(file_to_upload)
-        binary_data = file_to_upload.read_bytes()
-        if len(binary_data) < 1024:
-            raise ValueError("La imagen es demasiado pequeña o está corrupta.")
-
-        result = self._make_request(
-            "post",
-            f"incidents/{normalized_incident_id}/photos",
-            data=binary_data,
-            extra_headers={
-                "Content-Type": content_type,
-                "X-File-Name": file_to_upload.name,
-            },
-        )
-        if isinstance(result, dict):
-            return result.get("photo")
-        return None
 
     def get_photo_content(self, photo_id):
         """Descargar bytes de una foto de incidencia para mostrarla en UI."""
         normalized_photo_id = self._validate_record_id(photo_id)
         return self.incidents_client.get_photo_content(normalized_photo_id)
-        response = self._make_request(
-            "get",
-            f"photos/{normalized_photo_id}",
-            expect_json=False,
-        )
-        return response.content, response.headers.get("Content-Type", "image/jpeg")
 
     def resolve_asset(self, external_code, **kwargs):
         """
@@ -986,30 +924,6 @@ class InstallationHistory:
         payload = self.assets_client.build_resolve_asset_payload(external_code, **kwargs)
         return self.assets_client.resolve_asset(payload)
 
-        normalized_code = str(external_code or "").strip()
-        if not normalized_code:
-            raise ValueError("El código externo del equipo es obligatorio.")
-
-        payload = {
-            "external_code": normalized_code,
-        }
-
-        for key in (
-            "brand",
-            "serial_number",
-            "model",
-            "client_name",
-            "notes",
-            "status",
-            "update_existing",
-        ):
-            if key in kwargs and kwargs.get(key) is not None:
-                payload[key] = kwargs.get(key)
-
-        result = self._make_request("post", "assets/resolve", json=payload)
-        if isinstance(result, dict):
-            return result.get("asset")
-        return None
 
     def get_assets(self, limit=100, search=None, brand=None, status=None, code=None):
         """
@@ -1033,23 +947,6 @@ class InstallationHistory:
             code=code,
         )
 
-        params = {}
-        if limit:
-            params["limit"] = int(limit)
-        if search:
-            params["search"] = str(search).strip()
-        if brand:
-            params["brand"] = str(brand).strip()
-        if status:
-            params["status"] = str(status).strip()
-        if code:
-            params["code"] = str(code).strip()
-
-        payload = self._make_request("get", "assets", params=params)
-        if isinstance(payload, dict):
-            return payload.get("items") or []
-        return []
-
     def get_asset_by_id(self, asset_id):
         """
         Obtener un equipo por ID.
@@ -1063,14 +960,10 @@ class InstallationHistory:
         normalized_asset_id = self._validate_record_id(asset_id)
         try:
             return self.assets_client.get_asset_by_id(normalized_asset_id)
-            payload = self._make_request("get", f"assets/{normalized_asset_id}")
         except ConnectionError as error:
             if "HTTP 404" in str(error):
                 return None
             raise
-        if isinstance(payload, dict):
-            return payload.get("asset")
-        return None
 
     def save_asset(self, external_code, **kwargs):
         """
@@ -1099,26 +992,6 @@ class InstallationHistory:
         """
         normalized_asset_id = self._validate_record_id(asset_id)
         return self.assets_client.get_asset_incidents(normalized_asset_id, limit=limit)
-        params = {}
-        if limit:
-            params["limit"] = int(limit)
-        payload = self._make_request(
-            "get",
-            f"assets/{normalized_asset_id}/incidents",
-            params=params,
-        )
-        if isinstance(payload, dict):
-            payload["incidents"] = [
-                self._normalize_incident_lifecycle_fields(item)
-                for item in (payload.get("incidents") or [])
-            ]
-            return payload
-        return {
-            "asset": None,
-            "active_link": None,
-            "links": [],
-            "incidents": [],
-        }
 
     def delete_asset(self, asset_id):
         """
@@ -1132,8 +1005,6 @@ class InstallationHistory:
         """
         normalized_asset_id = self._validate_record_id(asset_id)
         return self.assets_client.delete_asset(normalized_asset_id)
-        self._make_request("delete", f"assets/{normalized_asset_id}")
-        return True
 
     def link_asset_to_installation(self, asset_id, installation_id, notes=""):
         """
@@ -1154,18 +1025,6 @@ class InstallationHistory:
             normalized_installation_id,
             notes=notes,
         )
-        payload = {
-            "installation_id": normalized_installation_id,
-            "notes": str(notes or "").strip(),
-        }
-        result = self._make_request(
-            "post",
-            f"assets/{normalized_asset_id}/link-installation",
-            json=payload,
-        )
-        if isinstance(result, dict):
-            return result.get("link")
-        return None
 
     def associate_asset_with_installation(self, external_code, installation_id, notes=""):
         """

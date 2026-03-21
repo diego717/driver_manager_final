@@ -224,7 +224,7 @@ class EventHandlers:
                 "⚠️ Se requieren permisos de Administrador\n\n"
                 "SOLUCIONES:\n\n"
                 "Opción 1 - Reiniciar como Administrador:\n"
-                "  1. Cierra Driver Manager\n"
+                "  1. Cierra SiteOps\n"
                 "  2. Clic derecho en DriverManager.exe (o main.py)\n"
                 "  3. Selecciona 'Ejecutar como administrador'\n"
                 "  4. Intenta instalar nuevamente\n\n"

@@ -228,6 +228,16 @@ vi.mock("@/src/storage/secure", () => secureStorageMocks);
 vi.mock("@/src/api/webAuth", () => webAuthMocks);
 vi.mock("@/src/security/startup-session-policy", () => startupSessionPolicyMocks);
 vi.mock("@/src/session/web-session-store", () => webSessionStoreMocks);
+vi.mock("@/src/components/SyncStatusBanner", () => ({
+  default: () => null,
+}));
+vi.mock("@/src/services/sync/incident-outbox-service", () => ({
+  enqueueCreateIncident: vi.fn(),
+  registerIncidentExecutors: vi.fn(),
+}));
+vi.mock("@/src/services/sync/sync-runner", () => ({
+  runSync: vi.fn(),
+}));
 vi.mock("expo-document-picker", () => ({
   getDocumentAsync: vi.fn(async () => ({ canceled: true, assets: [] })),
 }));
