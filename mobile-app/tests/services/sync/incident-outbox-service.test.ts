@@ -10,7 +10,7 @@ vi.mock('@nozbe/watermelondb', () => ({}))
 vi.mock('@nozbe/watermelondb/adapters/sqlite', () => ({}))
 
 // ─── Mock the repository layer ───────────────────────────────────────────────
-const mockCreatedIncident = {
+const mockCreatedIncident = vi.hoisted(() => ({
   id: 'local-1234',
   localId: 'local-1234',
   localSyncStatus: 'pending',
@@ -23,26 +23,26 @@ const mockCreatedIncident = {
   severity: 'medium',
   source: 'mobile',
   timeAdjustmentSeconds: 0,
-}
+}))
 
-const mockCreatedJob = {
+const mockCreatedJob = vi.hoisted(() => ({
   id: 'job-5678',
   jobStatus: 'pending',
   entityLocalId: 'local-1234',
   operation: 'create_incident',
   attemptCount: 0,
-}
+}))
 
-const mockIncidentsRepo = {
+const mockIncidentsRepo = vi.hoisted(() => ({
   createLocalIncident: vi.fn().mockResolvedValue(mockCreatedIncident),
   getByLocalId: vi.fn().mockResolvedValue(mockCreatedIncident),
   updateRemoteId: vi.fn().mockResolvedValue(undefined),
   updateSyncStatus: vi.fn().mockResolvedValue(undefined),
-}
+}))
 
-const mockSyncJobsRepo = {
+const mockSyncJobsRepo = vi.hoisted(() => ({
   createJob: vi.fn().mockResolvedValue(mockCreatedJob),
-}
+}))
 
 vi.mock('../../../src/db/repositories/incidents-repository', () => ({
   incidentsRepository: mockIncidentsRepo,
@@ -53,7 +53,7 @@ vi.mock('../../../src/db/repositories/sync-jobs-repository', () => ({
 }))
 
 // ─── Mock API (should not be called by enqueue) ──────────────────────────────
-const mockCreateIncident = vi.fn()
+const mockCreateIncident = vi.hoisted(() => vi.fn())
 vi.mock('../../../src/api/incidents', () => ({
   createIncident: mockCreateIncident,
 }))
