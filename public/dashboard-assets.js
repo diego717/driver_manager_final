@@ -469,7 +469,9 @@
                         isReactivation ? 'Equipo reactivado correctamente.' : 'Equipo dado de baja correctamente.',
                         'success',
                     );
-                    await loadAssets();
+                    void loadAssets().catch(() => {
+                        options.showNotification('El estado se actualizo, pero no pudimos refrescar equipos.', 'warning');
+                    });
                 },
             });
         }
@@ -508,7 +510,9 @@
                         }
                     }
                     options.showNotification('Equipo eliminado correctamente.', 'success');
-                    await loadAssets();
+                    void loadAssets().catch(() => {
+                        options.showNotification('El equipo se elimino, pero no pudimos refrescar equipos.', 'warning');
+                    });
                 },
             });
         }

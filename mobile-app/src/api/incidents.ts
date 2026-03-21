@@ -3,11 +3,14 @@ import {
   type CreateRecordResponse,
   type CreateIncidentInput,
   type CreateIncidentResponse,
+  type Incident,
+  type IncidentPhoto,
   type InstallationRecord,
   type ListIncidentsResponse,
   type UpdateIncidentEvidenceInput,
   type UpdateIncidentStatusInput,
 } from "../types/api";
+import { normalizeIncidentStatus } from "../utils/incidents";
 import { ensurePositiveInt } from "../utils/validation";
 import { signedJsonRequest } from "./client";
 
@@ -17,6 +20,21 @@ let installationsCacheExpiresAt = 0;
 
 type RawInstallationRecord = Omit<InstallationRecord, "id"> & {
   id: number | string;
+};
+
+type RawIncidentPhoto = IncidentPhoto;
+
+type RawIncidentRecord = Omit<Incident, "photos" | "incident_status"> & {
+  incident_status?: string | null;
+  photos?: RawIncidentPhoto[];
+};
+
+type RawListIncidentsResponse = Omit<ListIncidentsResponse, "incidents"> & {
+  incidents: RawIncidentRecord[];
+};
+
+type RawCreateIncidentResponse = Omit<CreateIncidentResponse, "incident"> & {
+  incident: Omit<RawIncidentRecord, "photos">;
 };
 
 type RawCreateRecordResponse = Omit<CreateRecordResponse, "record"> & {
@@ -51,6 +69,7 @@ function normalizeInstallationRecord(record: RawInstallationRecord): Installatio
     id: normalizeInstallationId(record.id),
     incident_open_count: asOptionalNonNegativeInt(record.incident_open_count),
     incident_in_progress_count: asOptionalNonNegativeInt(record.incident_in_progress_count),
+    incident_paused_count: asOptionalNonNegativeInt(record.incident_paused_count),
     incident_resolved_count: asOptionalNonNegativeInt(record.incident_resolved_count),
     incident_active_count: asOptionalNonNegativeInt(record.incident_active_count),
     incident_critical_active_count: asOptionalNonNegativeInt(record.incident_critical_active_count),
@@ -61,26 +80,59 @@ function normalizeInstallationRecords(records: RawInstallationRecord[]): Install
   return records.map(normalizeInstallationRecord);
 }
 
+function normalizeIncidentRecord(record: RawIncidentRecord): Incident {
+  return {
+    ...record,
+    asset_id:
+      record.asset_id === null || record.asset_id === undefined
+        ? null
+        : Number(record.asset_id) || null,
+    incident_status: normalizeIncidentStatus(record.incident_status),
+    estimated_duration_seconds:
+      record.estimated_duration_seconds === null || record.estimated_duration_seconds === undefined
+        ? null
+        : Math.max(0, Number(record.estimated_duration_seconds) || 0),
+    actual_duration_seconds:
+      record.actual_duration_seconds === null || record.actual_duration_seconds === undefined
+        ? null
+        : Math.max(0, Number(record.actual_duration_seconds) || 0),
+    photos: Array.isArray(record.photos) ? record.photos : [],
+  };
+}
+
 export async function createIncident(
   installationId: number,
   payload: CreateIncidentInput,
 ): Promise<CreateIncidentResponse> {
   ensurePositiveInt(installationId, "installationId");
-  return signedJsonRequest<CreateIncidentResponse>({
+  const response = await signedJsonRequest<RawCreateIncidentResponse>({
     method: "POST",
     path: `/installations/${installationId}/incidents`,
     data: payload,
   });
+  return {
+    ...response,
+    incident: normalizeIncidentRecord({
+      ...response.incident,
+      photos: [],
+    }),
+  };
 }
 
 export async function listIncidentsByInstallation(
   installationId: number,
 ): Promise<ListIncidentsResponse> {
   ensurePositiveInt(installationId, "installationId");
-  return signedJsonRequest<ListIncidentsResponse>({
+  const response = await signedJsonRequest<RawListIncidentsResponse>({
     method: "GET",
     path: `/installations/${installationId}/incidents`,
   });
+  return {
+    ...response,
+    incidents: Array.isArray(response.incidents)
+      ? response.incidents.map(normalizeIncidentRecord)
+      : [],
+  };
 }
 
 export async function updateIncidentStatus(
@@ -88,11 +140,18 @@ export async function updateIncidentStatus(
   payload: UpdateIncidentStatusInput,
 ): Promise<CreateIncidentResponse> {
   ensurePositiveInt(incidentId, "incidentId");
-  return signedJsonRequest<CreateIncidentResponse>({
+  const response = await signedJsonRequest<RawCreateIncidentResponse>({
     method: "PATCH",
     path: `/incidents/${incidentId}/status`,
     data: payload,
   });
+  return {
+    ...response,
+    incident: normalizeIncidentRecord({
+      ...response.incident,
+      photos: [],
+    }),
+  };
 }
 
 export async function updateIncidentEvidence(
@@ -100,11 +159,18 @@ export async function updateIncidentEvidence(
   payload: UpdateIncidentEvidenceInput,
 ): Promise<CreateIncidentResponse> {
   ensurePositiveInt(incidentId, "incidentId");
-  return signedJsonRequest<CreateIncidentResponse>({
+  const response = await signedJsonRequest<RawCreateIncidentResponse>({
     method: "PATCH",
     path: `/incidents/${incidentId}/evidence`,
     data: payload,
   });
+  return {
+    ...response,
+    incident: normalizeIncidentRecord({
+      ...response.incident,
+      photos: [],
+    }),
+  };
 }
 
 export async function listInstallations(

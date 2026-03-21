@@ -11,6 +11,9 @@ const assetsApiMocks = vi.hoisted(() => ({
   resolveAssetByExternalCode: vi.fn(),
   linkAssetToInstallation: vi.fn(),
 }));
+const statisticsApiMocks = vi.hoisted(() => ({
+  getDashboardStatistics: vi.fn(),
+}));
 const driversApiMocks = vi.hoisted(() => ({
   deleteDriver: vi.fn(),
   listDrivers: vi.fn(),
@@ -31,6 +34,10 @@ const webAuthMocks = vi.hoisted(() => ({
 }));
 const routerMocks = vi.hoisted(() => ({
   push: vi.fn(),
+  replace: vi.fn(),
+}));
+const routeParamMocks = vi.hoisted(() => ({
+  value: {} as Record<string, unknown>,
 }));
 const startupSessionPolicyMocks = vi.hoisted(() => ({
   consumeForceLoginOnOpenFlag: vi.fn(() => false),
@@ -210,11 +217,12 @@ vi.mock("@react-navigation/native", () => ({
 }));
 vi.mock("expo-router", () => ({
   useRouter: () => routerMocks,
-  useLocalSearchParams: () => ({}),
+  useLocalSearchParams: () => routeParamMocks.value,
 }));
 
 vi.mock("@/src/api/incidents", () => incidentsApiMocks);
 vi.mock("@/src/api/assets", () => assetsApiMocks);
+vi.mock("@/src/api/statistics", () => statisticsApiMocks);
 vi.mock("@/src/api/drivers", () => driversApiMocks);
 vi.mock("@/src/storage/secure", () => secureStorageMocks);
 vi.mock("@/src/api/webAuth", () => webAuthMocks);
@@ -236,41 +244,104 @@ vi.mock("@/src/theme/theme-preference", () => ({
   }),
 }));
 
-import CreateIncidentScreen from "@/app/(tabs)/index";
+import TodayScreen from "@/app/(tabs)/index";
+import CreateIncidentScreen from "@/app/incident/create";
+
+describe("TodayScreen accessibility", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    routeParamMocks.value = {};
+    incidentsApiMocks.listInstallations.mockResolvedValue([
+      { id: 17, client_name: "ACME Logistica" },
+    ]);
+    statisticsApiMocks.getDashboardStatistics.mockResolvedValue({
+      incident_in_progress_count: 1,
+      incident_sla_minutes: 30,
+    });
+  });
+
+  it("exposes labels, roles and touch target sizes for guided top-level controls", async () => {
+    const { render, waitFor } = await import("@testing-library/react-native/pure");
+    const view = render(<TodayScreen />);
+    await waitFor(() => {
+      expect(incidentsApiMocks.listInstallations).toHaveBeenCalled();
+    });
+
+    const refreshButton = view.getByLabelText("Refrescar resumen operativo");
+    expect(refreshButton.props.accessibilityRole).toBe("button");
+    expect(refreshButton.props.accessibilityState).toEqual(
+      expect.objectContaining({ disabled: false, busy: false }),
+    );
+    expect(flattenStyle(refreshButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
+
+    const openFlowButton = view.getByLabelText("Abrir el caso 17");
+    expect(openFlowButton.props.accessibilityRole).toBe("button");
+    expect(flattenStyle(openFlowButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
+
+    const backlogButton = view.getByLabelText("Abrir backlog del caso 17");
+    expect(backlogButton.props.accessibilityRole).toBe("button");
+    expect(flattenStyle(backlogButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
+  });
+
+  it("keeps a logical focus order for guided actions", async () => {
+    const { render, waitFor } = await import("@testing-library/react-native/pure");
+    const view = render(<TodayScreen />);
+    await waitFor(() => {
+      expect(incidentsApiMocks.listInstallations).toHaveBeenCalled();
+    });
+
+    const labels = view
+      .UNSAFE_getAllByType("TouchableOpacity")
+      .map((node) => node.props.accessibilityLabel)
+      .filter(Boolean);
+
+    expect(labels.indexOf("Refrescar resumen operativo")).toBeGreaterThanOrEqual(0);
+    expect(labels.indexOf("Abrir el caso 17")).toBeGreaterThanOrEqual(0);
+    expect(labels.indexOf("Abrir backlog del caso 17")).toBeGreaterThanOrEqual(0);
+  });
+
+  it("renders the distilled home without exposing the old form on home", async () => {
+    const { render, waitFor } = await import("@testing-library/react-native/pure");
+    incidentsApiMocks.listInstallations.mockResolvedValueOnce(
+      Array.from({ length: 30 }, (_, index) => ({
+        id: index + 1,
+        client_name: `Cliente ${index + 1}`,
+      })),
+    );
+
+    const view = render(<TodayScreen />);
+    await waitFor(() => {
+      expect(view.getByText("Caso foco")).toBeTruthy();
+    });
+
+    expect(view.getByText("Escanear equipo")).toBeTruthy();
+    expect(view.getByText("Caso manual")).toBeTruthy();
+    expect(view.getByText("Inventario")).toBeTruthy();
+    expect(view.getByText("Ver backlog")).toBeTruthy();
+    expect(view.queryByLabelText("ID de registro para la incidencia")).toBeNull();
+  });
+});
 
 describe("CreateIncidentScreen accessibility", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    routeParamMocks.value = { installationId: "17" };
     incidentsApiMocks.listInstallations.mockResolvedValue([
       { id: 17, client_name: "ACME Logistica" },
     ]);
   });
 
-  it("exposes labels, roles, states and touch target sizes for critical controls", async () => {
+  it("keeps only case-scoped form controls in the dedicated incident route", async () => {
     const { render, waitFor } = await import("@testing-library/react-native/pure");
     const view = render(<CreateIncidentScreen />);
     await waitFor(() => {
       expect(incidentsApiMocks.listInstallations).toHaveBeenCalled();
     });
 
-    expect(view.getByLabelText("ID de registro para la incidencia")).toBeTruthy();
-    expect(view.getByLabelText("Usuario reportante de la incidencia")).toBeTruthy();
+    expect(view.getByText("Caso listo")).toBeTruthy();
     expect(view.getByLabelText("Nota de la incidencia")).toBeTruthy();
-    expect(view.getByLabelText("Ajuste de tiempo en segundos")).toBeTruthy();
-
-    const toggleManual = view.getByLabelText("Mostrar formulario de registro manual");
-    expect(toggleManual.props.accessibilityRole).toBe("button");
-    expect(toggleManual.props.accessibilityState).toEqual(
-      expect.objectContaining({ disabled: false, busy: false, expanded: false }),
-    );
-    expect(flattenStyle(toggleManual.props.style).minHeight).toBeGreaterThanOrEqual(44);
-
-    const refreshButton = view.getByLabelText("Refrescar lista de registros");
-    expect(refreshButton.props.accessibilityRole).toBe("button");
-    expect(refreshButton.props.accessibilityState).toEqual(
-      expect.objectContaining({ disabled: false, busy: false }),
-    );
-    expect(flattenStyle(refreshButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
+    expect(view.queryByLabelText("ID de registro para la incidencia")).toBeNull();
+    expect(view.queryByLabelText("Usuario reportante de la incidencia")).toBeNull();
 
     const mediumSeverity = view.getByLabelText("Seleccionar severidad Media");
     expect(mediumSeverity.props.accessibilityRole).toBe("button");
@@ -286,56 +357,13 @@ describe("CreateIncidentScreen accessibility", () => {
     expect(flattenStyle(submitButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
   });
 
-  it("keeps a logical focus order for top-level actions", async () => {
-    const { render, waitFor } = await import("@testing-library/react-native/pure");
-    const view = render(<CreateIncidentScreen />);
-    await waitFor(() => {
-      expect(incidentsApiMocks.listInstallations).toHaveBeenCalled();
-    });
-
-    const labels = view
-      .UNSAFE_getAllByType("TouchableOpacity")
-      .map((node) => node.props.accessibilityLabel)
-      .filter(Boolean);
-
-    expect(labels.indexOf("Mostrar formulario de registro manual")).toBeGreaterThanOrEqual(0);
-    expect(labels.indexOf("Refrescar lista de registros")).toBeGreaterThan(
-      labels.indexOf("Mostrar formulario de registro manual"),
-    );
-    expect(labels.indexOf("Crear incidencia")).toBeGreaterThan(
-      labels.indexOf("Refrescar lista de registros"),
-    );
-  });
-
-  it("renders installation options incrementally and enables scroll interaction", async () => {
-    const { fireEvent, render, waitFor } = await import("@testing-library/react-native/pure");
-    incidentsApiMocks.listInstallations.mockResolvedValueOnce(
-      Array.from({ length: 30 }, (_, index) => ({
-        id: index + 1,
-        client_name: `Cliente ${index + 1}`,
-      })),
-    );
+  it("shows a dedicated empty state when the route does not include a case", async () => {
+    const { render } = await import("@testing-library/react-native/pure");
+    routeParamMocks.value = {};
 
     const view = render(<CreateIncidentScreen />);
-    await waitFor(() => {
-      expect(view.getByTestId("installation-options-list")).toBeTruthy();
-    });
-
-    const installationList = view.getByTestId("installation-options-list");
-    expect(installationList.props.initialNumToRender).toBe(8);
-    expect(installationList.props.windowSize).toBe(5);
-    expect(installationList.props.removeClippedSubviews).toBe(true);
-    expect(view.queryByText("#9 [Sin incidencias] - Cliente 9")).toBeNull();
-
-    fireEvent.scroll(installationList, {
-      nativeEvent: {
-        contentOffset: { x: 400, y: 0 },
-        layoutMeasurement: { width: 320, height: 60 },
-        contentSize: { width: 1200, height: 60 },
-      },
-    });
-
-    expect(view.getByText("#9 [Sin incidencias] - Cliente 9")).toBeTruthy();
+    expect(view.getByText("Falta resolver el caso")).toBeTruthy();
+    expect(view.getByLabelText("Abrir el flujo para resolver el caso")).toBeTruthy();
   });
 });
 

@@ -138,6 +138,9 @@ function createIncidentRouteDeps(overrides = {}) {
     async loadIncidentPhotoByIdForTenant() {
       return null;
     },
+    async recoverIncidentPhotosFromStorageForTenant() {
+      return 0;
+    },
     sanitizeFileName(value, fallback) {
       return value || fallback;
     },
@@ -964,6 +967,194 @@ test("installation incidents handler creates incident and updates installation s
   assert.deepEqual(statsUpdates, ["tenant-q"]);
 });
 
+test("installation incidents handler returns runtime timing fields on GET", async () => {
+  const { handleInstallationIncidentsRoute } = createIncidentsRouteHandlers(createIncidentRouteDeps({
+    jsonResponse,
+    parsePositiveInt(value) {
+      return Number(value);
+    },
+  }));
+
+  const db = {
+    prepare(sql) {
+      if (sql.includes("FROM incidents") && sql.includes("WHERE installation_id = ?")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [45, "tenant-q"]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [
+                {
+                  id: 901,
+                  installation_id: 45,
+                  asset_id: 77,
+                  reporter_username: "ops-admin",
+                  note: "Incidencia en curso",
+                  time_adjustment_seconds: 300,
+                  estimated_duration_seconds: 300,
+                  severity: "high",
+                  source: "web",
+                  created_at: "2026-12-01T09:50:00.000Z",
+                  incident_status: "paused",
+                  status_updated_at: "2026-12-01T10:05:00.000Z",
+                  status_updated_by: "ops-admin",
+                  resolved_at: null,
+                  resolved_by: null,
+                  resolution_note: null,
+                  checklist_json: "[]",
+                  evidence_note: null,
+                  work_started_at: null,
+                  work_ended_at: "2026-12-01T10:05:00.000Z",
+                  actual_duration_seconds: 915,
+                },
+              ],
+            };
+          },
+        };
+      }
+
+      if (sql.includes("FROM incident_photos")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [45, "tenant-q"]);
+            return this;
+          },
+          async all() {
+            return { results: [] };
+          },
+        };
+      }
+
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+
+  const response = await handleInstallationIncidentsRoute(
+    new Request("https://worker.example/installations/45/incidents", { method: "GET" }),
+    { DB: db },
+    {},
+    ["installations", "45", "incidents"],
+    false,
+    null,
+    "tenant-q",
+    "tenant-q",
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.success, true);
+  assert.equal(body.incidents.length, 1);
+  assert.equal(body.incidents[0].estimated_duration_seconds, 300);
+  assert.equal(body.incidents[0].work_started_at, null);
+  assert.equal(body.incidents[0].work_ended_at, "2026-12-01T10:05:00.000Z");
+  assert.equal(body.incidents[0].actual_duration_seconds, 915);
+});
+
+test("installation incidents handler reindexes orphaned R2 photos when D1 metadata is missing", async () => {
+  let photoQueryCount = 0;
+  const recoveredPhotos = [
+    {
+      id: 321,
+      incident_id: 19,
+      r2_key: "incidents/34/19/20260317200350107_inst-34-inc-19-cliente-equipo-arsl1-003.jpg",
+      file_name: "20260317200350107_inst-34-inc-19-cliente-equipo-arsl1-003.jpg",
+      content_type: "image/jpeg",
+      size_bytes: 92880,
+      sha256: null,
+      created_at: "2026-03-17T20:03:51.000Z",
+    },
+  ];
+  const { handleInstallationIncidentsRoute } = createIncidentsRouteHandlers(createIncidentRouteDeps({
+    parsePositiveInt(value) {
+      return Number(value);
+    },
+    async recoverIncidentPhotosFromStorageForTenant(_env, incidents, tenantId) {
+      assert.equal(tenantId, "tenant-q");
+      assert.equal(incidents.length, 1);
+      assert.equal(incidents[0].id, 19);
+      return 1;
+    },
+  }));
+
+  const db = {
+    prepare(sql) {
+      if (sql.includes("FROM incidents") && sql.includes("WHERE installation_id = ?")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [34, "tenant-q"]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [
+                {
+                  id: 19,
+                  installation_id: 34,
+                  asset_id: null,
+                  reporter_username: "ops-admin",
+                  note: "Incidencia con fotos huerfanas",
+                  time_adjustment_seconds: 0,
+                  estimated_duration_seconds: null,
+                  severity: "medium",
+                  source: "web",
+                  created_at: "2026-03-17T20:02:02.419Z",
+                  incident_status: "resolved",
+                  status_updated_at: "2026-03-17T20:10:00.000Z",
+                  status_updated_by: "ops-admin",
+                  resolved_at: "2026-03-17T20:10:00.000Z",
+                  resolved_by: "ops-admin",
+                  resolution_note: "ok",
+                  checklist_json: "[]",
+                  evidence_note: null,
+                  work_started_at: null,
+                  work_ended_at: null,
+                  actual_duration_seconds: 0,
+                },
+              ],
+            };
+          },
+        };
+      }
+
+      if (sql.includes("FROM incident_photos")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [34, "tenant-q"]);
+            return this;
+          },
+          async all() {
+            photoQueryCount += 1;
+            return {
+              results: photoQueryCount === 1 ? [] : recoveredPhotos,
+            };
+          },
+        };
+      }
+
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+
+  const response = await handleInstallationIncidentsRoute(
+    new Request("https://worker.example/installations/34/incidents", { method: "GET" }),
+    { DB: db },
+    {},
+    ["installations", "34", "incidents"],
+    false,
+    null,
+    "tenant-q",
+    "tenant-q",
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(photoQueryCount, 2);
+  assert.equal(body.incidents[0].photos.length, 1);
+  assert.equal(body.incidents[0].photos[0].id, 321);
+});
+
 test("incident evidence handler updates checklist and evidence note", async () => {
   const auditEvents = [];
   const realtimeEvents = [];
@@ -1186,6 +1377,172 @@ test("incident status handler resolves incidents through the nested installation
       tenantId: "tenant-z",
     },
   ]);
+});
+
+test("incident status handler pauses incidents and preserves accumulated runtime", async () => {
+  const realtimeEvents = [];
+  const { handleIncidentStatusRoute } = createIncidentsRouteHandlers(createIncidentRouteDeps({
+    async readJsonOrThrowBadRequest() {
+      return {};
+    },
+    normalizeIncidentStatusPayload() {
+      return {
+        incidentStatus: "paused",
+        resolutionNote: null,
+      };
+    },
+    nowIso() {
+      return "2026-12-01T10:05:30.000Z";
+    },
+    async loadIncidentForTenant() {
+      return {
+        id: 99,
+        installation_id: 45,
+        incident_status: "in_progress",
+        status_updated_at: "2026-12-01T10:03:00.000Z",
+        created_at: "2026-12-01T09:58:00.000Z",
+      };
+    },
+    async loadIncidentTimingFieldsForTenant() {
+      return {
+        work_started_at: "2026-12-01T10:03:00.000Z",
+        work_ended_at: null,
+        actual_duration_seconds: 120,
+      };
+    },
+    async logAuditEvent() {},
+    async publishRealtimeEvent(_env, payload, tenantId) {
+      realtimeEvents.push({ payload, tenantId });
+    },
+  }));
+
+  const db = {
+    prepare(sql) {
+      assert.match(sql, /UPDATE incidents/);
+      return {
+        bind(...args) {
+          assert.deepEqual(args, [
+            "paused",
+            "2026-12-01T10:05:30.000Z",
+            "manager1",
+            null,
+            null,
+            null,
+            null,
+            "2026-12-01T10:05:30.000Z",
+            270,
+            99,
+            "tenant-z",
+          ]);
+          return this;
+        },
+        async run() {
+          return { meta: { changes: 1 } };
+        },
+      };
+    },
+  };
+
+  const response = await handleIncidentStatusRoute(
+    new Request("https://worker.example/installations/45/incidents/99/status", { method: "PATCH" }),
+    { DB: db },
+    {},
+    ["installations", "45", "incidents", "99", "status"],
+    true,
+    { role: "admin", sub: "manager1" },
+    "tenant-z",
+    "tenant-z",
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.incident.incident_status, "paused");
+  assert.equal(body.incident.actual_duration_seconds, 270);
+  assert.equal(body.incident.work_started_at, null);
+  assert.equal(body.incident.work_ended_at, "2026-12-01T10:05:30.000Z");
+  assert.deepEqual(realtimeEvents, [
+    {
+      payload: {
+        type: "incident_status_updated",
+        incident: {
+          id: 99,
+          installation_id: 45,
+          incident_status: "paused",
+          status_updated_at: "2026-12-01T10:05:30.000Z",
+          created_at: "2026-12-01T09:58:00.000Z",
+          status_updated_by: "manager1",
+          resolved_at: null,
+          resolved_by: null,
+          resolution_note: null,
+          work_started_at: null,
+          work_ended_at: "2026-12-01T10:05:30.000Z",
+          actual_duration_seconds: 270,
+          photos: [],
+        },
+      },
+      tenantId: "tenant-z",
+    },
+  ]);
+});
+
+test("incident status handler returns actionable error when DB schema still rejects paused", async () => {
+  const { handleIncidentStatusRoute } = createIncidentsRouteHandlers(createIncidentRouteDeps({
+    async readJsonOrThrowBadRequest() {
+      return {};
+    },
+    normalizeIncidentStatusPayload() {
+      return {
+        incidentStatus: "paused",
+        resolutionNote: null,
+      };
+    },
+    async loadIncidentForTenant() {
+      return {
+        id: 99,
+        installation_id: 45,
+        incident_status: "in_progress",
+        status_updated_at: "2026-12-01T10:03:00.000Z",
+        created_at: "2026-12-01T09:58:00.000Z",
+      };
+    },
+    async loadIncidentTimingFieldsForTenant() {
+      return {
+        work_started_at: "2026-12-01T10:03:00.000Z",
+        actual_duration_seconds: 120,
+      };
+    },
+  }));
+
+  const db = {
+    prepare() {
+      return {
+        bind() {
+          return this;
+        },
+        async run() {
+          throw new Error("D1_ERROR: CHECK constraint failed: incident_status");
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => handleIncidentStatusRoute(
+      new Request("https://worker.example/installations/45/incidents/99/status", { method: "PATCH" }),
+      { DB: db },
+      {},
+      ["installations", "45", "incidents", "99", "status"],
+      true,
+      { role: "admin", sub: "manager1" },
+      "tenant-z",
+      "tenant-z",
+    ),
+    (error) => {
+      assert.equal(error?.status, 409);
+      assert.match(error?.message || "", /migraciones pendientes|base no soporta/i);
+      return true;
+    },
+  );
 });
 
 test("incident photos handler uploads validated images to storage", async () => {

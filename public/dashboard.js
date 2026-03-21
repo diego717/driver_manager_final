@@ -276,6 +276,7 @@ let dashboardDrivers = null;
 let dashboardAudit = null;
 let dashboardOverview = null;
 let dashboardRealtime = null;
+let dashboardScan = null;
 
 function openAccessibleModal(modalId, options = {}) {
     return dashboardModals.openAccessibleModal(modalId, options);
@@ -493,6 +494,20 @@ dashboardAssets = window.createDashboardAssets({
     },
     showNotification,
     sortAssetIncidentsByPriority: (...args) => dashboardIncidents.sortAssetIncidentsByPriority(...args),
+});
+
+dashboardScan = window.createDashboardScan({
+    api,
+    requireActiveSession,
+    showNotification,
+    openInstallation: async (installationId) => {
+        await dashboardNavigation.activateSection('incidents');
+        await showIncidentsForInstallation(installationId);
+    },
+    openAsset: async (assetId) => {
+        await dashboardNavigation.activateSection('assets');
+        await loadAssetDetail(assetId, { keepSelection: true });
+    },
 });
 
 dashboardDrivers = window.createDashboardDrivers({
@@ -810,19 +825,23 @@ function createManualRecordFromWeb() {
                 installation_time_seconds: 0,
             });
 
+            const createdRecord = result?.record && typeof result.record === 'object'
+                ? result.record
+                : null;
             closeActionModal(true);
-            const recordId = Number(result?.record?.id);
+            if (createdRecord) {
+                handleRealtimeInstallation(createdRecord, { notify: false });
+            }
+            const recordId = Number(createdRecord?.id);
             showNotification(
                 Number.isInteger(recordId) && recordId > 0
                     ? `Registro manual creado (#${recordId})`
                     : 'Registro manual creado.',
                 'success',
             );
-            await loadInstallations();
 
             if (Number.isInteger(recordId) && recordId > 0) {
                 currentSelectedInstallationId = recordId;
-                await showIncidentsForInstallation(recordId);
             }
         },
     });
@@ -920,12 +939,12 @@ function openAssetLinkModal(options = {}) {
             );
 
             if (Number.isInteger(knownAssetId) && knownAssetId > 0) {
-                await loadAssetDetail(knownAssetId, { keepSelection: true });
+                void loadAssetDetail(knownAssetId, { keepSelection: true }).catch(() => {
+                    showNotification('La asociacion se guardo, pero no pudimos refrescar el detalle del equipo.', 'warning');
+                });
                 return;
             }
             currentSelectedInstallationId = installationId;
-            await loadInstallations();
-            await showIncidentsForInstallation(installationId);
         },
     });
 }
@@ -1178,12 +1197,8 @@ function resolveIncidentRuntimeStartMs(incident) {
 }
 
 function resolveIncidentRealDurationSeconds(incident) {
-    const explicit = Number(incident?.actual_duration_seconds);
-    if (Number.isFinite(explicit) && explicit >= 0) {
-        return Math.floor(explicit);
-    }
-
     const normalizedStatus = normalizeIncidentStatus(incident?.incident_status);
+    const explicit = Number(incident?.actual_duration_seconds);
     const parseIso = (value) => {
         const parsed = Date.parse(String(value || ''));
         return Number.isFinite(parsed) ? parsed : null;
@@ -1193,6 +1208,16 @@ function resolveIncidentRealDurationSeconds(incident) {
     const workEndedAtMs = parseIso(incident?.work_ended_at)
         ?? parseIso(incident?.resolved_at)
         ?? (normalizedStatus === 'in_progress' ? Date.now() : null);
+    let derivedSegmentSeconds = null;
+    if (Number.isFinite(workStartedAtMs) && Number.isFinite(workEndedAtMs) && workEndedAtMs >= workStartedAtMs) {
+        derivedSegmentSeconds = Math.floor((workEndedAtMs - workStartedAtMs) / 1000);
+    }
+
+    if (Number.isFinite(explicit) && explicit >= 0) {
+        return normalizedStatus === 'in_progress' && Number.isFinite(derivedSegmentSeconds)
+            ? Math.floor(explicit) + derivedSegmentSeconds
+            : Math.floor(explicit);
+    }
 
     if (!Number.isFinite(workStartedAtMs) || !Number.isFinite(workEndedAtMs) || workEndedAtMs < workStartedAtMs) {
         return null;
@@ -1275,15 +1300,25 @@ function ensureIncidentRuntimeTicker() {
         const liveRuntimeNodes = document.querySelectorAll(
             '.incident-highlight-chip[data-runtime-live="1"]',
         );
-        if (!liveRuntimeNodes.length) return;
+        if (!liveRuntimeNodes.length) {
+            stopIncidentRuntimeTicker();
+            return;
+        }
         const nowMs = Date.now();
         for (const node of liveRuntimeNodes) {
             const startMs = Number(node.dataset.runtimeStartMs || '');
+            const baseSeconds = Math.max(0, Number(node.dataset.runtimeBaseSeconds || 0) || 0);
             if (!Number.isFinite(startMs) || startMs <= 0) continue;
-            const runtimeSeconds = Math.max(0, Math.floor((nowMs - startMs) / 1000));
+            const runtimeSeconds = baseSeconds + Math.max(0, Math.floor((nowMs - startMs) / 1000));
             node.textContent = `Tiempo real: ${formatDuration(runtimeSeconds)} (en curso)`;
         }
     }, 1000);
+}
+
+function stopIncidentRuntimeTicker() {
+    if (!incidentRuntimeTickerId) return;
+    window.clearInterval(incidentRuntimeTickerId);
+    incidentRuntimeTickerId = null;
 }
 
 function formatDuration(value) {
@@ -1834,6 +1869,7 @@ function getSeverityIconName(severity) {
 function normalizeIncidentStatus(value) {
     const normalized = String(value || '').trim().toLowerCase();
     if (normalized === 'in_progress') return 'in_progress';
+    if (normalized === 'paused') return 'paused';
     if (normalized === 'resolved') return 'resolved';
     return 'open';
 }
@@ -1841,6 +1877,7 @@ function normalizeIncidentStatus(value) {
 function incidentStatusLabel(value) {
     const normalized = normalizeIncidentStatus(value);
     if (normalized === 'resolved') return 'Resuelta';
+    if (normalized === 'paused') return 'Pausada';
     if (normalized === 'in_progress') return 'En curso';
     return 'Abierta';
 }
@@ -1972,8 +2009,8 @@ async function loadPhotoWithAuth(photoId) {
 async function renderIncidents(incidents, installationId) {
     return dashboardIncidents.renderIncidents(incidents, installationId);
 }
-async function viewPhoto(photoId) {
-    return dashboardModals.viewPhoto(photoId);
+async function viewPhoto(photoId, photoIds = []) {
+    return dashboardModals.viewPhoto(photoId, photoIds);
 }
 function closePhotoModal() {
     return dashboardModals.closePhotoModal();
@@ -2768,6 +2805,7 @@ async function activateSection(section) {
 
 // Event Listeners
 dashboardAuth.bindSessionUi();
+dashboardScan?.bindEvents();
 
 
 document.getElementById('headerPrimaryActionBtn')?.addEventListener('click', () => {
@@ -3054,8 +3092,8 @@ function handleSSEMessage(data) {
     return dashboardRealtime.handleSSEMessage(data);
 }
 
-function handleRealtimeInstallation(installation) {
-    return dashboardRealtime.handleRealtimeInstallation(installation);
+function handleRealtimeInstallation(installation, config = {}) {
+    return dashboardRealtime.handleRealtimeInstallation(installation, config);
 }
 
 function handleRealtimeInstallationUpdate(installation) {

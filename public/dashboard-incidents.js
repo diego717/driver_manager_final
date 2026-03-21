@@ -1,5 +1,33 @@
 (function attachDashboardIncidentsFactory(global) {
     function createDashboardIncidents(options) {
+        const INCIDENT_PHOTO_UPLOAD_MAX_FILES = 5;
+        const INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES = 5 * 1024 * 1024;
+        const INCIDENT_PHOTO_UPLOAD_MAX_BATCH_BYTES = 20 * 1024 * 1024;
+        const INCIDENT_PHOTO_UPLOAD_LABEL = `Subir fotos (max ${INCIDENT_PHOTO_UPLOAD_MAX_FILES} / 20MB)`;
+        const INCIDENT_STATUS_ACTION_DEFINITIONS = {
+            open: { label: 'Abrir', icon: 'radio_button_checked' },
+            in_progress: { label: 'En curso', icon: 'pending_actions' },
+            paused: { label: 'Pausar', icon: 'pause_circle' },
+            resolved: { label: 'Resolver', icon: 'task_alt' },
+        };
+
+        function formatPhotoBytes(bytes) {
+            const numericBytes = Math.max(0, Number(bytes) || 0);
+            if (numericBytes >= 1024 * 1024) {
+                return `${(numericBytes / (1024 * 1024)).toFixed(1)}MB`;
+            }
+            if (numericBytes >= 1024) {
+                return `${Math.round(numericBytes / 1024)}KB`;
+            }
+            return `${numericBytes}B`;
+        }
+
+        function runIncidentRefreshInBackground(config = {}, failureMessage = 'La incidencia se guardo, pero no pudimos refrescar la vista.') {
+            void refreshIncidentContext(config).catch(() => {
+                options.showNotification(failureMessage, 'warning');
+            });
+        }
+
         async function refreshIncidentContext(config = {}) {
             const parsedAssetId = options.parseStrictInteger(config.assetId);
             if (Number.isInteger(parsedAssetId) && parsedAssetId > 0) {
@@ -97,14 +125,24 @@
 
             if (Number.isInteger(realDurationSeconds) && realDurationSeconds >= 0) {
                 const runtimeChip = createIncidentHighlightChip(
-                    `Tiempo real: ${options.formatDuration(realDurationSeconds)}${statusValue === 'in_progress' ? ' (en curso)' : ''}`,
+                    `Tiempo real: ${options.formatDuration(realDurationSeconds)}${
+                        statusValue === 'in_progress'
+                            ? ' (en curso)'
+                            : statusValue === 'paused'
+                                ? ' (en pausa)'
+                                : ''
+                    }`,
                     statusValue === 'resolved' ? 'resolved' : statusValue,
                 );
+                runtimeChip.dataset.chip = 'runtime';
                 if (statusValue === 'in_progress') {
                     const runtimeStartMs = options.resolveIncidentRuntimeStartMs(incident);
                     if (Number.isFinite(runtimeStartMs) && runtimeStartMs > 0) {
                         runtimeChip.dataset.runtimeLive = '1';
                         runtimeChip.dataset.runtimeStartMs = String(runtimeStartMs);
+                        runtimeChip.dataset.runtimeBaseSeconds = String(
+                            Math.max(0, Number(incident?.actual_duration_seconds || 0) || 0),
+                        );
                         options.ensureIncidentRuntimeTicker();
                     }
                 }
@@ -195,6 +233,16 @@
             options.setElementTextWithMaterialIcon(button, iconName, label);
         }
 
+        function buildIncidentStatusActionMeta(currentStatus, targetStatus) {
+            const actionMeta = {
+                ...(INCIDENT_STATUS_ACTION_DEFINITIONS[targetStatus] || { label: targetStatus, icon: '' }),
+            };
+            if (currentStatus === 'paused' && targetStatus === 'in_progress') {
+                actionMeta.label = 'Reanudar';
+            }
+            return actionMeta;
+        }
+
         function buildIncidentStatusUpdateOptions(incident, config = {}) {
             const updateOptions = {};
             const installationCandidate = config.installationId ?? incident?.installation_id;
@@ -210,20 +258,29 @@
             return updateOptions;
         }
 
+        function buildLiveIncidentCardState(incident, config = {}) {
+            const baseIncident = incident && typeof incident === 'object' ? incident : {};
+            const nextState = { ...baseIncident };
+            const configInstallationId = options.parseStrictInteger(config.installationId);
+            const configAssetId = options.parseStrictInteger(config.assetId);
+            if (Number.isInteger(configInstallationId) && configInstallationId > 0) {
+                nextState.installation_id = configInstallationId;
+            }
+            if (Number.isInteger(configAssetId) && configAssetId > 0) {
+                nextState.asset_id = configAssetId;
+            }
+            return nextState;
+        }
+
         function appendIncidentStatusActions(parent, incident, config = {}) {
             const statusActions = document.createElement('div');
             statusActions.className = 'incident-actions';
             const incidentStatus = options.normalizeIncidentStatus(incident.incident_status);
             const canUpdateIncident = options.canCurrentUserEditAssets();
             const updateOptions = buildIncidentStatusUpdateOptions(incident, config);
-            const actionDefinitions = {
-                open: { label: 'Abrir', icon: 'radio_button_checked' },
-                in_progress: { label: 'En curso', icon: 'pending_actions' },
-                resolved: { label: 'Resolver', icon: 'task_alt' },
-            };
 
             const makeStatusBtn = (statusValue) => {
-                const actionMeta = actionDefinitions[statusValue] || { label: statusValue, icon: '' };
+                const actionMeta = buildIncidentStatusActionMeta(incidentStatus, statusValue);
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.className = 'btn-secondary';
@@ -234,7 +291,8 @@
                     button.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
                 }
                 button.addEventListener('click', () => {
-                    void updateIncidentStatusFromWeb(incident, statusValue, updateOptions);
+                    const liveIncident = button.closest('.incident-card')?.__incidentData || incident;
+                    void updateIncidentStatusFromWeb(liveIncident, statusValue, updateOptions);
                 });
                 return button;
             };
@@ -248,12 +306,14 @@
                 evidenceBtn.title = 'Solo admin/super_admin puede actualizar evidencia';
             }
             evidenceBtn.addEventListener('click', () => {
-                void updateIncidentEvidenceFromWeb(incident, updateOptions);
+                const liveIncident = evidenceBtn.closest('.incident-card')?.__incidentData || incident;
+                void updateIncidentEvidenceFromWeb(liveIncident, updateOptions);
             });
 
             statusActions.append(
                 makeStatusBtn('open'),
                 makeStatusBtn('in_progress'),
+                makeStatusBtn('paused'),
                 makeStatusBtn('resolved'),
                 evidenceBtn,
             );
@@ -266,7 +326,7 @@
             uploadPhotoBtn.type = 'button';
             uploadPhotoBtn.className = 'btn-secondary';
             const iconName = String(config.icon || '').trim();
-            const buttonLabel = String(config.label || 'Subir foto');
+            const buttonLabel = String(config.label || INCIDENT_PHOTO_UPLOAD_LABEL);
             decorateIncidentActionButton(
                 uploadPhotoBtn,
                 'photo',
@@ -275,7 +335,8 @@
             );
             uploadPhotoBtn.classList.add('incident-upload-btn');
             uploadPhotoBtn.addEventListener('click', () => {
-                void selectAndUploadIncidentPhoto(incident.id, installationId, {
+                const liveIncident = uploadPhotoBtn.closest('.incident-card')?.__incidentData || incident;
+                void selectAndUploadIncidentPhoto(liveIncident.id, installationId, {
                     assetId: options.parseStrictInteger(config.assetId),
                 });
             });
@@ -286,6 +347,9 @@
             if (!Array.isArray(photos) || photos.length === 0) return;
             const photosGrid = document.createElement('div');
             photosGrid.className = 'photos-grid';
+            const photoIds = photos
+                .map((photo) => options.parseStrictInteger(photo?.id))
+                .filter((photoId) => Number.isInteger(photoId) && photoId > 0);
 
             for (const photo of photos) {
                 const photoId = options.parseStrictInteger(photo?.id);
@@ -300,7 +364,7 @@
                 if (config.attachPhotoIdDataset === true) {
                     image.dataset.photoId = String(photoId);
                 }
-                image.addEventListener('click', () => options.viewPhoto(photoId));
+                image.addEventListener('click', () => options.viewPhoto(photoId, photoIds));
                 photosGrid.appendChild(image);
             }
 
@@ -347,6 +411,18 @@
                 };
             }
 
+            const hasPaused = activeIncidents.some(
+                (incident) => options.normalizeIncidentStatus(incident?.incident_status) === 'paused',
+            );
+            if (hasPaused) {
+                return {
+                    state: 'paused',
+                    label: `En pausa (${activeIncidents.length})`,
+                    badgeClass: 'attention-paused',
+                    iconName: options.recordAttentionStateIconName('paused'),
+                };
+            }
+
             return {
                 state: 'open',
                 label: `Abiertas (${activeIncidents.length})`,
@@ -357,7 +433,7 @@
 
         function sortAssetIncidentsByPriority(incidents) {
             const values = Array.isArray(incidents) ? [...incidents] : [];
-            const statusRank = { in_progress: 0, open: 1, resolved: 2 };
+            const statusRank = { in_progress: 0, paused: 1, open: 2, resolved: 3 };
             const severityRank = { critical: 0, high: 1, medium: 2, low: 3 };
             const parseTime = (value) => {
                 const parsed = Date.parse(String(value || ''));
@@ -415,13 +491,115 @@
             parent.appendChild(evidenceWrap);
         }
 
+        function applyVisibleIncidentUpdate(incident) {
+            const incidentId = options.parseStrictInteger(incident?.id);
+            if (!Number.isInteger(incidentId) || incidentId <= 0) return;
+
+            const cards = document.querySelectorAll(`.incident-card[data-incident-id="${incidentId}"]`);
+            if (!cards.length) return;
+
+            const statusValue = options.normalizeIncidentStatus(incident?.incident_status);
+            const canUpdateIncident = options.canCurrentUserEditAssets();
+            const runtimeText = Number.isInteger(options.resolveIncidentRealDurationSeconds(incident))
+                ? `Tiempo real: ${options.formatDuration(options.resolveIncidentRealDurationSeconds(incident))}${
+                    statusValue === 'in_progress'
+                        ? ' (en curso)'
+                        : statusValue === 'paused'
+                            ? ' (en pausa)'
+                            : ''
+                }`
+                : '';
+
+            cards.forEach((card) => {
+                if (!(card instanceof HTMLElement)) return;
+                card.dataset.status = statusValue;
+                card.dataset.updating = 'false';
+                card.__incidentData = buildLiveIncidentCardState(incident, {
+                    installationId: options.parseStrictInteger(incident?.installation_id),
+                    assetId: options.parseStrictInteger(incident?.asset_id),
+                });
+
+                const statusBadge = card.querySelector('.incident-status-badge');
+                if (statusBadge instanceof HTMLElement) {
+                    statusBadge.className = `badge incident-status-badge attention-${statusValue}`;
+                    options.setElementTextWithMaterialIcon(
+                        statusBadge,
+                        options.recordAttentionStateIconName(statusValue),
+                        options.incidentStatusLabel(statusValue),
+                    );
+                }
+
+                const runtimeChip = card.querySelector('.incident-highlight-chip[data-chip="runtime"]');
+                if (runtimeChip instanceof HTMLElement && runtimeText) {
+                    runtimeChip.dataset.tone = statusValue === 'resolved' ? 'resolved' : statusValue;
+                    runtimeChip.textContent = runtimeText;
+                    if (statusValue === 'in_progress') {
+                        const runtimeStartMs = options.resolveIncidentRuntimeStartMs(incident);
+                        if (Number.isFinite(runtimeStartMs) && runtimeStartMs > 0) {
+                            runtimeChip.dataset.runtimeLive = '1';
+                            runtimeChip.dataset.runtimeStartMs = String(runtimeStartMs);
+                            runtimeChip.dataset.runtimeBaseSeconds = String(
+                                Math.max(0, Number(incident?.actual_duration_seconds || 0) || 0),
+                            );
+                            options.ensureIncidentRuntimeTicker();
+                        }
+                    } else {
+                        delete runtimeChip.dataset.runtimeLive;
+                        delete runtimeChip.dataset.runtimeStartMs;
+                        delete runtimeChip.dataset.runtimeBaseSeconds;
+                    }
+                }
+
+                ['open', 'in_progress', 'paused', 'resolved'].forEach((targetStatus) => {
+                    const actionBtn = card.querySelector(`.incident-action-btn[data-action="${targetStatus}"]`);
+                    if (!(actionBtn instanceof HTMLButtonElement)) return;
+                    const actionMeta = buildIncidentStatusActionMeta(statusValue, targetStatus);
+                    decorateIncidentActionButton(actionBtn, targetStatus, actionMeta.label, actionMeta.icon);
+                    actionBtn.dataset.current = statusValue === targetStatus ? 'true' : 'false';
+                    actionBtn.disabled = !canUpdateIncident || statusValue === targetStatus;
+                    if (!canUpdateIncident) {
+                        actionBtn.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
+                    } else {
+                        actionBtn.removeAttribute('title');
+                    }
+                });
+            });
+        }
+
+        function setIncidentCardsUpdating(incidentId, isUpdating) {
+            const numericIncidentId = options.parseStrictInteger(incidentId);
+            if (!Number.isInteger(numericIncidentId) || numericIncidentId <= 0) return;
+            const cards = document.querySelectorAll(`.incident-card[data-incident-id="${numericIncidentId}"]`);
+            cards.forEach((card) => {
+                if (!(card instanceof HTMLElement)) return;
+                card.dataset.updating = isUpdating ? 'true' : 'false';
+                const currentStatus = options.normalizeIncidentStatus(card.dataset.status);
+                card.querySelectorAll('.incident-action-btn').forEach((button) => {
+                    if (!(button instanceof HTMLButtonElement)) return;
+                    if (isUpdating) {
+                        button.disabled = true;
+                        return;
+                    }
+                    const targetStatus = String(button.dataset.action || '').trim();
+                    if (['open', 'in_progress', 'paused', 'resolved'].includes(targetStatus)) {
+                        button.disabled = !options.canCurrentUserEditAssets() || currentStatus === targetStatus;
+                    } else if (targetStatus === 'evidence') {
+                        button.disabled = !options.canCurrentUserEditAssets();
+                    }
+                });
+            });
+        }
+
         async function appendIncidentCard(parent, incident, config = {}) {
             const incidentCard = document.createElement('div');
             const statusValue = options.normalizeIncidentStatus(incident?.incident_status);
             const severityValue = options.normalizeSeverity(incident?.severity || 'medium');
             incidentCard.className = 'incident-card incident-card-detailed';
+            incidentCard.dataset.incidentId = String(options.parseStrictInteger(incident?.id) || '');
             incidentCard.dataset.status = statusValue;
             incidentCard.dataset.severity = severityValue;
+            incidentCard.dataset.updating = 'false';
+            incidentCard.__incidentData = buildLiveIncidentCardState(incident, config);
 
             const incidentHeader = document.createElement('div');
             incidentHeader.className = 'incident-header';
@@ -441,7 +619,7 @@
             );
 
             const statusBadge = document.createElement('span');
-            statusBadge.className = `badge attention-${statusValue}`;
+            statusBadge.className = `badge incident-status-badge attention-${statusValue}`;
             options.setElementTextWithMaterialIcon(
                 statusBadge,
                 options.recordAttentionStateIconName(statusValue),
@@ -495,7 +673,7 @@
                 installationId: options.parseStrictInteger(config.installationId ?? incident?.installation_id),
             });
             appendIncidentUploadPhotoAction(actions, incident, config.installationId ?? incident.installation_id, {
-                label: config.uploadLabel || 'Subir foto',
+                label: config.uploadLabel || INCIDENT_PHOTO_UPLOAD_LABEL,
                 icon: config.uploadIcon || 'add_a_photo',
                 assetId: options.parseStrictInteger(config.assetId),
             });
@@ -574,7 +752,7 @@
                     assetTone: 'accent',
                     showReporter: true,
                     attachPhotoIdDataset: true,
-                    uploadLabel: 'Subir foto',
+                    uploadLabel: INCIDENT_PHOTO_UPLOAD_LABEL,
                     uploadIcon: 'add_a_photo',
                 });
             }
@@ -728,11 +906,16 @@
                     );
 
                     if (isAssetContext) {
-                        await options.loadAssetDetail(numericAssetId, { keepSelection: true });
+                        runIncidentRefreshInBackground(
+                            { assetId: numericAssetId, installationId: resolvedInstallationId },
+                            'La incidencia se creo, pero no pudimos refrescar el detalle del equipo.',
+                        );
                     } else if (Number.isInteger(resolvedInstallationId) && resolvedInstallationId > 0) {
-                        await showIncidentsForInstallation(resolvedInstallationId);
+                        runIncidentRefreshInBackground(
+                            { installationId: resolvedInstallationId },
+                            'La incidencia se creo, pero no pudimos refrescar el registro.',
+                        );
                     }
-                    await options.loadInstallations();
                 },
             });
 
@@ -784,24 +967,102 @@
             const picker = document.createElement('input');
             picker.className = 'hidden-file-picker';
             picker.type = 'file';
+            picker.multiple = true;
             picker.accept = 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp';
             document.body.appendChild(picker);
 
             picker.addEventListener('change', async () => {
-                const file = picker.files?.[0];
+                const selectedFiles = Array.from(picker.files || []);
                 picker.remove();
-                if (!file) return;
+                if (!selectedFiles.length) return;
 
-                try {
-                    await options.api.uploadIncidentPhoto(targetIncidentId, file);
-                    options.showNotification(`Foto subida a incidencia #${targetIncidentId}`, 'success');
-                    if (Number.isInteger(targetInstallationId) && targetInstallationId > 0) {
-                        await showIncidentsForInstallation(targetInstallationId);
-                    } else if (Number.isInteger(targetAssetId) && targetAssetId > 0) {
-                        await options.loadAssetDetail(targetAssetId, { keepSelection: true });
+                const filesToUpload = selectedFiles.slice(0, INCIDENT_PHOTO_UPLOAD_MAX_FILES);
+                if (selectedFiles.length > INCIDENT_PHOTO_UPLOAD_MAX_FILES) {
+                    options.showNotification(
+                        `Solo se permiten ${INCIDENT_PHOTO_UPLOAD_MAX_FILES} fotos por carga. Se subiran las primeras ${INCIDENT_PHOTO_UPLOAD_MAX_FILES}.`,
+                        'warning',
+                    );
+                }
+
+                const oversizedFiles = filesToUpload.filter((file) =>
+                    Math.max(0, Number(file?.size) || 0) > INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES,
+                );
+                if (oversizedFiles.length > 0) {
+                    const firstOversized = oversizedFiles[0];
+                    options.showNotification(
+                        `La foto ${firstOversized?.name || 'seleccionada'} supera el maximo de ${formatPhotoBytes(INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES)} por archivo.`,
+                        'error',
+                    );
+                    return;
+                }
+
+                const totalBatchBytes = filesToUpload.reduce(
+                    (sum, file) => sum + Math.max(0, Number(file?.size) || 0),
+                    0,
+                );
+                if (totalBatchBytes > INCIDENT_PHOTO_UPLOAD_MAX_BATCH_BYTES) {
+                    options.showNotification(
+                        `La carga seleccionada pesa ${formatPhotoBytes(totalBatchBytes)} y supera el maximo de ${formatPhotoBytes(INCIDENT_PHOTO_UPLOAD_MAX_BATCH_BYTES)} por tanda.`,
+                        'error',
+                    );
+                    return;
+                }
+
+                if (filesToUpload.length > 1) {
+                    options.showNotification(
+                        `Subiendo ${filesToUpload.length} fotos (${formatPhotoBytes(totalBatchBytes)}) a incidencia #${targetIncidentId}...`,
+                        'info',
+                    );
+                }
+
+                let uploadedCount = 0;
+                const failedFiles = [];
+
+                for (const file of filesToUpload) {
+                    try {
+                        await options.api.uploadIncidentPhoto(targetIncidentId, file);
+                        uploadedCount += 1;
+                    } catch (error) {
+                        failedFiles.push({
+                            name: String(file?.name || '').trim() || 'archivo',
+                            message: error?.message || error,
+                        });
                     }
-                } catch (error) {
-                    options.showNotification(`No se pudo subir foto: ${error.message || error}`, 'error');
+                }
+
+                if (!uploadedCount) {
+                    const failure = failedFiles[0];
+                    options.showNotification(
+                        `No se pudo subir ninguna foto: ${failure?.message || 'Error desconocido.'}`,
+                        'error',
+                    );
+                    return;
+                }
+
+                const uploadedLabel = uploadedCount === 1 ? '1 foto subida' : `${uploadedCount} fotos subidas`;
+                if (failedFiles.length > 0) {
+                    const firstFailedName = failedFiles[0]?.name || 'archivo';
+                    options.showNotification(
+                        `${uploadedLabel} a incidencia #${targetIncidentId}. Fallaron ${failedFiles.length} archivo(s), empezando por ${firstFailedName}.`,
+                        'warning',
+                    );
+                } else {
+                    options.showNotification(
+                        `${uploadedLabel} a incidencia #${targetIncidentId}.`,
+                        'success',
+                    );
+                }
+
+                if (Number.isInteger(targetInstallationId) && targetInstallationId > 0) {
+                    runIncidentRefreshInBackground(
+                        { installationId: targetInstallationId },
+                        'Las fotos se subieron, pero no pudimos refrescar el registro.',
+                    );
+                } else if (Number.isInteger(targetAssetId) && targetAssetId > 0) {
+                    runIncidentRefreshInBackground(
+                        { assetId: targetAssetId },
+                        'Las fotos se subieron, pero no pudimos refrescar el detalle del equipo.',
+                    );
                 }
             }, { once: true });
 
@@ -872,7 +1133,10 @@
                     });
                     options.closeActionModal(true);
                     options.showNotification(`Evidencia actualizada en incidencia #${incidentId}`, 'success');
-                    await refreshIncidentContext(config);
+                    runIncidentRefreshInBackground(
+                        config,
+                        'La evidencia se guardo, pero no pudimos refrescar la vista.',
+                    );
                 },
             });
         }
@@ -888,15 +1152,23 @@
             const normalizedStatus = options.normalizeIncidentStatus(targetStatus);
             const currentStatus = options.normalizeIncidentStatus(incident?.incident_status);
             const applyStatusUpdate = async (resolutionNote = '') => {
+                setIncidentCardsUpdating(incidentId, true);
                 try {
-                    await options.api.updateIncidentStatus(incidentId, {
+                    const result = await options.api.updateIncidentStatus(incidentId, {
                         incident_status: normalizedStatus,
                         resolution_note: resolutionNote,
                         reporter_username: options.getCurrentUser()?.username || 'web_user',
                     });
+                    if (result?.incident && typeof result.incident === 'object') {
+                        applyVisibleIncidentUpdate(result.incident);
+                    }
                     options.showNotification(`Incidencia #${incidentId} actualizada a "${options.incidentStatusLabel(normalizedStatus)}".`, 'success');
-                    await refreshIncidentContext(config);
+                    runIncidentRefreshInBackground(
+                        config,
+                        'El estado se actualizo, pero no pudimos refrescar la vista.',
+                    );
                 } catch (error) {
+                    setIncidentCardsUpdating(incidentId, false);
                     options.showNotification(`No se pudo actualizar estado: ${error.message || error}`, 'error');
                 }
             };
@@ -969,6 +1241,7 @@
 
         function handleRealtimeIncidentStatusUpdate(incident) {
             if (!incident || !incident.id) return;
+            applyVisibleIncidentUpdate(incident);
             options.showNotification(
                 `Incidencia #${incident.id} ahora esta "${options.incidentStatusLabel(incident.incident_status)}".`,
                 'info',

@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const fileSystemMock = vi.hoisted(() => ({
   readAsStringAsync: vi.fn(),
   getInfoAsync: vi.fn(),
+  downloadAsync: vi.fn(),
+  cacheDirectory: "file://cache/",
+  documentDirectory: "file://documents/",
   EncodingType: { Base64: "base64" },
 }));
 
@@ -16,6 +19,7 @@ vi.mock("./client", () => clientMock);
 
 import { uploadIncidentPhoto } from "./photos";
 import { fetchIncidentPhotoDataUri } from "./photos";
+import { resolveIncidentPhotoPreviewTarget } from "./photos";
 
 function toBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
@@ -33,6 +37,54 @@ describe("photos api", () => {
       },
     });
     vi.stubGlobal("fetch", vi.fn());
+  });
+
+  it("downloads incident photo previews into local cache when possible", async () => {
+    clientMock.resolveRequestAuth.mockResolvedValueOnce({
+      path: "/web/photos/44",
+      headers: {
+        Authorization: "Bearer web-token",
+      },
+    });
+    fileSystemMock.downloadAsync.mockResolvedValueOnce({
+      uri: "file://cache/incident-photo-44.img",
+      status: 200,
+    });
+
+    const target = await resolveIncidentPhotoPreviewTarget(44);
+
+    expect(fileSystemMock.downloadAsync).toHaveBeenCalledWith(
+      "https://worker.example/web/photos/44",
+      "file://cache/incident-photo-44.img",
+      {
+        headers: {
+          Authorization: "Bearer web-token",
+        },
+      },
+    );
+    expect(target).toEqual({
+      uri: "file://cache/incident-photo-44.img",
+      headers: {},
+    });
+  });
+
+  it("falls back to remote preview target when local cache download fails", async () => {
+    clientMock.resolveRequestAuth.mockResolvedValueOnce({
+      path: "/web/photos/45",
+      headers: {
+        Authorization: "Bearer web-token",
+      },
+    });
+    fileSystemMock.downloadAsync.mockRejectedValueOnce(new Error("download failed"));
+
+    const target = await resolveIncidentPhotoPreviewTarget(45);
+
+    expect(target).toEqual({
+      uri: "https://worker.example/web/photos/45",
+      headers: {
+        Authorization: "Bearer web-token",
+      },
+    });
   });
 
   it("rejects too-small image payload before upload", async () => {

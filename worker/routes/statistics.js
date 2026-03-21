@@ -184,9 +184,9 @@ export function createStatisticsRouteHandlers({ jsonResponse, textResponse }) {
         const { results: incidentSummaryRows } = await env.DB.prepare(`
           SELECT
             SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
-            SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress')
+            SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused')
               AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count,
-            SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress')
+            SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused')
               AND COALESCE(created_at, '') < ? THEN 1 ELSE 0 END) AS incident_outside_sla_count
           FROM incidents
           WHERE tenant_id = ?

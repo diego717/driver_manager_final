@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
+  FlatList,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -16,8 +17,8 @@ import {
 import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 
 import {
-  fetchIncidentPhotoDataUri,
   type IncidentPhotoPreviewTarget,
+  resolveIncidentPhotoPreviewTarget,
 } from "@/src/api/photos";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
@@ -33,11 +34,36 @@ export default function IncidentPhotoViewerScreen() {
   const params = useLocalSearchParams<{
     photoId?: string | string[];
     fileName?: string | string[];
+    photoIds?: string | string[];
+    initialIndex?: string | string[];
   }>();
 
   const photoIdText = useMemo(() => normalizeParam(params.photoId), [params.photoId]);
-  const fileName = useMemo(() => decodeURIComponent(normalizeParam(params.fileName)), [params.fileName]);
-  const photoId = Number.parseInt(photoIdText, 10);
+  const fileName = useMemo(
+    () => decodeURIComponent(normalizeParam(params.fileName)),
+    [params.fileName],
+  );
+  const photoIds = useMemo(() => {
+    const raw = decodeURIComponent(normalizeParam(params.photoIds));
+    const parsed = raw
+      .split(",")
+      .map((value) => Number.parseInt(value.trim(), 10))
+      .filter((value) => Number.isInteger(value) && value > 0);
+    const fallback = Number.parseInt(photoIdText, 10);
+    if (!parsed.length && Number.isInteger(fallback) && fallback > 0) {
+      return [fallback];
+    }
+    return parsed;
+  }, [params.photoIds, photoIdText]);
+  const initialIndex = useMemo(() => {
+    const raw = Number.parseInt(normalizeParam(params.initialIndex), 10);
+    if (!Number.isInteger(raw) || raw < 0) return 0;
+    return Math.min(raw, Math.max(photoIds.length - 1, 0));
+  }, [params.initialIndex, photoIds.length]);
+  const [activeIndex, setActiveIndex] = useState(initialIndex);
+  const photoId = photoIds[activeIndex] ?? Number.parseInt(photoIdText, 10);
+  const canGoPrev = activeIndex > 0;
+  const canGoNext = activeIndex < photoIds.length - 1;
 
   const [loading, setLoading] = useState(true);
   const [photoTarget, setPhotoTarget] = useState<IncidentPhotoPreviewTarget | null>(null);
@@ -109,6 +135,10 @@ export default function IncidentPhotoViewerScreen() {
   }));
 
   useEffect(() => {
+    setActiveIndex(initialIndex);
+  }, [initialIndex, photoIdText]);
+
+  useEffect(() => {
     let isMounted = true;
 
     const loadTarget = async () => {
@@ -122,10 +152,7 @@ export default function IncidentPhotoViewerScreen() {
       try {
         setLoading(true);
         setErrorMessage("");
-        const resolved = {
-          uri: await fetchIncidentPhotoDataUri(photoId),
-          headers: {},
-        };
+        const resolved = await resolveIncidentPhotoPreviewTarget(photoId);
         if (!isMounted) return;
         resetZoom();
         setPhotoTarget(resolved);
@@ -148,26 +175,99 @@ export default function IncidentPhotoViewerScreen() {
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaView style={[styles.safeArea, { backgroundColor: palette.screenBg }]}>
-        <Stack.Screen options={{ title: fileName || `Foto #${photoIdText || "N/A"}` }} />
+        <Stack.Screen
+          options={{
+            title:
+              photoIds.length > 1
+                ? `Evidencia ${activeIndex + 1}/${photoIds.length}`
+                : fileName || `Foto #${photoIdText || "N/A"}`,
+          }}
+        />
         <View style={[styles.container, { backgroundColor: palette.screenBg }]}>
-          <TouchableOpacity
-            style={[
-              styles.closeButton,
-              { backgroundColor: palette.buttonBg, borderColor: palette.buttonBorder },
-            ]}
-            onPress={() => router.back()}
-          >
-            <Text style={[styles.closeButtonText, { color: palette.textPrimary }]}>Cerrar</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.resetZoomButton,
-              { backgroundColor: palette.buttonBg, borderColor: palette.buttonBorder },
-            ]}
-            onPress={resetZoom}
-          >
-            <Text style={[styles.closeButtonText, { color: palette.textPrimary }]}>Restablecer zoom</Text>
-          </TouchableOpacity>
+          <View style={styles.topBar}>
+            <TouchableOpacity
+              style={[
+                styles.closeButton,
+                { backgroundColor: palette.buttonBg, borderColor: palette.buttonBorder },
+              ]}
+              onPress={() => router.back()}
+            >
+              <Text style={[styles.closeButtonText, { color: palette.textPrimary }]}>Cerrar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.resetZoomButton,
+                { backgroundColor: palette.buttonBg, borderColor: palette.buttonBorder },
+              ]}
+              onPress={resetZoom}
+            >
+              <Text style={[styles.closeButtonText, { color: palette.textPrimary }]}>
+                Restablecer zoom
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {photoIds.length > 1 ? (
+            <View
+              style={[
+                styles.navRail,
+                {
+                  backgroundColor: palette.heroBg,
+                  borderColor: palette.heroBorder,
+                },
+              ]}
+            >
+              <TouchableOpacity
+                style={[
+                  styles.navButton,
+                  {
+                    backgroundColor: canGoPrev ? palette.buttonBg : palette.subtleBg,
+                    borderColor: palette.buttonBorder,
+                    opacity: canGoPrev ? 1 : 0.55,
+                  },
+                ]}
+                onPress={() => {
+                  if (!canGoPrev) return;
+                  setActiveIndex((current) => Math.max(0, current - 1));
+                }}
+                disabled={!canGoPrev}
+              >
+                <Text style={[styles.navButtonText, { color: palette.textPrimary }]}>Anterior</Text>
+              </TouchableOpacity>
+              <View style={styles.navCenter}>
+                <Text style={[styles.counterText, { color: palette.textPrimary }]}>
+                  {activeIndex + 1}/{photoIds.length}
+                </Text>
+                <Text style={[styles.counterHint, { color: palette.textSecondary }]}>
+                  Desliza mentalmente la incidencia sin salir del zoom.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[
+                  styles.navButton,
+                  {
+                    backgroundColor: canGoNext ? palette.primaryButtonBg : palette.subtleBg,
+                    borderColor: canGoNext ? palette.primaryButtonBg : palette.buttonBorder,
+                    opacity: canGoNext ? 1 : 0.55,
+                  },
+                ]}
+                onPress={() => {
+                  if (!canGoNext) return;
+                  setActiveIndex((current) => Math.min(photoIds.length - 1, current + 1));
+                }}
+                disabled={!canGoNext}
+              >
+                <Text
+                  style={[
+                    styles.navButtonText,
+                    { color: canGoNext ? palette.primaryButtonText : palette.textPrimary },
+                  ]}
+                >
+                  Siguiente
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
 
           {loading ? (
             <View style={styles.centered}>
@@ -191,6 +291,41 @@ export default function IncidentPhotoViewerScreen() {
           <Text style={[styles.zoomHint, { color: palette.hint }]}>
             Pellizca para zoom, arrastra para mover y doble toque para reiniciar.
           </Text>
+          {photoIds.length > 1 ? (
+            <FlatList
+              horizontal
+              data={photoIds}
+              keyExtractor={(item) => String(item)}
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.thumbRail}
+              renderItem={({ item, index }) => {
+                const selected = index === activeIndex;
+                return (
+                  <TouchableOpacity
+                    style={[
+                      styles.thumbChip,
+                      {
+                        backgroundColor: selected ? palette.primaryButtonBg : palette.buttonBg,
+                        borderColor: selected ? palette.primaryButtonBg : palette.buttonBorder,
+                      },
+                    ]}
+                    onPress={() => setActiveIndex(index)}
+                  >
+                    <Text
+                      style={[
+                        styles.thumbChipText,
+                        {
+                          color: selected ? palette.primaryButtonText : palette.textPrimary,
+                        },
+                      ]}
+                    >
+                      Foto {index + 1}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          ) : null}
         </View>
       </SafeAreaView>
     </GestureHandlerRootView>
@@ -207,6 +342,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 12,
+  },
+  topBar: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
   },
   closeButton: {
     alignSelf: "flex-start",
@@ -226,6 +366,42 @@ const styles = StyleSheet.create({
   },
   closeButtonText: {
     fontFamily: fontFamilies.bold,
+  },
+  navRail: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderRadius: 20,
+    padding: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  navButton: {
+    minHeight: 44,
+    minWidth: 88,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+  },
+  navButtonText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 13,
+  },
+  navCenter: {
+    flex: 1,
+    gap: 2,
+  },
+  counterText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 15,
+    textAlign: "center",
+  },
+  counterHint: {
+    fontFamily: fontFamilies.regular,
+    fontSize: 11.5,
+    textAlign: "center",
   },
   centered: {
     flex: 1,
@@ -248,6 +424,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: fontFamilies.regular,
     textAlign: "center",
+  },
+  thumbRail: {
+    paddingTop: 10,
+    paddingBottom: 2,
+    gap: 8,
+  },
+  thumbChip: {
+    minHeight: 38,
+    borderRadius: 999,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  thumbChipText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 12,
   },
   errorText: {},
 });

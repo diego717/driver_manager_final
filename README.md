@@ -188,6 +188,17 @@ npm run dev:remote
 npm run deploy
 ```
 
+Deploy completo recomendado para produccion:
+
+```powershell
+npm run deploy:full
+```
+
+Ese flujo ejecuta, en orden:
+- tests web + contract tests
+- migraciones D1 remotas pendientes
+- deploy del Worker con validacion previa de seguridad
+
 `npm run deploy` ahora ejecuta una verificacion de seguridad previa (`security:verify-deploy`) que:
 - valida bindings KV criticos (`RATE_LIMIT_KV` y `WEB_SESSION_KV`) en `wrangler.toml`
 - valida que exista `WEB_SESSION_SECRET` en el Worker remoto
@@ -197,6 +208,7 @@ npm run deploy
 Comandos utiles:
 
 ```powershell
+npm run deploy:check         # tests + verificacion de seguridad, sin tocar remoto
 npm run tail                 # logs en vivo del Worker
 npm run test:web             # tests del dashboard + contract tests Worker
 npm run users:tenant         # script de gestion de usuarios por tenant (CLI Python)
@@ -298,8 +310,11 @@ Las migraciones incluidas crean:
 - `0007_multi_tenant_foundation.sql`: base multi-tenant (tenants, roles por tenant, auditoria tenant y limites de plan).
 - `0008_assets_registry.sql`: registro de equipos (assets), asociaciones e historial.
 - `0009_assets_brand_and_metadata.sql`: metadata extendida para equipos (marca/modelo/serie/cliente/notas).
+- `0010_incident_lifecycle_status.sql`: estado de ciclo de vida para incidencias.
+- `0011_incident_evidence_metadata.sql`: checklist y nota de evidencia.
 - `0012_incidents_asset_link.sql`: enlace opcional `asset_id` en incidencias para flujo asset-first.
 - `0013_incident_duration_fields.sql`: duracion estimada/real y marcas de inicio-fin por incidencia.
+- `0014_incident_status_paused.sql`: habilita estado `paused` en D1 para incidencias.
 
 ## Mobile app (Expo)
 

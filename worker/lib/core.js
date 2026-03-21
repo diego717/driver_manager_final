@@ -93,3 +93,8 @@ export function isMissingIncidentTimingColumnsError(error) {
     message.includes("actual_duration_seconds")
   );
 }
+
+export function isIncidentStatusConstraintError(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  return message.includes("check constraint failed") && message.includes("incident_status");
+}

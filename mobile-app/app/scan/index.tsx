@@ -27,7 +27,7 @@ export default function ScanScreen() {
   const [resolving, setResolving] = useState(false);
   const [manualCode, setManualCode] = useState("");
 
-  const navigateToCreateIncident = (values: {
+  const navigateToCaseContext = (values: {
     installationId?: number | null;
     assetExternalCode?: string | null;
     assetRecordId?: number | null;
@@ -44,7 +44,7 @@ export default function ScanScreen() {
     }
 
     const query = params.toString();
-    router.replace((query ? `/?${query}` : "/") as never);
+    router.replace((query ? `/case/context?${query}` : "/case/context") as never);
   };
 
   const resolveAndNavigate = async (rawValue: string) => {
@@ -61,12 +61,12 @@ export default function ScanScreen() {
     setResolving(true);
     try {
       if (parsed.type === "installation") {
-        navigateToCreateIncident({ installationId: parsed.installationId });
+        navigateToCaseContext({ installationId: parsed.installationId });
         return;
       }
 
       const lookup = await lookupCode(parsed.externalCode, "asset");
-      navigateToCreateIncident({
+      navigateToCaseContext({
         installationId: lookup.match.installation_id ?? undefined,
         assetExternalCode:
           lookup.match.external_code ??
@@ -100,7 +100,7 @@ export default function ScanScreen() {
       <ScreenHero
         eyebrow="Captura en campo"
         title="Escanear QR o codigo"
-        description="Prioriza el escaneo directo, pero mantiene un fallback manual para resolver instalaciones y equipos cuando la camara no alcanza."
+        description="El escaneo ya no cae en un formulario largo. Primero resuelve el contexto y despues decide si continuas el caso o cargas una incidencia."
         aside={
           <View
             style={[

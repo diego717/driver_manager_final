@@ -1,6 +1,6 @@
 export type IncidentSeverity = "low" | "medium" | "high" | "critical";
 export type IncidentSource = "desktop" | "mobile" | "web";
-export type IncidentStatus = "open" | "in_progress" | "resolved";
+export type IncidentStatus = "open" | "in_progress" | "paused" | "resolved";
 
 export interface CreateIncidentInput {
   note: string;
@@ -25,6 +25,7 @@ export interface IncidentPhoto {
 export interface Incident {
   id: number;
   installation_id: number;
+  asset_id?: number | null;
   reporter_username: string;
   note: string;
   time_adjustment_seconds: number;
@@ -34,6 +35,10 @@ export interface Incident {
   incident_status?: IncidentStatus;
   status_updated_at?: string | null;
   status_updated_by?: string | null;
+  estimated_duration_seconds?: number | null;
+  work_started_at?: string | null;
+  work_ended_at?: string | null;
+  actual_duration_seconds?: number | null;
   resolved_at?: string | null;
   resolved_by?: string | null;
   resolution_note?: string | null;
@@ -55,10 +60,18 @@ export interface InstallationRecord {
   notes?: string;
   incident_open_count?: number;
   incident_in_progress_count?: number;
+  incident_paused_count?: number;
   incident_resolved_count?: number;
   incident_active_count?: number;
   incident_critical_active_count?: number;
-  attention_state?: "clear" | "open" | "in_progress" | "resolved" | "critical" | string;
+  attention_state?:
+    | "clear"
+    | "open"
+    | "in_progress"
+    | "paused"
+    | "resolved"
+    | "critical"
+    | string;
 }
 
 export type CreateRecordInput = Omit<InstallationRecord, "id">;
@@ -102,4 +115,19 @@ export interface CreateRecordResponse {
 export interface UploadPhotoResponse {
   success: boolean;
   photo: IncidentPhoto;
+}
+
+export interface DashboardStatistics {
+  total_installations: number;
+  successful_installations: number;
+  failed_installations: number;
+  success_rate?: number;
+  average_time_minutes?: number;
+  unique_clients?: number;
+  incident_in_progress_count?: number;
+  incident_critical_active_count?: number;
+  incident_outside_sla_count?: number;
+  incident_sla_minutes?: number;
+  by_brand?: Record<string, number>;
+  top_drivers?: Record<string, number>;
 }

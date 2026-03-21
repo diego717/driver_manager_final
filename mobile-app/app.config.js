@@ -17,8 +17,18 @@ function resolveFilePathFromEnv(envName, localFileName) {
   return undefined;
 }
 
+function resolveTrimmedEnvValue(envName) {
+  const value = String(process.env[envName] || "").trim();
+  return value || undefined;
+}
+
 module.exports = () => {
   const expo = JSON.parse(JSON.stringify(baseExpoConfig));
+  const appDisplayName = resolveTrimmedEnvValue("APP_DISPLAY_NAME");
+
+  if (appDisplayName) {
+    expo.name = appDisplayName;
+  }
 
   const androidGoogleServicesFile = resolveFilePathFromEnv(
     "GOOGLE_SERVICES_JSON",
@@ -44,4 +54,3 @@ module.exports = () => {
 
   return { expo };
 };
-

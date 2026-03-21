@@ -137,6 +137,13 @@ export function extensionFromType(contentType) {
   return "jpg";
 }
 
+export function contentTypeFromIncidentPhotoKey(key) {
+  const normalized = normalizeOptionalString(key, "").toLowerCase();
+  if (normalized.endsWith(".png")) return "image/png";
+  if (normalized.endsWith(".webp")) return "image/webp";
+  return "image/jpeg";
+}
+
 export function validateAndProcessPhoto(bodyBuffer, declaredContentType) {
   const sizeBytes = bodyBuffer.byteLength;
   if (!sizeBytes) {
@@ -281,4 +288,83 @@ export async function loadIncidentPhotoByIdForTenant(env, photoId, incidentsTena
     .bind(photoId, incidentsTenantId, incidentsTenantId)
     .all();
   return results?.[0] || null;
+}
+
+export async function recoverIncidentPhotosFromStorageForTenant(
+  env,
+  incidents,
+  incidentsTenantId,
+  {
+    requireBucketOperation = requireIncidentsBucketOperation,
+  } = {},
+) {
+  if (!env?.DB || typeof env.DB.prepare !== "function") return 0;
+  const values = Array.isArray(incidents) ? incidents : [];
+  if (!values.length) return 0;
+
+  let bucket;
+  try {
+    bucket = requireBucketOperation(env, "list");
+  } catch {
+    return 0;
+  }
+  if (!bucket || typeof bucket.list !== "function") return 0;
+
+  let insertedCount = 0;
+  for (const incident of values) {
+    const incidentId = Number(incident?.id);
+    const installationId = Number(incident?.installation_id);
+    if (!Number.isInteger(incidentId) || incidentId <= 0) continue;
+    if (!Number.isInteger(installationId) || installationId <= 0) continue;
+
+    const prefix = `incidents/${installationId}/${incidentId}/`;
+    let listedObjects = [];
+    try {
+      const listResult = await bucket.list({ prefix });
+      listedObjects = Array.isArray(listResult?.objects) ? listResult.objects : [];
+    } catch {
+      continue;
+    }
+
+    for (const object of listedObjects) {
+      const r2Key = normalizeOptionalString(object?.key, "");
+      if (!r2Key) continue;
+      const fileName = r2Key.split("/").pop() || `incident_${incidentId}.jpg`;
+      const contentType = contentTypeFromIncidentPhotoKey(r2Key);
+      const sizeBytes = Math.max(0, Number(object?.size) || 0);
+      const uploadedAt =
+        object?.uploaded instanceof Date
+          ? object.uploaded.toISOString()
+          : new Date().toISOString();
+
+      const insertResult = await env.DB.prepare(`
+        INSERT OR IGNORE INTO incident_photos (
+          incident_id,
+          tenant_id,
+          r2_key,
+          file_name,
+          content_type,
+          size_bytes,
+          sha256,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+        .bind(
+          incidentId,
+          incidentsTenantId,
+          r2Key,
+          fileName,
+          contentType,
+          sizeBytes,
+          null,
+          uploadedAt,
+        )
+        .run();
+
+      insertedCount += Number(insertResult?.meta?.changes) || 0;
+    }
+  }
+
+  return insertedCount;
 }

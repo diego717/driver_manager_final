@@ -88,12 +88,19 @@
                     ...baseHeaders,
                     ...authHeaders,
                 };
-
-                const response = await fetch(buildUrl(endpoint), {
+                const requestInit = {
                     ...options,
                     headers,
                     credentials,
-                });
+                };
+                if (!Object.prototype.hasOwnProperty.call(requestInit, 'cache')) {
+                    const method = String(requestInit.method || 'GET').toUpperCase();
+                    if (method === 'GET') {
+                        requestInit.cache = 'no-store';
+                    }
+                }
+
+                const response = await fetch(buildUrl(endpoint), requestInit);
                 const payload = await parseApiResponsePayload(response);
                 return { response, payload };
             };
@@ -212,6 +219,13 @@
             },
             getIncidents(installationId) {
                 return request(`/web/installations/${installationId}/incidents`);
+            },
+            lookupCode(code, type) {
+                const query = new URLSearchParams({
+                    code: String(code || '').trim(),
+                    type: String(type || '').trim() || 'asset',
+                });
+                return request(`/web/lookup?${query.toString()}`);
             },
             createRecord(payload) {
                 return request('/web/records', {

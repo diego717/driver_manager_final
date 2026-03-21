@@ -268,6 +268,930 @@ test("reopening a resolved incident into in-progress requires confirmation and r
   assert.equal(document.getElementById("actionModal").classList.contains("active"), false);
 });
 
+test("scan qr modal opens from header overflow and keeps manual fallback visible", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload()),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { document } = dom.window;
+
+  await loginThroughForm(dom);
+  document.getElementById("overflowScanQrBtn").click();
+  await flushDashboardTasks();
+
+  assert.ok(document.getElementById("scanQrModal").classList.contains("active"));
+  assert.match(document.getElementById("scanQrStatus").textContent, /fallback|camara|navegador/i);
+  assert.ok(document.getElementById("scanQrManualInput"));
+});
+
+test("manual qr resolution opens incident context for installations", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload()),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/42/incidents",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          installation_id: 42,
+          incidents: [],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { document, Event } = dom.window;
+
+  await loginThroughForm(dom);
+  document.getElementById("overflowScanQrBtn").click();
+  await flushDashboardTasks();
+
+  document.getElementById("scanQrManualInput").value = "dm://installation/42";
+  document.getElementById("scanQrManualForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks(220);
+
+  assert.ok(document.getElementById("incidentsSection").classList.contains("active"));
+  assert.ok(router.calls.some((call) => call.pathname === "/web/installations/42/incidents"));
+});
+
+test("manual qr resolution opens asset detail when lookup resolves an asset", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload()),
+    },
+    {
+      method: "GET",
+      match: ({ url }) =>
+        url.pathname === "/web/lookup" &&
+        url.searchParams.get("code") === "EQ-77" &&
+        url.searchParams.get("type") === "asset",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          match: {
+            type: "asset",
+            asset_record_id: 77,
+            installation_id: 12,
+            external_code: "EQ-77",
+          },
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/assets/77/incidents",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          asset: {
+            id: 77,
+            external_code: "EQ-77",
+            brand: "Entrust",
+            model: "Sigma",
+            serial_number: "SN-77",
+            client_name: "QA",
+            status: "active",
+          },
+          active_link: {
+            installation_id: 12,
+          },
+          links: [],
+          incidents: [],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { document, Event } = dom.window;
+
+  await loginThroughForm(dom);
+  document.getElementById("overflowScanQrBtn").click();
+  await flushDashboardTasks();
+
+  document.getElementById("scanQrManualInput").value = "dm://asset/EQ-77";
+  document.getElementById("scanQrManualForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks(220);
+
+  assert.ok(document.getElementById("assetsSection").classList.contains("active"));
+  assert.ok(router.calls.some((call) => call.pathname === "/web/lookup"));
+  assert.ok(router.calls.some((call) => call.pathname === "/web/assets/77/incidents"));
+});
+
+test("photo modal navigates between multiple evidence photos without closing", async () => {
+  const router = createFetchRouter([
+    {
+      method: "GET",
+      match: "/web/photos/11",
+      resolver: async () =>
+        new Response("photo-11", {
+          status: 200,
+          headers: { "Content-Type": "image/jpeg" },
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/photos/12",
+      resolver: async () =>
+        new Response("photo-12", {
+          status: 200,
+          headers: { "Content-Type": "image/jpeg" },
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/photos/13",
+      resolver: async () =>
+        new Response("photo-13", {
+          status: 200,
+          headers: { "Content-Type": "image/jpeg" },
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+
+  window.webAccessToken = "token-test";
+  await window.viewPhoto(11, [11, 12, 13]);
+  await flushDashboardTasks();
+
+  assert.ok(document.getElementById("photoModal").classList.contains("active"));
+  assert.equal(document.getElementById("photoViewerCounter").textContent, "1 / 3");
+  assert.equal(document.getElementById("photoPrevBtn").disabled, true);
+  assert.equal(document.getElementById("photoNextBtn").disabled, false);
+
+  document.getElementById("photoNextBtn").click();
+  await flushDashboardTasks();
+
+  assert.equal(document.getElementById("photoViewerCounter").textContent, "2 / 3");
+  assert.equal(document.getElementById("photoPrevBtn").disabled, false);
+  assert.ok(router.calls.some((call) => call.pathname === "/web/photos/12"));
+});
+
+test("camera scan falls back to jsQR when BarcodeDetector is unavailable", async () => {
+  let openedInstallationId = null;
+  const { dom } = await setupDashboardApp();
+  const { window } = dom;
+  const { document } = window;
+
+  const video = document.getElementById("scanQrVideo");
+  Object.defineProperty(video, "play", {
+    configurable: true,
+    value: async () => {},
+  });
+  Object.defineProperty(video, "pause", {
+    configurable: true,
+    value: () => {},
+  });
+  Object.defineProperty(video, "videoWidth", {
+    configurable: true,
+    get: () => 320,
+  });
+  Object.defineProperty(video, "videoHeight", {
+    configurable: true,
+    get: () => 240,
+  });
+  Object.defineProperty(window.HTMLCanvasElement.prototype, "getContext", {
+    configurable: true,
+    value() {
+      return {
+        drawImage() {},
+        getImageData() {
+          return {
+            data: new Uint8ClampedArray(320 * 240 * 4),
+          };
+        },
+      };
+    },
+  });
+
+  window.BarcodeDetector = undefined;
+  window.jsQR = () => ({ data: "dm://installation/42" });
+  Object.defineProperty(window.navigator, "mediaDevices", {
+    configurable: true,
+    value: {
+      getUserMedia: async () => ({
+        getTracks() {
+          return [
+            {
+              stop() {},
+            },
+          ];
+        },
+      }),
+    },
+  });
+
+  const scan = window.createDashboardScan({
+    api: {
+      lookupCode: async () => ({ match: null }),
+    },
+    openInstallation: async (installationId) => {
+      openedInstallationId = installationId;
+    },
+    openAsset: async () => {},
+    requireActiveSession: () => true,
+    showNotification: () => {},
+  });
+
+  await scan.startCamera();
+  await flushDashboardTasks(220);
+  await flushDashboardTasks();
+
+  assert.equal(openedInstallationId, 42);
+  assert.match(document.getElementById("scanQrStatus").textContent, /escaneo compatible|resolviendo codigo/i);
+});
+
+test("manual record creation updates the installations view without forcing a blocking reload", async () => {
+  const recordPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+    {
+      method: "GET",
+      match: "/web/installations",
+      resolver: async () => createJsonResponse([]),
+    },
+    {
+      method: "POST",
+      match: "/web/records",
+      resolver: async ({ request }) => {
+        recordPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse(
+          {
+            success: true,
+            record: {
+              id: 123,
+              tenant_id: "default",
+              timestamp: "2026-03-20T12:00:00.000Z",
+              client_name: "Cliente QA",
+              driver_brand: "Equipo QA",
+              driver_version: "v1",
+              status: "manual",
+              driver_description: "Registro manual desde dashboard web",
+              installation_time_seconds: 0,
+              os_info: "web",
+              notes: "Alta creada desde test",
+              attention_state: "normal",
+            },
+          },
+          { status: 201 },
+        );
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, MouseEvent, Event } = window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  document
+    .querySelector(".nav-links a[data-section=\"installations\"]")
+    .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  await flushDashboardTasks(220);
+  await flushDashboardTasks();
+
+  const installationsCallsBeforeCreate = router.calls.filter((call) => call.pathname === "/web/installations").length;
+
+  window.createManualRecordFromWeb();
+  document.getElementById("actionRecordClient").value = "Cliente QA";
+  document.getElementById("actionRecordBrand").value = "Equipo QA";
+  document.getElementById("actionRecordVersion").value = "v1";
+  document.getElementById("actionRecordNotes").value = "Alta creada desde test";
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(recordPayloads.length, 1);
+  assert.equal(document.getElementById("actionModal").classList.contains("active"), false);
+  assert.match(document.getElementById("installationsTable").textContent, /#123/);
+  assert.match(document.getElementById("installationsTable").textContent, /Cliente QA/);
+  assert.equal(
+    router.calls.filter((call) => call.pathname === "/web/installations").length,
+    installationsCallsBeforeCreate,
+  );
+});
+
+test("incident creation keeps the modal flow responsive without forcing an installations reload", async () => {
+  const incidentPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+    {
+      method: "GET",
+      match: "/web/installations",
+      resolver: async () => createJsonResponse([]),
+    },
+    {
+      method: "POST",
+      match: "/web/installations/45/incidents",
+      resolver: async ({ request }) => {
+        incidentPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse(
+          {
+            success: true,
+            incident: {
+              id: 88,
+              installation_id: 45,
+              note: "Incidencia creada desde test",
+              severity: "high",
+              incident_status: "open",
+              created_at: "2026-03-20T12:15:00.000Z",
+              reporter_username: "ops-admin",
+              photos: [],
+            },
+          },
+          { status: 201 },
+        );
+      },
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/incidents",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          installation_id: 45,
+          incidents: [
+            {
+              id: 88,
+              installation_id: 45,
+              note: "Incidencia creada desde test",
+              severity: "high",
+              incident_status: "open",
+              created_at: "2026-03-20T12:15:00.000Z",
+              reporter_username: "ops-admin",
+              photos: [],
+            },
+          ],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  const installationsCallsBeforeCreate = router.calls.filter((call) => call.pathname === "/web/installations").length;
+
+  window.createIncidentFromWeb(45);
+  document.getElementById("actionIncidentNote").value = "Incidencia creada desde test";
+  document.getElementById("actionIncidentSeverity").value = "high";
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(incidentPayloads.length, 1);
+  assert.equal(document.getElementById("actionModal").classList.contains("active"), false);
+  assert.equal(
+    router.calls.filter((call) => call.pathname === "/web/installations").length,
+    installationsCallsBeforeCreate,
+  );
+  assert.ok(router.calls.some((call) => call.pathname === "/web/installations/45/incidents"));
+});
+
+test("incident photo upload accepts multiple files and limits each batch to five", async () => {
+  const uploadedFileNames = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+    {
+      method: "POST",
+      match: "/web/incidents/19/photos",
+      resolver: async ({ request }) => {
+        uploadedFileNames.push(request.headers.get("X-File-Name"));
+        return createJsonResponse({ success: true }, { status: 201 });
+      },
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/incidents",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          installation_id: 45,
+          incidents: [
+            {
+              id: 19,
+              installation_id: 45,
+              note: "Fotos en curso",
+              severity: "medium",
+              incident_status: "open",
+              created_at: "2026-03-20T12:20:00.000Z",
+              reporter_username: "ops-admin",
+              photos: [],
+            },
+          ],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  await window.renderIncidents(
+    [
+      {
+        id: 19,
+        installation_id: 45,
+        note: "Fotos en curso",
+        severity: "medium",
+        incident_status: "open",
+        created_at: "2026-03-20T12:20:00.000Z",
+        reporter_username: "ops-admin",
+        photos: [],
+      },
+    ],
+    45,
+  );
+
+  assert.match(document.querySelector(".incident-upload-btn").textContent, /max 5/i);
+
+  window.selectAndUploadIncidentPhoto(19, 45);
+  const picker = document.querySelector(".hidden-file-picker");
+  assert.ok(picker);
+
+  const files = Array.from({ length: 6 }, (_, index) =>
+    new window.File([`image-${index + 1}`], `photo-${index + 1}.jpg`, { type: "image/jpeg" }),
+  );
+  Object.defineProperty(picker, "files", {
+    configurable: true,
+    value: files,
+  });
+  picker.dispatchEvent(new Event("change", { bubbles: true }));
+
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.deepEqual(uploadedFileNames, [
+    "photo-1.jpg",
+    "photo-2.jpg",
+    "photo-3.jpg",
+    "photo-4.jpg",
+    "photo-5.jpg",
+  ]);
+  assert.ok(router.calls.some((call) => call.pathname === "/web/installations/45/incidents"));
+  assert.match(document.body.textContent, /Solo se permiten 5 fotos por carga/i);
+});
+
+test("incident photo upload rejects batches over 20MB before sending requests", async () => {
+  const uploadedFileNames = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+    {
+      method: "POST",
+      match: "/web/incidents/19/photos",
+      resolver: async ({ request }) => {
+        uploadedFileNames.push(request.headers.get("X-File-Name"));
+        return createJsonResponse({ success: true }, { status: 201 });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  await window.selectAndUploadIncidentPhoto(19, 45);
+  const picker = document.querySelector(".hidden-file-picker");
+  assert.ok(picker);
+
+  const oversizedBatch = Array.from({ length: 5 }, (_, index) => ({
+    name: `photo-${index + 1}.jpg`,
+    size: Math.floor(4.5 * 1024 * 1024),
+    type: "image/jpeg",
+  }));
+  Object.defineProperty(picker, "files", {
+    configurable: true,
+    value: oversizedBatch,
+  });
+  picker.dispatchEvent(new Event("change", { bubbles: true }));
+
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.deepEqual(uploadedFileNames, []);
+  assert.match(document.body.textContent, /supera el maximo de 20\.0MB por tanda/i);
+});
+
+test("paused incidents show paused runtime and offer resume action", async () => {
+  const { dom } = await setupDashboardApp();
+  const { window } = dom;
+  const { document } = window;
+
+  await window.renderIncidents(
+    [
+      {
+        id: 27,
+        installation_id: 45,
+        note: "Pendiente por salida a campo",
+        severity: "medium",
+        incident_status: "paused",
+        created_at: "2026-03-20T12:20:00.000Z",
+        status_updated_at: "2026-03-20T12:40:00.000Z",
+        actual_duration_seconds: 780,
+        reporter_username: "ops-admin",
+        photos: [],
+      },
+    ],
+    45,
+  );
+
+  const card = document.querySelector("#incidentsList .incident-card");
+  assert.ok(card);
+  assert.equal(card.dataset.status, "paused");
+  assert.match(card.textContent, /Pausada/);
+  assert.match(card.textContent, /en pausa/i);
+  assert.match(
+    card.querySelector('.incident-action-btn[data-action="in_progress"]').textContent,
+    /Reanudar/,
+  );
+});
+
+test("status updates apply pause state immediately in the visible card", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+    {
+      method: "PATCH",
+      match: "/web/incidents/27/status",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          incident: {
+            id: 27,
+            installation_id: 45,
+            note: "Pendiente por salida a campo",
+            severity: "medium",
+            incident_status: "paused",
+            created_at: "2026-03-20T12:20:00.000Z",
+            status_updated_at: "2026-03-20T12:40:00.000Z",
+            actual_duration_seconds: 780,
+            reporter_username: "ops-admin",
+            photos: [],
+          },
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/incidents",
+      resolver: async () =>
+        createJsonResponse({
+          incidents: [
+            {
+              id: 27,
+              installation_id: 45,
+              note: "Pendiente por salida a campo",
+              severity: "medium",
+              incident_status: "paused",
+              created_at: "2026-03-20T12:20:00.000Z",
+              status_updated_at: "2026-03-20T12:40:00.000Z",
+              actual_duration_seconds: 780,
+              reporter_username: "ops-admin",
+              photos: [],
+            },
+          ],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  await window.renderIncidents(
+    [
+      {
+        id: 27,
+        installation_id: 45,
+        note: "Pendiente por salida a campo",
+        severity: "medium",
+        incident_status: "in_progress",
+        created_at: "2026-03-20T12:20:00.000Z",
+        status_updated_at: "2026-03-20T12:27:00.000Z",
+        reporter_username: "ops-admin",
+        photos: [],
+      },
+    ],
+    45,
+  );
+
+  document.querySelector('.incident-action-btn[data-action="paused"]').click();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const card = document.querySelector("#incidentsList .incident-card");
+  assert.ok(card);
+  assert.equal(card.dataset.status, "paused");
+  assert.match(card.textContent, /Pausada/);
+  assert.match(card.textContent, /en pausa/i);
+  assert.match(
+    card.querySelector('.incident-action-btn[data-action="in_progress"]').textContent,
+    /Reanudar/,
+  );
+});
+
+test("status updates mark the card as updating while the request is in flight", async () => {
+  let resolvePatch;
+  const patchPromise = new Promise((resolve) => {
+    resolvePatch = resolve;
+  });
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+    {
+      method: "PATCH",
+      match: "/web/incidents/27/status",
+      resolver: async () => {
+        await patchPromise;
+        return createJsonResponse({
+          success: true,
+          incident: {
+            id: 27,
+            installation_id: 45,
+            note: "Pendiente por salida a campo",
+            severity: "medium",
+            incident_status: "paused",
+            created_at: "2026-03-20T12:20:00.000Z",
+            status_updated_at: "2026-03-20T12:40:00.000Z",
+            actual_duration_seconds: 780,
+            reporter_username: "ops-admin",
+            photos: [],
+          },
+        });
+      },
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/incidents",
+      resolver: async () =>
+        createJsonResponse({
+          incidents: [
+            {
+              id: 27,
+              installation_id: 45,
+              note: "Pendiente por salida a campo",
+              severity: "medium",
+              incident_status: "paused",
+              created_at: "2026-03-20T12:20:00.000Z",
+              status_updated_at: "2026-03-20T12:40:00.000Z",
+              actual_duration_seconds: 780,
+              reporter_username: "ops-admin",
+              photos: [],
+            },
+          ],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  await window.renderIncidents(
+    [
+      {
+        id: 27,
+        installation_id: 45,
+        note: "Pendiente por salida a campo",
+        severity: "medium",
+        incident_status: "in_progress",
+        created_at: "2026-03-20T12:20:00.000Z",
+        status_updated_at: "2026-03-20T12:27:00.000Z",
+        reporter_username: "ops-admin",
+        photos: [],
+      },
+    ],
+    45,
+  );
+
+  document.querySelector('.incident-action-btn[data-action="paused"]').click();
+  await flushDashboardTasks();
+
+  const card = document.querySelector("#incidentsList .incident-card");
+  assert.ok(card);
+  assert.equal(card.dataset.updating, "true");
+  assert.equal(
+    card.querySelector('.incident-action-btn[data-action="paused"]').disabled,
+    true,
+  );
+
+  resolvePatch();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(card.dataset.updating, "false");
+});
+
+test("resuming an incident keeps the accumulated runtime in the live counter", async () => {
+  const resumedAtIso = new Date(Date.now()).toISOString();
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+    {
+      method: "PATCH",
+      match: "/web/incidents/27/status",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          incident: {
+            id: 27,
+            installation_id: 45,
+            note: "Pendiente por salida a campo",
+            severity: "medium",
+            incident_status: "in_progress",
+            created_at: "2026-03-20T12:20:00.000Z",
+            status_updated_at: resumedAtIso,
+            work_started_at: resumedAtIso,
+            actual_duration_seconds: 780,
+            reporter_username: "ops-admin",
+            photos: [],
+          },
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/incidents",
+      resolver: async () =>
+        createJsonResponse({
+          incidents: [
+            {
+              id: 27,
+              installation_id: 45,
+              note: "Pendiente por salida a campo",
+              severity: "medium",
+              incident_status: "in_progress",
+              created_at: "2026-03-20T12:20:00.000Z",
+              status_updated_at: resumedAtIso,
+              work_started_at: resumedAtIso,
+              actual_duration_seconds: 780,
+              reporter_username: "ops-admin",
+              photos: [],
+            },
+          ],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  await window.renderIncidents(
+    [
+      {
+        id: 27,
+        installation_id: 45,
+        note: "Pendiente por salida a campo",
+        severity: "medium",
+        incident_status: "paused",
+        created_at: "2026-03-20T12:20:00.000Z",
+        status_updated_at: "2026-03-20T12:40:00.000Z",
+        work_ended_at: "2026-03-20T12:40:00.000Z",
+        actual_duration_seconds: 780,
+        reporter_username: "ops-admin",
+        photos: [],
+      },
+    ],
+    45,
+  );
+
+  document.querySelector('.incident-action-btn[data-action="in_progress"]').click();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const runtimeChip = document.querySelector('.incident-highlight-chip[data-chip="runtime"]');
+  assert.ok(runtimeChip);
+  assert.match(runtimeChip.textContent, /13m/);
+  assert.equal(runtimeChip.dataset.runtimeBaseSeconds, "780");
+
+  await new Promise((resolve) => window.setTimeout(resolve, 1100));
+  assert.match(runtimeChip.textContent, /13m 1s \(en curso\)/);
+  window.stopIncidentRuntimeTicker();
+});
+
 test("incident cards avoid repeating low-priority metadata already shown in chips and panels", async () => {
   const { dom } = await setupDashboardApp();
   const { window } = dom;

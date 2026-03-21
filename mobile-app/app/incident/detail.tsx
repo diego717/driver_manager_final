@@ -6,37 +6,44 @@ import {
   Alert,
   FlatList,
   Image,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 
 import { extractApiError } from "@/src/api/client";
 import { listIncidentsByInstallation, updateIncidentStatus } from "@/src/api/incidents";
 import {
-  fetchIncidentPhotoDataUri,
   type IncidentPhotoPreviewTarget,
+  resolveIncidentPhotoPreviewTarget,
 } from "@/src/api/photos";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
+import RuntimeChip from "@/src/components/RuntimeChip";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
+import SectionCard from "@/src/components/SectionCard";
+import StatusChip from "@/src/components/StatusChip";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 import { type Incident } from "@/src/types/api";
+import {
+  formatDateTime,
+  formatDuration,
+  getIncidentStatusLabel,
+  getSeverityLabel,
+  normalizeIncidentStatus,
+  resolveIncidentEstimatedDurationSeconds,
+  resolveIncidentRealDurationSeconds,
+} from "@/src/utils/incidents";
+
+const MIN_TOUCH_TARGET_SIZE = 44;
 
 function normalizeParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
   return value ?? "";
-}
-const MIN_TOUCH_TARGET_SIZE = 44;
-
-function formatDate(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString();
 }
 
 function formatBytes(size: number): string {
@@ -46,44 +53,13 @@ function formatBytes(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function formatDuration(value: number): string {
-  const totalSeconds = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
-  if (totalSeconds <= 0) return "0s";
-
-  const days = Math.floor(totalSeconds / 86400);
-  const hours = Math.floor((totalSeconds % 86400) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  const parts: string[] = [];
-  if (days) parts.push(`${days}d`);
-  if (hours) parts.push(`${hours}h`);
-  if (minutes) parts.push(`${minutes}m`);
-  if (seconds || parts.length === 0) parts.push(`${seconds}s`);
-  return parts.join(" ");
-}
-
-function normalizeIncidentStatus(value: string | null | undefined): "open" | "in_progress" | "resolved" {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "in_progress") return "in_progress";
-  if (normalized === "resolved") return "resolved";
-  return "open";
-}
-
-function incidentStatusLabel(value: string | null | undefined): string {
-  const status = normalizeIncidentStatus(value);
-  if (status === "in_progress") return "En curso";
-  if (status === "resolved") return "Resuelta";
-  return "Abierta";
-}
-
 async function loadWithConcurrency<T>(
   tasks: Array<() => Promise<T>>,
   limit = 3,
 ): Promise<T[]> {
   const results: T[] = [];
-  for (let i = 0; i < tasks.length; i += limit) {
-    const batch = tasks.slice(i, i + limit);
+  for (let index = 0; index < tasks.length; index += limit) {
+    const batch = tasks.slice(index, index + limit);
     results.push(...(await Promise.all(batch.map((task) => task()))));
   }
   return results;
@@ -116,6 +92,10 @@ export default function IncidentDetailScreen() {
   const [loadingPhotoPreviews, setLoadingPhotoPreviews] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [resolutionNote, setResolutionNote] = useState("");
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [activePhotoIndex, setActivePhotoIndex] = useState(0);
+  const { width: windowWidth } = useWindowDimensions();
+
   const loadIncident = useCallback(async () => {
     if (!Number.isInteger(installationId) || installationId <= 0) {
       setErrorMessage("installation_id invalido.");
@@ -139,6 +119,7 @@ export default function IncidentDetailScreen() {
         return;
       }
       setIncident(found);
+      setActivePhotoIndex(0);
     } catch (error) {
       const message = extractApiError(error);
       setIncident(null);
@@ -154,6 +135,16 @@ export default function IncidentDetailScreen() {
       void loadIncident();
     }, [loadIncident]),
   );
+
+  useEffect(() => {
+    if (normalizeIncidentStatus(incident?.incident_status) !== "in_progress") {
+      return;
+    }
+    const timerId = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+    return () => clearInterval(timerId);
+  }, [incident]);
 
   useEffect(() => {
     let isMounted = true;
@@ -177,10 +168,7 @@ export default function IncidentDetailScreen() {
       const resolvedEntries = await loadWithConcurrency(
         incident.photos.map((photo) => async () => {
           try {
-            const previewTarget = {
-              uri: await fetchIncidentPhotoDataUri(photo.id),
-              headers: {},
-            };
+            const previewTarget = await resolveIncidentPhotoPreviewTarget(photo.id);
             return [photo.id, previewTarget] as const;
           } catch {
             return [photo.id, null] as const;
@@ -211,7 +199,7 @@ export default function IncidentDetailScreen() {
   }, [incident]);
 
   const onChangeStatus = useCallback(
-    async (nextStatus: "open" | "in_progress" | "resolved") => {
+    async (nextStatus: "open" | "in_progress" | "paused" | "resolved") => {
       if (!incident) return;
       const currentStatus = normalizeIncidentStatus(incident.incident_status);
       if (currentStatus === nextStatus) return;
@@ -240,23 +228,63 @@ export default function IncidentDetailScreen() {
     );
   }, [incident, router]);
 
-  const onOpenPhoto = useCallback((photoId: number, fileName: string) => {
-    if (!incident) return;
-    router.push(
-      `/incident/photo-viewer?photoId=${photoId}&incidentId=${incident.id}&installationId=${incident.installation_id}&fileName=${encodeURIComponent(fileName)}` as never,
-    );
-  }, [incident, router]);
+  const onOpenPhoto = useCallback(
+    (photoId: number, fileName: string, initialIndex: number) => {
+      if (!incident) return;
+      const photoIds = incident.photos?.map((photo) => photo.id).join(",") || String(photoId);
+      router.push(
+        `/incident/photo-viewer?photoId=${photoId}&incidentId=${incident.id}&installationId=${incident.installation_id}&initialIndex=${initialIndex}&photoIds=${encodeURIComponent(photoIds)}&fileName=${encodeURIComponent(fileName)}` as never,
+      );
+    },
+    [incident, router],
+  );
+
+  const photoCardWidth = Math.max(260, windowWidth - 72);
+  const photoSnapInterval = photoCardWidth + 12;
+  const activePhoto = incident?.photos?.[activePhotoIndex] ?? null;
 
   const renderPhotoItem = useCallback(
-    ({ item }: { item: NonNullable<Incident["photos"]>[number] }) => (
-      <View style={[styles.photoItem, { backgroundColor: palette.itemBg, borderColor: palette.itemBorder }]}>
-        <Text style={[styles.photoTitle, { color: palette.textPrimary }]}>#{item.id} - {item.file_name}</Text>
-        <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Tipo: {item.content_type}</Text>
-        <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Tamano: {formatBytes(item.size_bytes)}</Text>
-        <Text style={[styles.photoMeta, { color: palette.textMuted }]}>Fecha: {formatDate(item.created_at)}</Text>
+    ({
+      item,
+      index,
+    }: {
+      item: NonNullable<Incident["photos"]>[number];
+      index: number;
+    }) => (
+      <View
+        style={[
+          styles.photoItem,
+          {
+            width: photoCardWidth,
+            backgroundColor: palette.itemBg,
+            borderColor: palette.itemBorder,
+          },
+        ]}
+      >
+        <View style={styles.photoHead}>
+          <View
+            style={[
+              styles.photoIndexPill,
+              {
+                backgroundColor: palette.heroEyebrowBg,
+                borderColor: palette.heroBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.photoIndexText, { color: palette.previewLink }]}>
+              {index + 1}/{incident?.photos?.length ?? 1}
+            </Text>
+          </View>
+          <Text style={[styles.photoMetaCompact, { color: palette.textMuted }]}>
+            {formatDateTime(item.created_at)}
+          </Text>
+        </View>
+        <Text style={[styles.photoTitle, { color: palette.textPrimary }]} numberOfLines={1}>
+          {item.file_name}
+        </Text>
         {photoPreviews[item.id] ? (
           <TouchableOpacity
-            onPress={() => onOpenPhoto(item.id, item.file_name)}
+            onPress={() => onOpenPhoto(item.id, item.file_name, index)}
             accessibilityRole="imagebutton"
             accessibilityLabel={`Abrir vista completa de la foto ${item.id}`}
             accessibilityState={{ disabled: false }}
@@ -269,17 +297,37 @@ export default function IncidentDetailScreen() {
               style={[styles.photoPreview, { backgroundColor: palette.previewPlaceholder }]}
               resizeMode="cover"
             />
-            <Text style={[styles.openPreviewText, { color: palette.previewLink }]}>Ver en pantalla completa</Text>
           </TouchableOpacity>
         ) : loadingPhotoPreviews && !failedPhotoIds[item.id] ? (
-          <Text style={[styles.hintText, { color: palette.textMuted }]}>Cargando vista previa...</Text>
+          <Text style={[styles.hintText, { color: palette.textMuted }]}>
+            Cargando vista previa...
+          </Text>
         ) : (
-          <Text style={[styles.hintText, { color: palette.textMuted }]}>No se pudo cargar la vista previa.</Text>
+          <Text style={[styles.hintText, { color: palette.textMuted }]}>
+            No se pudo cargar la vista previa.
+          </Text>
         )}
+        <View style={styles.photoFooter}>
+          <View style={styles.photoStats}>
+            <Text style={[styles.photoMeta, { color: palette.textMuted }]}>
+              {item.content_type}
+            </Text>
+            <Text style={[styles.photoMeta, { color: palette.textMuted }]}>
+              {formatBytes(item.size_bytes)}
+            </Text>
+          </View>
+          <Text style={[styles.openPreviewText, { color: palette.previewLink }]}>
+            Abrir y deslizar
+          </Text>
+        </View>
       </View>
     ),
-    [failedPhotoIds, loadingPhotoPreviews, onOpenPhoto, palette, photoPreviews],
+    [failedPhotoIds, incident?.photos?.length, loadingPhotoPreviews, onOpenPhoto, palette, photoCardWidth, photoPreviews],
   );
+
+  const status = normalizeIncidentStatus(incident?.incident_status);
+  const runtime = resolveIncidentRealDurationSeconds(incident, nowMs);
+  const estimated = resolveIncidentEstimatedDurationSeconds(incident);
 
   return (
     <ScreenScaffold contentContainerStyle={styles.container}>
@@ -288,24 +336,8 @@ export default function IncidentDetailScreen() {
       <ScreenHero
         eyebrow="Seguimiento"
         title={`Incidencia #${incidentIdText || "N/A"}`}
-        description="Consulta el estado operativo, revisa evidencia y resuelve la incidencia sin salir del contexto de instalacion."
-        aside={
-          incident ? (
-            <View
-              style={[
-                styles.heroBadge,
-                {
-                  backgroundColor: palette.heroEyebrowBg,
-                  borderColor: palette.heroBorder,
-                },
-              ]}
-            >
-              <Text style={[styles.heroBadgeText, { color: palette.heroEyebrowText }]}>
-                {incidentStatusLabel(incident.incident_status)}
-              </Text>
-            </View>
-          ) : null
-        }
+        description="Estado operativo, tiempo acumulado, evidencia y fotos desde una sola pantalla."
+        aside={incident ? <StatusChip value={incident.incident_status} /> : null}
       />
 
       <View style={styles.topRow}>
@@ -346,52 +378,91 @@ export default function IncidentDetailScreen() {
             { backgroundColor: palette.errorBg, borderColor: palette.errorBorder },
           ]}
         >
-          <Text style={[styles.feedbackText, { color: palette.errorText }]}>Error: {errorMessage}</Text>
+          <Text style={[styles.feedbackText, { color: palette.errorText }]}>
+            Error: {errorMessage}
+          </Text>
         </View>
       ) : incident ? (
         <>
-          <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
-            <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>Datos principales</Text>
-            <Text style={[styles.cardText, { color: palette.textSecondary }]}>Instalacion: #{incident.installation_id}</Text>
-            <Text style={[styles.cardText, { color: palette.textSecondary }]}>Severidad: {incident.severity}</Text>
-            <Text style={[styles.cardText, { color: palette.textSecondary }]}>Fuente: {incident.source}</Text>
-            <Text style={[styles.cardText, { color: palette.textSecondary }]}>Usuario: {incident.reporter_username}</Text>
+          <SectionCard
+            title="Datos principales"
+            description="El tiempo real y la pausa siguen la misma regla que en web."
+          >
             <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-              Ajuste tiempo: {formatDuration(incident.time_adjustment_seconds ?? 0)}
+              Instalacion: #{incident.installation_id}
             </Text>
             <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-              Estado: {incidentStatusLabel(incident.incident_status)}
+              Usuario: {incident.reporter_username}
+            </Text>
+            <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+              Severidad: {getSeverityLabel(incident.severity)}
+            </Text>
+            <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+              Fuente: {incident.source}
+            </Text>
+            <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+              Fecha: {formatDateTime(incident.created_at)}
             </Text>
             {incident.resolved_at ? (
               <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-                Resuelta: {formatDate(incident.resolved_at)}
+                Resuelta: {formatDateTime(incident.resolved_at)}
               </Text>
             ) : null}
+
+            <View style={styles.runtimeGrid}>
+              <RuntimeChip label="Estado" value={getIncidentStatusLabel(status)} />
+              <RuntimeChip label="Estimado" value={formatDuration(estimated)} />
+              <RuntimeChip label="Real" value={formatDuration(runtime)} />
+            </View>
+
             <View style={styles.statusButtonsRow}>
-              <TouchableOpacity
-                style={[styles.statusButton, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
-                onPress={() => void onChangeStatus("open")}
-                disabled={updatingStatus || normalizeIncidentStatus(incident.incident_status) === "open"}
-                accessibilityRole="button"
-              >
-                <Text style={[styles.statusButtonText, { color: palette.refreshText }]}>Abrir</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.statusButton, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
-                onPress={() => void onChangeStatus("in_progress")}
-                disabled={updatingStatus || normalizeIncidentStatus(incident.incident_status) === "in_progress"}
-                accessibilityRole="button"
-              >
-                <Text style={[styles.statusButtonText, { color: palette.refreshText }]}>En curso</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.statusButton, { backgroundColor: palette.primaryButtonBg }]}
-                onPress={() => void onChangeStatus("resolved")}
-                disabled={updatingStatus || normalizeIncidentStatus(incident.incident_status) === "resolved"}
-                accessibilityRole="button"
-              >
-                <Text style={[styles.statusButtonText, { color: palette.primaryButtonText }]}>Resolver</Text>
-              </TouchableOpacity>
+              {[
+                { key: "open" as const, label: "Abrir" },
+                {
+                  key: "in_progress" as const,
+                  label: status === "paused" ? "Reanudar" : "En curso",
+                },
+                { key: "paused" as const, label: "Pausar" },
+                { key: "resolved" as const, label: "Resolver", primary: true },
+              ].map((action) => {
+                const selected = status === action.key;
+                return (
+                  <TouchableOpacity
+                    key={action.key}
+                    style={[
+                      styles.statusButton,
+                      {
+                        backgroundColor:
+                          selected || action.primary
+                            ? palette.primaryButtonBg
+                            : palette.refreshBg,
+                        borderColor: action.primary
+                          ? palette.primaryButtonBg
+                          : palette.inputBorder,
+                      },
+                    ]}
+                    onPress={() => {
+                      void onChangeStatus(action.key);
+                    }}
+                    disabled={updatingStatus}
+                    accessibilityRole="button"
+                  >
+                    <Text
+                      style={[
+                        styles.statusButtonText,
+                        {
+                          color:
+                            selected || action.primary
+                              ? palette.primaryButtonText
+                              : palette.refreshText,
+                        },
+                      ]}
+                    >
+                      {action.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
             <TextInput
               value={resolutionNote}
@@ -405,23 +476,22 @@ export default function IncidentDetailScreen() {
                 },
               ]}
               multiline
-              placeholder="Nota de resolución (opcional)"
+              placeholder="Nota de resolucion (opcional)"
               placeholderTextColor={palette.textMuted}
             />
-            <Text style={[styles.cardText, { color: palette.textSecondary }]}>Fecha: {formatDate(incident.created_at)}</Text>
-          </View>
+          </SectionCard>
 
-          <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
-            <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>Nota</Text>
-            <Text style={[styles.cardText, { color: palette.textSecondary }]}>{incident.note}</Text>
-          </View>
+          <SectionCard title="Nota" description="Contexto principal de la incidencia.">
+            <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+              {incident.note}
+            </Text>
+          </SectionCard>
 
-          <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
-            <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>Checklist aplicado</Text>
+          <SectionCard title="Checklist y evidencia" description="Resumen rapido del trabajo realizado.">
             {incident.checklist_items?.length ? (
               incident.checklist_items.map((item, index) => (
                 <Text key={`${item}-${index}`} style={[styles.cardText, { color: palette.textSecondary }]}>
-                  • {item}
+                  - {item}
                 </Text>
               ))
             ) : (
@@ -430,33 +500,70 @@ export default function IncidentDetailScreen() {
                 body="Todavia no se registro una validacion guiada para esta incidencia."
               />
             )}
-            <Text style={[styles.cardTitle, { color: palette.textPrimary, marginTop: 10 }]}>Nota operativa</Text>
             <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-              {incident.evidence_note?.trim() ? incident.evidence_note : "Sin nota operativa."}
+              Nota operativa: {incident.evidence_note?.trim() ? incident.evidence_note : "Sin nota operativa."}
             </Text>
-          </View>
+          </SectionCard>
 
-          <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
-            <Text style={[styles.cardTitle, { color: palette.textPrimary }]}>Fotos ({incident.photos?.length ?? 0})</Text>
+          <SectionCard
+            title={`Fotos (${incident.photos?.length ?? 0})`}
+            description="Desliza entre evidencias sin salir del detalle y abre el visor completo cuando necesites zoom."
+            aside={
+              activePhoto ? (
+                <View
+                  style={[
+                    styles.photoCounterBadge,
+                    {
+                      backgroundColor: palette.heroEyebrowBg,
+                      borderColor: palette.heroBorder,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.photoCounterText, { color: palette.heroEyebrowText }]}>
+                    {activePhotoIndex + 1}/{incident.photos?.length ?? 1}
+                  </Text>
+                </View>
+              ) : null
+            }
+          >
             {!incident.photos?.length ? (
               <EmptyStateCard
                 title="Esta incidencia aun no tiene fotos adjuntas."
                 body="Usa la accion principal para agregar evidencia fotografica desde el dispositivo."
               />
             ) : (
-              <FlatList
-                testID="incident-photos-list"
-                data={incident.photos}
-                keyExtractor={(item) => String(item.id)}
-                renderItem={renderPhotoItem}
-                initialNumToRender={3}
-                windowSize={5}
-                removeClippedSubviews
-                scrollEnabled={false}
-                contentContainerStyle={styles.photosList}
-              />
+              <>
+                <Text style={[styles.photoRailHint, { color: palette.textSecondary }]}>
+                  {activePhoto
+                    ? `Vista activa: ${activePhoto.file_name}`
+                    : "Desliza para recorrer las fotos de la incidencia."}
+                </Text>
+                <FlatList
+                  testID="incident-photos-list"
+                  data={incident.photos}
+                  keyExtractor={(item) => String(item.id)}
+                  renderItem={renderPhotoItem}
+                  initialNumToRender={2}
+                  windowSize={3}
+                  removeClippedSubviews
+                  horizontal
+                  decelerationRate="fast"
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.photosList}
+                  snapToAlignment="start"
+                  snapToInterval={photoSnapInterval}
+                  onMomentumScrollEnd={(event) => {
+                    const nextIndex = Math.round(
+                      event.nativeEvent.contentOffset.x / photoSnapInterval,
+                    );
+                    setActivePhotoIndex(
+                      Math.max(0, Math.min(nextIndex, (incident.photos?.length ?? 1) - 1)),
+                    );
+                  }}
+                />
+              </>
             )}
-          </View>
+          </SectionCard>
 
           <TouchableOpacity
             style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
@@ -479,17 +586,6 @@ const styles = StyleSheet.create({
   container: {
     padding: 20,
     gap: 10,
-  },
-  heroBadge: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  heroBadgeText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 11.5,
-    letterSpacing: 0.3,
   },
   topRow: {
     flexDirection: "row",
@@ -533,27 +629,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: fontFamilies.regular,
   },
-  card: {
-    borderWidth: 1,
-    borderRadius: 18,
-    padding: 14,
-    gap: 8,
-  },
-  cardTitle: {
-    fontFamily: fontFamilies.bold,
-    marginBottom: 2,
-  },
   cardText: {
     fontSize: 13,
     fontFamily: fontFamilies.regular,
   },
+  runtimeGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
   statusButtonsRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
     marginTop: 6,
   },
   statusButton: {
-    flex: 1,
+    minWidth: "47%",
+    flexGrow: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     borderRadius: 14,
     borderWidth: 1,
@@ -582,32 +675,75 @@ const styles = StyleSheet.create({
   },
   photoItem: {
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 8,
+    marginRight: 12,
+  },
+  photoHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  photoIndexPill: {
+    borderWidth: 1,
+    borderRadius: 999,
     paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 3,
+    paddingVertical: 5,
+  },
+  photoIndexText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 11,
   },
   photoTitle: {
     fontFamily: fontFamilies.bold,
-    fontSize: 12,
+    fontSize: 14,
   },
   photoMeta: {
     fontSize: 12,
     fontFamily: fontFamilies.regular,
   },
+  photoMetaCompact: {
+    fontSize: 11.5,
+    fontFamily: fontFamilies.regular,
+  },
   photoPreview: {
-    marginTop: 6,
     width: "100%",
-    height: 160,
-    borderRadius: 8,
+    height: 220,
+    borderRadius: 16,
+  },
+  photoFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  photoStats: {
+    gap: 2,
   },
   openPreviewText: {
-    marginTop: 6,
     fontFamily: fontFamilies.bold,
     fontSize: 12,
   },
   photosList: {
-    gap: 8,
+    paddingRight: 10,
+  },
+  photoCounterBadge: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  photoCounterText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 11.5,
+  },
+  photoRailHint: {
+    fontFamily: fontFamilies.regular,
+    fontSize: 13,
+    lineHeight: 18,
   },
   primaryButton: {
     marginTop: 4,

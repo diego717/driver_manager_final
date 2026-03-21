@@ -270,11 +270,24 @@ export function RootLayoutNav() {
         >
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen
+            name="case/context"
+            options={{ title: "Resolver contexto" }}
+          />
+          <Stack.Screen
+            name="case/manual"
+            options={{ title: "Caso manual" }}
+          />
+          <Stack.Screen
+            name="incident/create"
+            options={{ title: "Nueva incidencia" }}
+          />
+          <Stack.Screen
             name="incident/detail"
             options={{ title: "Detalle incidencia" }}
           />
           <Stack.Screen name="incident/upload" options={{ title: "Subir foto" }} />
           <Stack.Screen name="scan/index" options={{ title: "Escaner" }} />
+          <Stack.Screen name="qr-generator" options={{ title: "Generar QR" }} />
           <Stack.Screen name="incident/photo-viewer" options={{ title: "Foto" }} />
           <Stack.Screen name="drivers" options={{ title: "Drivers R2" }} />
           <Stack.Screen

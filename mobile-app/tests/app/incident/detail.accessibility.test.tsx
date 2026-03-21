@@ -98,6 +98,7 @@ function createReactNativeMock() {
       ReactModule.createElement("TextInput", props, children),
     TouchableOpacity: ({ children, ...props }: any) =>
       ReactModule.createElement("TouchableOpacity", props, children),
+    useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
     View: ({ children, ...props }: any) => ReactModule.createElement("View", props, children),
   };
 }
@@ -162,7 +163,7 @@ describe("IncidentDetailScreen accessibility", () => {
   });
 
   it("exposes loading state for refresh button and interactive labels for actions", async () => {
-    const { render, waitFor } = await import("@testing-library/react-native/pure");
+    const { fireEvent, render, waitFor } = await import("@testing-library/react-native/pure");
     const deferredList = createDeferred({
       success: true,
       installation_id: 7,
@@ -252,6 +253,12 @@ describe("IncidentDetailScreen accessibility", () => {
     const openPhoto = view.getByLabelText("Abrir vista completa de la foto 5");
     expect(openPhoto.props.accessibilityRole).toBe("imagebutton");
     expect(openPhoto).toBeTruthy();
+    fireEvent.press(openPhoto);
+    expect(routerMocks.push).toHaveBeenCalledWith(
+      expect.stringContaining("/incident/photo-viewer?photoId=5"),
+    );
+    expect(routerMocks.push).toHaveBeenCalledWith(expect.stringContaining("initialIndex=0"));
+    expect(routerMocks.push).toHaveBeenCalledWith(expect.stringContaining("photoIds=5"));
 
     const addEvidence = view.getByLabelText("Adjuntar evidencia fotografica");
     expect(addEvidence.props.accessibilityRole).toBe("button");
@@ -297,7 +304,7 @@ describe("IncidentDetailScreen accessibility", () => {
     );
   });
 
-  it("supports partial photo rendering and reveals the rest after scroll", async () => {
+  it("supports horizontal photo rendering and reveals the rest after swipe", async () => {
     const { fireEvent, render, waitFor } = await import("@testing-library/react-native/pure");
     incidentsApiMocks.listIncidentsByInstallation.mockResolvedValueOnce({
       success: true,
@@ -332,19 +339,20 @@ describe("IncidentDetailScreen accessibility", () => {
     });
 
     const photosList = view.getByTestId("incident-photos-list");
-    expect(photosList.props.initialNumToRender).toBe(3);
-    expect(photosList.props.windowSize).toBe(5);
+    expect(photosList.props.initialNumToRender).toBe(2);
+    expect(photosList.props.windowSize).toBe(3);
     expect(photosList.props.removeClippedSubviews).toBe(true);
+    expect(photosList.props.horizontal).toBe(true);
     expect(view.queryByText("#4 - captura-4.jpg")).toBeNull();
 
     fireEvent.scroll(photosList, {
       nativeEvent: {
-        contentOffset: { x: 0, y: 400 },
+        contentOffset: { x: 400, y: 0 },
         layoutMeasurement: { width: 320, height: 400 },
-        contentSize: { width: 320, height: 1200 },
+        contentSize: { width: 1200, height: 320 },
       },
     });
 
-    expect(view.getByText("#4 - captura-4.jpg")).toBeTruthy();
+    expect(view.getByText("captura-4.jpg")).toBeTruthy();
   });
 });

@@ -41,6 +41,22 @@ export interface IncidentPhotoPreviewTarget {
   headers: Record<string, string>;
 }
 
+function resolvePreviewCacheDirectory(): string {
+  if (typeof FileSystem.cacheDirectory === "string" && FileSystem.cacheDirectory.trim()) {
+    return FileSystem.cacheDirectory;
+  }
+  if (typeof FileSystem.documentDirectory === "string" && FileSystem.documentDirectory.trim()) {
+    return FileSystem.documentDirectory;
+  }
+  return "";
+}
+
+function buildPreviewCacheUri(photoId: number): string {
+  const cacheDirectory = resolvePreviewCacheDirectory();
+  if (!cacheDirectory) return "";
+  return `${cacheDirectory.replace(/\/?$/, "/")}incident-photo-${photoId}.img`;
+}
+
 function base64FromArrayBuffer(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   const wordArray = CryptoJS.lib.WordArray.create(bytes as unknown as number[]);
@@ -60,8 +76,27 @@ export async function resolveIncidentPhotoPreviewTarget(
     bodyHash: sha256HexFromString(""),
   });
 
+  const remoteUri = joinUrl(apiBaseUrl, requestAuth.path);
+  const previewCacheUri = buildPreviewCacheUri(photoId);
+
+  if (previewCacheUri && typeof FileSystem.downloadAsync === "function") {
+    try {
+      const downloadResult = await FileSystem.downloadAsync(remoteUri, previewCacheUri, {
+        headers: requestAuth.headers,
+      });
+      if (downloadResult.status >= 200 && downloadResult.status < 300) {
+        return {
+          uri: downloadResult.uri,
+          headers: {},
+        };
+      }
+    } catch {
+      // Fallback to direct remote loading when local cache download is not available.
+    }
+  }
+
   return {
-    uri: joinUrl(apiBaseUrl, requestAuth.path),
+    uri: remoteUri,
     headers: requestAuth.headers,
   };
 }

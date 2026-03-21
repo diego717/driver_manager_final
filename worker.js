@@ -55,6 +55,7 @@ import {
   loadIncidentByIdForTenant,
   loadIncidentForTenant,
   loadIncidentPhotoByIdForTenant,
+  recoverIncidentPhotosFromStorageForTenant,
   loadIncidentTimingFieldsForTenant,
   requireIncidentsBucketOperation,
   resolveIncidentPhotoMetadata,
@@ -114,7 +115,7 @@ const ASSET_MODEL_MAX_LENGTH = 160;
 const ASSET_CLIENT_NAME_MAX_LENGTH = 180;
 const ASSET_NOTES_MAX_LENGTH = 2000;
 const ALLOWED_ASSET_STATUSES = new Set(["active", "inactive", "retired", "maintenance"]);
-const ALLOWED_INCIDENT_STATUSES = new Set(["open", "in_progress", "resolved"]);
+const ALLOWED_INCIDENT_STATUSES = new Set(["open", "in_progress", "paused", "resolved"]);
 const DRIVER_BRAND_MAX_LENGTH = 120;
 const DRIVER_VERSION_MAX_LENGTH = 120;
 const DRIVER_DESCRIPTION_MAX_LENGTH = 500;
@@ -128,7 +129,7 @@ function dashboardAssetSecurityHeaders() {
   return {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
-    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=(self)",
     "X-Content-Type-Options": "nosniff",
     "Content-Security-Policy": [
       "default-src 'self'",
@@ -442,7 +443,7 @@ function normalizeInstallationUpdatePayload(data) {
 
 function normalizeIncidentLifecycleStatus(value) {
   const normalized = normalizeOptionalString(value, "open").toLowerCase();
-  if (normalized === "in_progress" || normalized === "resolved") {
+  if (normalized === "in_progress" || normalized === "paused" || normalized === "resolved") {
     return normalized;
   }
   return "open";
@@ -454,6 +455,9 @@ function deriveInstallationAttentionState(summary) {
 
   const inProgress = normalizeNonNegativeInteger(summary?.incident_in_progress_count, 0);
   if (inProgress > 0) return "in_progress";
+
+  const paused = normalizeNonNegativeInteger(summary?.incident_paused_count, 0);
+  if (paused > 0) return "paused";
 
   const open = normalizeNonNegativeInteger(summary?.incident_open_count, 0);
   if (open > 0) return "open";
@@ -468,6 +472,7 @@ function buildDefaultInstallationOperationalSummary() {
   return {
     incident_open_count: 0,
     incident_in_progress_count: 0,
+    incident_paused_count: 0,
     incident_resolved_count: 0,
     incident_active_count: 0,
     incident_critical_active_count: 0,
@@ -505,6 +510,7 @@ async function loadInstallationOperationalSummaries(env, installationIds, tenant
       const summary = {
         incident_open_count: normalizeNonNegativeInteger(row?.incident_open_count, 0),
         incident_in_progress_count: normalizeNonNegativeInteger(row?.incident_in_progress_count, 0),
+        incident_paused_count: normalizeNonNegativeInteger(row?.incident_paused_count, 0),
         incident_resolved_count: normalizeNonNegativeInteger(row?.incident_resolved_count, 0),
         incident_active_count: normalizeNonNegativeInteger(row?.incident_active_count, 0),
         incident_critical_active_count: normalizeNonNegativeInteger(
@@ -523,9 +529,10 @@ async function loadInstallationOperationalSummaries(env, installationIds, tenant
         installation_id,
         SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'open' THEN 1 ELSE 0 END) AS incident_open_count,
         SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'paused' THEN 1 ELSE 0 END) AS incident_paused_count,
         SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'resolved' THEN 1 ELSE 0 END) AS incident_resolved_count,
-        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') THEN 1 ELSE 0 END) AS incident_active_count,
-        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused') THEN 1 ELSE 0 END) AS incident_active_count,
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count
       FROM incidents
       WHERE tenant_id = ?
         AND installation_id IN (${placeholders})
@@ -549,9 +556,10 @@ async function loadInstallationOperationalSummaries(env, installationIds, tenant
       installation_id,
       SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'open' THEN 1 ELSE 0 END) AS incident_open_count,
       SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
+      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'paused' THEN 1 ELSE 0 END) AS incident_paused_count,
       SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'resolved' THEN 1 ELSE 0 END) AS incident_resolved_count,
-      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') THEN 1 ELSE 0 END) AS incident_active_count,
-      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count
+      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused') THEN 1 ELSE 0 END) AS incident_active_count,
+      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count
     FROM incidents
     WHERE installation_id IN (${placeholders})
     GROUP BY installation_id
@@ -1013,6 +1021,7 @@ async function getIncidentsAfterId(
         reporter_username,
         note,
         time_adjustment_seconds,
+        estimated_duration_seconds,
         severity,
         source,
         created_at,
@@ -1023,7 +1032,10 @@ async function getIncidentsAfterId(
         resolved_by,
         resolution_note,
         checklist_json,
-        evidence_note
+        evidence_note,
+        work_started_at,
+        work_ended_at,
+        actual_duration_seconds
       FROM incidents
       WHERE tenant_id = ?
         AND id > ?
@@ -1044,6 +1056,7 @@ async function getIncidentsAfterId(
         reporter_username,
         note,
         time_adjustment_seconds,
+        estimated_duration_seconds,
         severity,
         source,
         created_at,
@@ -1103,9 +1116,9 @@ async function getSseStatisticsSnapshot(env, tenantId = DEFAULT_REALTIME_TENANT_
     const { results: incidentSummaryRows } = await env.DB.prepare(`
       SELECT
         SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'in_progress' THEN 1 ELSE 0 END) AS incident_in_progress_count,
-        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress')
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused')
           AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count,
-        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress')
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused')
           AND COALESCE(created_at, '') < ? THEN 1 ELSE 0 END) AS incident_outside_sla_count
       FROM incidents
       WHERE tenant_id = ?
@@ -2541,7 +2554,9 @@ function mapIncidentRow(incident, photos = undefined) {
   }
   const actualDurationSeconds =
     Number.isInteger(persistedActualDuration) && persistedActualDuration >= 0
-      ? persistedActualDuration
+      ? normalizedStatus === "in_progress" && Number.isInteger(derivedRuntimeDuration) && derivedRuntimeDuration >= 0
+        ? persistedActualDuration + derivedRuntimeDuration
+        : persistedActualDuration
       : derivedRuntimeDuration;
 
   const mapped = {
@@ -3828,6 +3843,7 @@ async function handleAssetsRoute(
                   i.reporter_username,
                   i.note,
                   i.time_adjustment_seconds,
+                  i.estimated_duration_seconds,
                   i.severity,
                   i.source,
                   i.created_at,
@@ -3839,6 +3855,9 @@ async function handleAssetsRoute(
                   i.resolution_note,
                   i.checklist_json,
                   i.evidence_note,
+                  i.work_started_at,
+                  i.work_ended_at,
+                  i.actual_duration_seconds,
                   inst.client_name AS installation_client_name,
                   inst.driver_brand AS installation_brand,
                   inst.driver_version AS installation_version
@@ -3876,6 +3895,7 @@ async function handleAssetsRoute(
                   i.reporter_username,
                   i.note,
                   i.time_adjustment_seconds,
+                  i.estimated_duration_seconds,
                   i.severity,
                   i.source,
                   i.created_at,
@@ -4692,6 +4712,7 @@ const incidentsRouteHandlers = createIncidentsRouteHandlers({
   buildIncidentR2Key,
   sha256Hex,
   loadIncidentPhotoByIdForTenant,
+  recoverIncidentPhotosFromStorageForTenant,
   sanitizeFileName,
   corsHeaders,
 });

@@ -260,6 +260,16 @@ function runPublicDashboardScripts(dom) {
   });
   apiScript.runInContext(context);
 
+  const jsQrScript = new vm.Script(readPublicTextAsset("jsqr.js"), {
+    filename: "public/jsqr.js",
+  });
+  jsQrScript.runInContext(context);
+
+  const scanScript = new vm.Script(readPublicTextAsset("dashboard-scan.js"), {
+    filename: "public/dashboard-scan.js",
+  });
+  scanScript.runInContext(context);
+
   const modalsScript = new vm.Script(readPublicTextAsset("dashboard-modals.js"), {
     filename: "public/dashboard-modals.js",
   });

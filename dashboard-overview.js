@@ -128,7 +128,7 @@
 
         function normalizeRecordAttentionState(value) {
             const normalized = String(value || '').trim().toLowerCase();
-            if (normalized === 'critical' || normalized === 'in_progress' || normalized === 'open' || normalized === 'resolved') {
+            if (normalized === 'critical' || normalized === 'in_progress' || normalized === 'paused' || normalized === 'open' || normalized === 'resolved') {
                 return normalized;
             }
             return 'clear';
@@ -138,6 +138,7 @@
             const normalized = normalizeRecordAttentionState(value);
             if (normalized === 'critical') return 'Cr\u00edtica';
             if (normalized === 'in_progress') return 'En curso';
+            if (normalized === 'paused') return 'En pausa';
             if (normalized === 'open') return 'Abierta';
             if (normalized === 'resolved') return 'Resuelta';
             return 'Sin incidencias';
@@ -147,6 +148,7 @@
             const normalized = normalizeRecordAttentionState(value);
             if (normalized === 'critical') return 'error';
             if (normalized === 'in_progress') return 'pending';
+            if (normalized === 'paused') return 'pause_circle';
             if (normalized === 'open') return 'report_problem';
             if (normalized === 'resolved') return 'check_circle';
             return 'radio_button_unchecked';

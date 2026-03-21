@@ -1,100 +1,61 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
-import {
-  linkAssetToInstallation,
-  resolveAssetByExternalCode,
-} from "@/src/api/assets";
-import {
-  createIncident,
-  createInstallationRecord,
-  listInstallations,
-} from "@/src/api/incidents";
 import { extractApiError } from "@/src/api/client";
-import { useSharedWebSessionState } from "@/src/session/web-session-store";
-import { getStoredWebAccessUsername } from "@/src/storage/secure";
-import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
+import { listInstallations } from "@/src/api/incidents";
+import { getDashboardStatistics } from "@/src/api/statistics";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
+import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
+import SectionCard from "@/src/components/SectionCard";
+import StatusChip from "@/src/components/StatusChip";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
+import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
-import { type IncidentSeverity, type InstallationRecord } from "@/src/types/api";
-
-const SEVERITY_OPTIONS: Array<{
-  value: IncidentSeverity;
-  label: string;
-  criteria: string;
-}> = [
-  {
-    value: "low",
-    label: "Baja",
-    criteria: "No bloquea operación y hay workaround.",
-  },
-  {
-    value: "medium",
-    label: "Media",
-    criteria: "Afecta operación parcial, requiere atención hoy.",
-  },
-  {
-    value: "high",
-    label: "Alta",
-    criteria: "Bloquea proceso principal o múltiples usuarios.",
-  },
-  {
-    value: "critical",
-    label: "Crítica",
-    criteria: "Caída total, riesgo de datos o cliente detenido.",
-  },
-];
-const MIN_TOUCH_TARGET_SIZE = 44;
+import { type DashboardStatistics, type InstallationRecord } from "@/src/types/api";
+import { deriveRecordIncidentSummary } from "@/src/utils/incidents";
 
 type FeedbackState = {
   tone: InlineFeedbackTone;
   message: string;
 } | null;
 
+const MIN_TOUCH_TARGET_SIZE = 44;
+
 function normalizeRouteParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
   return value ?? "";
 }
 
-function normalizeRecordAttentionState(value: unknown): "clear" | "open" | "in_progress" | "resolved" | "critical" {
-  const normalized = String(value ?? "").trim().toLowerCase();
-  if (
-    normalized === "open" ||
-    normalized === "in_progress" ||
-    normalized === "resolved" ||
-    normalized === "critical"
-  ) {
-    return normalized;
-  }
-  return "clear";
+function buildAttentionRank(record: InstallationRecord): number {
+  const attentionState = String(record.attention_state || "").trim().toLowerCase();
+  if (attentionState === "critical") return 0;
+  if (attentionState === "in_progress") return 1;
+  if (attentionState === "paused") return 2;
+  if (attentionState === "open") return 3;
+  return 4;
 }
 
-function recordAttentionStateLabel(value: unknown): string {
-  const normalized = normalizeRecordAttentionState(value);
-  if (normalized === "critical") return "Crítica";
-  if (normalized === "in_progress") return "En curso";
-  if (normalized === "open") return "Abierta";
-  if (normalized === "resolved") return "Resuelta";
-  return "Sin incidencias";
+function sortRecordsForAction(records: InstallationRecord[]): InstallationRecord[] {
+  return [...records].sort((left, right) => {
+    const attentionDelta = buildAttentionRank(left) - buildAttentionRank(right);
+    if (attentionDelta !== 0) return attentionDelta;
+
+    const leftSummary = deriveRecordIncidentSummary(left);
+    const rightSummary = deriveRecordIncidentSummary(right);
+    if (rightSummary.active !== leftSummary.active) {
+      return rightSummary.active - leftSummary.active;
+    }
+
+    return Number(right.id) - Number(left.id);
+  });
 }
 
-export default function CreateIncidentScreen() {
+export default function TodayScreen() {
   const router = useRouter();
   const queryParams = useLocalSearchParams<{
     installationId?: string | string[];
@@ -102,60 +63,25 @@ export default function CreateIncidentScreen() {
     assetRecordId?: string | string[];
   }>();
   const palette = useAppPalette();
-  const initialInstallationIdFromQr = useMemo(() => {
-    const raw = normalizeRouteParam(queryParams.installationId).trim();
-    const parsed = Number.parseInt(raw, 10);
-    return Number.isInteger(parsed) && parsed > 0 ? String(parsed) : "";
-  }, [queryParams.installationId]);
-  const initialAssetExternalCodeFromQr = useMemo(
-    () => normalizeRouteParam(queryParams.assetExternalCode).trim(),
-    [queryParams.assetExternalCode],
-  );
-  const initialAssetRecordIdFromQr = useMemo(() => {
-    const raw = normalizeRouteParam(queryParams.assetRecordId).trim();
-    const parsed = Number.parseInt(raw, 10);
-    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-  }, [queryParams.assetRecordId]);
-
-  const [installationId, setInstallationId] = useState(initialInstallationIdFromQr || "1");
-  const [assetExternalCode, setAssetExternalCode] = useState(initialAssetExternalCodeFromQr);
-  const [assetRecordId, setAssetRecordId] = useState<number | null>(initialAssetRecordIdFromQr);
-  const [reporterUsername, setReporterUsername] = useState("");
-  const [note, setNote] = useState("");
-  const [timeAdjustment, setTimeAdjustment] = useState("0");
-  const [severity, setSeverity] = useState<IncidentSeverity>("medium");
-  const [manualClientName, setManualClientName] = useState("");
-  const [manualNotes, setManualNotes] = useState("");
-  const [showManualRecordForm, setShowManualRecordForm] = useState(false);
-  const [installations, setInstallations] = useState<InstallationRecord[]>([]);
-  const [loadingInstallations, setLoadingInstallations] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [linkingAssetOnly, setLinkingAssetOnly] = useState(false);
-  const [creatingManualRecord, setCreatingManualRecord] = useState(false);
-  const [feedbackMessage, setFeedbackMessage] = useState<FeedbackState>(null);
-  const [lastCreatedIncidentId, setLastCreatedIncidentId] = useState<number | null>(null);
-  const [lastCreatedInstallationId, setLastCreatedInstallationId] = useState<number | null>(null);
-  const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const visibleInstallations = useMemo(() => installations.slice(0, 30), [installations]);
   const { checkingSession, hasActiveSession } = useSharedWebSessionState();
+  const [installations, setInstallations] = useState<InstallationRecord[]>([]);
+  const [statistics, setStatistics] = useState<DashboardStatistics | null>(null);
+  const [loadingOverview, setLoadingOverview] = useState(false);
+  const [feedbackMessage, setFeedbackMessage] = useState<FeedbackState>(null);
+  const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const resolveFeedbackTone = (title: string): InlineFeedbackTone => {
+  const qrInstallationId = normalizeRouteParam(queryParams.installationId).trim();
+  const qrAssetExternalCode = normalizeRouteParam(queryParams.assetExternalCode).trim();
+  const qrAssetRecordId = normalizeRouteParam(queryParams.assetRecordId).trim();
+
+  const notify = useCallback((title: string, message: string) => {
     const normalized = String(title || "").trim().toLowerCase();
-    if (normalized.includes("error")) return "error";
-    if (normalized.includes("invalido")) return "warning";
-    if (normalized.includes("sesion")) return "warning";
-    if (normalized.includes("creado") || normalized.includes("asociado") || normalized.includes("exito")) {
-      return "success";
-    }
-    return "info";
-  };
-
-  const notify = (title: string, message: string) => {
-    setFeedbackMessage({
-      tone: resolveFeedbackTone(title),
-      message: `${title}: ${message}`,
-    });
-    Alert.alert(title, message);
+    const tone: InlineFeedbackTone = normalized.includes("error")
+      ? "error"
+      : normalized.includes("sesion") || normalized.includes("invalido")
+        ? "warning"
+        : "info";
+    setFeedbackMessage({ tone, message: `${title}: ${message}` });
     if (feedbackTimeoutRef.current) {
       clearTimeout(feedbackTimeoutRef.current);
     }
@@ -163,38 +89,30 @@ export default function CreateIncidentScreen() {
       setFeedbackMessage(null);
       feedbackTimeoutRef.current = null;
     }, 5000);
-  };
+  }, []);
 
-  const loadInstallations = useCallback(async (options?: { forceRefresh?: boolean }) => {
-    if (!hasActiveSession) {
-      return;
-    }
+  const loadOverview = useCallback(async (options?: { forceRefresh?: boolean }) => {
+    if (!hasActiveSession) return;
     try {
-      setLoadingInstallations(true);
-      const records = await listInstallations(options);
+      setLoadingOverview(true);
+      const [stats, records] = await Promise.all([
+        getDashboardStatistics(),
+        listInstallations(options),
+      ]);
+      setStatistics(stats);
       setInstallations(records);
-      setInstallationId((current) => {
-        const currentId = Number.parseInt(current, 10);
-        const exists = records.some((item) => item.id === currentId);
-        if (!exists && records.length > 0) {
-          return String(records[0].id);
-        }
-        return current;
-      });
     } catch (error) {
-      notify("Error", `No se pudo cargar registros: ${extractApiError(error)}`);
+      notify("Error", `No se pudo cargar resumen: ${extractApiError(error)}`);
     } finally {
-      setLoadingInstallations(false);
+      setLoadingOverview(false);
     }
-  }, [hasActiveSession]);
+  }, [hasActiveSession, notify]);
 
   useFocusEffect(
     useCallback(() => {
-      if (!hasActiveSession) {
-        return;
-      }
-      void loadInstallations();
-    }, [hasActiveSession, loadInstallations]),
+      if (!hasActiveSession) return;
+      void loadOverview();
+    }, [hasActiveSession, loadOverview]),
   );
 
   useEffect(() => {
@@ -206,323 +124,52 @@ export default function CreateIncidentScreen() {
   }, []);
 
   useEffect(() => {
-    if (hasActiveSession) return;
-    setInstallations([]);
-    setLastCreatedIncidentId(null);
-    setLastCreatedInstallationId(null);
+    if (!hasActiveSession) {
+      setInstallations([]);
+      setStatistics(null);
+    }
   }, [hasActiveSession]);
 
   useEffect(() => {
-    if (initialInstallationIdFromQr) {
-      setInstallationId(initialInstallationIdFromQr);
-    }
-    if (initialAssetExternalCodeFromQr) {
-      setAssetExternalCode(initialAssetExternalCodeFromQr);
-    }
-    if (initialAssetRecordIdFromQr) {
-      setAssetRecordId(initialAssetRecordIdFromQr);
-    }
-  }, [
-    initialAssetExternalCodeFromQr,
-    initialAssetRecordIdFromQr,
-    initialInstallationIdFromQr,
-  ]);
+    if (!qrInstallationId && !qrAssetExternalCode && !qrAssetRecordId) return;
+    const params = new URLSearchParams();
+    if (qrInstallationId) params.set("installationId", qrInstallationId);
+    if (qrAssetExternalCode) params.set("assetExternalCode", qrAssetExternalCode);
+    if (qrAssetRecordId) params.set("assetRecordId", qrAssetRecordId);
+    const query = params.toString();
+    router.replace(`/case/context${query ? `?${query}` : ""}` as never);
+  }, [qrAssetExternalCode, qrAssetRecordId, qrInstallationId, router]);
 
-  useEffect(() => {
-    let mounted = true;
-    void getStoredWebAccessUsername().then((storedUsername) => {
-      if (!mounted || !storedUsername) return;
-      setReporterUsername((current) => {
-        if (current.trim()) {
-          return current;
-        }
-        return storedUsername;
-      });
-    });
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  const onCreateManualRecord = async () => {
-    if (!hasActiveSession) {
-      notify("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
-      router.push("/modal?focus=login");
-      return;
-    }
-    try {
-      setCreatingManualRecord(true);
-      const response = await createInstallationRecord({
-        client_name: manualClientName.trim() || "Sin cliente",
-        notes: manualNotes.trim(),
-        status: "manual",
-        driver_brand: "N/A",
-        driver_version: "N/A",
-        driver_description: "Registro manual creado desde app móvil",
-        os_info: "mobile",
-        installation_time_seconds: 0,
-      });
-
-      const createdId = response.record?.id;
-      if (createdId) {
-        setInstallationId(String(createdId));
-      }
-      notify(
-        "Registro creado",
-        `ID: ${createdId ?? "N/A"}\nAhora puedes adjuntar incidencia sin registro previo.`,
-      );
-      setManualClientName("");
-      setManualNotes("");
-      setShowManualRecordForm(false);
-      await loadInstallations({ forceRefresh: true });
-    } catch (error) {
-      notify("Error", extractApiError(error));
-    } finally {
-      setCreatingManualRecord(false);
-    }
-  };
-
-  const onSubmit = async () => {
-    if (!hasActiveSession) {
-      notify("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
-      router.push("/modal?focus=login");
-      return;
-    }
-    const parsedInstallationId = Number.parseInt(installationId, 10);
-    const parsedTimeAdjustment = Number.parseInt(timeAdjustment, 10);
-
-    if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) {
-      notify("Dato inválido", "El ID de registro debe ser un número positivo.");
-      return;
-    }
-    if (
-      installations.length > 0 &&
-      !installations.some((item) => item.id === parsedInstallationId)
-    ) {
-      notify(
-        "Registro no encontrado",
-        "Ese ID de registro no existe en la lista cargada. Refresca o crea un registro manual.",
-      );
-      return;
-    }
-    if (!note.trim()) {
-      notify("Dato inválido", "La nota es obligatoria.");
-      return;
-    }
-    if (!Number.isInteger(parsedTimeAdjustment)) {
-      notify("Dato inválido", "time_adjustment_seconds debe ser entero.");
-      return;
-    }
-
-    try {
-      setSubmitting(true);
-      const response = await createIncident(parsedInstallationId, {
-        note: note.trim(),
-        reporter_username: reporterUsername.trim() || "mobile_user",
-        time_adjustment_seconds: parsedTimeAdjustment,
-        severity,
-        source: "mobile",
-        apply_to_installation: false,
-      });
-
-      const normalizedAssetCode = assetExternalCode.trim();
-      let assetLinkWarning = "";
-      if (normalizedAssetCode) {
-        try {
-          let resolvedAssetId = assetRecordId;
-          if (!resolvedAssetId || resolvedAssetId <= 0) {
-            const resolved = await resolveAssetByExternalCode(normalizedAssetCode);
-            const resolvedId = Number(resolved.asset?.id);
-            if (!Number.isInteger(resolvedId) || resolvedId <= 0) {
-              throw new Error("No se obtuvo asset_id valido al resolver el equipo.");
-            }
-            resolvedAssetId = resolvedId;
-            setAssetRecordId(resolvedId);
-          }
-
-          await linkAssetToInstallation(
-            resolvedAssetId,
-            parsedInstallationId,
-            `Asociado desde mobile para incidencia #${response.incident.id}`,
-          );
-        } catch (linkError) {
-          assetLinkWarning = extractApiError(linkError);
-        }
-      }
-
-      if (assetLinkWarning) {
-        notify(
-          "Incidencia creada con advertencia",
-          `ID: ${response.incident.id}\nRegistro: ${response.incident.installation_id}\nNo se pudo asociar equipo QR: ${assetLinkWarning}`,
-        );
-      } else if (normalizedAssetCode) {
-        notify(
-          "Incidencia creada",
-          `ID: ${response.incident.id}\nRegistro: ${response.incident.installation_id}\nEquipo asociado: ${normalizedAssetCode}`,
-        );
-      } else {
-        notify(
-          "Incidencia creada",
-          `ID: ${response.incident.id}\nRegistro: ${response.incident.installation_id}`,
-        );
-      }
-      setLastCreatedIncidentId(response.incident.id);
-      setLastCreatedInstallationId(response.incident.installation_id);
-      setNote("");
-      setTimeAdjustment("0");
-    } catch (error) {
-      const message = extractApiError(error);
-      if (message.toLowerCase().includes("no encontrada")) {
-        await loadInstallations({ forceRefresh: true });
-      }
-      notify("Error", message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const onLinkAssetWithoutIncident = async () => {
-    if (!hasActiveSession) {
-      notify("Sesión requerida", "Inicia sesión web en Configuración y acceso.");
-      router.push("/modal?focus=login");
-      return;
-    }
-
-    const normalizedAssetCode = assetExternalCode.trim();
-    if (!normalizedAssetCode) {
-      notify("Dato inválido", "No hay un equipo QR para asociar.");
-      return;
-    }
-
-    const parsedInstallationId = Number.parseInt(installationId, 10);
-    if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) {
-      notify("Dato inválido", "El ID de registro debe ser un número positivo.");
-      return;
-    }
-
-    if (
-      installations.length > 0 &&
-      !installations.some((item) => item.id === parsedInstallationId)
-    ) {
-      notify(
-        "Registro no encontrado",
-        "Ese ID de registro no existe en la lista cargada. Refresca la lista.",
-      );
-      return;
-    }
-
-    try {
-      setLinkingAssetOnly(true);
-      let resolvedAssetId = assetRecordId;
-      if (!resolvedAssetId || resolvedAssetId <= 0) {
-        const resolved = await resolveAssetByExternalCode(normalizedAssetCode);
-        const resolvedId = Number(resolved.asset?.id);
-        if (!Number.isInteger(resolvedId) || resolvedId <= 0) {
-          throw new Error("No se obtuvo asset_id valido al resolver el equipo.");
-        }
-        resolvedAssetId = resolvedId;
-        setAssetRecordId(resolvedId);
-      }
-
-      await linkAssetToInstallation(
-        resolvedAssetId,
-        parsedInstallationId,
-        "Asociado desde mobile sin crear incidencia",
-      );
-
-      notify(
-        "Equipo asociado",
-        `Equipo ${normalizedAssetCode} asociado a instalación #${parsedInstallationId}.`,
-      );
-    } catch (error) {
-      notify("Error", extractApiError(error));
-    } finally {
-      setLinkingAssetOnly(false);
-    }
-  };
-
-  const renderInstallationChip = useCallback(
-    ({ item }: { item: InstallationRecord }) => {
-      const selected = String(item.id) === installationId;
-      const attentionLabel = recordAttentionStateLabel(item.attention_state);
-      return (
-        <TouchableOpacity
-          style={[
-            styles.chip,
-            { backgroundColor: palette.chipBg, borderColor: palette.chipBorder },
-            selected && {
-              backgroundColor: palette.chipSelectedBg,
-              borderColor: palette.chipSelectedBorder,
-            },
-          ]}
-          onPress={() => setInstallationId(String(item.id))}
-          accessibilityRole="button"
-          accessibilityLabel={`Seleccionar registro ${item.id}${item.client_name ? ` de ${item.client_name}` : ""} con estado ${attentionLabel}`}
-          accessibilityState={{ selected }}
-        >
-          <Text
-            style={[
-              styles.chipText,
-              { color: palette.chipText },
-              selected && { color: palette.chipSelectedText },
-            ]}
-          >
-            #{item.id} [{attentionLabel}] {item.client_name ? `- ${item.client_name}` : ""}
-          </Text>
-        </TouchableOpacity>
-      );
-    },
-    [installationId, palette],
+  const prioritizedInstallations = useMemo(
+    () => sortRecordsForAction(installations),
+    [installations],
+  );
+  const focusRecord = prioritizedInstallations[0] || null;
+  const focusSummary = useMemo(
+    () => deriveRecordIncidentSummary(focusRecord),
+    [focusRecord],
   );
 
-  const renderSeverityOption = useCallback(
-    ({ item }: { item: (typeof SEVERITY_OPTIONS)[number] }) => {
-      const selected = severity === item.value;
-      return (
-        <TouchableOpacity
-          style={[
-            styles.severityChip,
-            { backgroundColor: palette.severityBg, borderColor: palette.severityBorder },
-            selected && {
-              backgroundColor: palette.severitySelectedBg,
-              borderColor: palette.severitySelectedBorder,
-            },
-          ]}
-          onPress={() => setSeverity(item.value)}
-          accessibilityRole="button"
-          accessibilityLabel={`Seleccionar severidad ${item.label}`}
-          accessibilityState={{ selected }}
-        >
-          <Text
-            style={[
-              styles.severityChipLabel,
-              { color: palette.severityLabel },
-              selected && { color: palette.severitySelectedLabel },
-            ]}
-          >
-            {item.label}
-          </Text>
-          <Text
-            style={[
-              styles.severityChipCriteria,
-              { color: palette.severityCriteria },
-              selected && { color: palette.severitySelectedCriteria },
-            ]}
-          >
-            {item.criteria}
-          </Text>
-        </TouchableOpacity>
-      );
-    },
-    [palette, severity],
-  );
+  const openCaseContext = useCallback((record?: InstallationRecord | null) => {
+    const targetId = Number(record?.id);
+    router.push(
+      `${Number.isInteger(targetId) && targetId > 0 ? `/case/context?installationId=${targetId}` : "/case/context"}` as never,
+    );
+  }, [router]);
+
+  const openBacklog = useCallback((record?: InstallationRecord | null) => {
+    const targetId = Number(record?.id);
+    router.push(
+      `${Number.isInteger(targetId) && targetId > 0 ? `/work?installationId=${targetId}` : "/work"}` as never,
+    );
+  }, [router]);
 
   if (checkingSession) {
     return (
       <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
         <ActivityIndicator size="large" color={palette.loadingSpinner} />
         <Text style={[styles.authHintText, { color: palette.textSecondary }]}>
-          Verificando sesión web...
+          Preparando el turno...
         </Text>
       </ScreenScaffold>
     );
@@ -532,9 +179,9 @@ export default function CreateIncidentScreen() {
     return (
       <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
         <WebInlineLoginCard
-          hint="Inicia sesion web para ver registros e incidencias."
+          hint="Inicia sesion web para ver casos, backlog e inventario desde la app."
           onLoginSuccess={async () => {
-            await loadInstallations({ forceRefresh: true });
+            await loadOverview({ forceRefresh: true });
           }}
           onOpenAdvanced={() => router.push("/modal?focus=login")}
         />
@@ -545,406 +192,150 @@ export default function CreateIncidentScreen() {
   return (
     <ScreenScaffold contentContainerStyle={styles.container}>
       <ScreenHero
-        eyebrow="Android Ops"
-        title="Crear incidencia"
-        description="Disenado para captura rapida en terreno: selecciona el registro, marca urgencia y dispara el siguiente paso sin perder contexto."
-        aside={
-          <View
-            style={[
-              styles.heroBadge,
-              {
-                backgroundColor: palette.heroEyebrowBg,
-                borderColor: palette.heroBorder,
-              },
-            ]}
-          >
-            <Text style={[styles.heroBadgeText, { color: palette.heroEyebrowText }]}>
-              {assetExternalCode ? "QR listo" : "Manual"}
-            </Text>
-          </View>
-        }
+        eyebrow="Hoy"
+        title="Que sigue ahora"
+        description="Escanear es la ruta principal. Si no aplica, usa caso manual o inventario."
       >
-        <View style={styles.heroMetaRow}>
-          <View
-            style={[
-              styles.heroMetaChip,
-              {
-                backgroundColor: palette.heroEyebrowBg,
-                borderColor: palette.heroBorder,
-              },
-            ]}
-          >
-            <Text style={[styles.heroMetaText, { color: palette.heroEyebrowText }]}>
-              {installations.length} registros
-            </Text>
-          </View>
-          <View
-            style={[
-              styles.heroMetaChip,
-              {
-                backgroundColor: palette.heroEyebrowBg,
-                borderColor: palette.heroBorder,
-              },
-            ]}
-          >
-            <Text style={[styles.heroMetaText, { color: palette.heroEyebrowText }]}>
-              severidad {severity}
-            </Text>
-          </View>
-        </View>
+        <Text style={[styles.heroMetaText, { color: palette.textSecondary }]}>
+          {statistics?.incident_in_progress_count ?? 0} en curso · {installations.length} casos
+        </Text>
       </ScreenHero>
+
       {feedbackMessage ? (
         <InlineFeedback message={feedbackMessage.message} tone={feedbackMessage.tone} />
       ) : null}
 
-      <View
-        style={[
-          styles.optionalSectionCard,
-          { backgroundColor: palette.optionalCardBg, borderColor: palette.optionalCardBorder },
-        ]}
+      <SectionCard
+        title="Entrada principal"
+        description="Empieza por el QR cuando estas en campo."
       >
-        <Text style={[styles.optionalSectionTitle, { color: palette.optionalCardTitle }]}>
-          No tengo registro previo
-        </Text>
-        <Text style={[styles.optionalSectionDescription, { color: palette.optionalCardBody }]}>
-          Crea primero un registro base solo si no aparece tu registro en la lista.
-        </Text>
         <TouchableOpacity
-          style={[
-            styles.optionalSectionToggle,
-            {
-              backgroundColor: palette.optionalToggleBg,
-              borderColor: palette.optionalToggleBorder,
-            },
-          ]}
-          onPress={() => setShowManualRecordForm((current) => !current)}
-          disabled={creatingManualRecord}
+          style={[styles.scanButton, { backgroundColor: palette.primaryButtonBg }]}
+          onPress={() => router.push("/scan" as never)}
           accessibilityRole="button"
-          accessibilityLabel={
-            showManualRecordForm
-              ? "Ocultar formulario de registro manual"
-              : "Mostrar formulario de registro manual"
-          }
-          accessibilityState={{
-            disabled: creatingManualRecord,
-            busy: creatingManualRecord,
-            expanded: showManualRecordForm,
-          }}
+          accessibilityLabel="Escanear equipo para iniciar trabajo"
         >
-          <Text style={[styles.optionalSectionToggleText, { color: palette.optionalToggleText }]}>
-            {showManualRecordForm ? "Ocultar registro manual" : "Crear registro manual"}
+          <Text style={[styles.scanButtonTitle, { color: palette.primaryButtonText }]}>
+            Escanear equipo
+          </Text>
+          <Text style={[styles.scanButtonBody, { color: palette.primaryButtonText }]}>
+            Apunta, resuelve el contexto y sigue.
           </Text>
         </TouchableOpacity>
 
-        {showManualRecordForm ? (
-          <View style={styles.optionalSectionForm}>
-            <Text style={[styles.label, { color: palette.label }]}>Cliente (opcional)</Text>
-            <TextInput
-              value={manualClientName}
-              onChangeText={setManualClientName}
-              style={[
-                styles.input,
-                {
-                  backgroundColor: palette.inputBg,
-                  borderColor: palette.inputBorder,
-                  color: palette.textPrimary,
-                },
-              ]}
-              placeholder="Cliente ACME"
-              placeholderTextColor={palette.placeholder}
-              accessibilityLabel="Nombre del cliente para registro manual"
-            />
-
-            <Text style={[styles.label, { color: palette.label }]}>Notas del registro base (opcional)</Text>
-            <TextInput
-              value={manualNotes}
-              onChangeText={setManualNotes}
-              style={[
-                styles.input,
-                styles.manualNoteInput,
-                {
-                  backgroundColor: palette.inputBg,
-                  borderColor: palette.inputBorder,
-                  color: palette.textPrimary,
-                },
-              ]}
-              multiline
-              placeholder="Contexto inicial del caso"
-              placeholderTextColor={palette.placeholder}
-              accessibilityLabel="Notas del registro manual"
-            />
-
-            <TouchableOpacity
-              style={[
-                styles.secondaryButton,
-                { backgroundColor: palette.secondaryButtonBg },
-                creatingManualRecord && styles.buttonDisabled,
-              ]}
-              onPress={onCreateManualRecord}
-              disabled={creatingManualRecord}
-              accessibilityRole="button"
-              accessibilityLabel="Crear registro manual"
-              accessibilityState={{
-                disabled: creatingManualRecord,
-                busy: creatingManualRecord,
-              }}
-            >
-              {creatingManualRecord ? (
-                <ActivityIndicator color={palette.secondaryButtonText} />
-              ) : (
-                <Text style={[styles.buttonText, { color: palette.secondaryButtonText }]}>
-                  Crear registro manual
-                </Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        ) : null}
-      </View>
-
-      <View style={[styles.sectionDivider, { borderColor: palette.inputBorder }]} />
-
-      <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>2) Crear incidencia sobre un registro</Text>
-
-      <View style={styles.rowBetween}>
-        <Text style={[styles.label, { color: palette.label }]}>Escaneo QR</Text>
-        <TouchableOpacity
-          style={[
-            styles.refreshButton,
-            { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-          ]}
-          onPress={() => router.push("/scan")}
-          accessibilityRole="button"
-          accessibilityLabel="Abrir escaner QR"
-        >
-          <Text style={[styles.refreshButtonText, { color: palette.refreshText }]}>Escanear QR</Text>
-        </TouchableOpacity>
-      </View>
-
-      {assetExternalCode ? (
-        <View
-          style={[
-            styles.optionalSectionCard,
-            { backgroundColor: palette.optionalCardBg, borderColor: palette.optionalCardBorder },
-          ]}
-        >
-          <Text style={[styles.optionalSectionTitle, { color: palette.optionalCardTitle }]}>
-            Equipo detectado
-          </Text>
-          <Text style={[styles.optionalSectionDescription, { color: palette.optionalCardBody }]}>
-            Codigo: {assetExternalCode}
-          </Text>
-          <Text style={[styles.optionalSectionDescription, { color: palette.optionalCardBody }]}>
-            Asset ID: {assetRecordId ? `#${assetRecordId}` : "pendiente (se resolvera al guardar)"}
-          </Text>
-          <Text style={[styles.hint, { color: palette.textMuted }]}>
-            Puedes asociarlo ahora o dejar que se asocie automáticamente al crear incidencia.
-          </Text>
+        <View style={styles.utilityRow}>
           <TouchableOpacity
             style={[
-              styles.secondaryButton,
-              { backgroundColor: palette.secondaryButtonBg },
-              linkingAssetOnly && styles.buttonDisabled,
+              styles.utilityButton,
+              { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
             ]}
-            onPress={onLinkAssetWithoutIncident}
-            disabled={linkingAssetOnly || submitting}
+            onPress={() => router.push("/case/manual" as never)}
             accessibilityRole="button"
-            accessibilityLabel="Asociar equipo sin crear incidencia"
-            accessibilityState={{
-              disabled: linkingAssetOnly || submitting,
-              busy: linkingAssetOnly,
-            }}
+            accessibilityLabel="Iniciar caso manual"
           >
-            {linkingAssetOnly ? (
-              <ActivityIndicator color={palette.secondaryButtonText} />
+            <Text style={[styles.utilityButtonText, { color: palette.refreshText }]}>
+              Caso manual
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.utilityButton,
+              { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+            ]}
+            onPress={() => router.push("/explore" as never)}
+            accessibilityRole="button"
+            accessibilityLabel="Abrir inventario"
+          >
+            <Text style={[styles.utilityButtonText, { color: palette.refreshText }]}>
+              Inventario
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </SectionCard>
+
+      <SectionCard
+        title="Caso foco"
+        description="Si ya hay trabajo abierto, retomas desde aqui."
+        aside={(
+          <TouchableOpacity
+            style={[
+              styles.refreshButton,
+              { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+            ]}
+            onPress={() => {
+              void loadOverview({ forceRefresh: true });
+            }}
+            disabled={loadingOverview}
+            accessibilityRole="button"
+            accessibilityLabel="Refrescar resumen operativo"
+            accessibilityState={{ disabled: loadingOverview, busy: loadingOverview }}
+          >
+            {loadingOverview ? (
+              <ActivityIndicator size="small" color={palette.refreshText} />
             ) : (
-              <Text style={[styles.buttonText, { color: palette.secondaryButtonText }]}>
-                Asociar ahora
+              <Text style={[styles.refreshButtonText, { color: palette.refreshText }]}>
+                Refrescar
               </Text>
             )}
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.optionalSectionToggle,
-              {
-                backgroundColor: palette.optionalToggleBg,
-                borderColor: palette.optionalToggleBorder,
-              },
-            ]}
-            onPress={() => {
-              setAssetExternalCode("");
-              setAssetRecordId(null);
-            }}
-            accessibilityRole="button"
-            accessibilityLabel="Quitar equipo escaneado"
-          >
-            <Text style={[styles.optionalSectionToggleText, { color: palette.optionalToggleText }]}>
-              Quitar equipo
-            </Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
-
-      <View style={styles.rowBetween}>
-        <Text style={[styles.label, { color: palette.label }]}>Registros disponibles</Text>
-        <TouchableOpacity
-          style={[
-            styles.refreshButton,
-            { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-          ]}
-          onPress={() => {
-            void loadInstallations({ forceRefresh: true });
-          }}
-          disabled={loadingInstallations}
-          accessibilityRole="button"
-          accessibilityLabel="Refrescar lista de registros"
-          accessibilityState={{ disabled: loadingInstallations, busy: loadingInstallations }}
-        >
-          {loadingInstallations ? (
-            <ActivityIndicator size="small" color={palette.refreshText} />
-          ) : (
-            <Text style={[styles.refreshButtonText, { color: palette.refreshText }]}>Refrescar</Text>
-          )}
-        </TouchableOpacity>
-      </View>
-      {installations.length === 0 ? (
-        <EmptyStateCard
-          title="No hay registros para seleccionar."
-          body="Inicia un registro manual o refresca la lista para continuar con la incidencia."
-        />
-      ) : (
-        <>
-          {installations.length > 30 ? (
-            <Text style={[styles.hint, { color: palette.textMuted }]}>
-              Mostrando 30 de {installations.length}. Usa ID de registro para buscar otros.
-            </Text>
-          ) : null}
-          <FlatList
-            testID="installation-options-list"
-            data={visibleInstallations}
-            keyExtractor={(item) => String(item.id)}
-            renderItem={renderInstallationChip}
-            horizontal
-            initialNumToRender={8}
-            windowSize={5}
-            removeClippedSubviews
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipsWrap}
-            scrollEnabled={visibleInstallations.length > 4}
-          />
-        </>
-      )}
-
-      <Text style={[styles.label, { color: palette.label }]}>ID de registro</Text>
-      <TextInput
-        value={installationId}
-        onChangeText={setInstallationId}
-        keyboardType="numeric"
-        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
-        placeholder="1"
-        placeholderTextColor={palette.placeholder}
-        accessibilityLabel="ID de registro para la incidencia"
-      />
-
-      <Text style={[styles.label, { color: palette.label }]}>Usuario</Text>
-      <TextInput
-        value={reporterUsername}
-        onChangeText={setReporterUsername}
-        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
-        placeholder="Usuario web"
-        placeholderTextColor={palette.placeholder}
-        accessibilityLabel="Usuario reportante de la incidencia"
-      />
-
-      <Text style={[styles.label, { color: palette.label }]}>Nota</Text>
-      <TextInput
-        value={note}
-        onChangeText={setNote}
-        style={[
-          styles.input,
-          styles.noteInput,
-          { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary },
-        ]}
-        multiline
-        placeholder="Describe la incidencia"
-        placeholderTextColor={palette.placeholder}
-        accessibilityLabel="Nota de la incidencia"
-      />
-
-      <FlatList
-        testID="severity-options-list"
-        data={SEVERITY_OPTIONS}
-        keyExtractor={(item) => item.value}
-        renderItem={renderSeverityOption}
-        initialNumToRender={4}
-        windowSize={4}
-        removeClippedSubviews
-        scrollEnabled={false}
-        contentContainerStyle={styles.severityWrap}
-        ListHeaderComponent={
-          <Text style={[styles.label, { color: palette.label }]}>Urgencia (severidad)</Text>
-        }
-      />
-
-      <Text style={[styles.label, { color: palette.label }]}>Ajuste de tiempo (segundos)</Text>
-      <TextInput
-        value={timeAdjustment}
-        onChangeText={setTimeAdjustment}
-        keyboardType="numeric"
-        style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary }]}
-        placeholder="0"
-        placeholderTextColor={palette.placeholder}
-        accessibilityLabel="Ajuste de tiempo en segundos"
-      />
-
-      <TouchableOpacity
-        style={[
-          styles.button,
-          { backgroundColor: palette.primaryButtonBg },
-          submitting && styles.buttonDisabled,
-        ]}
-        onPress={onSubmit}
-        disabled={submitting}
-        accessibilityRole="button"
-        accessibilityLabel="Crear incidencia"
-        accessibilityState={{ disabled: submitting, busy: submitting }}
-      >
-        {submitting ? (
-          <ActivityIndicator color={palette.primaryButtonText} />
-        ) : (
-          <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>Crear incidencia</Text>
         )}
-      </TouchableOpacity>
-
-      {lastCreatedIncidentId && lastCreatedInstallationId ? (
-        <View
-          style={[
-            styles.optionalSectionCard,
-            { backgroundColor: palette.optionalCardBg, borderColor: palette.optionalCardBorder },
-          ]}
-        >
-          <Text style={[styles.optionalSectionTitle, { color: palette.optionalCardTitle }]}>
-            Siguiente paso recomendado
-          </Text>
-          <Text style={[styles.optionalSectionDescription, { color: palette.optionalCardBody }]}>
-            Completa la evidencia guiada (checklist, nota, fotos y confirmacion) para la incidencia
-            #{lastCreatedIncidentId}.
-          </Text>
-          <TouchableOpacity
-            style={[styles.button, { backgroundColor: palette.primaryButtonBg }]}
-            onPress={() =>
-              router.push(
-                `/incident/upload?incidentId=${lastCreatedIncidentId}&installationId=${lastCreatedInstallationId}` as never,
-              )
-            }
-            accessibilityRole="button"
-            accessibilityLabel="Abrir asistente de evidencia para la incidencia creada"
+      >
+        {!focusRecord ? (
+          <EmptyStateCard
+            title="Todavia no hay un caso arriba."
+            body="Empieza por escanear un equipo o inicia un caso manual."
+          />
+        ) : (
+          <View
+            style={[
+              styles.focusCard,
+              { backgroundColor: palette.heroBg, borderColor: palette.heroBorder },
+            ]}
           >
-            <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>
-              Abrir asistente de evidencia
+            <View style={styles.focusHeader}>
+              <View style={styles.focusTitleWrap}>
+                <Text style={[styles.focusTitle, { color: palette.textPrimary }]}>
+                  Caso #{focusRecord.id}
+                </Text>
+                <Text style={[styles.focusBody, { color: palette.textSecondary }]}>
+                  {focusRecord.client_name || "Sin cliente"}
+                </Text>
+              </View>
+              <StatusChip kind="attention" value={focusRecord.attention_state} />
+            </View>
+
+            <Text style={[styles.focusMeta, { color: palette.textMuted }]}>
+              {focusSummary.active} activas · {focusSummary.inProgress} en curso · {focusSummary.paused} pausadas
             </Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
+
+            <View style={styles.focusActions}>
+              <TouchableOpacity
+                style={[styles.primaryAction, { backgroundColor: palette.primaryButtonBg }]}
+                onPress={() => openCaseContext(focusRecord)}
+                accessibilityRole="button"
+                accessibilityLabel={`Abrir el caso ${focusRecord.id}`}
+              >
+                <Text style={[styles.primaryActionText, { color: palette.primaryButtonText }]}>
+                  Trabajar este caso
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.secondaryAction,
+                  { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+                ]}
+                onPress={() => openBacklog(focusRecord)}
+                accessibilityRole="button"
+                accessibilityLabel={`Abrir backlog del caso ${focusRecord.id}`}
+              >
+                <Text style={[styles.secondaryActionText, { color: palette.refreshText }]}>
+                  Ver backlog
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+      </SectionCard>
     </ScreenScaffold>
   );
 }
@@ -960,169 +351,34 @@ const styles = StyleSheet.create({
     padding: 22,
     gap: 12,
   },
-  authCard: {
-    width: "100%",
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 16,
-    gap: 10,
-  },
-  authTitle: {
-    fontSize: 21,
-    fontFamily: fontFamilies.bold,
-  },
   authHintText: {
     fontSize: 14,
     lineHeight: 20,
     fontFamily: fontFamilies.regular,
   },
-  rowBetween: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 10,
-  },
-  title: {
-    fontSize: 28,
-    fontFamily: fontFamilies.bold,
-  },
-  heroBadge: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  heroBadgeText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 11.5,
-    letterSpacing: 0.3,
-  },
-  heroMetaRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  heroMetaChip: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
   heroMetaText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 12,
-  },
-  subtitle: {
-    fontSize: 15,
-    lineHeight: 21,
     fontFamily: fontFamilies.regular,
-    marginBottom: 10,
-  },
-  feedbackBox: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginBottom: 4,
-  },
-  feedbackText: {
-    fontSize: 12,
-    fontFamily: fontFamilies.regular,
-  },
-  sectionTitle: {
-    marginTop: 12,
-    fontSize: 16,
-    fontFamily: fontFamilies.bold,
-  },
-  optionalSectionCard: {
-    marginTop: 10,
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 14,
-    gap: 10,
-  },
-  optionalSectionTitle: {
-    fontSize: 15,
-    fontFamily: fontFamilies.bold,
-  },
-  optionalSectionDescription: {
     fontSize: 13,
     lineHeight: 18,
+  },
+  scanButton: {
+    minHeight: 88,
+    borderRadius: 20,
+    alignItems: "flex-start",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    gap: 4,
+  },
+  scanButtonTitle: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 17,
+    lineHeight: 22,
+  },
+  scanButtonBody: {
     fontFamily: fontFamilies.regular,
-  },
-  optionalSectionToggle: {
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    minHeight: MIN_TOUCH_TARGET_SIZE,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  optionalSectionToggleText: {
-    fontSize: 14,
-    fontFamily: fontFamilies.bold,
-  },
-  optionalSectionForm: {
-    gap: 10,
-    marginTop: 2,
-  },
-  sectionDivider: {
-    marginTop: 14,
-    borderBottomWidth: 1,
-  },
-  label: {
-    fontSize: 13.5,
-    fontFamily: fontFamilies.semibold,
-  },
-  input: {
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-  },
-  hint: {
-    fontSize: 12.5,
-    lineHeight: 18,
-  },
-  chipsWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 9,
-    marginBottom: 6,
-  },
-  severityWrap: {
-    gap: 8,
-  },
-  severityChip: {
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 11,
-    paddingVertical: 10,
-    minHeight: MIN_TOUCH_TARGET_SIZE,
-    justifyContent: "center",
-    gap: 3,
-  },
-  severityChipLabel: {
-    fontFamily: fontFamilies.bold,
     fontSize: 13,
-  },
-  severityChipCriteria: {
-    fontSize: 12.5,
-    lineHeight: 17,
-    fontFamily: fontFamilies.regular,
-  },
-  chip: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    minHeight: MIN_TOUCH_TARGET_SIZE,
-    justifyContent: "center",
-  },
-  chipText: {
-    fontSize: 12.5,
-    fontFamily: fontFamilies.semibold,
+    lineHeight: 18,
   },
   refreshButton: {
     borderWidth: 1,
@@ -1136,35 +392,78 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.semibold,
     fontSize: 13,
   },
-  noteInput: {
-    minHeight: 120,
-    textAlignVertical: "top",
+  focusCard: {
+    borderWidth: 1,
+    borderRadius: 20,
+    padding: 16,
+    gap: 12,
   },
-  manualNoteInput: {
-    minHeight: 90,
-    textAlignVertical: "top",
+  focusHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
   },
-  secondaryButton: {
-    marginTop: 8,
-    borderRadius: 12,
-    minHeight: MIN_TOUCH_TARGET_SIZE,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 15,
+  focusTitleWrap: {
+    flex: 1,
+    gap: 4,
   },
-  button: {
-    marginTop: 12,
-    borderRadius: 12,
-    minHeight: MIN_TOUCH_TARGET_SIZE,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 15,
-  },
-  buttonDisabled: {
-    opacity: 0.7,
-  },
-  buttonText: {
+  focusTitle: {
     fontFamily: fontFamilies.bold,
-    fontSize: 16,
+    fontSize: 19,
+    lineHeight: 24,
+  },
+  focusBody: {
+    fontFamily: fontFamilies.regular,
+    fontSize: 13.5,
+    lineHeight: 19,
+  },
+  focusMeta: {
+    fontFamily: fontFamilies.regular,
+    fontSize: 12.5,
+    lineHeight: 18,
+  },
+  focusActions: {
+    gap: 10,
+  },
+  primaryAction: {
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 13,
+  },
+  primaryActionText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 14.5,
+  },
+  secondaryAction: {
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    borderWidth: 1,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+  },
+  secondaryActionText: {
+    fontFamily: fontFamilies.semibold,
+    fontSize: 13.5,
+  },
+  utilityRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  utilityButton: {
+    flex: 1,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    borderWidth: 1,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 10,
+  },
+  utilityButtonText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 13,
   },
 });

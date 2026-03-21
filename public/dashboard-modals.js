@@ -1,10 +1,24 @@
 (function attachDashboardModalsFactory(global) {
     function createDashboardModals(options) {
+        const parsePhotoId = (rawValue) => {
+            if (typeof options.parseStrictInteger === 'function') {
+                return options.parseStrictInteger(rawValue);
+            }
+            const normalized = String(rawValue ?? '').trim();
+            if (!/^\d+$/.test(normalized)) return null;
+            const numericValue = Number.parseInt(normalized, 10);
+            return Number.isInteger(numericValue) ? numericValue : null;
+        };
         const modalLastFocused = new Map();
         let actionModalSubmitHandler = null;
         let actionModalSubmitBusy = false;
         let actionModalEventsBound = false;
         let qrPasswordModalBusy = false;
+        let photoModalState = {
+            photoIds: [],
+            activeIndex: 0,
+            currentObjectUrl: '',
+        };
 
         function isElementFocusable(node) {
             if (!(node instanceof HTMLElement)) return false;
@@ -235,14 +249,78 @@
             actionModalEventsBound = true;
         }
 
-        async function viewPhoto(photoId) {
+        function revokeCurrentPhotoObjectUrl() {
+            if (photoModalState.currentObjectUrl) {
+                URL.revokeObjectURL(photoModalState.currentObjectUrl);
+                photoModalState.currentObjectUrl = '';
+            }
+        }
+
+        function syncPhotoViewerUi() {
+            const prevBtn = document.getElementById('photoPrevBtn');
+            const nextBtn = document.getElementById('photoNextBtn');
+            const counter = document.getElementById('photoViewerCounter');
+            const dots = document.getElementById('photoViewerDots');
+            const total = photoModalState.photoIds.length || 1;
+            const activeIndex = Math.max(0, Math.min(photoModalState.activeIndex, total - 1));
+            photoModalState.activeIndex = activeIndex;
+
+            if (counter) {
+                counter.textContent = `${activeIndex + 1} / ${total}`;
+            }
+            if (prevBtn) prevBtn.disabled = activeIndex <= 0;
+            if (nextBtn) nextBtn.disabled = activeIndex >= total - 1;
+            if (dots) {
+                dots.innerHTML = '';
+                photoModalState.photoIds.forEach((id, index) => {
+                    const dot = document.createElement('button');
+                    dot.type = 'button';
+                    dot.className = 'photo-dot';
+                    dot.setAttribute('role', 'tab');
+                    dot.setAttribute('aria-selected', index === activeIndex ? 'true' : 'false');
+                    dot.setAttribute('aria-label', `Abrir foto ${index + 1}`);
+                    dot.addEventListener('click', () => {
+                        void showPhotoAtIndex(index);
+                    });
+                    dots.appendChild(dot);
+                });
+            }
+        }
+
+        async function showPhotoAtIndex(nextIndex) {
             const img = document.getElementById('photoViewer');
+            const normalizedIndex = Math.max(0, Math.min(Number(nextIndex) || 0, photoModalState.photoIds.length - 1));
+            const photoId = photoModalState.photoIds[normalizedIndex];
+            if (!(img instanceof HTMLImageElement) || !photoId) return;
+            revokeCurrentPhotoObjectUrl();
             const photoUrl = await options.loadPhotoWithAuth(photoId);
             if (photoUrl) {
+                photoModalState.activeIndex = normalizedIndex;
+                photoModalState.currentObjectUrl = photoUrl;
                 img.src = photoUrl;
-                const closeButton = document.querySelector('#photoModal .close');
-                openAccessibleModal('photoModal', { preferredElement: closeButton });
+                syncPhotoViewerUi();
             }
+        }
+
+        async function viewPhoto(photoId, photoIds = []) {
+            const uniquePhotoIds = Array.from(
+                new Set(
+                    (Array.isArray(photoIds) ? photoIds : [photoId])
+                        .map((id) => parsePhotoId(id))
+                        .filter((id) => Number.isInteger(id) && id > 0),
+                ),
+            );
+            const normalizedPhotoId = parsePhotoId(photoId);
+            photoModalState.photoIds = uniquePhotoIds.length
+                ? uniquePhotoIds
+                : Number.isInteger(normalizedPhotoId) && normalizedPhotoId > 0
+                    ? [normalizedPhotoId]
+                    : [];
+            photoModalState.activeIndex = Math.max(0, photoModalState.photoIds.indexOf(normalizedPhotoId));
+            syncPhotoViewerUi();
+            await showPhotoAtIndex(photoModalState.activeIndex);
+            const closeButton = document.querySelector('#photoModal .close');
+            openAccessibleModal('photoModal', { preferredElement: closeButton });
         }
 
         function closePhotoModal() {
@@ -250,6 +328,13 @@
             if (image instanceof HTMLImageElement) {
                 image.removeAttribute('src');
             }
+            revokeCurrentPhotoObjectUrl();
+            photoModalState = {
+                photoIds: [],
+                activeIndex: 0,
+                currentObjectUrl: '',
+            };
+            syncPhotoViewerUi();
             closeAccessibleModal('photoModal');
         }
 
@@ -529,6 +614,16 @@
         function handleModalKeyboardInteraction(event) {
             const topModal = getTopActiveModalElement();
             if (!(topModal instanceof HTMLElement)) return false;
+            if (topModal.id === 'photoModal' && event.key === 'ArrowLeft') {
+                event.preventDefault();
+                void showPhotoAtIndex(photoModalState.activeIndex - 1);
+                return true;
+            }
+            if (topModal.id === 'photoModal' && event.key === 'ArrowRight') {
+                event.preventDefault();
+                void showPhotoAtIndex(photoModalState.activeIndex + 1);
+                return true;
+            }
             if (event.key === 'Escape') {
                 event.preventDefault();
                 return closeTopActiveModal();
@@ -541,6 +636,14 @@
 
             document.querySelector('#photoModal .close')?.addEventListener('click', () => {
                 closePhotoModal();
+            });
+
+            document.getElementById('photoPrevBtn')?.addEventListener('click', () => {
+                void showPhotoAtIndex(photoModalState.activeIndex - 1);
+            });
+
+            document.getElementById('photoNextBtn')?.addEventListener('click', () => {
+                void showPhotoAtIndex(photoModalState.activeIndex + 1);
             });
 
             document.getElementById('photoModal')?.addEventListener('click', (event) => {

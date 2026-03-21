@@ -143,6 +143,10 @@
                                 <span class="material-symbols-outlined icon-inline-sm" aria-hidden="true">warning</span>
                                 <span>Nueva incidencia</span>
                             </button>
+                            <button id="overflowScanQrBtn" class="header-overflow-item" type="button" role="menuitem">
+                                <span class="material-symbols-outlined icon-inline-sm" aria-hidden="true">qr_code_scanner</span>
+                                <span>Escanear QR</span>
+                            </button>
                             <button id="notifBtn" class="header-overflow-item header-overflow-item-with-badge" type="button" role="menuitem" aria-label="Notificaciones">
                                 <span class="material-symbols-outlined icon-inline-sm" aria-hidden="true">notifications</span>
                                 <span>Notificaciones</span>
@@ -242,6 +246,7 @@
                     
                     <!-- Action buttons -->
                     <div class="filter-actions">
+                        <button id="installationsScanQrBtn" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">qr_code_scanner</span> Escanear QR</button>
                         <button id="clearFilters" class="btn-secondary is-hidden"><span class="material-symbols-outlined icon-inline-sm">delete</span> Limpiar Filtros</button>
                         <button id="applyFilters" class="btn-primary"><span class="material-symbols-outlined icon-inline-sm">filter_alt</span> Aplicar</button>
                         <button id="exportBtn" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">download</span> Exportar</button>
@@ -259,6 +264,11 @@
             </div>
             
             <div id="incidentsSection" class="section">
+                <div class="filters incidents-toolbar">
+                    <div class="filter-actions">
+                        <button id="incidentsScanQrBtn" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">qr_code_scanner</span> Escanear QR</button>
+                    </div>
+                </div>
                 <div id="incidentsList" class="incidents-grid">
                     <p class="loading">Cargando incidencias...</p>
                 </div>
@@ -405,7 +415,21 @@
             <button type="button" class="close" aria-label="Cerrar visor de foto">&times;</button>
             <h3 id="photoModalTitle" class="sr-only">Visor de foto</h3>
             <p id="photoModalDescription" class="sr-only">Muestra la evidencia fotográfica ampliada.</p>
-            <img id="photoViewer" src="" alt="Foto de incidencia">
+            <div class="photo-modal-shell">
+                <button type="button" id="photoPrevBtn" class="photo-nav-btn" aria-label="Foto anterior">
+                    <span class="material-symbols-outlined">chevron_left</span>
+                </button>
+                <div class="photo-stage">
+                    <img id="photoViewer" src="" alt="Foto de incidencia">
+                    <div class="photo-stage-meta">
+                        <span id="photoViewerCounter">1 / 1</span>
+                    </div>
+                </div>
+                <button type="button" id="photoNextBtn" class="photo-nav-btn" aria-label="Foto siguiente">
+                    <span class="material-symbols-outlined">chevron_right</span>
+                </button>
+            </div>
+            <div id="photoViewerDots" class="photo-dots" role="tablist" aria-label="Fotos de evidencia"></div>
         </div>
     </div>
 
@@ -518,6 +542,36 @@
         </div>
     </div>
 
+    <div id="scanQrModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="scanQrModalTitle" aria-describedby="scanQrModalDescription">
+        <div class="modal-content scan-modal">
+            <button type="button" class="close" aria-label="Cerrar escaneo QR">&times;</button>
+            <h3 id="scanQrModalTitle">Escanear QR</h3>
+            <p id="scanQrModalDescription" class="qr-modal-subtitle">Usa camara si el navegador soporta escaneo nativo. Si no, ingresa el codigo manualmente.</p>
+            <div class="flow-panel-onboard">
+                <p class="flow-panel-onboard-title">Formatos soportados</p>
+                <p class="flow-panel-onboard-text">dm://installation/{id}, dm://asset/{external_code} o un numero puro para instalacion.</p>
+            </div>
+            <div class="scan-video-shell">
+                <video id="scanQrVideo" playsinline muted></video>
+                <div id="scanQrStatus" class="scan-status" role="status" aria-live="polite">Listo para iniciar camara.</div>
+            </div>
+            <div class="qr-actions">
+                <button type="button" id="scanQrStartBtn" class="btn-primary">Iniciar camara</button>
+                <button type="button" id="scanQrStopBtn" class="btn-secondary">Detener</button>
+            </div>
+            <form id="scanQrManualForm" class="scan-manual-form">
+                <div class="input-group">
+                    <label for="scanQrManualInput">Fallback manual</label>
+                    <input type="text" id="scanQrManualInput" placeholder="dm://installation/12 o dm://asset/EQ-001" autocomplete="off">
+                </div>
+                <p id="scanQrError" class="error"></p>
+                <div class="qr-actions">
+                    <button type="submit" id="scanQrSubmitBtn" class="btn-primary">Resolver codigo</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <div id="actionModal" class="modal flow-panel" role="dialog" aria-modal="false" aria-labelledby="actionModalTitle" aria-describedby="actionModalDescription actionModalSubtitle">
         <div class="modal-content action-modal flow-panel-content">
             <button type="button" class="close" aria-label="Cerrar formulario">&times;</button>
@@ -541,6 +595,8 @@
     
     <script src="/dashboard-qr.js" defer></script>
     <script src="/dashboard-api.js" defer></script>
+    <script src="/jsqr.js" defer></script>
+    <script src="/dashboard-scan.js" defer></script>
     <script src="/dashboard-modals.js" defer></script>
     <script src="/dashboard-incidents.js" defer></script>
     <script src="/dashboard-assets.js" defer></script>

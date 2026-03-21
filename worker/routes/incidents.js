@@ -1,4 +1,4 @@
-import { HttpError } from "../lib/core.js";
+import { HttpError, isIncidentStatusConstraintError } from "../lib/core.js";
 
 export function createIncidentsRouteHandlers({
   jsonResponse,
@@ -37,6 +37,7 @@ export function createIncidentsRouteHandlers({
   buildIncidentR2Key,
   sha256Hex,
   loadIncidentPhotoByIdForTenant,
+  recoverIncidentPhotosFromStorageForTenant,
   sanitizeFileName,
   corsHeaders,
 }) {
@@ -83,9 +84,11 @@ export function createIncidentsRouteHandlers({
           SELECT
             id,
             installation_id,
+            asset_id,
             reporter_username,
             note,
             time_adjustment_seconds,
+            estimated_duration_seconds,
             severity,
             source,
             created_at,
@@ -96,7 +99,10 @@ export function createIncidentsRouteHandlers({
             resolved_by,
             resolution_note,
             checklist_json,
-            evidence_note
+            evidence_note,
+            work_started_at,
+            work_ended_at,
+            actual_duration_seconds
           FROM incidents
           WHERE installation_id = ?
             AND tenant_id = ?
@@ -105,7 +111,7 @@ export function createIncidentsRouteHandlers({
           .bind(installationId, incidentsTenantId)
           .all();
 
-        const { results: photos } = await env.DB.prepare(`
+        let { results: photos } = await env.DB.prepare(`
           SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
           FROM incident_photos p
           INNER JOIN incidents i ON i.id = p.incident_id
@@ -115,6 +121,27 @@ export function createIncidentsRouteHandlers({
         `)
           .bind(installationId, incidentsTenantId)
           .all();
+
+        if ((!photos || photos.length === 0) && incidents.length > 0) {
+          const recoveredCount = await recoverIncidentPhotosFromStorageForTenant?.(
+            env,
+            incidents,
+            incidentsTenantId,
+          );
+          if (Number(recoveredCount) > 0) {
+            const recoveredPhotosResult = await env.DB.prepare(`
+              SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
+              FROM incident_photos p
+              INNER JOIN incidents i ON i.id = p.incident_id
+              WHERE i.installation_id = ?
+                AND i.tenant_id = ?
+              ORDER BY p.created_at ASC, p.id ASC
+            `)
+              .bind(installationId, incidentsTenantId)
+              .all();
+            photos = recoveredPhotosResult?.results || [];
+          }
+        }
 
         const photosByIncident = {};
         for (const photo of photos) {
@@ -565,6 +592,18 @@ export function createIncidentsRouteHandlers({
       );
       const previousStatus = normalizeOptionalString(existingIncident.incident_status, "open")
         .toLowerCase();
+      const parseIsoMillis = (value) => {
+        const parsed = Date.parse(String(value || ""));
+        return Number.isFinite(parsed) ? parsed : null;
+      };
+      const computeElapsedSeconds = (startIso, endIso) => {
+        const startMs = parseIsoMillis(startIso);
+        const endMs = parseIsoMillis(endIso);
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+          return null;
+        }
+        return Math.floor((endMs - startMs) / 1000);
+      };
       let workStartedAt =
         normalizeOptionalString(timingFields.work_started_at, "").trim() || null;
       let workEndedAt =
@@ -576,6 +615,7 @@ export function createIncidentsRouteHandlers({
       if (!Number.isInteger(actualDurationSeconds) || actualDurationSeconds < 0) {
         actualDurationSeconds = null;
       }
+      const accumulatedDurationSeconds = actualDurationSeconds ?? 0;
       if (!workStartedAt && previousStatus === "in_progress") {
         workStartedAt = normalizeOptionalString(existingIncident.status_updated_at, "").trim() || null;
       }
@@ -585,22 +625,50 @@ export function createIncidentsRouteHandlers({
         workEndedAt = null;
         actualDurationSeconds = null;
       } else if (payload.incidentStatus === "in_progress") {
-        if (!workStartedAt || previousStatus !== "in_progress") {
+        if (previousStatus === "paused") {
           workStartedAt = statusUpdatedAt;
-        }
-        workEndedAt = null;
-        actualDurationSeconds = null;
-      } else if (payload.incidentStatus === "resolved") {
-        if (!workStartedAt) {
-          workStartedAt = normalizeOptionalString(existingIncident.created_at, "").trim() || statusUpdatedAt;
-        }
-        workEndedAt = statusUpdatedAt;
-        const startMs = Date.parse(workStartedAt);
-        const endMs = Date.parse(workEndedAt);
-        if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs) {
-          actualDurationSeconds = Math.floor((endMs - startMs) / 1000);
+          workEndedAt = null;
+          actualDurationSeconds = accumulatedDurationSeconds;
         } else {
+          if (!workStartedAt || previousStatus !== "in_progress") {
+            workStartedAt = statusUpdatedAt;
+          }
+          workEndedAt = null;
           actualDurationSeconds = null;
+        }
+      } else if (payload.incidentStatus === "paused") {
+        const segmentStartIso =
+          workStartedAt ||
+          normalizeOptionalString(existingIncident.status_updated_at, "").trim() ||
+          normalizeOptionalString(existingIncident.created_at, "").trim() ||
+          statusUpdatedAt;
+        const segmentElapsedSeconds = previousStatus === "in_progress"
+          ? computeElapsedSeconds(segmentStartIso, statusUpdatedAt)
+          : 0;
+        actualDurationSeconds = Math.max(
+          0,
+          accumulatedDurationSeconds + (Number.isInteger(segmentElapsedSeconds) ? segmentElapsedSeconds : 0),
+        );
+        workStartedAt = null;
+        workEndedAt = statusUpdatedAt;
+      } else if (payload.incidentStatus === "resolved") {
+        if (previousStatus === "paused") {
+          actualDurationSeconds = accumulatedDurationSeconds;
+          workStartedAt = null;
+          workEndedAt = statusUpdatedAt;
+        } else {
+          if (!workStartedAt) {
+            workStartedAt = normalizeOptionalString(existingIncident.created_at, "").trim() || statusUpdatedAt;
+          }
+          workEndedAt = statusUpdatedAt;
+          const segmentElapsedSeconds = computeElapsedSeconds(workStartedAt, workEndedAt);
+          if (Number.isInteger(segmentElapsedSeconds)) {
+            actualDurationSeconds = accumulatedDurationSeconds + segmentElapsedSeconds;
+          } else if (accumulatedDurationSeconds > 0) {
+            actualDurationSeconds = accumulatedDurationSeconds;
+          } else {
+            actualDurationSeconds = null;
+          }
         }
       }
 
@@ -639,6 +707,12 @@ export function createIncidentsRouteHandlers({
           )
           .run();
       } catch (error) {
+        if (isIncidentStatusConstraintError(error)) {
+          throw new HttpError(
+            409,
+            "La base no soporta el estado 'paused' todavia. Aplica las migraciones pendientes y reintenta.",
+          );
+        }
         if (!isMissingIncidentTimingColumnsError(error)) {
           throw error;
         }

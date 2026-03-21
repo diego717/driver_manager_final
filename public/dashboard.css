@@ -1063,6 +1063,7 @@ tr[data-asset-id]:focus-visible {
 .badge.attention-clear { background: rgba(13, 159, 110, 0.1); color: var(--success); }
 .badge.attention-open { background: rgba(217, 119, 6, 0.1); color: var(--warning); }
 .badge.attention-in_progress { background: rgba(29, 78, 216, 0.12); color: #1d4ed8; }
+.badge.attention-paused { background: rgba(71, 85, 105, 0.12); color: #475569; }
 .badge.attention-resolved { background: rgba(13, 159, 110, 0.16); color: var(--success); }
 .badge.attention-critical { background: rgba(220, 38, 38, 0.18); color: var(--error); animation: pulse 2s infinite; }
 .badge.asset-active { background: rgba(13, 159, 110, 0.12); color: var(--success); }
@@ -1120,8 +1121,25 @@ tr[data-asset-id]:focus-visible {
     background: linear-gradient(90deg, color-mix(in oklab, var(--info) 78%, var(--accent-primary) 22%), var(--info));
 }
 
+.incident-card[data-status="paused"]::before {
+    background: linear-gradient(90deg, color-mix(in oklab, var(--text-secondary) 72%, var(--warning) 28%), var(--text-secondary));
+}
+
 .incident-card[data-status="resolved"]::before {
     background: linear-gradient(90deg, color-mix(in oklab, var(--success) 82%, var(--accent-secondary) 18%), var(--success));
+}
+
+.incident-card[data-updating="true"] {
+    opacity: 0.78;
+}
+
+.incident-card[data-updating="true"] .incident-actions::after {
+    content: "Actualizando...";
+    display: inline-flex;
+    align-items: center;
+    margin-left: 10px;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
 }
 
 .incident-card[data-status="resolved"] {
@@ -1247,12 +1265,108 @@ tr[data-asset-id]:focus-visible {
 }
 
 .modal-content.photo-modal {
-    max-width: 90%;
+    max-width: min(92vw, 1080px);
     max-height: 90%;
-    padding: 1rem;
+    padding: 1rem 1rem 0.85rem;
     display: flex;
     flex-direction: column;
     align-items: center;
+    gap: 0.8rem;
+}
+
+.photo-modal-shell {
+    width: 100%;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.photo-stage {
+    position: relative;
+    min-width: 0;
+    width: 100%;
+    min-height: min(70vh, 620px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+        radial-gradient(circle at top, color-mix(in oklab, var(--accent-primary) 12%, transparent), transparent 34%),
+        color-mix(in oklab, var(--bg-card) 92%, black 8%);
+    border: 1px solid color-mix(in oklab, var(--border) 70%, var(--accent-primary) 30%);
+    border-radius: 22px;
+    overflow: hidden;
+}
+
+#photoViewer {
+    max-width: 100%;
+    max-height: min(70vh, 620px);
+    object-fit: contain;
+}
+
+.photo-stage-meta {
+    position: absolute;
+    left: 0.85rem;
+    bottom: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.28rem 0.58rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--bg-secondary) 74%, transparent);
+    border: 1px solid color-mix(in oklab, var(--border) 70%, var(--accent-primary) 30%);
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.photo-nav-btn {
+    width: 48px;
+    height: 48px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--border) 70%, var(--accent-primary) 30%);
+    background: color-mix(in oklab, var(--bg-secondary) 90%, var(--accent-primary) 10%);
+    color: var(--text-primary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.photo-nav-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: var(--accent-primary);
+}
+
+.photo-nav-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.photo-dots {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.45rem;
+    padding-bottom: 0.1rem;
+}
+
+.photo-dot {
+    width: 12px;
+    height: 12px;
+    padding: 0;
+    border: none;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--text-secondary) 36%, transparent);
+    cursor: pointer;
+    transition: transform 0.2s ease, background-color 0.2s ease;
+}
+
+.photo-dot[aria-selected="true"] {
+    background: var(--accent-primary);
+    transform: scale(1.18);
 }
 
 .modal-content.qr-modal {
@@ -1266,6 +1380,11 @@ tr[data-asset-id]:focus-visible {
 }
 
 .modal-content.action-modal {
+    max-width: 560px;
+    width: min(560px, 100%);
+}
+
+.modal-content.scan-modal {
     max-width: 560px;
     width: min(560px, 100%);
 }
@@ -1349,6 +1468,33 @@ tr[data-asset-id]:focus-visible {
     color: var(--text-secondary);
     font-size: 0.8125rem;
     line-height: 1.5;
+}
+
+.scan-video-shell {
+    margin-bottom: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    overflow: hidden;
+    background: color-mix(in oklab, var(--bg-card) 86%, var(--accent-primary) 14%);
+}
+
+.scan-video-shell video {
+    width: 100%;
+    min-height: 260px;
+    display: block;
+    background: color-mix(in oklab, var(--bg-primary) 80%, black 20%);
+}
+
+.scan-status {
+    padding: 0.8rem 1rem;
+    border-top: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+}
+
+.scan-manual-form {
+    display: grid;
+    gap: 0.75rem;
 }
 
 .qr-type-selector {
@@ -1890,6 +2036,11 @@ tr[data-asset-id]:focus-visible {
 .incident-highlight-chip[data-tone="in_progress"] {
     background: color-mix(in oklab, var(--bg-card) 86%, var(--info) 14%);
     border-color: color-mix(in oklab, var(--border) 68%, var(--info) 32%);
+}
+
+.incident-highlight-chip[data-tone="paused"] {
+    background: color-mix(in oklab, var(--bg-card) 84%, var(--text-secondary) 16%);
+    border-color: color-mix(in oklab, var(--border) 62%, var(--text-secondary) 38%);
 }
 
 .incident-highlight-chip[data-tone="resolved"] {
@@ -2463,6 +2614,12 @@ tr[data-asset-id]:focus-visible {
     color: color-mix(in oklab, var(--text-primary) 86%, var(--info) 14%);
 }
 
+.incident-action-btn[data-action="paused"] {
+    background: color-mix(in oklab, var(--bg-card) 78%, var(--text-secondary) 22%);
+    border-color: color-mix(in oklab, var(--border) 56%, var(--text-secondary) 44%);
+    color: color-mix(in oklab, var(--text-primary) 84%, var(--text-secondary) 16%);
+}
+
 .incident-action-btn[data-action="resolved"] {
     background: color-mix(in oklab, var(--bg-card) 72%, var(--success) 28%);
     border-color: color-mix(in oklab, var(--border) 48%, var(--success) 52%);
@@ -2837,6 +2994,20 @@ tr[data-asset-id]:focus-visible {
         padding: 1rem;
         border-radius: 12px;
         max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 1.5rem);
+    }
+
+    .photo-modal-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .photo-stage {
+        min-height: min(56vh, 420px);
+    }
+
+    .photo-nav-btn {
+        width: 100%;
+        height: 42px;
+        border-radius: 14px;
     }
 
     .modal-content.qr-modal {

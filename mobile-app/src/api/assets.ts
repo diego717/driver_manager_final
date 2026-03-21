@@ -41,13 +41,18 @@ export interface ListAssetsResponse {
 export interface AssetIncidentRecord {
   id: number;
   installation_id: number;
+  asset_id?: number | null;
   reporter_username?: string;
   note?: string;
   time_adjustment_seconds?: number;
+  estimated_duration_seconds?: number | null;
+  work_started_at?: string | null;
+  work_ended_at?: string | null;
+  actual_duration_seconds?: number | null;
   severity?: string;
   source?: string;
   created_at?: string;
-  incident_status?: "open" | "in_progress" | "resolved";
+  incident_status?: "open" | "in_progress" | "paused" | "resolved";
   status_updated_at?: string | null;
   status_updated_by?: string | null;
   resolved_at?: string | null;

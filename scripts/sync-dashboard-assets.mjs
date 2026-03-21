@@ -9,8 +9,10 @@ const sources = {
   html: path.join(rootDir, "dashboard.html"),
   css: path.join(rootDir, "dashboard.css"),
   chart: path.join(rootDir, "node_modules", "chart.js", "dist", "chart.umd.js"),
+  jsqr: path.join(rootDir, "node_modules", "jsqr", "dist", "jsQR.js"),
   qr: path.join(rootDir, "dashboard-qr.js"),
   api: path.join(rootDir, "dashboard-api.js"),
+  scan: path.join(rootDir, "dashboard-scan.js"),
   modals: path.join(rootDir, "dashboard-modals.js"),
   incidents: path.join(rootDir, "dashboard-incidents.js"),
   assets: path.join(rootDir, "dashboard-assets.js"),
@@ -44,8 +46,10 @@ function rewriteDashboardHtml(content, versions) {
     .replace(/href="\/dashboard\.css(?:\?v=[^"]+)?"/g, `href="/dashboard.css?v=${versions.css}"`)
     .replace(/href="\/manifest\.json(?:\?v=[^"]+)?"/g, `href="/manifest.json?v=${versions.manifest}"`)
     .replace(/src="\/chart\.umd\.js(?:\?v=[^"]+)?"/g, `src="/chart.umd.js?v=${versions.chart}"`)
+    .replace(/src="\/jsqr\.js(?:\?v=[^"]+)?"/g, `src="/jsqr.js?v=${versions.jsqr}"`)
     .replace(/src="\/dashboard-qr\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-qr.js?v=${versions.qr}"`)
     .replace(/src="\/dashboard-api\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-api.js?v=${versions.api}"`)
+    .replace(/src="\/dashboard-scan\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-scan.js?v=${versions.scan}"`)
     .replace(/src="\/dashboard-modals\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-modals.js?v=${versions.modals}"`)
     .replace(/src="\/dashboard-incidents\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-incidents.js?v=${versions.incidents}"`)
     .replace(/src="\/dashboard-assets\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-assets.js?v=${versions.assets}"`)
@@ -76,8 +80,10 @@ function rewriteServiceWorker(content, versions) {
     "/web/dashboard",
     `/dashboard.css?v=${versions.css}`,
     `/chart.umd.js?v=${versions.chart}`,
+    `/jsqr.js?v=${versions.jsqr}`,
     `/dashboard-qr.js?v=${versions.qr}`,
     `/dashboard-api.js?v=${versions.api}`,
+    `/dashboard-scan.js?v=${versions.scan}`,
     `/dashboard-modals.js?v=${versions.modals}`,
     `/dashboard-incidents.js?v=${versions.incidents}`,
     `/dashboard-assets.js?v=${versions.assets}`,
@@ -127,8 +133,10 @@ function main() {
   const html = readFile(sources.html);
   const css = readFile(sources.css);
   const chart = readFile(sources.chart);
+  const jsqr = readFile(sources.jsqr);
   const qr = readFile(sources.qr);
   const api = readFile(sources.api);
+  const scan = readFile(sources.scan);
   const modals = readFile(sources.modals);
   const incidents = readFile(sources.incidents);
   const assets = readFile(sources.assets);
@@ -148,8 +156,10 @@ function main() {
   const versions = {
     css: hashOf(css),
     chart: hashOf(chart),
+    jsqr: hashOf(jsqr),
     qr: hashOf(qr),
     api: hashOf(api),
+    scan: hashOf(scan),
     modals: hashOf(modals),
     incidents: hashOf(incidents),
     assets: hashOf(assets),
@@ -170,8 +180,10 @@ function main() {
     [
       versions.css,
       versions.chart,
+      versions.jsqr,
       versions.qr,
       versions.api,
+      versions.scan,
       versions.modals,
       versions.incidents,
       versions.assets,
@@ -192,8 +204,10 @@ function main() {
   fs.mkdirSync(publicDir, { recursive: true });
   writeFile("dashboard.css", css);
   writeFile("chart.umd.js", chart);
+  writeFile("jsqr.js", jsqr);
   writeFile("dashboard-qr.js", qr);
   writeFile("dashboard-api.js", api);
+  writeFile("dashboard-scan.js", scan);
   writeFile("dashboard-modals.js", modals);
   writeFile("dashboard-incidents.js", incidents);
   writeFile("dashboard-assets.js", assets);

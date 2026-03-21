@@ -485,9 +485,9 @@ function createMockDB({
           }
 
           if (
-            normalized.startsWith(
-              "SELECT id, installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at, incident_status",
-            )
+            normalized.startsWith("SELECT id, installation_id") &&
+            normalized.includes("FROM incidents") &&
+            normalized.includes("WHERE installation_id = ?")
           ) {
             const installationId = Number(call.bound?.[0]);
             const tenantId = String(call.bound?.[1] ?? "default");
@@ -533,12 +533,15 @@ function createMockDB({
 
               const status = String(incident.incident_status ?? "open").toLowerCase();
               const normalizedStatus =
-                status === "in_progress" || status === "resolved" ? status : "open";
+                status === "in_progress" || status === "paused" || status === "resolved"
+                  ? status
+                  : "open";
               const severity = String(incident.severity ?? "").toLowerCase();
               const current = grouped.get(installationId) || {
                 installation_id: installationId,
                 incident_open_count: 0,
                 incident_in_progress_count: 0,
+                incident_paused_count: 0,
                 incident_resolved_count: 0,
                 incident_active_count: 0,
                 incident_critical_active_count: 0,
@@ -548,6 +551,12 @@ function createMockDB({
                 current.incident_resolved_count += 1;
               } else if (normalizedStatus === "in_progress") {
                 current.incident_in_progress_count += 1;
+                current.incident_active_count += 1;
+                if (severity === "critical") {
+                  current.incident_critical_active_count += 1;
+                }
+              } else if (normalizedStatus === "paused") {
+                current.incident_paused_count += 1;
                 current.incident_active_count += 1;
                 if (severity === "critical") {
                   current.incident_critical_active_count += 1;
@@ -582,7 +591,7 @@ function createMockDB({
             for (const incident of state.incidents) {
               if (String(incident.tenant_id ?? "default") !== tenant) continue;
               const status = String(incident.incident_status ?? "open").toLowerCase();
-              const active = status === "open" || status === "in_progress";
+              const active = status === "open" || status === "in_progress" || status === "paused";
               if (status === "in_progress") {
                 inProgressCount += 1;
               }
@@ -745,6 +754,32 @@ function createMockDB({
             const id = Number(call.bound?.[0]);
             const row = state.incidents.find((item) => Number(item.id) === id);
             return { results: row ? [row] : [] };
+          }
+
+          if (
+            normalized ===
+            "SELECT estimated_duration_seconds, work_started_at, work_ended_at, actual_duration_seconds FROM incidents WHERE id = ? AND tenant_id = ? LIMIT 1"
+          ) {
+            const incidentId = Number(call.bound?.[0]);
+            const tenantId = String(call.bound?.[1] ?? "default");
+            const row = state.incidents.find(
+              (item) =>
+                Number(item.id) === incidentId &&
+                String(item.tenant_id ?? "default") === tenantId,
+            );
+            if (!row) {
+              return { results: [] };
+            }
+            return {
+              results: [
+                {
+                  estimated_duration_seconds: row.estimated_duration_seconds ?? 0,
+                  work_started_at: row.work_started_at ?? null,
+                  work_ended_at: row.work_ended_at ?? null,
+                  actual_duration_seconds: row.actual_duration_seconds ?? null,
+                },
+              ],
+            };
           }
 
           if (
@@ -1140,6 +1175,9 @@ function createMockDB({
               incidentId,
               tenantId,
             ] = call.bound;
+            if (state.failIncidentStatusUpdateWithConstraint && String(incidentStatus) === "paused") {
+              throw new Error("D1_ERROR: CHECK constraint failed: incident_status");
+            }
             const row = state.incidents.find(
               (item) =>
                 String(item.id) === String(incidentId) &&
@@ -1174,6 +1212,9 @@ function createMockDB({
               incidentId,
               tenantId,
             ] = call.bound;
+            if (state.failIncidentStatusUpdateWithConstraint && String(incidentStatus) === "paused") {
+              throw new Error("D1_ERROR: CHECK constraint failed: incident_status");
+            }
             const row = state.incidents.find(
               (item) =>
                 String(item.id) === String(incidentId) &&
@@ -1772,7 +1813,7 @@ test("Dashboard assets include hardened security headers", async () => {
     assert.equal(response.status, 200, `Expected 200 for ${url}`);
     assert.equal(response.headers.get("X-Frame-Options"), "DENY");
     assert.equal(response.headers.get("Referrer-Policy"), "no-referrer");
-    assert.equal(response.headers.get("Permissions-Policy"), "geolocation=(), microphone=(), camera=()");
+    assert.equal(response.headers.get("Permissions-Policy"), "geolocation=(), microphone=(), camera=(self)");
     assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
 
     const csp = response.headers.get("Content-Security-Policy") || "";
@@ -1830,6 +1871,7 @@ test("GET /installations returns DB rows as JSON", async () => {
       tenant_id: "default",
       incident_open_count: 0,
       incident_in_progress_count: 0,
+      incident_paused_count: 0,
       incident_resolved_count: 0,
       incident_active_count: 0,
       incident_critical_active_count: 0,
@@ -2634,6 +2676,97 @@ test("PATCH /incidents/:id/status updates incident status and resolution fields"
   assert.ok(auditEvent);
 });
 
+test("PATCH /incidents/:id/status supports paused and keeps accumulated runtime", async () => {
+  const db = createMockDB({
+    installations: [{ id: 45 }],
+    incidents: [
+      {
+        id: 11,
+        installation_id: 45,
+        reporter_username: "admin",
+        note: "Incidencia A",
+        time_adjustment_seconds: 10,
+        severity: "high",
+        source: "mobile",
+        created_at: "2026-02-15T10:00:00Z",
+        incident_status: "in_progress",
+        status_updated_at: "2026-02-15T10:03:00Z",
+        work_started_at: "2026-02-15T10:03:00Z",
+        actual_duration_seconds: 120,
+      },
+    ],
+  });
+
+  const request = new Request("https://worker.example/incidents/11/status", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      incident_status: "paused",
+      reporter_username: "tech_user",
+    }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.success, true);
+  assert.equal(body.incident.incident_status, "paused");
+  assert.equal(body.incident.status_updated_by, "tech_user");
+  assert.equal(body.incident.resolved_at, null);
+  assert.equal(body.incident.work_started_at, null);
+  assert.equal(typeof body.incident.work_ended_at, "string");
+  const expectedPausedDurationSeconds = 120 + Math.floor(
+    (Date.parse(body.incident.work_ended_at) - Date.parse("2026-02-15T10:03:00Z")) / 1000,
+  );
+  assert.equal(body.incident.actual_duration_seconds, expectedPausedDurationSeconds);
+
+  const updatedIncident = db.state.incidents.find((row) => Number(row.id) === 11);
+  assert.equal(updatedIncident.incident_status, "paused");
+  assert.equal(updatedIncident.status_updated_by, "tech_user");
+  assert.equal(updatedIncident.work_started_at, null);
+  assert.equal(updatedIncident.actual_duration_seconds, expectedPausedDurationSeconds);
+});
+
+test("PATCH /incidents/:id/status returns clear error when DB schema still rejects paused", async () => {
+  const db = createMockDB({
+    installations: [{ id: 45 }],
+    incidents: [
+      {
+        id: 11,
+        installation_id: 45,
+        reporter_username: "admin",
+        note: "Incidencia A",
+        time_adjustment_seconds: 10,
+        severity: "high",
+        source: "mobile",
+        created_at: "2026-02-15T10:00:00Z",
+        incident_status: "in_progress",
+        status_updated_at: "2026-02-15T10:03:00Z",
+        work_started_at: "2026-02-15T10:03:00Z",
+        actual_duration_seconds: 120,
+      },
+    ],
+  });
+  db.state.failIncidentStatusUpdateWithConstraint = true;
+
+  const request = new Request("https://worker.example/incidents/11/status", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      incident_status: "paused",
+      reporter_username: "tech_user",
+    }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(body.success, false);
+  assert.match(body.error.message, /migraciones pendientes|base no soporta/i);
+});
+
 test("PATCH /installations/:id/incidents/:id/status validates installation ownership", async () => {
   const db = createMockDB({
     installations: [{ id: 45 }, { id: 99 }],
@@ -3170,6 +3303,16 @@ test("GET /statistics returns full stats with brand grouping", async () => {
         installation_time_seconds: 180,
       },
     ],
+    incidents: [
+      {
+        id: 10,
+        installation_id: 1,
+        tenant_id: "default",
+        created_at: "2026-02-15T09:00:00.000Z",
+        incident_status: "paused",
+        severity: "critical",
+      },
+    ],
   });
   const request = new Request(
     "https://worker.example/statistics?start_date=2026-07-01T00:00:00.000Z&end_date=2026-08-01T00:00:00.000Z",
@@ -3184,6 +3327,9 @@ test("GET /statistics returns full stats with brand grouping", async () => {
   assert.equal(body.successful_installations, 1);
   assert.equal(body.failed_installations, 1);
   assert.equal(body.unique_clients, 2);
+  assert.equal(body.incident_in_progress_count, 0);
+  assert.equal(body.incident_critical_active_count, 1);
+  assert.equal(body.incident_outside_sla_count, 1);
   assert.deepEqual(body.by_brand, { Zebra: 1, Magicard: 1 });
 });
 
@@ -3734,6 +3880,7 @@ test("POST /web/auth/login creates cookie session for web routes", async () => {
       tenant_id: "default",
       incident_open_count: 0,
       incident_in_progress_count: 0,
+      incident_paused_count: 0,
       incident_resolved_count: 0,
       incident_active_count: 0,
       incident_critical_active_count: 0,
@@ -5427,6 +5574,7 @@ test("accepts signed requests when auth secrets are configured", async () => {
       tenant_id: "default",
       incident_open_count: 0,
       incident_in_progress_count: 0,
+      incident_paused_count: 0,
       incident_resolved_count: 0,
       incident_active_count: 0,
       incident_critical_active_count: 0,

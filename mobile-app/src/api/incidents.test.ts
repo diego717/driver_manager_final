@@ -111,6 +111,47 @@ describe("incidents api", () => {
     expect(records).toEqual([{ id: 10 }]);
   });
 
+  it("normalizes paused counters and incident runtime fields from API", async () => {
+    clientMocks.signedJsonRequest
+      .mockResolvedValueOnce([
+        {
+          id: "10",
+          incident_paused_count: "2",
+        },
+      ])
+      .mockResolvedValueOnce({
+        success: true,
+        installation_id: 10,
+        incidents: [
+          {
+            id: 3,
+            installation_id: 10,
+            reporter_username: "ops",
+            note: "Pausa QA",
+            time_adjustment_seconds: 60,
+            severity: "medium",
+            source: "mobile",
+            created_at: "2026-03-20T10:00:00.000Z",
+            incident_status: "paused",
+            estimated_duration_seconds: "120",
+            actual_duration_seconds: "75",
+          },
+        ],
+      });
+
+    const records = await listInstallations();
+    const incidents = await listIncidentsByInstallation(10);
+
+    expect(records[0].incident_paused_count).toBe(2);
+    expect(incidents.incidents[0]).toEqual(
+      expect.objectContaining({
+        incident_status: "paused",
+        estimated_duration_seconds: 120,
+        actual_duration_seconds: 75,
+      }),
+    );
+  });
+
   it("bypasses cache when forceRefresh is true", async () => {
     clientMocks.signedJsonRequest
       .mockResolvedValueOnce([{ id: 10 }])

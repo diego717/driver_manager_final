@@ -169,36 +169,50 @@
             }
         }
 
-        function handleRealtimeInstallation(installation) {
+        function handleRealtimeInstallation(installation, config = {}) {
             const currentInstallationsData = options.getCurrentInstallationsData();
-            if (Array.isArray(currentInstallationsData) && options.isSectionActive('installations')) {
-                const nextInstallations = [installation, ...currentInstallationsData];
-                options.setCurrentInstallationsData(nextInstallations);
-                options.renderInstallationsTable(nextInstallations.slice(0, 50));
+            const installationId = Number.parseInt(String(installation?.id || ''), 10);
+            const alreadyTracked = Array.isArray(currentInstallationsData)
+                && Number.isInteger(installationId)
+                && installationId > 0
+                && currentInstallationsData.some((item) => Number.parseInt(String(item?.id || ''), 10) === installationId);
 
-                const resultsCount = document.getElementById('resultsCount');
-                if (resultsCount) {
-                    const count = nextInstallations.length;
-                    resultsCount.innerHTML =
-                        `Mostrando <span class="count">${Math.min(count, 50)}</span> ` +
-                        `de <span class="count">${count}</span> resultado${count !== 1 ? 's' : ''}`;
+            if (Array.isArray(currentInstallationsData)) {
+                const nextInstallations = currentInstallationsData.filter(
+                    (item) => Number.parseInt(String(item?.id || ''), 10) !== installationId,
+                );
+                nextInstallations.unshift(installation);
+                options.setCurrentInstallationsData(nextInstallations);
+
+                if (options.isSectionActive('installations')) {
+                    options.renderInstallationsTable(nextInstallations.slice(0, 50));
+
+                    const resultsCount = document.getElementById('resultsCount');
+                    if (resultsCount) {
+                        const count = nextInstallations.length;
+                        resultsCount.innerHTML =
+                            `Mostrando <span class="count">${Math.min(count, 50)}</span> ` +
+                            `de <span class="count">${count}</span> resultado${count !== 1 ? 's' : ''}`;
+                    }
                 }
             }
 
-            const attentionState = options.normalizeRecordAttentionState(installation?.attention_state);
-            const statusIcon = attentionState === 'critical'
-                ? 'CRIT'
-                : attentionState === 'in_progress'
-                    ? 'CURSO'
-                    : attentionState === 'open'
-                        ? 'ABIERTA'
-                        : 'REG';
-            options.showNotification(
-                `${statusIcon} Nuevo registro: ${installation?.client_name || 'Sin cliente'}`,
-                'info',
-            );
+            if (config.notify !== false && !alreadyTracked) {
+                const attentionState = options.normalizeRecordAttentionState(installation?.attention_state);
+                const statusIcon = attentionState === 'critical'
+                    ? 'CRIT'
+                    : attentionState === 'in_progress'
+                        ? 'CURSO'
+                        : attentionState === 'open'
+                            ? 'ABIERTA'
+                            : 'REG';
+                options.showNotification(
+                    `${statusIcon} Nuevo registro: ${installation?.client_name || 'Sin cliente'}`,
+                    'info',
+                );
+            }
 
-            if (options.isSectionActive('dashboard')) {
+            if (!alreadyTracked && options.isSectionActive('dashboard')) {
                 setTimeout(() => {
                     void options.loadDashboard();
                 }, 1000);
