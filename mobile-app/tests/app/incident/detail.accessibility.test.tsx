@@ -98,6 +98,7 @@ function createReactNativeMock() {
       ReactModule.createElement("TextInput", props, children),
     TouchableOpacity: ({ children, ...props }: any) =>
       ReactModule.createElement("TouchableOpacity", props, children),
+    Platform: { OS: "ios", select: (obj: any) => obj.ios ?? obj.default },
     useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
     View: ({ children, ...props }: any) => ReactModule.createElement("View", props, children),
   };
@@ -110,7 +111,6 @@ const originalModuleLoad = (Module as any)._load as (...args: any[]) => unknown;
   }
   return originalModuleLoad.call(this, request, parent, isMain);
 };
-
 afterAll(() => {
   (Module as any)._load = originalModuleLoad;
 });
@@ -139,6 +139,17 @@ vi.mock("@/src/api/client", () => ({
   extractApiError: (error: unknown) =>
     error instanceof Error ? error.message : String(error),
 }));
+
+vi.mock("expo-modules-core", () => ({
+  EventEmitter: class EventEmitter {
+    addListener() { return { remove: () => {} }; }
+    removeAllListeners() {}
+    emit() {}
+  },
+  Platform: { OS: "ios", select: (obj: any) => obj.ios ?? obj.default },
+  requireNativeModule: () => ({}),
+}));
+
 vi.mock("@/src/theme/theme-preference", () => ({
   useThemePreference: () => ({
     mode: "light",
