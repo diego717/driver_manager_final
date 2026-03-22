@@ -4,23 +4,23 @@
     "chart": "74401d738d",
     "jsqr": "bc40c8a151",
     "qr": "961179b0a2",
-    "api": "fca7e69a5d",
+    "api": "9903e73635",
     "scan": "69c1c05efd",
     "modals": "d032aa0069",
-    "incidents": "96ae2497ef",
+    "incidents": "13086aaf71",
     "assets": "96d251b869",
     "drivers": "d4b073868d",
     "audit": "f6a8c58478",
     "overview": "20378fba17",
-    "realtime": "666a62e898",
+    "realtime": "ff5df790ec",
     "auth": "3e1ec8b9ae",
     "navigation": "13eac20df6",
     "bootstrap": "d41f5f1a45",
-    "js": "1d96c6a06c",
+    "js": "dca1ed5a95",
     "pwa": "55b84aa40e",
     "manifest": "9130a5f920",
     "sw": "4c87568cf6",
     "materialSymbolsFont": "ee7248184b",
-    "build": "5e15c60aa9"
+    "build": "d86af7c632"
   }
 }

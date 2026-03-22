@@ -196,8 +196,11 @@ export async function getResolvedApiBaseUrl(): Promise<string> {
 export function extractApiError(error: unknown): string {
   if (!error) return "Unknown error";
   if ((error as AxiosError).isAxiosError) {
-    const axiosErr = error as AxiosError<{ error?: { message?: string } }>;
-    const apiMsg = axiosErr.response?.data?.error?.message;
+    const axiosErr = error as AxiosError<{ error?: { message?: string } } | string>;
+    const responseData = axiosErr.response?.data;
+    const apiMsg =
+      (typeof responseData === "object" && responseData?.error?.message) ||
+      (typeof responseData === "string" ? responseData.trim() : "");
     const status = axiosErr.response?.status;
     if (apiMsg && status) return `${apiMsg} (HTTP ${status})`;
     if (apiMsg) return apiMsg;

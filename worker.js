@@ -535,6 +535,7 @@ async function loadInstallationOperationalSummaries(env, installationIds, tenant
         SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count
       FROM incidents
       WHERE tenant_id = ?
+        AND deleted_at IS NULL
         AND installation_id IN (${placeholders})
       GROUP BY installation_id
     `)
@@ -561,7 +562,8 @@ async function loadInstallationOperationalSummaries(env, installationIds, tenant
       SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused') THEN 1 ELSE 0 END) AS incident_active_count,
       SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count
     FROM incidents
-    WHERE installation_id IN (${placeholders})
+    WHERE deleted_at IS NULL
+      AND installation_id IN (${placeholders})
     GROUP BY installation_id
   `)
     .bind(...ids)
@@ -964,6 +966,7 @@ async function getSseLatestState(env, tenantId = DEFAULT_REALTIME_TENANT_ID) {
     SELECT COALESCE(MAX(id), 0) AS max_id
     FROM incidents
     WHERE tenant_id = ?
+      AND deleted_at IS NULL
   `)
     .bind(normalizedTenantId)
     .all();
@@ -1038,6 +1041,7 @@ async function getIncidentsAfterId(
         actual_duration_seconds
       FROM incidents
       WHERE tenant_id = ?
+        AND deleted_at IS NULL
         AND id > ?
       ORDER BY id ASC
       LIMIT ?
@@ -1070,6 +1074,7 @@ async function getIncidentsAfterId(
         evidence_note
       FROM incidents
       WHERE tenant_id = ?
+        AND deleted_at IS NULL
         AND id > ?
       ORDER BY id ASC
       LIMIT ?
@@ -1122,6 +1127,7 @@ async function getSseStatisticsSnapshot(env, tenantId = DEFAULT_REALTIME_TENANT_
           AND COALESCE(created_at, '') < ? THEN 1 ELSE 0 END) AS incident_outside_sla_count
       FROM incidents
       WHERE tenant_id = ?
+        AND deleted_at IS NULL
     `)
       .bind(outsideSlaCutoffIso, normalizedTenantId)
       .all();
@@ -2188,6 +2194,12 @@ function parseBooleanOrNull(value) {
 function requireAdminRole(role) {
   if (!["admin", "super_admin"].includes(normalizeOptionalString(role, "").toLowerCase())) {
     throw new HttpError(403, "No tienes permisos para administrar usuarios web.");
+  }
+}
+
+function requireSuperAdminRole(role) {
+  if (normalizeOptionalString(role, "").toLowerCase() !== "super_admin") {
+    throw new HttpError(403, "Solo super_admin puede eliminar incidencias.");
   }
 }
 
@@ -3866,6 +3878,7 @@ async function handleAssetsRoute(
                   ON inst.id = i.installation_id
                  AND inst.tenant_id = i.tenant_id
                 WHERE i.tenant_id = ?
+                  AND i.deleted_at IS NULL
                   AND (
                     i.asset_id = ?
                     OR EXISTS (
@@ -3915,6 +3928,7 @@ async function handleAssetsRoute(
                   ON inst.id = i.installation_id
                  AND inst.tenant_id = i.tenant_id
                 WHERE i.tenant_id = ?
+                  AND i.deleted_at IS NULL
                   AND EXISTS (
                     SELECT 1
                     FROM asset_installation_links l
@@ -4573,6 +4587,7 @@ const webAuthRouteHandlers = createWebAuthRouteHandlers({
   canManageAllTenants,
   listWebUsers,
   requireAdminRole,
+  requireSuperAdminRole,
   assertSameTenantOrSuperAdmin,
   getWebUserById,
   parsePositiveInt,
@@ -4680,6 +4695,7 @@ const incidentsRouteHandlers = createIncidentsRouteHandlers({
   parsePositiveInt,
   requireWebWriteRole,
   requireAdminRole,
+  requireSuperAdminRole,
   readJsonOrThrowBadRequest,
   validateIncidentPayload,
   parseOptionalPositiveInt,
@@ -4928,6 +4944,19 @@ export default {
       );
       if (incidentEvidenceResponse) {
         return incidentEvidenceResponse;
+      }
+      const incidentDeleteResponse = await incidentsRouteHandlers.handleIncidentDeleteRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        incidentsTenantId,
+        realtimeTenantId,
+      );
+      if (incidentDeleteResponse) {
+        return incidentDeleteResponse;
       }
       const incidentStatusResponse = await incidentsRouteHandlers.handleIncidentStatusRoute(
         request,

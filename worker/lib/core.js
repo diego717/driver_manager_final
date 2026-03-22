@@ -98,3 +98,15 @@ export function isIncidentStatusConstraintError(error) {
   const message = normalizeOptionalString(error?.message, "").toLowerCase();
   return message.includes("check constraint failed") && message.includes("incident_status");
 }
+
+export function isMissingIncidentSoftDeleteColumnsError(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  if (!(message.includes("no such column") || message.includes("has no column named"))) {
+    return false;
+  }
+  return (
+    message.includes("deleted_at") ||
+    message.includes("deleted_by") ||
+    message.includes("deletion_reason")
+  );
+}

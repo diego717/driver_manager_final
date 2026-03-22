@@ -151,6 +151,21 @@
                 case 'incident_status_updated':
                     options.handleRealtimeIncidentStatusUpdate(data.incident);
                     break;
+                case 'incident_deleted':
+                    options.handleRealtimeIncidentStatusUpdate({
+                        ...(data?.incident || {}),
+                        incident_status: 'resolved',
+                    });
+                    if (options.isSectionActive('incidents')) {
+                        const installationId = Number(data?.incident?.installation_id);
+                        if (Number.isInteger(installationId) && installationId > 0) {
+                            options.showIncidentsForInstallation(installationId);
+                        }
+                    }
+                    if (options.isSectionActive('dashboard')) {
+                        void options.loadDashboard();
+                    }
+                    break;
                 case 'stats_update':
                     handleRealtimeStatsUpdate(data.statistics);
                     break;

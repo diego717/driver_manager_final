@@ -178,6 +178,9 @@ function createMockDB({
     byBrand: byBrand.map((row) => ({ ...row })),
     incidents: incidents.map((row) => ({
       tenant_id: "default",
+      deleted_at: null,
+      deleted_by: null,
+      deletion_reason: null,
       ...row,
     })),
     incidentPhotos: incidentPhotos.map((row) => ({
@@ -225,6 +228,7 @@ function createMockDB({
     });
   };
   const round2 = (value) => Math.round(value * 100) / 100;
+  const isIncidentVisible = (incident) => !incident?.deleted_at;
 
   return {
     calls,
@@ -498,6 +502,7 @@ function createMockDB({
                   !normalized.includes("AND tenant_id = ?") ||
                   String(item.tenant_id ?? "default") === tenantId,
               )
+              .filter((item) => !normalized.includes("deleted_at IS NULL") || isIncidentVisible(item))
               .sort((a, b) => {
                 const byCreated = String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""));
                 if (byCreated !== 0) return byCreated;
@@ -527,6 +532,7 @@ function createMockDB({
 
             const grouped = new Map();
             for (const incident of state.incidents) {
+              if (normalized.includes("deleted_at IS NULL") && !isIncidentVisible(incident)) continue;
               const installationId = Number(incident.installation_id);
               if (!installationIdSet.has(installationId)) continue;
               if (tenantId && String(incident.tenant_id ?? "default") !== tenantId) continue;
@@ -590,6 +596,7 @@ function createMockDB({
 
             for (const incident of state.incidents) {
               if (String(incident.tenant_id ?? "default") !== tenant) continue;
+              if (normalized.includes("deleted_at IS NULL") && !isIncidentVisible(incident)) continue;
               const status = String(incident.incident_status ?? "open").toLowerCase();
               const active = status === "open" || status === "in_progress" || status === "paused";
               if (status === "in_progress") {
@@ -623,6 +630,7 @@ function createMockDB({
             const incidentIds = new Set(
               state.incidents
                 .filter((item) => Number(item.installation_id) === installationId)
+                .filter((item) => !normalized.includes("i.deleted_at IS NULL") || isIncidentVisible(item))
                 .map((item) => Number(item.id)),
             );
             const rows = state.incidentPhotos.filter((item) => incidentIds.has(Number(item.incident_id)));
@@ -643,6 +651,7 @@ function createMockDB({
                     Number(item.installation_id) === installationId &&
                     String(item.tenant_id ?? "default") === tenantId,
                 )
+                .filter((item) => !normalized.includes("i.deleted_at IS NULL") || isIncidentVisible(item))
                 .map((item) => Number(item.id)),
             );
             const rows = state.incidentPhotos
@@ -753,12 +762,16 @@ function createMockDB({
           if (normalized.startsWith("SELECT id, installation_id FROM incidents WHERE id = ?")) {
             const id = Number(call.bound?.[0]);
             const row = state.incidents.find((item) => Number(item.id) === id);
+            if (normalized.includes("deleted_at IS NULL") && !isIncidentVisible(row)) {
+              return { results: [] };
+            }
             return { results: row ? [row] : [] };
           }
 
           if (
-            normalized ===
-            "SELECT estimated_duration_seconds, work_started_at, work_ended_at, actual_duration_seconds FROM incidents WHERE id = ? AND tenant_id = ? LIMIT 1"
+            normalized.startsWith(
+              "SELECT estimated_duration_seconds, work_started_at, work_ended_at, actual_duration_seconds FROM incidents WHERE id = ? AND tenant_id = ?",
+            )
           ) {
             const incidentId = Number(call.bound?.[0]);
             const tenantId = String(call.bound?.[1] ?? "default");
@@ -767,6 +780,9 @@ function createMockDB({
                 Number(item.id) === incidentId &&
                 String(item.tenant_id ?? "default") === tenantId,
             );
+            if (normalized.includes("deleted_at IS NULL") && !isIncidentVisible(row)) {
+              return { results: [] };
+            }
             if (!row) {
               return { results: [] };
             }
@@ -798,6 +814,9 @@ function createMockDB({
                 Number(item.id) === incidentId &&
                 String(item.tenant_id ?? "default") === incidentTenantId,
             );
+            if (normalized.includes("i.deleted_at IS NULL") && !isIncidentVisible(incident)) {
+              return { results: [] };
+            }
             if (!incident) return { results: [] };
 
             const installation = state.installations.find(
@@ -867,6 +886,9 @@ function createMockDB({
                 Number(item.id) === Number(photo.incident_id) &&
                 String(item.tenant_id ?? incidentTenantId) === incidentTenantId,
             );
+            if (normalized.includes("i.deleted_at IS NULL") && !isIncidentVisible(incident)) {
+              return { results: [] };
+            }
             if (!incident) return { results: [] };
             return {
               results: [
@@ -1153,6 +1175,29 @@ function createMockDB({
             if (row) {
               row.checklist_json = checklistJson;
               row.evidence_note = evidenceNote;
+            }
+            return { success: true, meta: { changes: row ? 1 : 0 } };
+          }
+
+          if (
+            normalized.startsWith(
+              "UPDATE incidents SET deleted_at = ?, deleted_by = ?, deletion_reason = ?, status_updated_at = ?, status_updated_by = ? WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL",
+            )
+          ) {
+            const [deletedAt, deletedBy, deletionReason, statusUpdatedAt, statusUpdatedBy, incidentId, tenantId] =
+              call.bound;
+            const row = state.incidents.find(
+              (item) =>
+                String(item.id) === String(incidentId) &&
+                String(item.tenant_id ?? "default") === String(tenantId ?? "default") &&
+                !item.deleted_at,
+            );
+            if (row) {
+              row.deleted_at = deletedAt;
+              row.deleted_by = deletedBy;
+              row.deletion_reason = deletionReason;
+              row.status_updated_at = statusUpdatedAt;
+              row.status_updated_by = statusUpdatedBy;
             }
             return { success: true, meta: { changes: row ? 1 : 0 } };
           }
@@ -2726,6 +2771,130 @@ test("PATCH /incidents/:id/status supports paused and keeps accumulated runtime"
   assert.equal(updatedIncident.status_updated_by, "tech_user");
   assert.equal(updatedIncident.work_started_at, null);
   assert.equal(updatedIncident.actual_duration_seconds, expectedPausedDurationSeconds);
+});
+
+test("DELETE /web/incidents/:id soft deletes incident for super_admin and hides it from lists", async () => {
+  const db = createMockDB({
+    installations: [{ id: 45 }],
+    incidents: [
+      {
+        id: 11,
+        installation_id: 45,
+        reporter_username: "admin_root",
+        note: "Incidencia A",
+        time_adjustment_seconds: 10,
+        severity: "high",
+        source: "web",
+        created_at: "2026-02-15T10:00:00Z",
+        incident_status: "open",
+      },
+    ],
+  });
+  const env = {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_root",
+        password: "StrongPass#2026",
+        role: "super_admin",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const deleteResponse = await workerFetch(
+    new Request("https://worker.example/web/incidents/11", {
+      method: "DELETE",
+      headers: webSessionHeadersFromResponse(bootstrapResponse),
+    }),
+    env,
+  );
+  const deleteBody = await deleteResponse.json();
+
+  assert.equal(deleteResponse.status, 200);
+  assert.equal(deleteBody.success, true);
+  assert.equal(deleteBody.incident_id, 11);
+  assert.equal(typeof deleteBody.deleted_at, "string");
+
+  const softDeletedIncident = db.state.incidents.find((row) => Number(row.id) === 11);
+  assert.equal(typeof softDeletedIncident?.deleted_at, "string");
+  assert.equal(softDeletedIncident?.deleted_by, "admin_root");
+  assert.equal(softDeletedIncident?.deletion_reason, "soft_delete_super_admin");
+
+  const listResponse = await workerFetch(
+    new Request("https://worker.example/web/installations/45/incidents", {
+      method: "GET",
+      headers: webSessionHeadersFromResponse(bootstrapResponse),
+    }),
+    env,
+  );
+  const listBody = await listResponse.json();
+  assert.equal(listResponse.status, 200);
+  assert.equal(listBody.incidents.length, 0);
+
+  const auditEvent = db.state.auditLogs.find((row) => row.action === "soft_delete_incident");
+  assert.ok(auditEvent);
+});
+
+test("DELETE /web/incidents/:id rejects admin role", async () => {
+  const db = createMockDB({
+    installations: [{ id: 45 }],
+    incidents: [
+      {
+        id: 11,
+        installation_id: 45,
+        reporter_username: "admin_user",
+        note: "Incidencia A",
+        time_adjustment_seconds: 10,
+        severity: "high",
+        source: "web",
+        created_at: "2026-02-15T10:00:00Z",
+        incident_status: "open",
+      },
+    ],
+  });
+  const env = {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_user",
+        password: "StrongPass#2026",
+        role: "admin",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const deleteResponse = await workerFetch(
+    new Request("https://worker.example/web/incidents/11", {
+      method: "DELETE",
+      headers: webSessionHeadersFromResponse(bootstrapResponse),
+    }),
+    env,
+  );
+  const deleteBody = await deleteResponse.json();
+
+  assert.equal(deleteResponse.status, 403);
+  assert.match(deleteBody.error.message, /super_admin/i);
+  assert.equal(db.state.incidents.find((row) => Number(row.id) === 11)?.deleted_at, null);
 });
 
 test("PATCH /incidents/:id/status returns clear error when DB schema still rejects paused", async () => {

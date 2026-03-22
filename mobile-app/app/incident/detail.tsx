@@ -15,11 +15,12 @@ import {
 } from "react-native";
 
 import { extractApiError } from "@/src/api/client";
-import { listIncidentsByInstallation, updateIncidentStatus } from "@/src/api/incidents";
+import { deleteIncident, listIncidentsByInstallation, updateIncidentStatus } from "@/src/api/incidents";
 import {
   type IncidentPhotoPreviewTarget,
   resolveIncidentPhotoPreviewTarget,
 } from "@/src/api/photos";
+import { readStoredWebSession } from "@/src/api/webAuth";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import RuntimeChip from "@/src/components/RuntimeChip";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -91,7 +92,9 @@ export default function IncidentDetailScreen() {
   const [failedPhotoIds, setFailedPhotoIds] = useState<Record<number, boolean>>({});
   const [loadingPhotoPreviews, setLoadingPhotoPreviews] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [deletingIncident, setDeletingIncident] = useState(false);
   const [resolutionNote, setResolutionNote] = useState("");
+  const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [activePhotoIndex, setActivePhotoIndex] = useState(0);
   const { width: windowWidth } = useWindowDimensions();
@@ -133,6 +136,9 @@ export default function IncidentDetailScreen() {
   useFocusEffect(
     useCallback(() => {
       void loadIncident();
+      void readStoredWebSession()
+        .then((session) => setWebSessionRole(session.role))
+        .catch(() => setWebSessionRole(null));
     }, [loadIncident]),
   );
 
@@ -227,6 +233,36 @@ export default function IncidentDetailScreen() {
       `/incident/upload?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
     );
   }, [incident, router]);
+
+  const onDeleteIncident = useCallback(() => {
+    if (!incident || deletingIncident) return;
+
+    Alert.alert(
+      "Eliminar incidencia",
+      `La incidencia #${incident.id} dejara de verse en la app y en web. Esta accion solo la puede hacer super_admin.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Eliminar",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              try {
+                setDeletingIncident(true);
+                await deleteIncident(incident.id);
+                Alert.alert("Incidencia eliminada", `La incidencia #${incident.id} fue ocultada.`);
+                router.back();
+              } catch (error) {
+                Alert.alert("Error", extractApiError(error));
+              } finally {
+                setDeletingIncident(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [deletingIncident, incident, router]);
 
   const onOpenPhoto = useCallback(
     (photoId: number, fileName: string, initialIndex: number) => {
@@ -328,6 +364,7 @@ export default function IncidentDetailScreen() {
   const status = normalizeIncidentStatus(incident?.incident_status);
   const runtime = resolveIncidentRealDurationSeconds(incident, nowMs);
   const estimated = resolveIncidentEstimatedDurationSeconds(incident);
+  const canDeleteIncident = webSessionRole === "super_admin";
 
   return (
     <ScreenScaffold contentContainerStyle={styles.container}>
@@ -576,6 +613,26 @@ export default function IncidentDetailScreen() {
               Adjuntar evidencia
             </Text>
           </TouchableOpacity>
+          {canDeleteIncident ? (
+            <TouchableOpacity
+              style={[
+                styles.secondaryDangerButton,
+                {
+                  backgroundColor: palette.errorBg,
+                  borderColor: palette.errorBorder,
+                },
+              ]}
+              onPress={onDeleteIncident}
+              disabled={deletingIncident}
+              accessibilityRole="button"
+              accessibilityLabel="Eliminar incidencia"
+              accessibilityState={{ disabled: deletingIncident, busy: deletingIncident }}
+            >
+              <Text style={[styles.secondaryDangerButtonText, { color: palette.errorText }]}>
+                {deletingIncident ? "Eliminando..." : "Eliminar incidencia"}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </>
       ) : null}
     </ScreenScaffold>
@@ -754,6 +811,19 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   primaryButtonText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 15,
+  },
+  secondaryDangerButton: {
+    marginTop: 4,
+    borderRadius: 10,
+    borderWidth: 1,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
+  },
+  secondaryDangerButtonText: {
     fontFamily: fontFamilies.bold,
     fontSize: 15,
   },

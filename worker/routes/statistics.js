@@ -175,6 +175,7 @@ export function createStatisticsRouteHandlers({ jsonResponse, textResponse }) {
         ? Math.min(rawSlaMinutes, 24 * 60)
         : 30;
       const outsideSlaCutoffIso = new Date(Date.now() - incidentSlaMinutes * 60 * 1000).toISOString();
+      const outsideSlaCutoffSqlite = outsideSlaCutoffIso.replace('T', ' ').substring(0, 19);
       let incidentSummary = {
         incident_in_progress_count: 0,
         incident_critical_active_count: 0,
@@ -190,8 +191,9 @@ export function createStatisticsRouteHandlers({ jsonResponse, textResponse }) {
               AND COALESCE(created_at, '') < ? THEN 1 ELSE 0 END) AS incident_outside_sla_count
           FROM incidents
           WHERE tenant_id = ?
+            AND deleted_at IS NULL
         `)
-          .bind(outsideSlaCutoffIso, statsTenantId)
+          .bind(outsideSlaCutoffSqlite, statsTenantId)
           .all();
         const row = incidentSummaryRows?.[0] || {};
         incidentSummary = {

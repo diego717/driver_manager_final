@@ -11,6 +11,13 @@
             resolved: { label: 'Resolver', icon: 'task_alt' },
         };
 
+        function canCurrentUserAuditDeletedIncidents() {
+            const role = String(options.getCurrentUser?.()?.role || '').toLowerCase();
+            return role === 'super_admin';
+        }
+
+        let includeDeletedIncidentsAudit = false;
+
         function formatPhotoBytes(bytes) {
             const numericBytes = Math.max(0, Number(bytes) || 0);
             if (numericBytes >= 1024 * 1024) {
@@ -273,11 +280,21 @@
         }
 
         function appendIncidentStatusActions(parent, incident, config = {}) {
+            const isSoftDeleted = String(incident?.deleted_at || '').trim().length > 0;
             const statusActions = document.createElement('div');
             statusActions.className = 'incident-actions';
             const incidentStatus = options.normalizeIncidentStatus(incident.incident_status);
-            const canUpdateIncident = options.canCurrentUserEditAssets();
+            const canUpdateIncident = options.canCurrentUserEditAssets() && !isSoftDeleted;
             const updateOptions = buildIncidentStatusUpdateOptions(incident, config);
+
+            if (isSoftDeleted) {
+                const auditNotice = document.createElement('small');
+                auditNotice.className = 'asset-muted';
+                auditNotice.textContent = `Eliminada: ${new Date(incident.deleted_at).toLocaleString('es-ES')}${
+                    incident?.deleted_by ? ` por ${incident.deleted_by}` : ''
+                }`;
+                parent.appendChild(auditNotice);
+            }
 
             const makeStatusBtn = (statusValue) => {
                 const actionMeta = buildIncidentStatusActionMeta(incidentStatus, statusValue);
@@ -310,6 +327,20 @@
                 void updateIncidentEvidenceFromWeb(liveIncident, updateOptions);
             });
 
+            // USER SUPER ADMIN DELETE BUTTON INJECT
+            const isSuperAdmin = String(options.getCurrentUser()?.role || '').trim().toLowerCase() === 'super_admin';
+            let deleteBtn = null;
+            if (isSuperAdmin && !isSoftDeleted) {
+                deleteBtn = document.createElement('button');
+                deleteBtn.type = 'button';
+                deleteBtn.className = 'btn-secondary incident-delete-btn';
+                decorateIncidentActionButton(deleteBtn, 'delete', 'Eliminar', 'delete');
+                deleteBtn.addEventListener('click', () => {
+                    const liveIncident = deleteBtn.closest('.incident-card')?.__incidentData || incident;
+                    void deleteIncidentFromWeb(liveIncident, updateOptions);
+                });
+            }
+
             statusActions.append(
                 makeStatusBtn('open'),
                 makeStatusBtn('in_progress'),
@@ -317,6 +348,7 @@
                 makeStatusBtn('resolved'),
                 evidenceBtn,
             );
+            if (deleteBtn) statusActions.append(deleteBtn);
             parent.appendChild(statusActions);
             return statusActions;
         }
@@ -375,9 +407,11 @@
 
         function deriveAssetAttentionMetaFromIncidents(incidents) {
             const values = Array.isArray(incidents) ? incidents : [];
-            const activeIncidents = values.filter(
-                (incident) => options.normalizeIncidentStatus(incident?.incident_status) !== 'resolved',
-            );
+            const activeIncidents = values.filter((incident) => {
+                const isDeleted = String(incident?.deleted_at || '').trim().length > 0;
+                if (isDeleted) return false;
+                return options.normalizeIncidentStatus(incident?.incident_status) !== 'resolved';
+            });
             if (!activeIncidents.length) {
                 return {
                     state: 'clear',
@@ -668,6 +702,44 @@
             appendIncidentEvidenceSummary(incidentCard, incident);
             appendIncidentResolutionSummary(incidentCard, incident);
 
+            const deletedAtText = String(incident?.deleted_at || '').trim();
+            if (deletedAtText) {
+                incidentCard.classList.add('incident-card-deleted');
+                const deletedPanel = document.createElement('div');
+                deletedPanel.className = 'incident-resolution-panel';
+                deletedPanel.dataset.status = 'deleted';
+
+                const deletedHeader = document.createElement('div');
+                deletedHeader.className = 'incident-resolution-header';
+
+                const deletedLabel = document.createElement('small');
+                deletedLabel.className = 'asset-muted';
+                deletedLabel.textContent = 'Auditoría';
+
+                const deletedState = document.createElement('span');
+                deletedState.className = 'incident-resolution-state';
+                options.setElementTextWithMaterialIcon(
+                    deletedState,
+                    'delete',
+                    'Incidencia eliminada',
+                );
+
+                deletedHeader.append(deletedLabel, deletedState);
+                deletedPanel.appendChild(deletedHeader);
+
+                const deletedMeta = document.createElement('small');
+                deletedMeta.className = 'incident-resolution-meta';
+                const deletedBy = String(incident?.deleted_by || '').trim();
+                const deletionReason = String(incident?.deletion_reason || '').trim();
+                deletedMeta.textContent = [
+                    `Fecha: ${new Date(deletedAtText).toLocaleString('es-ES')}`,
+                    deletedBy ? `por ${deletedBy}` : '',
+                    deletionReason ? `motivo: ${deletionReason}` : '',
+                ].filter(Boolean).join(' · ');
+                deletedPanel.appendChild(deletedMeta);
+                incidentCard.appendChild(deletedPanel);
+            }
+
             const actions = appendIncidentStatusActions(incidentCard, incident, {
                 assetId: options.parseStrictInteger(config.assetId),
                 installationId: options.parseStrictInteger(config.installationId ?? incident?.installation_id),
@@ -728,6 +800,27 @@
 
             const actions = document.createElement('div');
             actions.className = 'incidents-header-actions';
+
+            if (canCurrentUserAuditDeletedIncidents()) {
+                const auditToggleWrap = document.createElement('label');
+                auditToggleWrap.className = 'action-checkbox';
+                auditToggleWrap.title = 'Incluye incidencias eliminadas para auditoría';
+
+                const auditToggle = document.createElement('input');
+                auditToggle.type = 'checkbox';
+                auditToggle.checked = includeDeletedIncidentsAudit === true;
+                auditToggle.addEventListener('change', () => {
+                    includeDeletedIncidentsAudit = auditToggle.checked === true;
+                    void showIncidentsForInstallation(installationId);
+                });
+
+                const auditToggleText = document.createElement('span');
+                auditToggleText.textContent = 'Mostrar eliminadas (auditoría)';
+
+                auditToggleWrap.append(auditToggle, auditToggleText);
+                actions.appendChild(auditToggleWrap);
+            }
+
             actions.append(createIncidentBtn, backButton);
 
             header.append(heading, actions);
@@ -948,7 +1041,9 @@
             if (container) container.innerHTML = '<p class="loading">Cargando incidencias...</p>';
 
             try {
-                const data = await options.api.getIncidents(installationId);
+                const data = await options.api.getIncidents(installationId, {
+                    includeDeleted: includeDeletedIncidentsAudit && canCurrentUserAuditDeletedIncidents(),
+                });
                 await renderIncidents(data.incidents || [], installationId);
             } catch (_error) {
                 if (container) container.innerHTML = '<p class="error">Error cargando incidencias</p>';
@@ -1214,6 +1309,33 @@
             await applyStatusUpdate('');
         }
 
+        async function deleteIncidentFromWeb(incident, config = {}) {
+            if (!options.requireActiveSession()) return;
+            const incidentId = options.parseStrictInteger(incident?.id);
+            if (!Number.isInteger(incidentId) || incidentId <= 0) return;
+
+            options.openActionConfirmModal({
+                title: `Eliminar incidencia #${incidentId}`,
+                subtitle: 'Esta accion marcara la incidencia como eliminada y dejara rastro en el registro de auditoria.',
+                submitLabel: 'Eliminar incidencia',
+                acknowledgementText: 'Confirmo que deseo eliminar esta incidencia de los listados activos.',
+                missingConfirmationMessage: 'Debes confirmar la eliminacion para continuar.',
+                onSubmit: async () => {
+                    options.closeActionModal(true);
+                    try {
+                        const updateOptions = buildIncidentStatusUpdateOptions(incident, config);
+                        setIncidentCardsUpdating(incidentId, true);
+                        await options.api.deleteIncident(incidentId);
+                        options.showNotification(`Incidencia #${incidentId} eliminada.`, 'success');
+                        void runIncidentRefreshInBackground(updateOptions.installationId, updateOptions.assetId);
+                    } catch (error) {
+                        setIncidentCardsUpdating(incidentId, false);
+                        options.showNotification(`No se pudo eliminar la incidencia: ${error.message || error}`, 'error');
+                    }
+                },
+            });
+        }
+
         async function createIncidentForAsset(assetId) {
             if (!options.requireActiveSession()) return;
             const numericAssetId = Number.parseInt(String(assetId), 10);
@@ -1241,14 +1363,20 @@
 
         function handleRealtimeIncidentStatusUpdate(incident) {
             if (!incident || !incident.id) return;
-            applyVisibleIncidentUpdate(incident);
-            options.showNotification(
-                `Incidencia #${incident.id} ahora esta "${options.incidentStatusLabel(incident.incident_status)}".`,
-                'info',
-            );
+            const isDeleted = String(incident?.deleted_at || '').trim().length > 0;
+            if (isDeleted) {
+                options.showNotification(`Incidencia #${incident.id} eliminada.`, 'info');
+            } else {
+                applyVisibleIncidentUpdate(incident);
+                options.showNotification(
+                    `Incidencia #${incident.id} ahora esta "${options.incidentStatusLabel(incident.incident_status)}".`,
+                    'info',
+                );
+            }
 
             const activeIncidentsSection = document.getElementById('incidentsSection')?.classList.contains('active');
             const activeAssetsSection = document.getElementById('assetsSection')?.classList.contains('active');
+            const activeDashboardSection = document.getElementById('dashboardSection')?.classList.contains('active');
             const currentSelectedInstallationId = options.getCurrentSelectedInstallationId();
             const currentSelectedAssetId = options.getCurrentSelectedAssetId();
 
@@ -1258,12 +1386,16 @@
             if (activeAssetsSection && currentSelectedAssetId) {
                 void options.loadAssetDetail(currentSelectedAssetId, { keepSelection: true });
             }
+            if (activeDashboardSection) {
+                void options.loadDashboard();
+            }
         }
 
         return {
             appendIncidentCard,
             createIncidentForAsset,
             createIncidentFromWeb,
+            deleteIncidentFromWeb,
             deriveAssetAttentionMetaFromIncidents,
             handleRealtimeIncident,
             handleRealtimeIncidentStatusUpdate,

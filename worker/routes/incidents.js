@@ -1,10 +1,15 @@
-import { HttpError, isIncidentStatusConstraintError } from "../lib/core.js";
+import {
+  HttpError,
+  isIncidentStatusConstraintError,
+  isMissingIncidentSoftDeleteColumnsError,
+} from "../lib/core.js";
 
 export function createIncidentsRouteHandlers({
   jsonResponse,
   parsePositiveInt,
   requireWebWriteRole,
   requireAdminRole,
+  requireSuperAdminRole,
   readJsonOrThrowBadRequest,
   validateIncidentPayload,
   parseOptionalPositiveInt,
@@ -80,7 +85,19 @@ export function createIncidentsRouteHandlers({
       const installationId = parsePositiveInt(routeParts[1], "installation_id");
 
       if (request.method === "GET") {
-        const { results: incidents } = await env.DB.prepare(`
+        const includeDeletedRaw = normalizeOptionalString(
+          new URL(request.url).searchParams.get("include_deleted"),
+          "",
+        ).toLowerCase();
+        const includeDeleted = includeDeletedRaw === "1" || includeDeletedRaw === "true";
+        if (includeDeleted) {
+          if (!isWebRoute) {
+            throw new HttpError(403, "Solo super_admin puede ver incidencias eliminadas.");
+          }
+          requireSuperAdminRole(webSession?.role);
+        }
+
+        const incidentsQuery = `
           SELECT
             id,
             installation_id,
@@ -102,23 +119,30 @@ export function createIncidentsRouteHandlers({
             evidence_note,
             work_started_at,
             work_ended_at,
-            actual_duration_seconds
+            actual_duration_seconds,
+            deleted_at,
+            deleted_by,
+            deletion_reason
           FROM incidents
           WHERE installation_id = ?
             AND tenant_id = ?
+            ${includeDeleted ? "" : "AND deleted_at IS NULL"}
           ORDER BY created_at DESC, id DESC
-        `)
+        `;
+        const { results: incidents } = await env.DB.prepare(incidentsQuery)
           .bind(installationId, incidentsTenantId)
           .all();
 
-        let { results: photos } = await env.DB.prepare(`
+        const photosQuery = `
           SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
           FROM incident_photos p
           INNER JOIN incidents i ON i.id = p.incident_id
           WHERE i.installation_id = ?
             AND i.tenant_id = ?
+            ${includeDeleted ? "" : "AND i.deleted_at IS NULL"}
           ORDER BY p.created_at ASC, p.id ASC
-        `)
+        `;
+        let { results: photos } = await env.DB.prepare(photosQuery)
           .bind(installationId, incidentsTenantId)
           .all();
 
@@ -129,14 +153,7 @@ export function createIncidentsRouteHandlers({
             incidentsTenantId,
           );
           if (Number(recoveredCount) > 0) {
-            const recoveredPhotosResult = await env.DB.prepare(`
-              SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
-              FROM incident_photos p
-              INNER JOIN incidents i ON i.id = p.incident_id
-              WHERE i.installation_id = ?
-                AND i.tenant_id = ?
-              ORDER BY p.created_at ASC, p.id ASC
-            `)
+            const recoveredPhotosResult = await env.DB.prepare(photosQuery)
               .bind(installationId, incidentsTenantId)
               .all();
             photos = recoveredPhotosResult?.results || [];
@@ -593,7 +610,12 @@ export function createIncidentsRouteHandlers({
       const previousStatus = normalizeOptionalString(existingIncident.incident_status, "open")
         .toLowerCase();
       const parseIsoMillis = (value) => {
-        const parsed = Date.parse(String(value || ""));
+        let text = String(value || "").trim();
+        if (text && !text.endsWith("Z") && !text.includes("+") && !text.includes("-")) {
+          if (text.length === 19) text += "Z";
+        }
+        text = text.replace(" ", "T");
+        const parsed = Date.parse(text);
         return Number.isFinite(parsed) ? parsed : null;
       };
       const computeElapsedSeconds = (startIso, endIso) => {
@@ -926,7 +948,127 @@ export function createIncidentsRouteHandlers({
     return null;
   }
 
+  async function handleIncidentDeleteRoute(
+    request,
+    env,
+    corsPolicy,
+    routeParts,
+    isWebRoute,
+    webSession,
+    incidentsTenantId,
+    realtimeTenantId,
+  ) {
+    if (request.method !== "DELETE") {
+      return null;
+    }
+
+    const isDeleteByIncidentIdRoute =
+      routeParts.length === 2 && routeParts[0] === "incidents";
+    const isDeleteByInstallationIncidentRoute =
+      routeParts.length === 4 &&
+      routeParts[0] === "installations" &&
+      routeParts[2] === "incidents";
+
+    if (!isDeleteByIncidentIdRoute && !isDeleteByInstallationIncidentRoute) {
+      return null;
+    }
+
+    if (!isWebRoute) {
+      throw new HttpError(405, "Metodo no permitido para eliminar incidencias.");
+    }
+
+    requireSuperAdminRole(webSession?.role);
+
+    const incidentId = parsePositiveInt(
+      isDeleteByInstallationIncidentRoute ? routeParts[3] : routeParts[1],
+      "incident_id",
+    );
+    const installationIdFromPath = isDeleteByInstallationIncidentRoute
+      ? parsePositiveInt(routeParts[1], "installation_id")
+      : null;
+
+    const deletedAt = nowIso();
+    const deletedBy = normalizeOptionalString(webSession?.sub, "web");
+    let existingIncident = null;
+    let updateResult = null;
+    try {
+      existingIncident = await loadIncidentForTenant(env, {
+        incidentId,
+        incidentsTenantId,
+        installationId: installationIdFromPath,
+      });
+
+      updateResult = await env.DB.prepare(`
+        UPDATE incidents
+        SET
+          deleted_at = ?,
+          deleted_by = ?,
+          deletion_reason = ?,
+          status_updated_at = ?,
+          status_updated_by = ?
+        WHERE id = ?
+          AND tenant_id = ?
+          AND deleted_at IS NULL
+      `)
+        .bind(
+          deletedAt,
+          deletedBy,
+          "soft_delete_super_admin",
+          deletedAt,
+          deletedBy,
+          incidentId,
+          incidentsTenantId,
+        )
+        .run();
+    } catch (error) {
+      if (isMissingIncidentSoftDeleteColumnsError(error)) {
+        throw new HttpError(
+          409,
+          "La base no soporta soft delete de incidencias todavia. Aplica la migracion 0015_incident_soft_delete.sql y reintenta.",
+        );
+      }
+      throw error;
+    }
+
+    const updatedRows = Number(updateResult?.meta?.changes) || 0;
+    if (updatedRows <= 0) {
+      throw new HttpError(404, "Incidencia no encontrada o ya eliminada.");
+    }
+
+    await logAuditEvent(env, {
+      action: "soft_delete_incident",
+      username: deletedBy,
+      success: true,
+      tenantId: incidentsTenantId,
+      details: {
+        incident_id: incidentId,
+        installation_id: existingIncident?.installation_id || installationIdFromPath,
+        previous_status: existingIncident?.incident_status || "open",
+        tenant_id: incidentsTenantId,
+      },
+      ipAddress: getClientIpForRateLimit(request),
+      platform: "web",
+    });
+
+    await publishRealtimeEvent(env, {
+      type: "incident_deleted",
+      incident: {
+        id: incidentId,
+        installation_id: existingIncident?.installation_id || installationIdFromPath,
+        deleted_at: deletedAt,
+      },
+    }, realtimeTenantId);
+    await publishRealtimeStatsUpdate(env, realtimeTenantId);
+
+    return jsonResponse(request, env, corsPolicy, {
+      success: true,
+      incident_id: incidentId,
+      deleted_at: deletedAt,
+    });
+  }
+
   return {
+    handleIncidentDeleteRoute,
     handleInstallationIncidentsRoute,
     handleIncidentEvidenceRoute,
     handleIncidentStatusRoute,

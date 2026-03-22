@@ -89,6 +89,12 @@ export interface CreateIncidentResponse {
   incident: Omit<Incident, "photos">;
 }
 
+export interface DeleteIncidentResponse {
+  success: boolean;
+  incident_id: number;
+  deleted_at: string;
+}
+
 export interface UpdateIncidentStatusInput {
   incident_status: IncidentStatus;
   resolution_note?: string;

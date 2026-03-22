@@ -3,6 +3,7 @@ import {
   type CreateRecordResponse,
   type CreateIncidentInput,
   type CreateIncidentResponse,
+  type DeleteIncidentResponse,
   type Incident,
   type IncidentPhoto,
   type InstallationRecord,
@@ -171,6 +172,16 @@ export async function updateIncidentEvidence(
       photos: [],
     }),
   };
+}
+
+export async function deleteIncident(
+  incidentId: number,
+): Promise<DeleteIncidentResponse> {
+  ensurePositiveInt(incidentId, "incidentId");
+  return signedJsonRequest<DeleteIncidentResponse>({
+    method: "DELETE",
+    path: `/incidents/${incidentId}`,
+  });
 }
 
 export async function listInstallations(

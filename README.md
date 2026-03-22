@@ -320,6 +320,22 @@ Las migraciones incluidas crean:
 - `0012_incidents_asset_link.sql`: enlace opcional `asset_id` en incidencias para flujo asset-first.
 - `0013_incident_duration_fields.sql`: duracion estimada/real y marcas de inicio-fin por incidencia.
 - `0014_incident_status_paused.sql`: habilita estado `paused` en D1 para incidencias.
+- `0015_incident_soft_delete.sql`: soft delete de incidencias (`deleted_at`, `deleted_by`, `deletion_reason`).
+
+Importante:
+Antes de usar en entorno real endpoints/vistas que dependan de incidencias eliminadas, aplica migraciones D1 remotas:
+
+```powershell
+npm run d1:migrate:remote
+```
+
+Validación rápida de columnas en D1 remota:
+
+```powershell
+npx wrangler d1 execute DB --remote --command "PRAGMA table_info(incidents);"
+```
+
+Debe listar: `deleted_at`, `deleted_by`, `deletion_reason`.
 
 ## Mobile app (Expo)
 

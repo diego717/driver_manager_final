@@ -221,6 +221,7 @@ export async function loadIncidentForTenant(
     WHERE i.id = ?
       AND i.tenant_id = ?
       AND inst.tenant_id = ?
+      AND i.deleted_at IS NULL
   `;
   const bindings = [incidentId, incidentsTenantId, incidentsTenantId];
 
@@ -245,6 +246,7 @@ export async function loadIncidentTimingFieldsForTenant(env, incidentId, inciden
       FROM incidents
       WHERE id = ?
         AND tenant_id = ?
+        AND deleted_at IS NULL
       LIMIT 1
     `)
       .bind(incidentId, incidentsTenantId)
@@ -269,6 +271,7 @@ export async function loadIncidentByIdForTenant(env, incidentId, incidentsTenant
     FROM incidents
     WHERE id = ?
       AND tenant_id = ?
+      AND deleted_at IS NULL
   `)
     .bind(incidentId, incidentsTenantId)
     .all();
@@ -284,6 +287,7 @@ export async function loadIncidentPhotoByIdForTenant(env, photoId, incidentsTena
     WHERE p.id = ?
       AND p.tenant_id = ?
       AND i.tenant_id = ?
+      AND i.deleted_at IS NULL
   `)
     .bind(photoId, incidentsTenantId, incidentsTenantId)
     .all();

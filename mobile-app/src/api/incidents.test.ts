@@ -10,6 +10,7 @@ import {
   clearInstallationsCache,
   createIncident,
   createInstallationRecord,
+  deleteIncident,
   listIncidentsByInstallation,
   listInstallations,
 } from "./incidents";
@@ -69,6 +70,22 @@ describe("incidents api", () => {
 
   it("rejects invalid installation id when creating incident", async () => {
     await expect(createIncident(0, { note: "x" })).rejects.toThrow(/positive integer/i);
+  });
+
+  it("deletes incident using /incidents/:id", async () => {
+    clientMocks.signedJsonRequest.mockResolvedValue({
+      success: true,
+      incident_id: 77,
+      deleted_at: "2026-03-21T10:00:00.000Z",
+    });
+
+    const response = await deleteIncident(77);
+
+    expect(response.incident_id).toBe(77);
+    expect(clientMocks.signedJsonRequest).toHaveBeenCalledWith({
+      method: "DELETE",
+      path: "/incidents/77",
+    });
   });
 
   it("lists installations and incidents using expected routes", async () => {

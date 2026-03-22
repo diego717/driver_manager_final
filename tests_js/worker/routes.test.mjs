@@ -32,6 +32,7 @@ function createIncidentRouteDeps(overrides = {}) {
     },
     requireWebWriteRole() {},
     requireAdminRole() {},
+    requireSuperAdminRole() {},
     async readJsonOrThrowBadRequest() {
       return {};
     },

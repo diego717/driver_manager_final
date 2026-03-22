@@ -1909,6 +1909,9 @@ async function updateIncidentEvidenceFromWeb(incident, options = {}) {
 async function updateIncidentStatusFromWeb(incident, targetStatus, options = {}) {
     return dashboardIncidents.updateIncidentStatusFromWeb(incident, targetStatus, options);
 }
+async function deleteIncidentFromWeb(incident, options = {}) {
+    return dashboardIncidents.deleteIncidentFromWeb(incident, options);
+}
 function deriveAssetAttentionMetaFromIncidents(incidents) {
     return dashboardIncidents.deriveAssetAttentionMetaFromIncidents(incidents);
 }

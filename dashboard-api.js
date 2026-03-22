@@ -217,8 +217,13 @@
             getAuditLogs(limit = 100) {
                 return request(`/web/audit-logs?limit=${limit}`);
             },
-            getIncidents(installationId) {
-                return request(`/web/installations/${installationId}/incidents`);
+            getIncidents(installationId, options = {}) {
+                const query = new URLSearchParams();
+                if (options?.includeDeleted === true) {
+                    query.set('include_deleted', '1');
+                }
+                const suffix = query.toString() ? `?${query.toString()}` : '';
+                return request(`/web/installations/${installationId}/incidents${suffix}`);
             },
             lookupCode(code, type) {
                 const query = new URLSearchParams({
@@ -243,6 +248,11 @@
                 return request(`/web/assets/${assetId}/incidents`, {
                     method: 'POST',
                     body: JSON.stringify(payload || {}),
+                });
+            },
+            deleteIncident(incidentId) {
+                return request(`/web/incidents/${incidentId}`, {
+                    method: 'DELETE',
                 });
             },
             updateIncidentStatus(incidentId, payload) {
