@@ -175,34 +175,7 @@ describe("IncidentDetailScreen accessibility", () => {
 
   it("exposes loading state for refresh button and interactive labels for actions", async () => {
     const { fireEvent, render, waitFor } = await import("@testing-library/react-native/pure");
-    const deferredList = createDeferred<any>(); //
-      success: true,
-      installation_id: 7,
-      incidents: [
-        {
-          id: 50,
-          installation_id: 7,
-          reporter_username: "tester",
-          note: "Fallo de prueba",
-          time_adjustment_seconds: 20,
-          severity: "high",
-          source: "mobile",
-          created_at: "2026-02-20T10:00:00.000Z",
-          photos: [
-            {
-              id: 5,
-              incident_id: 50,
-              r2_key: "a/b.jpg",
-              file_name: "captura.jpg",
-              content_type: "image/jpeg",
-              size_bytes: 340000,
-              sha256: null,
-              created_at: "2026-02-20T10:01:00.000Z",
-            },
-          ],
-        },
-      ],
-    });
+    const deferredList = createDeferred<any>();
     incidentsApiMocks.listIncidentsByInstallation.mockImplementationOnce(
       () => deferredList.promise,
     );
