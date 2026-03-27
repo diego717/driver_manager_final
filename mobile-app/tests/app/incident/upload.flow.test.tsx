@@ -63,6 +63,10 @@ function createReactNativeMock() {
       bezier: vi.fn(() => (value: number) => value),
     },
     Image: ({ children, ...props }: any) => ReactModule.createElement("Image", props, children),
+    Platform: {
+      OS: "ios",
+      select: (options: Record<string, unknown>) => options.ios ?? options.default,
+    },
     ScrollView: ({ children, ...props }: any) =>
       ReactModule.createElement("ScrollView", props, children),
     StyleSheet: {

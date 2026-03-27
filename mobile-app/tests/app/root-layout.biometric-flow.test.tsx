@@ -76,6 +76,10 @@ vi.mock("react-native", () => ({
   ActivityIndicator: ({ children }: any) =>
     React.createElement("ActivityIndicator", null, children),
   Image: ({ children, ...props }: any) => React.createElement("Image", props, children),
+  Platform: {
+    OS: "ios",
+    select: (options: Record<string, unknown>) => options.ios ?? options.default,
+  },
   Text: ({ children, ...props }: any) => React.createElement("Text", props, children),
   View: ({ children }: any) => React.createElement("View", null, children),
   Animated: {

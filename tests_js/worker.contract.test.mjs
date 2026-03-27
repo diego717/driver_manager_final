@@ -6705,6 +6705,218 @@ test("public tracking snapshot refreshes after incident creation and status chan
   assert.equal(inProgressStateBody.tracking.public_status, "en_progreso");
 });
 
+test("public tracking events stream emits connected payload for a valid link", async () => {
+  const db = createMockDB({
+    installations: [
+      {
+        id: 45,
+        timestamp: "2026-03-26T10:00:00.000Z",
+      },
+    ],
+    incidents: [
+      {
+        id: 91,
+        installation_id: 45,
+        incident_status: "open",
+        created_at: "2026-03-26T10:05:00.000Z",
+        status_updated_at: "2026-03-26T10:05:00.000Z",
+      },
+    ],
+  });
+  const publicTrackingKv = createMockKV();
+  const env = {
+    DB: db,
+    PUBLIC_TRACKING_KV: publicTrackingKv,
+    PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+    PUBLIC_TRACKING_BASE_URL: "https://estado.example.com",
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_root",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const createResponse = await workerFetch(
+    new Request("https://worker.example/web/installations/45/public-tracking-link", {
+      method: "POST",
+      headers: {
+        ...webSessionHeadersFromResponse(bootstrapResponse),
+      },
+    }),
+    env,
+  );
+  const createBody = await createResponse.json();
+  const shortCode = decodeURIComponent(new URL(createBody.link.tracking_url).pathname.split("/").pop() || "");
+
+  const eventsResponse = await workerFetch(
+    new Request(`https://worker.example/track/${encodeURIComponent(shortCode)}/events`, {
+      method: "GET",
+    }),
+    {
+      PUBLIC_TRACKING_KV: publicTrackingKv,
+      PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+    },
+  );
+
+  assert.equal(eventsResponse.status, 200);
+  assert.equal(eventsResponse.headers.get("Content-Type"), "text/event-stream");
+
+  const reader = eventsResponse.body.getReader();
+  const firstChunk = await reader.read();
+  await reader.cancel();
+  const firstText = new TextDecoder().decode(firstChunk.value || new Uint8Array());
+
+  assert.match(firstText, /"type":"connected"/);
+  assert.match(firstText, /"public_status":"pendiente"/);
+});
+
+test("public tracking state rate limits repeated anonymous reads when RATE_LIMIT_KV is configured", async () => {
+  const db = createMockDB({
+    installations: [
+      {
+        id: 45,
+        timestamp: "2026-03-26T10:00:00.000Z",
+      },
+    ],
+  });
+  const publicTrackingKv = createMockKV();
+  const env = {
+    DB: db,
+    PUBLIC_TRACKING_KV: publicTrackingKv,
+    PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+    PUBLIC_TRACKING_BASE_URL: "https://estado.example.com",
+    RATE_LIMIT_KV: createMockKV(),
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_root",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const createResponse = await workerFetch(
+    new Request("https://worker.example/web/installations/45/public-tracking-link", {
+      method: "POST",
+      headers: {
+        ...webSessionHeadersFromResponse(bootstrapResponse),
+      },
+    }),
+    env,
+  );
+  const createBody = await createResponse.json();
+  const shortCode = decodeURIComponent(new URL(createBody.link.tracking_url).pathname.split("/").pop() || "");
+
+  let blockedResponse = null;
+  for (let attempt = 0; attempt < 121; attempt += 1) {
+    blockedResponse = await workerFetch(
+      new Request(`https://worker.example/track/${encodeURIComponent(shortCode)}/state`, {
+        method: "GET",
+        headers: {
+          "CF-Connecting-IP": "198.51.100.10",
+        },
+      }),
+      {
+        PUBLIC_TRACKING_KV: publicTrackingKv,
+        PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+        RATE_LIMIT_KV: env.RATE_LIMIT_KV,
+      },
+    );
+  }
+
+  assert.equal(blockedResponse.status, 429);
+});
+
+test("public tracking events rate limits repeated stream opens when RATE_LIMIT_KV is configured", async () => {
+  const db = createMockDB({
+    installations: [
+      {
+        id: 45,
+        timestamp: "2026-03-26T10:00:00.000Z",
+      },
+    ],
+  });
+  const publicTrackingKv = createMockKV();
+  const env = {
+    DB: db,
+    PUBLIC_TRACKING_KV: publicTrackingKv,
+    PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+    PUBLIC_TRACKING_BASE_URL: "https://estado.example.com",
+    RATE_LIMIT_KV: createMockKV(),
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_root",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const createResponse = await workerFetch(
+    new Request("https://worker.example/web/installations/45/public-tracking-link", {
+      method: "POST",
+      headers: {
+        ...webSessionHeadersFromResponse(bootstrapResponse),
+      },
+    }),
+    env,
+  );
+  const createBody = await createResponse.json();
+  const shortCode = decodeURIComponent(new URL(createBody.link.tracking_url).pathname.split("/").pop() || "");
+
+  let blockedResponse = null;
+  for (let attempt = 0; attempt < 13; attempt += 1) {
+    blockedResponse = await workerFetch(
+      new Request(`https://worker.example/track/${encodeURIComponent(shortCode)}/events`, {
+        method: "GET",
+        headers: {
+          "CF-Connecting-IP": "198.51.100.20",
+        },
+      }),
+      {
+        PUBLIC_TRACKING_KV: publicTrackingKv,
+        PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+        RATE_LIMIT_KV: env.RATE_LIMIT_KV,
+      },
+    );
+    if (blockedResponse?.status === 200 && blockedResponse.body) {
+      const reader = blockedResponse.body.getReader();
+      await reader.cancel();
+    }
+  }
+
+  assert.equal(blockedResponse.status, 429);
+});
+
 test("POST /assets/:id/incidents auto-creates installation context and copies gps snapshot", async () => {
   const baseDb = createMockDB();
   const assetLinks = [];

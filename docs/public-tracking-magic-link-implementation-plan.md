@@ -236,6 +236,62 @@ Esto evita emitir links con host interno, preview URL o dominio equivocado.
 
 ## 5) Contrato API recomendado
 
+## 5.0 Estado actual de implementacion
+
+Al dia de hoy, esta seccion del contrato API ya esta implementada en su mayor parte en el repo.
+
+Ya existe:
+
+- `GET /web/installations/:id/public-tracking-link`
+- `POST /web/installations/:id/public-tracking-link`
+- `DELETE /web/installations/:id/public-tracking-link`
+- `GET /track/:token`
+- `GET /track/:token/state`
+- `GET /track/:token/events`
+
+Tambien existe:
+
+- emision de Magic Link firmado
+- soporte de link corto (`short_code`) y link largo (`token`)
+- snapshot publico cacheado en KV
+- UI de dashboard para crear, regenerar, copiar y revocar el link
+- cliente publico con SSE como camino principal y polling como fallback
+- SSE publico con scope reducido
+- manejo operativo explicito de `snapshot_miss` con `503`
+- rate limiting especifico para rutas publicas anonimas sobre `/track/:token`, `/track/:token/state` y `/track/:token/events` cuando `RATE_LIMIT_KV` esta disponible
+
+Implicancia practica:
+
+- el contrato API del MVP ya funciona para emision, consulta, lectura publica y realtime publico basico
+- la feature ya tiene una primera capa de hardening en rutas anonimas
+- lo pendiente principal queda mas del lado de optimizacion, observabilidad fina y evolucion arquitectonica
+
+## 5.0.1 Gap concreto entre plan y codigo actual
+
+Lo que el plan pedia y ya esta cubierto:
+
+- endpoints internos de gestion
+- bootstrap publico del estado
+- validacion del token en Worker
+- respuesta publica de snapshot
+- stream publico `/track/:token/events`
+- publicacion de eventos `tracking_updated`, `tracking_revoked`, `tracking_expired`
+- cliente publico con SSE en lugar de polling como camino principal
+- controles minimos de abuso en endpoints anonimos
+- politica de respuesta cuando hay token valido pero snapshot ausente o invalido
+
+Lo que el plan pedia y aun falta:
+
+- publicacion via broker dedicado en vez de SSE con polling interno por conexion
+- afinacion de observabilidad para distinguir mejor vistas reales vs unfurls/prefetch
+- endurecimiento adicional de limites por IP segun trafico real
+- decision final sobre si el polling de fallback debe quedarse fijo o ser feature-flagged
+
+Recomendacion de lectura:
+
+- tratar `GET/POST/DELETE /web/installations/:id/public-tracking-link`, `GET /track/:token`, `GET /track/:token/state` y `GET /track/:token/events` como implementados
+- tratar broker-driven realtime y hardening fino como siguiente iteracion
+
 ## 5.1 Endpoints internos de gestion
 
 Nuevos endpoints web:
@@ -267,6 +323,12 @@ Uso:
 - `/track/:token` sirve HTML publica
 - `/track/:token/state` devuelve bootstrap JSON del snapshot
 - `/track/:token/events` abre SSE publico con scope de ese token
+
+Estado real hoy:
+
+- `GET /track/:token`: implementado
+- `GET /track/:token/state`: implementado
+- `GET /track/:token/events`: implementado
 
 ## 5.3 Respuesta publica sugerida
 
@@ -315,6 +377,13 @@ El flujo publico debe fallar sin consultar D1 cuando:
 - la firma es invalida
 - el link fue revocado
 - el KV entry ya no existe
+
+Estado real hoy:
+
+- la validacion criptografica del token ya existe
+- la resolucion por `short_code` tambien existe
+- la lectura publica ya depende de KV como fuente primaria
+- `snapshot` faltante/corrupto ya responde con error explicito
 
 ---
 
@@ -787,6 +856,13 @@ Motivo:
 - los links se comparten por canales no controlados
 - los previews de WhatsApp/email pueden multiplicar requests
 - SSE anonimo sin limites desde el primer dia abre una superficie innecesaria
+
+Estado real hoy:
+
+- ya existe rate limiting especifico para `/track/:token`, `/track/:token/state` y `/track/:token/events`
+- el hardening usa `RATE_LIMIT_KV` cuando esta disponible
+- la politica actual diferencia lecturas generales de aperturas de SSE
+- aun queda por calibrar umbrales finales segun trafico real
 
 ---
 

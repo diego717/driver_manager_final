@@ -4,6 +4,8 @@
     let pollingTimerId = null;
     let pollingEnabled = false;
     let activeLoadRequestId = 0;
+    let eventSource = null;
+    let eventSourceEnabled = false;
 
     function resolveTrackingToken() {
         const bodyToken = String(documentRef.body?.dataset?.trackingToken || '').trim();
@@ -120,7 +122,7 @@
 
     function schedulePolling() {
         clearPollingTimer();
-        if (!pollingEnabled || documentRef.hidden) {
+        if (!pollingEnabled || eventSourceEnabled || documentRef.hidden) {
             return;
         }
         pollingTimerId = globalScope.setTimeout(() => {
@@ -128,9 +130,81 @@
         }, POLLING_INTERVAL_MS);
     }
 
+    function closeEventSource() {
+        if (eventSource && typeof eventSource.close === 'function') {
+            eventSource.close();
+        }
+        eventSource = null;
+        eventSourceEnabled = false;
+    }
+
+    function renderTracking(tracking) {
+        setStatus(
+            tracking.public_reference || `Servicio #${tracking.installation_id}`,
+            tracking.public_message || 'Seguimiento disponible.',
+            statusTone(tracking),
+        );
+        renderSummary(tracking);
+        renderMeta(tracking);
+        renderTimeline(tracking);
+    }
+
+    function startEventStream() {
+        const token = resolveTrackingToken();
+        if (!token || typeof globalScope.EventSource !== 'function' || eventSource) {
+            return false;
+        }
+
+        try {
+            const nextEventSource = new globalScope.EventSource(`/track/${encodeURIComponent(token)}/events`);
+            eventSource = nextEventSource;
+            eventSourceEnabled = true;
+            clearPollingTimer();
+
+            nextEventSource.onmessage = (event) => {
+                let payload = {};
+                try {
+                    payload = JSON.parse(String(event?.data || '{}'));
+                } catch {
+                    return;
+                }
+
+                if (payload?.tracking && typeof payload.tracking === 'object') {
+                    renderTracking(payload.tracking);
+                }
+
+                if (payload?.type === 'tracking_revoked' || payload?.type === 'tracking_expired') {
+                    setStatus('Enlace no disponible', payload?.message || 'Este enlace ya no esta disponible.', 'error');
+                    closeEventSource();
+                    pollingEnabled = false;
+                    clearPollingTimer();
+                }
+
+                if (payload?.type === 'snapshot_unavailable') {
+                    setStatus('Seguimiento no disponible', payload?.message || 'No se pudo cargar el estado actual.', 'error');
+                }
+            };
+
+            nextEventSource.onerror = () => {
+                if (eventSource !== nextEventSource) return;
+                closeEventSource();
+                schedulePolling();
+            };
+
+            return true;
+        } catch {
+            closeEventSource();
+            return false;
+        }
+    }
+
     function handleVisibilityChange() {
         if (documentRef.hidden) {
             clearPollingTimer();
+            closeEventSource();
+            return;
+        }
+        if (startEventStream()) {
             return;
         }
         void loadTrackingState({ silent: true });
@@ -170,15 +244,7 @@
                 return;
             }
 
-            const tracking = payload.tracking;
-            setStatus(
-                tracking.public_reference || `Servicio #${tracking.installation_id}`,
-                tracking.public_message || 'Seguimiento disponible.',
-                statusTone(tracking),
-            );
-            renderSummary(tracking);
-            renderMeta(tracking);
-            renderTimeline(tracking);
+            renderTracking(payload.tracking);
         } catch (error) {
             if (requestId !== activeLoadRequestId) {
                 return;
@@ -202,6 +268,9 @@
                 refreshBtn.disabled = false;
             }
             if (requestId === activeLoadRequestId) {
+                if (!documentRef.hidden && startEventStream()) {
+                    return;
+                }
                 schedulePolling();
             }
         }
@@ -212,7 +281,10 @@
             void loadTrackingState();
         });
         documentRef.addEventListener('visibilitychange', handleVisibilityChange);
-        globalScope.addEventListener('beforeunload', clearPollingTimer);
+        globalScope.addEventListener('beforeunload', () => {
+            clearPollingTimer();
+            closeEventSource();
+        });
         pollingEnabled = true;
         void loadTrackingState();
     });

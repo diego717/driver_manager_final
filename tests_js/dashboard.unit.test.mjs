@@ -16,7 +16,7 @@ test.afterEach(() => {
   cleanupDashboardApps();
 });
 
-test("public tracking page polls automatically while visible and pauses when hidden", async () => {
+test("public tracking page polls automatically while visible and pauses when hidden when SSE is unavailable", async () => {
   const dom = new JSDOM(
     `<!doctype html>
     <html>
@@ -74,6 +74,11 @@ test("public tracking page polls automatically while visible and pauses when hid
       },
     };
   };
+  Object.defineProperty(window, "EventSource", {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
   window.setTimeout = (callback, delay) => {
     const timerId = nextTimerId++;
     scheduledTimers.set(timerId, { callback, delay });

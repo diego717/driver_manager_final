@@ -222,6 +222,43 @@ Referencia detallada:
 
 - `docs/gps-tagging-geofencing-implementation-plan.md`
 
+## Rollout Public Tracking
+
+Estado del repo al 2026-03-27:
+
+- Magic Link publico: implementado
+- lectura publica via KV: implementada
+- cliente publico: implementado
+- SSE publico: implementado
+- rate limiting especifico para `/track/*`: implementado
+
+Checklist minimo antes de activar en un entorno real:
+
+1. Confirmar bindings y secrets:
+   - `PUBLIC_TRACKING_KV`
+   - `PUBLIC_TRACKING_SECRET`
+   - `PUBLIC_TRACKING_BASE_URL`
+2. Confirmar que `PUBLIC_TRACKING_BASE_URL` use HTTPS y apunte al host canonico publico.
+3. Confirmar que `RATE_LIMIT_KV` exista para proteger rutas anonimas `/track/*`.
+4. Sincronizar assets publicados:
+   - `npm run dashboard:sync-assets`
+5. Ejecutar smoke manual:
+   - crear enlace
+   - abrir `/track/:token`
+   - validar `/track/:token/state`
+   - validar actualizacion por SSE
+   - revocar enlace y confirmar `410`
+   - abrir muchas veces `/track/:token/events` y confirmar `429` cuando corresponda
+
+Variables de entorno relevantes:
+
+- `PUBLIC_TRACKING_SECRET`
+- `PUBLIC_TRACKING_BASE_URL`
+
+Referencia detallada:
+
+- `docs/public-tracking-magic-link-implementation-plan.md`
+
 ## Autenticacion
 
 El repositorio mantiene dos modelos:

@@ -5763,6 +5763,7 @@ const auditLogsRouteHandlers = createAuditLogsRouteHandlers({
 });
 
 const publicTrackingRouteHandlers = createPublicTrackingRouteHandlers({
+  HttpError,
   jsonResponse,
   textResponse,
   requireAdminRole,

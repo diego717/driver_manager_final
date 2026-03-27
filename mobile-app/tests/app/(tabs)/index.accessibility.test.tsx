@@ -181,6 +181,10 @@ function createReactNativeMock() {
       ReactModule.createElement("ActivityIndicator", props, children),
     Alert: { alert: vi.fn() },
     FlatList,
+    Platform: {
+      OS: "ios",
+      select: (options: Record<string, unknown>) => options.ios ?? options.default,
+    },
     ScrollView: ({ children, ...props }: any) =>
       ReactModule.createElement("ScrollView", props, children),
     StyleSheet: {

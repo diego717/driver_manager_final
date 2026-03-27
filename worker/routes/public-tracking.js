@@ -1,4 +1,5 @@
 export function createPublicTrackingRouteHandlers({
+  HttpError,
   jsonResponse,
   textResponse,
   requireAdminRole,
@@ -13,6 +14,78 @@ export function createPublicTrackingRouteHandlers({
   logAuditEvent,
   resolvePublicTrackingOrigin,
 }) {
+  const PUBLIC_TRACKING_SSE_POLL_INTERVAL_MS = 10000;
+  const PUBLIC_TRACKING_SSE_KEEP_ALIVE_MS = 30000;
+  const PUBLIC_TRACKING_VIEW_RATE_LIMIT_MAX_ATTEMPTS = 120;
+  const PUBLIC_TRACKING_VIEW_RATE_LIMIT_WINDOW_SECONDS = 5 * 60;
+  const PUBLIC_TRACKING_EVENTS_RATE_LIMIT_MAX_ATTEMPTS = 12;
+  const PUBLIC_TRACKING_EVENTS_RATE_LIMIT_WINDOW_SECONDS = 5 * 60;
+  const encoder = new TextEncoder();
+
+  function getPublicTrackingRateLimitStore(env) {
+    const kv = env?.RATE_LIMIT_KV;
+    if (!kv) return null;
+    if (
+      typeof kv.get !== "function" ||
+      typeof kv.put !== "function" ||
+      typeof kv.delete !== "function"
+    ) {
+      return null;
+    }
+    return kv;
+  }
+
+  function normalizeRateLimitCounter(value) {
+    const parsed = Number.parseInt(String(value ?? ""), 10);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      return 0;
+    }
+    return parsed;
+  }
+
+  function buildPublicTrackingRateLimitKey({ ipAddress, bucket }) {
+    return `public_tracking_rate:${String(bucket || "view")}:${String(ipAddress || "unknown").trim() || "unknown"}`;
+  }
+
+  async function enforcePublicTrackingRateLimit(env, ipAddress, bucket = "view") {
+    const store = getPublicTrackingRateLimitStore(env);
+    if (!store) return;
+
+    const normalizedBucket = bucket === "events" ? "events" : "view";
+    const maxAttempts = normalizedBucket === "events"
+      ? PUBLIC_TRACKING_EVENTS_RATE_LIMIT_MAX_ATTEMPTS
+      : PUBLIC_TRACKING_VIEW_RATE_LIMIT_MAX_ATTEMPTS;
+    const windowSeconds = normalizedBucket === "events"
+      ? PUBLIC_TRACKING_EVENTS_RATE_LIMIT_WINDOW_SECONDS
+      : PUBLIC_TRACKING_VIEW_RATE_LIMIT_WINDOW_SECONDS;
+    const key = buildPublicTrackingRateLimitKey({ ipAddress, bucket: normalizedBucket });
+    const currentAttempts = normalizeRateLimitCounter(await store.get(key));
+
+    if (currentAttempts >= maxAttempts) {
+      throw new HttpError(429, "Demasiadas solicitudes publicas. Intenta nuevamente en unos minutos.");
+    }
+
+    await store.put(key, String(currentAttempts + 1), {
+      expirationTtl: windowSeconds,
+    });
+  }
+
+  function encodeSseData(payload) {
+    return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+  }
+
+  function encodeSseComment(comment) {
+    return encoder.encode(`:${String(comment || "ping")}\n\n`);
+  }
+
+  function normalizeSnapshotSignature(snapshot) {
+    try {
+      return JSON.stringify(snapshot || null);
+    } catch {
+      return "null";
+    }
+  }
+
   async function handlePublicTrackingWebRoute(
     request,
     env,
@@ -157,11 +230,13 @@ export function createPublicTrackingRouteHandlers({
     }
 
     const token = decodeURIComponent(String(routeParts[1] || ""));
+    const requestIp = getClientIpForRateLimit(request);
     if (!token) {
       return textResponse(request, env, corsPolicy, "Ruta no encontrada.", 404);
     }
 
     if (routeParts.length === 2 && request.method === "GET") {
+      await enforcePublicTrackingRateLimit(env, requestIp, "view");
       try {
         await resolvePublicTrackingRequest(env, token);
         return new Response(renderPublicTrackingHtml({ token }), {
@@ -190,10 +265,130 @@ export function createPublicTrackingRouteHandlers({
       routeParts[2] === "state" &&
       request.method === "GET"
     ) {
+      await enforcePublicTrackingRateLimit(env, requestIp, "view");
       const trackingRequest = await resolvePublicTrackingRequest(env, token);
+      if (!trackingRequest.entry?.snapshot || typeof trackingRequest.entry.snapshot !== "object") {
+        return jsonResponse(request, env, corsPolicy, {
+          success: false,
+          error: {
+            code: "SNAPSHOT_UNAVAILABLE",
+            message: "El seguimiento publico no esta disponible temporalmente.",
+          },
+        }, 503);
+      }
       return jsonResponse(request, env, corsPolicy, {
         success: true,
         tracking: trackingRequest.entry.snapshot || null,
+      });
+    }
+
+    if (
+      routeParts.length === 3 &&
+      routeParts[2] === "events" &&
+      request.method === "GET"
+    ) {
+      await enforcePublicTrackingRateLimit(env, requestIp, "events");
+      const trackingRequest = await resolvePublicTrackingRequest(env, token);
+      if (!trackingRequest.entry?.snapshot || typeof trackingRequest.entry.snapshot !== "object") {
+        return new Response("snapshot_unavailable", {
+          status: 503,
+          headers: {
+            ...publicTrackingHeaders(),
+            "Content-Type": "text/plain; charset=utf-8",
+            "Retry-After": "15",
+          },
+        });
+      }
+
+      let closed = false;
+      let pollTimer = null;
+      let keepAliveTimer = null;
+      let lastSnapshotSignature = normalizeSnapshotSignature(trackingRequest.entry.snapshot);
+
+      const stream = new ReadableStream({
+        start(controller) {
+          const closeStream = () => {
+            if (closed) return;
+            closed = true;
+            if (pollTimer) clearInterval(pollTimer);
+            if (keepAliveTimer) clearInterval(keepAliveTimer);
+            try {
+              controller.close();
+            } catch {}
+          };
+
+          const sendPayload = (payload) => {
+            if (closed) return;
+            controller.enqueue(encodeSseData(payload));
+          };
+
+          const sendComment = (comment) => {
+            if (closed) return;
+            controller.enqueue(encodeSseComment(comment));
+          };
+
+          const pollSnapshot = async () => {
+            if (closed) return;
+            try {
+              const nextRequest = await resolvePublicTrackingRequest(env, token);
+              const nextSnapshot = nextRequest.entry?.snapshot || null;
+              if (!nextSnapshot || typeof nextSnapshot !== "object") {
+                sendPayload({
+                  type: "snapshot_unavailable",
+                  message: "El seguimiento publico no esta disponible temporalmente.",
+                });
+                closeStream();
+                return;
+              }
+
+              const nextSignature = normalizeSnapshotSignature(nextSnapshot);
+              if (nextSignature !== lastSnapshotSignature) {
+                lastSnapshotSignature = nextSignature;
+                sendPayload({
+                  type: "tracking_updated",
+                  tracking: nextSnapshot,
+                });
+              }
+            } catch (error) {
+              const status = Number(error?.status || 0);
+              sendPayload({
+                type: status === 410 ? "tracking_revoked" : "tracking_expired",
+                message: String(error?.message || "Este enlace ya no esta disponible."),
+              });
+              closeStream();
+            }
+          };
+
+          sendPayload({
+            type: "connected",
+            tracking: trackingRequest.entry.snapshot,
+          });
+
+          pollTimer = setInterval(() => {
+            pollSnapshot().catch(() => {
+              closeStream();
+            });
+          }, PUBLIC_TRACKING_SSE_POLL_INTERVAL_MS);
+
+          keepAliveTimer = setInterval(() => {
+            sendComment("ping");
+          }, PUBLIC_TRACKING_SSE_KEEP_ALIVE_MS);
+        },
+        cancel() {
+          closed = true;
+          if (pollTimer) clearInterval(pollTimer);
+          if (keepAliveTimer) clearInterval(keepAliveTimer);
+        },
+      });
+
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          ...publicTrackingHeaders(),
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache, no-store",
+          Connection: "keep-alive",
+        },
       });
     }
 
