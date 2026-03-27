@@ -31,7 +31,8 @@ test("GET /web/dashboard returns versioned static dashboard and strict CSP", asy
   assert.equal(inlineScripts.length, 0, "Dashboard should not embed inline scripts");
 
   const scripts = extractExternalScripts(html);
-  assert.ok(scripts.some((src) => /^\/chart\.umd\.js\?v=[a-f0-9]{10}$/.test(src)));
+  assert.equal(scripts.some((src) => /^\/chart\.umd\.js\?v=[a-f0-9]{10}$/.test(src)), false);
+  assert.equal(scripts.some((src) => /^\/jsqr\.js\?v=[a-f0-9]{10}$/.test(src)), false);
   assert.ok(scripts.some((src) => /^\/dashboard-modals\.js\?v=[a-f0-9]{10}$/.test(src)));
   assert.ok(scripts.some((src) => /^\/dashboard-incidents\.js\?v=[a-f0-9]{10}$/.test(src)));
   assert.ok(scripts.some((src) => /^\/dashboard-auth\.js\?v=[a-f0-9]{10}$/.test(src)));

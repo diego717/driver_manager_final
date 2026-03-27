@@ -1,0 +1,205 @@
+:root {
+    color-scheme: light;
+    --pt-bg: #f5efe6;
+    --pt-surface: rgba(255, 252, 246, 0.92);
+    --pt-border: rgba(102, 85, 63, 0.16);
+    --pt-text: #2a2218;
+    --pt-text-muted: #6a5b49;
+    --pt-accent: #0f766e;
+    --pt-warning: #b45309;
+    --pt-shadow: 0 18px 45px rgba(58, 42, 24, 0.12);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    color: var(--pt-text);
+    background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.12), transparent 30%),
+        radial-gradient(circle at bottom right, rgba(180, 83, 9, 0.16), transparent 34%),
+        var(--pt-bg);
+}
+
+.public-tracking-shell {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 1.25rem;
+}
+
+.public-tracking-card {
+    width: min(100%, 44rem);
+    background: var(--pt-surface);
+    border: 1px solid var(--pt-border);
+    border-radius: 24px;
+    box-shadow: var(--pt-shadow);
+    padding: 1.4rem;
+    backdrop-filter: blur(14px);
+}
+
+.public-tracking-eyebrow {
+    margin: 0 0 0.35rem;
+    font-size: 0.76rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--pt-text-muted);
+}
+
+#publicTrackingTitle {
+    margin: 0;
+    font-size: clamp(1.7rem, 4vw, 2.35rem);
+    line-height: 1.02;
+}
+
+#publicTrackingMessage {
+    margin: 0.55rem 0 0;
+    color: var(--pt-text-muted);
+    font-size: 1rem;
+}
+
+#publicTrackingMessage[data-tone="success"] {
+    color: var(--pt-accent);
+}
+
+#publicTrackingMessage[data-tone="error"] {
+    color: #991b1b;
+}
+
+#publicTrackingMessage[data-tone="warning"] {
+    color: var(--pt-warning);
+}
+
+#publicTrackingMessage[data-tone="reopened"] {
+    color: #0f5f8f;
+}
+
+.public-tracking-summary {
+    display: grid;
+    gap: 0.55rem;
+    margin-top: 0.9rem;
+    padding: 0.95rem 1rem;
+    border-radius: 18px;
+    border: 1px solid var(--pt-border);
+    background: rgba(255, 255, 255, 0.76);
+}
+
+.public-tracking-summary[data-tone="success"] {
+    background: rgba(15, 118, 110, 0.08);
+}
+
+.public-tracking-summary[data-tone="warning"] {
+    background: rgba(180, 83, 9, 0.08);
+}
+
+.public-tracking-summary[data-tone="reopened"] {
+    background: rgba(15, 95, 143, 0.08);
+}
+
+.public-tracking-status-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: fit-content;
+    max-width: 100%;
+    border-radius: 999px;
+    border: 1px solid var(--pt-border);
+    background: rgba(255, 255, 255, 0.84);
+    padding: 0.42rem 0.72rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: var(--pt-text);
+}
+
+.public-tracking-status-badge[data-tone="success"] {
+    color: var(--pt-accent);
+}
+
+.public-tracking-status-badge[data-tone="warning"] {
+    color: var(--pt-warning);
+}
+
+.public-tracking-status-badge[data-tone="reopened"] {
+    color: #0f5f8f;
+}
+
+.public-tracking-summary-text {
+    margin: 0;
+    color: var(--pt-text);
+    line-height: 1.5;
+}
+
+.public-tracking-transition {
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: var(--pt-text-muted);
+}
+
+.public-tracking-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin-top: 1rem;
+}
+
+.public-tracking-chip {
+    border-radius: 999px;
+    border: 1px solid var(--pt-border);
+    background: rgba(255, 255, 255, 0.72);
+    padding: 0.38rem 0.7rem;
+    font-size: 0.84rem;
+    color: var(--pt-text-muted);
+}
+
+.public-tracking-timeline {
+    margin-top: 1rem;
+    display: grid;
+    gap: 0.7rem;
+}
+
+.public-tracking-timeline-item {
+    border-radius: 18px;
+    border: 1px solid var(--pt-border);
+    background: rgba(255, 255, 255, 0.76);
+    padding: 0.85rem 0.95rem;
+    display: grid;
+    gap: 0.24rem;
+}
+
+.public-tracking-timeline-item[data-type="case_reopened"] {
+    border-color: rgba(15, 95, 143, 0.22);
+    background: rgba(15, 95, 143, 0.08);
+}
+
+.public-tracking-timeline-time,
+.public-tracking-empty {
+    color: var(--pt-text-muted);
+    font-size: 0.88rem;
+}
+
+.public-tracking-refresh {
+    margin-top: 1rem;
+    border: none;
+    border-radius: 999px;
+    background: linear-gradient(135deg, var(--pt-accent), #115e59);
+    color: white;
+    font: inherit;
+    padding: 0.7rem 1rem;
+}
+
+.public-tracking-refresh:disabled {
+    opacity: 0.65;
+}
+
+@media (max-width: 640px) {
+    .public-tracking-card {
+        padding: 1.1rem;
+        border-radius: 20px;
+    }
+}

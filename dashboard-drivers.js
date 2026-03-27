@@ -1,5 +1,22 @@
 (function attachDashboardDriversFactory(global) {
     function createDashboardDrivers(options) {
+        function setContainerMessage(container, className, message) {
+            if (!(container instanceof HTMLElement)) return;
+            const copy = document.createElement('p');
+            copy.className = className;
+            copy.textContent = message;
+            container.replaceChildren(copy);
+        }
+
+        function renderCountSummary(container, count, singularLabel, pluralLabel = `${singularLabel}s`) {
+            if (!(container instanceof HTMLElement)) return;
+            container.replaceChildren('Mostrando ');
+            const countNode = document.createElement('span');
+            countNode.className = 'count';
+            countNode.textContent = String(Math.max(0, Number(count) || 0));
+            container.append(countNode, ` ${Number(count) === 1 ? singularLabel : pluralLabel}`);
+        }
+
         function formatDriverSize(bytes, sizeMb) {
             const numericBytes = Number(bytes);
             if (Number.isFinite(numericBytes) && numericBytes > 0) {
@@ -32,9 +49,9 @@
             const resultsCount = document.getElementById('driversResultsCount');
             if (!tableContainer) return;
 
-            tableContainer.innerHTML = '<p class="loading">Cargando drivers...</p>';
+            setContainerMessage(tableContainer, 'loading', 'Cargando drivers...');
             if (resultsCount) {
-                resultsCount.innerHTML = '<span class="loading">Buscando...</span>';
+                setContainerMessage(resultsCount, 'loading', 'Buscando...');
             }
 
             try {
@@ -44,8 +61,7 @@
                 renderDriversTable(items);
 
                 if (resultsCount) {
-                    const count = items.length;
-                    resultsCount.innerHTML = `Mostrando <span class="count">${count}</span> driver${count !== 1 ? 's' : ''}`;
+                    renderCountSummary(resultsCount, items.length, 'driver');
                 }
             } catch (_err) {
                 tableContainer.replaceChildren();

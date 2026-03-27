@@ -24,16 +24,25 @@ import SectionCard from "@/src/components/SectionCard";
 import StatusChip from "@/src/components/StatusChip";
 import SyncStatusBanner from "@/src/components/SyncStatusBanner";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
+import { captureCurrentGpsSnapshot } from "@/src/services/location";
 import { enqueueCreateIncident, registerIncidentExecutors } from "@/src/services/sync/incident-outbox-service";
 import { runSync } from "@/src/services/sync/sync-runner";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { getStoredWebAccessUsername } from "@/src/storage/secure";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
 import {
+  type GpsCapturePayload,
   type IncidentSeverity,
   type InstallationRecord,
 } from "@/src/types/api";
+import {
+  evaluateGeofencePreview,
+  formatGeofenceSummary,
+  formatGpsStatusLabel,
+  formatGpsSummary,
+  hasInstallationSiteConfig,
+} from "@/src/utils/gps";
 
 // Register sync executor once
 registerIncidentExecutors();
@@ -105,6 +114,13 @@ export default function CreateIncidentScreen() {
   const [severity, setSeverity] = useState<IncidentSeverity>("medium");
   const [submitting, setSubmitting] = useState(false);
   const [loadingCase, setLoadingCase] = useState(false);
+  const [capturingGps, setCapturingGps] = useState(false);
+  const [gpsSnapshot, setGpsSnapshot] = useState<GpsCapturePayload>({
+    status: "pending",
+    source: "none",
+    note: "",
+  });
+  const [gpsOverrideNote, setGpsOverrideNote] = useState("");
   const [feedbackMessage, setFeedbackMessage] = useState<FeedbackState>(null);
   const [lastCreatedIncidentId, setLastCreatedIncidentId] = useState<number | null>(null);
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -131,6 +147,14 @@ export default function CreateIncidentScreen() {
       }
     );
   }, [installationId, installations]);
+  const geofencePreview = useMemo(
+    () => evaluateGeofencePreview(gpsSnapshot, selectedCase),
+    [gpsSnapshot, selectedCase],
+  );
+  const hasSiteConfig = useMemo(() => hasInstallationSiteConfig(selectedCase), [selectedCase]);
+  const requiresGpsOverride = gpsSnapshot.status !== "captured";
+  const requiresGeofenceOverride = gpsSnapshot.status === "captured" && geofencePreview.result === "outside";
+  const showGpsOverrideField = requiresGpsOverride || requiresGeofenceOverride;
 
   const clearFeedbackSoon = useCallback(() => {
     if (feedbackTimeoutRef.current) {
@@ -163,11 +187,32 @@ export default function CreateIncidentScreen() {
     }
   }, [hasActiveSession, installationId, notify]);
 
+  const captureGps = useCallback(async (options?: { silent?: boolean }) => {
+    if (capturingGps) return;
+    try {
+      setCapturingGps(true);
+      const snapshot = await captureCurrentGpsSnapshot();
+      setGpsSnapshot(snapshot);
+      if (snapshot.status === "captured" && options?.silent !== true) {
+        notify("info", "Ubicacion capturada para respaldar la incidencia.");
+      }
+    } catch (error) {
+      setGpsSnapshot({
+        status: "unavailable",
+        source: "browser",
+        note: extractApiError(error),
+      });
+    } finally {
+      setCapturingGps(false);
+    }
+  }, [capturingGps, notify]);
+
   useFocusEffect(
     useCallback(() => {
       if (!hasActiveSession || !installationId) return;
       void loadCases();
-    }, [hasActiveSession, installationId, loadCases]),
+      void captureGps({ silent: true });
+    }, [captureGps, hasActiveSession, installationId, loadCases]),
   );
 
   useEffect(() => {
@@ -197,6 +242,27 @@ export default function CreateIncidentScreen() {
       return;
     }
 
+    let gpsPayload: GpsCapturePayload = gpsSnapshot;
+    let geofenceOverrideNote = "";
+    const normalizedOverride = gpsOverrideNote.trim();
+    if (gpsSnapshot.status !== "captured") {
+      if (!normalizedOverride) {
+        notify("warning", "Si no hay GPS valido, registra un motivo de override antes de guardar.");
+        return;
+      }
+      gpsPayload = {
+        status: "override",
+        source: "override",
+        note: normalizedOverride,
+      };
+    } else if (geofencePreview.result === "outside") {
+      if (!normalizedOverride) {
+        notify("warning", "La captura GPS quedo fuera del radio. Debes justificar la excepcion.");
+        return;
+      }
+      geofenceOverrideNote = normalizedOverride;
+    }
+
     try {
       setSubmitting(true);
 
@@ -208,6 +274,8 @@ export default function CreateIncidentScreen() {
         timeAdjustmentSeconds: 0,
         severity,
         source: "mobile",
+        gps: gpsPayload,
+        geofenceOverrideNote,
       });
 
       setLastCreatedIncidentId(localId as unknown as number); // localId used for navigation
@@ -395,7 +463,7 @@ export default function CreateIncidentScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Cambiar el caso resuelto"
               >
-                <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>
+            <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>
                   Cambiar contexto
                 </Text>
               </TouchableOpacity>
@@ -407,6 +475,124 @@ export default function CreateIncidentScreen() {
             body="Refresca o vuelve al paso anterior para resolverlo otra vez."
           />
         )}
+      </SectionCard>
+
+      <SectionCard
+        title="GPS y geofence"
+        description="La incidencia intenta registrar ubicacion y compararla contra el sitio configurado del caso."
+        aside={
+          <TouchableOpacity
+            style={[
+              styles.ghostButton,
+              { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+              capturingGps && styles.buttonDisabled,
+            ]}
+            onPress={() => {
+              void captureGps();
+            }}
+            disabled={capturingGps}
+            accessibilityRole="button"
+            accessibilityLabel="Recapturar ubicacion para la incidencia"
+            accessibilityState={{ disabled: capturingGps, busy: capturingGps }}
+          >
+            {capturingGps ? (
+              <ActivityIndicator size="small" color={palette.refreshText} />
+            ) : (
+              <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>Recapturar</Text>
+            )}
+          </TouchableOpacity>
+        }
+      >
+        <View
+          style={[
+            styles.gpsCard,
+            {
+              backgroundColor:
+                gpsSnapshot.status === "captured"
+                  ? palette.infoBg
+                  : gpsSnapshot.status === "override" || gpsSnapshot.status === "denied"
+                    ? palette.warningBg
+                    : palette.surfaceAlt,
+              borderColor:
+                gpsSnapshot.status === "captured"
+                  ? palette.infoBorder
+                  : gpsSnapshot.status === "override" || gpsSnapshot.status === "denied"
+                    ? palette.warningText
+                    : palette.border,
+            },
+          ]}
+        >
+          <Text style={[styles.gpsTitle, { color: palette.textPrimary }]}>
+            {formatGpsStatusLabel(gpsSnapshot.status)}
+          </Text>
+          <Text style={[styles.gpsBody, { color: palette.textSecondary }]}>
+            {formatGpsSummary(gpsSnapshot)}
+          </Text>
+          <Text
+            style={[
+              styles.gpsFootnote,
+              {
+                color:
+                  geofencePreview.result === "outside"
+                    ? palette.warningText
+                    : geofencePreview.result === "inside"
+                      ? palette.successText
+                      : palette.textMuted,
+              },
+            ]}
+          >
+            {formatGeofenceSummary(geofencePreview)}
+          </Text>
+          {hasSiteConfig ? (
+            <Text style={[styles.gpsFootnote, { color: palette.textMuted }]}>
+              Sitio: {Number(selectedCase?.site_lat).toFixed(5)}, {Number(selectedCase?.site_lng).toFixed(5)} · radio{" "}
+              {Math.round(Number(selectedCase?.site_radius_m) || 0)} m
+            </Text>
+          ) : null}
+        </View>
+
+        {showGpsOverrideField ? (
+          <>
+            <Text style={[styles.label, { color: palette.label }]}>
+              {requiresGeofenceOverride ? "Motivo de excepcion geofence" : "Motivo de override GPS"}
+            </Text>
+            <TextInput
+              value={gpsOverrideNote}
+              onChangeText={setGpsOverrideNote}
+              style={[
+                styles.input,
+                styles.overrideInput,
+                {
+                  backgroundColor: palette.inputBg,
+                  borderColor: requiresGeofenceOverride ? palette.warningText : palette.inputBorder,
+                  color: palette.textPrimary,
+                },
+              ]}
+              multiline
+              placeholder={
+                requiresGeofenceOverride
+                  ? "Explica por que registras la incidencia fuera del radio configurado."
+                  : "Explica por que registras la incidencia sin coordenadas validas."
+              }
+              placeholderTextColor={palette.placeholder}
+              selectionColor={textInputAccentColor}
+              cursorColor={textInputAccentColor}
+              accessibilityLabel={
+                requiresGeofenceOverride ? "Motivo de excepcion geofence" : "Motivo de override GPS"
+              }
+            />
+            <Text
+              style={[
+                styles.gpsFootnote,
+                { color: requiresGeofenceOverride ? palette.warningText : palette.textMuted },
+              ]}
+            >
+              {requiresGeofenceOverride
+                ? "Si la politica hard geofence esta activa en web, esta justificacion evita el bloqueo."
+                : "Solo se usa cuando el telefono no entrega una ubicacion util para auditar la incidencia."}
+            </Text>
+          </>
+        ) : null}
       </SectionCard>
 
       <SectionCard
@@ -429,6 +615,8 @@ export default function CreateIncidentScreen() {
           multiline
           placeholder="Describe la incidencia"
           placeholderTextColor={palette.placeholder}
+          selectionColor={textInputAccentColor}
+          cursorColor={textInputAccentColor}
           accessibilityLabel="Nota de la incidencia"
         />
 
@@ -556,6 +744,27 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
   },
+  gpsCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 14,
+    gap: 6,
+  },
+  gpsTitle: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 15,
+    lineHeight: 20,
+  },
+  gpsBody: {
+    fontFamily: fontFamilies.regular,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  gpsFootnote: {
+    fontFamily: fontFamilies.medium,
+    fontSize: 12.5,
+    lineHeight: 17,
+  },
   contextActionRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -575,9 +784,16 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 11,
+    fontFamily: inputFontFamily,
+    fontSize: 14,
+    lineHeight: 19,
   },
   noteInput: {
     minHeight: 120,
+    textAlignVertical: "top",
+  },
+  overrideInput: {
+    minHeight: 96,
     textAlignVertical: "top",
   },
   severityWrap: {

@@ -1,6 +1,7 @@
 (function attachDashboardRealtimeFactory(global) {
     function createDashboardRealtime(options) {
         let eventSource = null;
+        let eventSourceEpoch = 0;
         let sseReconnectTimer = null;
         let sseReconnectAttempts = 0;
         let sseLastConnectAttemptAt = 0;
@@ -56,11 +57,37 @@
             }, delayMs);
         }
 
+        let lastSyncAt = 0;
+        const SYNC_COOLDOWN_MS = 1000;
+
+        function renderVisibleResultsCount(container, visibleCount, totalCount) {
+            if (!(container instanceof HTMLElement)) return;
+            const normalizedVisible = Math.max(0, Number(visibleCount) || 0);
+            const normalizedTotal = Math.max(0, Number(totalCount) || 0);
+            container.replaceChildren('Mostrando ');
+            const visibleNode = document.createElement('span');
+            visibleNode.className = 'count';
+            visibleNode.textContent = String(normalizedVisible);
+            const totalNode = document.createElement('span');
+            totalNode.className = 'count';
+            totalNode.textContent = String(normalizedTotal);
+            container.append(visibleNode, ' de ', totalNode, ` resultado${normalizedTotal !== 1 ? 's' : ''}`);
+        }
+
         function syncSSEForCurrentContext(forceReconnect = false) {
             if (!canUseRealtimeNow()) {
                 closeSSE();
                 updateConnectionStatus('paused');
                 return;
+            }
+
+            const now = Date.now();
+            if (forceReconnect && (now - lastSyncAt < SYNC_COOLDOWN_MS)) {
+                console.log('[SSE] Sync throttled');
+                return;
+            }
+            if (forceReconnect) {
+                lastSyncAt = now;
             }
 
             if (forceReconnect || !eventSource) {
@@ -76,6 +103,9 @@
 
             const now = Date.now();
             if (now - sseLastConnectAttemptAt < options.minConnectGapMs) {
+                if (eventSource) {
+                    return;
+                }
                 scheduleSSEReconnect(options.minConnectGapMs);
                 return;
             }
@@ -86,21 +116,29 @@
                 sseReconnectTimer = null;
             }
             if (eventSource) {
+                eventSource.onopen = null;
+                eventSource.onmessage = null;
+                eventSource.onerror = null;
                 eventSource.close();
                 eventSource = null;
             }
 
             try {
                 const sseUrl = `${options.apiBase}/web/events`;
-                eventSource = new EventSource(sseUrl, { withCredentials: true });
+                const nextEventSource = new EventSource(sseUrl, { withCredentials: true });
+                const nextEpoch = eventSourceEpoch + 1;
+                eventSourceEpoch = nextEpoch;
+                eventSource = nextEventSource;
 
-                eventSource.onopen = () => {
+                nextEventSource.onopen = () => {
+                    if (eventSource !== nextEventSource || eventSourceEpoch !== nextEpoch) return;
                     console.log('[SSE] Connection established');
                     sseReconnectAttempts = 0;
                     updateConnectionStatus('connected');
                 };
 
-                eventSource.onmessage = (event) => {
+                nextEventSource.onmessage = (event) => {
+                    if (eventSource !== nextEventSource || eventSourceEpoch !== nextEpoch) return;
                     try {
                         const data = JSON.parse(event.data);
                         handleSSEMessage(data);
@@ -109,9 +147,13 @@
                     }
                 };
 
-                eventSource.onerror = (error) => {
+                nextEventSource.onerror = (error) => {
+                    if (eventSource !== nextEventSource || eventSourceEpoch !== nextEpoch) return;
                     console.error('[SSE] Connection error:', error);
                     if (eventSource) {
+                        eventSource.onopen = null;
+                        eventSource.onmessage = null;
+                        eventSource.onerror = null;
                         eventSource.close();
                         eventSource = null;
                     }
@@ -205,9 +247,7 @@
                     const resultsCount = document.getElementById('resultsCount');
                     if (resultsCount) {
                         const count = nextInstallations.length;
-                        resultsCount.innerHTML =
-                            `Mostrando <span class="count">${Math.min(count, 50)}</span> ` +
-                            `de <span class="count">${count}</span> resultado${count !== 1 ? 's' : ''}`;
+                        renderVisibleResultsCount(resultsCount, Math.min(count, 50), count);
                     }
                 }
             }
@@ -297,6 +337,9 @@
 
         function closeSSE() {
             if (eventSource) {
+                eventSource.onopen = null;
+                eventSource.onmessage = null;
+                eventSource.onerror = null;
                 eventSource.close();
                 eventSource = null;
             }
@@ -304,6 +347,7 @@
                 clearTimeout(sseReconnectTimer);
                 sseReconnectTimer = null;
             }
+            eventSourceEpoch += 1;
 
             connectionStatusLastRendered = { status: '', at: 0 };
             const indicator = document.getElementById('connectionStatus');

@@ -227,30 +227,77 @@ export function createInstallationsRouteHandlers({
         const installationId = parsePositiveInt(recordId, "id");
         const data = await readJsonOrThrowBadRequest(request);
         const payload = normalizeInstallationUpdatePayload(data);
+        const updateAssignments = [];
+        const bindings = [];
+
+        if (Object.prototype.hasOwnProperty.call(payload, "notes")) {
+          updateAssignments.push("notes = ?");
+          bindings.push(payload.notes);
+        }
+        if (Object.prototype.hasOwnProperty.call(payload, "installation_time_seconds")) {
+          updateAssignments.push("installation_time_seconds = ?");
+          bindings.push(payload.installation_time_seconds);
+        }
+        if (payload.has_site_config === true) {
+          updateAssignments.push("site_lat = ?", "site_lng = ?", "site_radius_m = ?");
+          bindings.push(payload.site_lat, payload.site_lng, payload.site_radius_m);
+        }
+
+        if (!updateAssignments.length) {
+          throw new HttpError(400, "No hay campos validos para actualizar.");
+        }
+
         const updateResult = await env.DB.prepare(`
           UPDATE installations
-          SET notes = ?, installation_time_seconds = ?
+          SET ${updateAssignments.join(", ")}
           WHERE id = ?
             AND tenant_id = ?
         `)
-          .bind(payload.notes, payload.installation_time_seconds, installationId, installationsTenantId)
+          .bind(...bindings, installationId, installationsTenantId)
           .run();
 
         if (!Number(updateResult?.meta?.changes || 0)) {
           throw new HttpError(404, "Registro no encontrado.");
         }
 
+        const { results } = await env.DB.prepare(`
+          SELECT *
+          FROM installations
+          WHERE id = ?
+            AND tenant_id = ?
+          LIMIT 1
+        `)
+          .bind(installationId, installationsTenantId)
+          .all();
+        const updatedInstallation = results?.[0] || null;
+
+        const summaryById = await loadInstallationOperationalSummaries(
+          env,
+          [installationId],
+          installationsTenantId,
+        );
+        const enrichedInstallation = updatedInstallation
+          ? mapInstallationWithOperationalState(updatedInstallation, summaryById)
+          : {
+              id: installationId,
+              notes: payload.notes,
+              installation_time_seconds: payload.installation_time_seconds,
+              site_lat: payload.site_lat,
+              site_lng: payload.site_lng,
+              site_radius_m: payload.site_radius_m,
+            };
+
         await publishRealtimeEvent(env, {
           type: "installation_updated",
-          installation: {
-            id: installationId,
-            notes: payload.notes,
-            installation_time_seconds: payload.installation_time_seconds,
-          },
+          installation: enrichedInstallation,
         }, realtimeTenantId);
         await publishRealtimeStatsUpdate(env, realtimeTenantId);
 
-        return jsonResponse(request, env, corsPolicy, { success: true, updated: String(installationId) });
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          updated: String(installationId),
+          installation: enrichedInstallation,
+        });
       }
 
       if (request.method === "DELETE") {

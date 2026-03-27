@@ -14,6 +14,7 @@
         function runSectionLoaders(section) {
             options.validateSectionBindings(section, { notify: true });
             if (section === 'installations') options.loadInstallations();
+            if (section === 'incidents') options.loadIncidentsWorkspace?.();
             if (section === 'assets') options.loadAssets();
             if (section === 'drivers') options.loadDrivers();
             if (section === 'audit') options.loadAuditLogs();

@@ -4,6 +4,8 @@ import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
   Alert,
+  Linking,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -17,6 +19,11 @@ import {
   listInstallations,
   updateIncidentStatus,
 } from "@/src/api/incidents";
+import {
+  createInstallationPublicTrackingLink,
+  deleteInstallationPublicTrackingLink,
+  getInstallationPublicTrackingLink,
+} from "@/src/api/public-tracking";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import RuntimeChip from "@/src/components/RuntimeChip";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -28,7 +35,7 @@ import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
-import { type Incident, type IncidentStatus, type InstallationRecord } from "@/src/types/api";
+import { type Incident, type IncidentStatus, type InstallationRecord, type PublicTrackingLink } from "@/src/types/api";
 import {
   formatDateTime,
   formatDuration,
@@ -56,8 +63,11 @@ export default function WorkTabScreen() {
   const [loading, setLoading] = useState(false);
   const [loadingInstallations, setLoadingInstallations] = useState(false);
   const [updatingIncidentId, setUpdatingIncidentId] = useState<number | null>(null);
+  const [loadingTrackingLink, setLoadingTrackingLink] = useState(false);
+  const [trackingActionBusy, setTrackingActionBusy] = useState(false);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
+  const [trackingLink, setTrackingLink] = useState<PublicTrackingLink | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const { checkingSession, hasActiveSession } = useSharedWebSessionState();
 
@@ -99,6 +109,27 @@ export default function WorkTabScreen() {
         Alert.alert("Error", `No se pudieron cargar los casos: ${extractApiError(error)}`);
       } finally {
         setLoadingInstallations(false);
+      }
+    },
+    [hasActiveSession],
+  );
+
+  const loadTrackingLink = useCallback(
+    async (targetInstallationId: number, options?: { silent?: boolean }) => {
+      if (!hasActiveSession) return;
+      if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) return;
+
+      try {
+        setLoadingTrackingLink(true);
+        const link = await getInstallationPublicTrackingLink(targetInstallationId);
+        setTrackingLink(link);
+      } catch (error) {
+        setTrackingLink(null);
+        if (options?.silent !== true) {
+          Alert.alert("Tracking publico", extractApiError(error));
+        }
+      } finally {
+        setLoadingTrackingLink(false);
       }
     },
     [hasActiveSession],
@@ -188,9 +219,12 @@ export default function WorkTabScreen() {
       if (!hasActiveSession) return;
       const parsedInstallationId = Number.parseInt(installationId, 10);
       if (Number.isInteger(parsedInstallationId) && parsedInstallationId > 0) {
-        void loadIncidents(parsedInstallationId);
+        void Promise.all([
+          loadIncidents(parsedInstallationId),
+          loadTrackingLink(parsedInstallationId, { silent: true }),
+        ]);
       }
-    }, [hasActiveSession, installationId, loadIncidents]),
+    }, [hasActiveSession, installationId, loadIncidents, loadTrackingLink]),
   );
 
   useEffect(() => {
@@ -234,6 +268,66 @@ export default function WorkTabScreen() {
       return new Date(left.created_at || 0).getTime() - new Date(right.created_at || 0).getTime();
     })[0] ?? null;
   }, [activeIncidents]);
+  const activeTrackingUrl = trackingLink?.active === true
+    ? String(trackingLink?.tracking_url || "").trim()
+    : "";
+
+  const handleCreateTrackingLink = useCallback(async () => {
+    const parsedInstallationId = Number.parseInt(installationId, 10);
+    if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) return;
+    try {
+      setTrackingActionBusy(true);
+      const link = await createInstallationPublicTrackingLink(parsedInstallationId);
+      setTrackingLink(link);
+      Alert.alert("Tracking publico", "Enlace publico listo para compartir.");
+    } catch (error) {
+      Alert.alert("Tracking publico", extractApiError(error));
+    } finally {
+      setTrackingActionBusy(false);
+    }
+  }, [installationId]);
+
+  const handleRevokeTrackingLink = useCallback(async () => {
+    const parsedInstallationId = Number.parseInt(installationId, 10);
+    if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) return;
+    try {
+      setTrackingActionBusy(true);
+      await deleteInstallationPublicTrackingLink(parsedInstallationId);
+      setTrackingLink((current) => current ? {
+        ...current,
+        active: false,
+        status: "revoked",
+        tracking_url: null,
+      } : null);
+      Alert.alert("Tracking publico", "Enlace publico revocado.");
+    } catch (error) {
+      Alert.alert("Tracking publico", extractApiError(error));
+    } finally {
+      setTrackingActionBusy(false);
+    }
+  }, [installationId]);
+
+  const handleOpenTrackingLink = useCallback(async () => {
+    if (!activeTrackingUrl) return;
+    const supported = await Linking.canOpenURL(activeTrackingUrl);
+    if (!supported) {
+      Alert.alert("Tracking publico", "No se pudo abrir el enlace en este dispositivo.");
+      return;
+    }
+    await Linking.openURL(activeTrackingUrl);
+  }, [activeTrackingUrl]);
+
+  const handleShareTrackingLink = useCallback(async () => {
+    if (!activeTrackingUrl) return;
+    try {
+      await Share.share({
+        message: `Seguimiento del servicio: ${activeTrackingUrl}`,
+        url: activeTrackingUrl,
+      });
+    } catch (error) {
+      Alert.alert("Tracking publico", extractApiError(error));
+    }
+  }, [activeTrackingUrl]);
 
   if (checkingSession) {
     return (
@@ -481,6 +575,164 @@ export default function WorkTabScreen() {
 
 
 
+      {activeIncidents.length === 0 && currentInstallationRecord ? (
+        <SectionCard
+          title="Cierre operativo"
+          description="No quedan incidencias activas en este caso. Ya puedes emitir la conformidad final."
+        >
+          <View
+            style={[
+              styles.focusCard,
+              { backgroundColor: palette.heroBg, borderColor: palette.heroBorder },
+            ]}
+          >
+            <Text style={[styles.focusTitle, { color: palette.textPrimary }]}>
+              Caso #{currentInstallationRecord.id} listo para conformidad
+            </Text>
+            <Text style={[styles.focusBody, { color: palette.textSecondary }]}>
+              Captura la firma del cliente y envia el PDF final por email desde este mismo flujo.
+            </Text>
+            <TouchableOpacity
+              style={[styles.primaryAction, { backgroundColor: palette.primaryButtonBg }]}
+              onPress={() =>
+                router.push(`/case/conformity?installationId=${currentInstallationRecord.id}` as never)
+              }
+              accessibilityRole="button"
+              accessibilityLabel={`Abrir conformidad final del caso ${currentInstallationRecord.id}`}
+            >
+              <Text style={[styles.primaryActionText, { color: palette.primaryButtonText }]}>
+                Abrir conformidad final
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </SectionCard>
+      ) : null}
+
+      {currentInstallationRecord ? (
+        <SectionCard
+          title="Tracking publico"
+          description="Genera un enlace de solo lectura para compartir el estado del caso."
+          aside={
+            loadingTrackingLink ? (
+              <ActivityIndicator size="small" color={palette.loadingSpinner} />
+            ) : trackingLink?.active ? (
+              <View
+                style={[
+                  styles.missionBadge,
+                  { backgroundColor: palette.heroEyebrowBg, borderColor: palette.heroBorder },
+                ]}
+              >
+                <Text style={[styles.missionBadgeText, { color: palette.heroEyebrowText }]}>
+                  activo
+                </Text>
+              </View>
+            ) : undefined
+          }
+        >
+          <View
+            style={[
+              styles.focusCard,
+              { backgroundColor: palette.surfaceAlt, borderColor: palette.border },
+            ]}
+          >
+            <Text style={[styles.focusTitle, { color: palette.textPrimary }]}>
+              {trackingLink?.active ? "Enlace listo para compartir" : "Sin enlace publico activo"}
+            </Text>
+            <Text style={[styles.focusBody, { color: palette.textSecondary }]}>
+              {trackingLink?.active
+                ? trackingLink.snapshot?.summary_text || "El cliente puede seguir el estado actual del caso con este enlace."
+                : "Solo admin o super_admin puede generar el Magic Link publico desde mobile."}
+            </Text>
+            {trackingLink?.active && activeTrackingUrl ? (
+              <Text style={[styles.supportingText, { color: palette.textMuted }]}>
+                {activeTrackingUrl}
+              </Text>
+            ) : null}
+            {trackingLink?.active && trackingLink.expires_at ? (
+              <Text style={[styles.supportingText, { color: palette.textMuted }]}>
+                Expira: {formatDateTime(trackingLink.expires_at)}
+              </Text>
+            ) : null}
+            <View style={styles.contextActionRow}>
+              <TouchableOpacity
+                style={[
+                  styles.primaryAction,
+                  { backgroundColor: palette.primaryButtonBg },
+                  trackingActionBusy && styles.buttonDisabled,
+                ]}
+                onPress={() => {
+                  void handleCreateTrackingLink();
+                }}
+                disabled={trackingActionBusy}
+                accessibilityRole="button"
+                accessibilityLabel={`Crear o regenerar enlace publico del caso ${currentInstallationRecord.id}`}
+              >
+                {trackingActionBusy ? (
+                  <ActivityIndicator color={palette.primaryButtonText} />
+                ) : (
+                  <Text style={[styles.primaryActionText, { color: palette.primaryButtonText }]}>
+                    {trackingLink?.active ? "Regenerar enlace" : "Crear enlace"}
+                  </Text>
+                )}
+              </TouchableOpacity>
+              {trackingLink?.active && activeTrackingUrl ? (
+                <TouchableOpacity
+                  style={[
+                    styles.secondaryButton,
+                    { backgroundColor: palette.secondaryButtonBg, borderColor: palette.inputBorder },
+                  ]}
+                  onPress={() => {
+                    void handleShareTrackingLink();
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Compartir enlace publico del caso ${currentInstallationRecord.id}`}
+                >
+                  <Text style={[styles.secondaryButtonText, { color: palette.secondaryButtonText }]}>
+                    Compartir
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            {trackingLink?.active && activeTrackingUrl ? (
+              <View style={styles.contextActionRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.ghostButton,
+                    { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+                  ]}
+                  onPress={() => {
+                    void handleOpenTrackingLink();
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Abrir tracking publico del caso ${currentInstallationRecord.id}`}
+                >
+                  <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>
+                    Abrir seguimiento
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.ghostButton,
+                    { backgroundColor: palette.warningBg, borderColor: palette.warningText },
+                    trackingActionBusy && styles.buttonDisabled,
+                  ]}
+                  onPress={() => {
+                    void handleRevokeTrackingLink();
+                  }}
+                  disabled={trackingActionBusy}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Revocar enlace publico del caso ${currentInstallationRecord.id}`}
+                >
+                  <Text style={[styles.ghostButtonText, { color: palette.warningText }]}>
+                    Revocar enlace
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+          </View>
+        </SectionCard>
+      ) : null}
+
       <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>
         Cola del caso ({activeIncidents.length})
       </Text>
@@ -713,6 +965,67 @@ const styles = StyleSheet.create({
   topActionText: {
     fontFamily: fontFamilies.bold,
     fontSize: 14,
+  },
+  focusCard: {
+    borderWidth: 1,
+    borderRadius: 20,
+    padding: 16,
+    gap: 12,
+  },
+  focusTitle: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 19,
+    lineHeight: 24,
+  },
+  focusBody: {
+    fontFamily: fontFamilies.regular,
+    fontSize: 13.5,
+    lineHeight: 19,
+  },
+  primaryAction: {
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 13,
+  },
+  primaryActionText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 14.5,
+  },
+  contextActionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  secondaryButton: {
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    borderWidth: 1,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  secondaryButtonText: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 13.5,
+  },
+  ghostButton: {
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    borderWidth: 1,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  ghostButtonText: {
+    fontFamily: fontFamilies.semibold,
+    fontSize: 13.5,
+  },
+  buttonDisabled: {
+    opacity: 0.72,
   },
   utilityLabel: {
     fontFamily: fontFamilies.regular,

@@ -14,7 +14,7 @@ import { loginWebSession } from "@/src/api/webAuth";
 import { refreshSharedWebSessionState } from "@/src/session/web-session-store";
 import { getStoredWebAccessUsername } from "@/src/storage/secure";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
 
 type WebInlineLoginCardProps = {
   hint: string;
@@ -135,6 +135,8 @@ export default function WebInlineLoginCard(props: WebInlineLoginCardProps) {
           ]}
           placeholder="nombre_usuario"
           placeholderTextColor={palette.placeholder}
+          selectionColor={textInputAccentColor}
+          cursorColor={textInputAccentColor}
           accessibilityLabel="Usuario web para iniciar sesion"
           onFocus={() => setFocusedField("username")}
           onBlur={() => setFocusedField((current) => (current === "username" ? null : current))}
@@ -173,6 +175,8 @@ export default function WebInlineLoginCard(props: WebInlineLoginCardProps) {
           ]}
           placeholder="********"
           placeholderTextColor={palette.placeholder}
+          selectionColor={textInputAccentColor}
+          cursorColor={textInputAccentColor}
           accessibilityLabel="Contrasena web para iniciar sesion"
           onFocus={() => setFocusedField("password")}
           onBlur={() => setFocusedField((current) => (current === "password" ? null : current))}
@@ -349,7 +353,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    fontFamily: fontFamilies.regular,
+    fontFamily: inputFontFamily,
   },
   inputCompact: {
     minHeight: 44,

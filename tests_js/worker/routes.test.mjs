@@ -10,6 +10,7 @@ import { createMaintenanceRouteHandlers } from "../../worker/routes/maintenance.
 import { createRecordsRouteHandlers } from "../../worker/routes/records.js";
 import { createStatisticsRouteHandlers } from "../../worker/routes/statistics.js";
 import { createSystemRouteHandlers } from "../../worker/routes/system.js";
+import { buildPublicTrackingSnapshot } from "../../worker/lib/public-tracking.js";
 
 function jsonResponse(_request, _env, _corsPolicy, body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -23,6 +24,253 @@ function jsonResponse(_request, _env, _corsPolicy, body, status = 200) {
 function textResponse(_request, _env, _corsPolicy, text, status = 200) {
   return new Response(text, { status });
 }
+
+test("public tracking snapshot prioritizes reopened incidents over a previous conformity close", async () => {
+  const installations = [
+    {
+      id: 45,
+      tenant_id: "tenant-a",
+      timestamp: "2026-03-26T09:00:00.000Z",
+    },
+  ];
+  const incidents = [
+    {
+      id: 18,
+      installation_id: 45,
+      tenant_id: "tenant-a",
+      incident_status: "in_progress",
+      created_at: "2026-03-26T10:00:00.000Z",
+      status_updated_at: "2026-03-26T12:30:00.000Z",
+      resolved_at: null,
+      deleted_at: null,
+    },
+  ];
+  const installationConformities = [
+    {
+      id: 7,
+      installation_id: 45,
+      tenant_id: "tenant-a",
+      generated_at: "2026-03-26T11:00:00.000Z",
+      status: "generated",
+      generated_by_username: "ops-admin",
+      photo_count: 0,
+    },
+  ];
+  const env = {
+    DB: {
+      prepare(sql) {
+        const normalized = String(sql || "").replace(/\s+/g, " ").trim();
+        return {
+          bind(...args) {
+            this.args = args;
+            return this;
+          },
+          async all() {
+            if (normalized.startsWith("SELECT id, timestamp FROM installations WHERE id = ?")) {
+              const [installationId, tenantId] = this.args;
+              const rows = installations.filter(
+                (row) => Number(row.id) === Number(installationId) && String(row.tenant_id) === String(tenantId),
+              );
+              return { results: rows.slice(0, 1) };
+            }
+            if (normalized.startsWith("SELECT SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'open' THEN 1 ELSE 0 END) AS incident_open_count")) {
+              const [installationId, tenantId] = this.args;
+              const scoped = incidents.filter(
+                (row) =>
+                  Number(row.installation_id) === Number(installationId) &&
+                  String(row.tenant_id) === String(tenantId) &&
+                  !row.deleted_at,
+              );
+              const countByStatus = (status) =>
+                scoped.filter((row) => String(row.incident_status || "open").toLowerCase() === status).length;
+              return {
+                results: [{
+                  incident_open_count: countByStatus("open"),
+                  incident_in_progress_count: countByStatus("in_progress"),
+                  incident_paused_count: countByStatus("paused"),
+                  incident_resolved_count: countByStatus("resolved"),
+                }],
+              };
+            }
+            if (normalized.startsWith("SELECT id, incident_status, created_at, status_updated_at, resolved_at FROM incidents WHERE installation_id = ?")) {
+              const [installationId, tenantId] = this.args;
+              const rows = incidents
+                .filter(
+                  (row) =>
+                    Number(row.installation_id) === Number(installationId) &&
+                    String(row.tenant_id) === String(tenantId) &&
+                    !row.deleted_at,
+                )
+                .sort((left, right) => {
+                  const leftTs = String(left.status_updated_at || left.created_at || "");
+                  const rightTs = String(right.status_updated_at || right.created_at || "");
+                  const byTs = rightTs.localeCompare(leftTs);
+                  if (byTs !== 0) return byTs;
+                  return Number(right.id) - Number(left.id);
+                });
+              return { results: rows.slice(0, 1) };
+            }
+            if (normalized.startsWith("SELECT * FROM installation_conformities WHERE installation_id = ?")) {
+              const [installationId, tenantId] = this.args;
+              const rows = installationConformities
+                .filter(
+                  (row) =>
+                    Number(row.installation_id) === Number(installationId) &&
+                    String(row.tenant_id) === String(tenantId),
+                )
+                .sort((left, right) => {
+                  const byTs = String(right.generated_at || "").localeCompare(String(left.generated_at || ""));
+                  if (byTs !== 0) return byTs;
+                  return Number(right.id) - Number(left.id);
+                });
+              return { results: rows.slice(0, 1) };
+            }
+            throw new Error(`Unhandled SQL in test: ${normalized}`);
+          },
+        };
+      },
+    },
+  };
+
+  const snapshot = await buildPublicTrackingSnapshot(env, {
+    tenantId: "tenant-a",
+    installationId: 45,
+  });
+
+  assert.equal(snapshot.public_status, "en_progreso");
+  assert.equal(snapshot.closed, false);
+  assert.equal(snapshot.reopened, true);
+  assert.equal(snapshot.public_previous_status, "cerrado");
+  assert.equal(snapshot.public_transition_label, "Cerrado -> Caso reabierto, en trabajo");
+  assert.match(snapshot.public_message, /reabierto/i);
+  assert.ok(snapshot.milestones.some((item) => item.type === "case_reopened"));
+  assert.ok(snapshot.milestones.some((item) => item.type === "work_resumed" && /retomado/i.test(item.label)));
+});
+
+test("public tracking snapshot distinguishes delayed-again and closed-again milestones", async () => {
+  const installations = [
+    {
+      id: 52,
+      tenant_id: "tenant-a",
+      timestamp: "2026-03-26T08:00:00.000Z",
+    },
+  ];
+  const incidents = [
+    {
+      id: 24,
+      installation_id: 52,
+      tenant_id: "tenant-a",
+      incident_status: "paused",
+      created_at: "2026-03-26T09:00:00.000Z",
+      status_updated_at: "2026-03-26T12:10:00.000Z",
+      resolved_at: null,
+      deleted_at: null,
+    },
+  ];
+  const installationConformities = [
+    {
+      id: 11,
+      installation_id: 52,
+      tenant_id: "tenant-a",
+      generated_at: "2026-03-26T10:30:00.000Z",
+      status: "generated",
+      generated_by_username: "ops-admin",
+      photo_count: 0,
+    },
+  ];
+  const env = {
+    DB: {
+      prepare(sql) {
+        const normalized = String(sql || "").replace(/\s+/g, " ").trim();
+        return {
+          bind(...args) {
+            this.args = args;
+            return this;
+          },
+          async all() {
+            if (normalized.startsWith("SELECT id, timestamp FROM installations WHERE id = ?")) {
+              const [installationId, tenantId] = this.args;
+              return {
+                results: installations.filter(
+                  (row) => Number(row.id) === Number(installationId) && String(row.tenant_id) === String(tenantId),
+                ).slice(0, 1),
+              };
+            }
+            if (normalized.startsWith("SELECT SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'open' THEN 1 ELSE 0 END) AS incident_open_count")) {
+              const [installationId, tenantId] = this.args;
+              const scoped = incidents.filter(
+                (row) =>
+                  Number(row.installation_id) === Number(installationId) &&
+                  String(row.tenant_id) === String(tenantId) &&
+                  !row.deleted_at,
+              );
+              const countByStatus = (status) =>
+                scoped.filter((row) => String(row.incident_status || "open").toLowerCase() === status).length;
+              return {
+                results: [{
+                  incident_open_count: countByStatus("open"),
+                  incident_in_progress_count: countByStatus("in_progress"),
+                  incident_paused_count: countByStatus("paused"),
+                  incident_resolved_count: countByStatus("resolved"),
+                }],
+              };
+            }
+            if (normalized.startsWith("SELECT id, incident_status, created_at, status_updated_at, resolved_at FROM incidents WHERE installation_id = ?")) {
+              const [installationId, tenantId] = this.args;
+              return {
+                results: incidents.filter(
+                  (row) =>
+                    Number(row.installation_id) === Number(installationId) &&
+                    String(row.tenant_id) === String(tenantId) &&
+                    !row.deleted_at,
+                ).slice(0, 1),
+              };
+            }
+            if (normalized.startsWith("SELECT * FROM installation_conformities WHERE installation_id = ?")) {
+              const [installationId, tenantId] = this.args;
+              return {
+                results: installationConformities.filter(
+                  (row) =>
+                    Number(row.installation_id) === Number(installationId) &&
+                    String(row.tenant_id) === String(tenantId),
+                ).slice(0, 1),
+              };
+            }
+            throw new Error(`Unhandled SQL in test: ${normalized}`);
+          },
+        };
+      },
+    },
+  };
+
+  const snapshot = await buildPublicTrackingSnapshot(env, {
+    tenantId: "tenant-a",
+    installationId: 52,
+  });
+
+  assert.equal(snapshot.public_status, "demorado");
+  assert.equal(snapshot.reopened, true);
+  assert.ok(snapshot.milestones.some((item) => item.type === "case_delayed_again" && /demorado nuevamente/i.test(item.label)));
+  incidents[0].incident_status = "resolved";
+  incidents[0].resolved_at = "2026-03-26T12:20:00.000Z";
+  incidents[0].status_updated_at = "2026-03-26T12:20:00.000Z";
+  installationConformities[0].generated_at = "2026-03-26T13:00:00.000Z";
+
+  const closedAgainSnapshot = await buildPublicTrackingSnapshot(env, {
+    tenantId: "tenant-a",
+    installationId: 52,
+  });
+
+  assert.equal(closedAgainSnapshot.public_status, "cerrado");
+  assert.equal(closedAgainSnapshot.reopened, false);
+  assert.equal(closedAgainSnapshot.public_previous_status, "resuelto");
+  assert.equal(closedAgainSnapshot.public_transition_label, "Resuelto -> Cerrado");
+  assert.ok(
+    closedAgainSnapshot.milestones.some(
+      (item) => item.type === "conformity_generated" && item.label === "Servicio cerrado nuevamente",
+    ),
+  );
+});
 
 function createIncidentRouteDeps(overrides = {}) {
   return {
@@ -63,6 +311,14 @@ function createIncidentRouteDeps(overrides = {}) {
       return {
         incidentStatus: "open",
         resolutionNote: null,
+      };
+    },
+    evaluateGeofence() {
+      return {
+        geofence_distance_m: null,
+        geofence_radius_m: null,
+        geofence_result: "not_applicable",
+        geofence_checked_at: null,
       };
     },
     async loadIncidentForTenant() {
@@ -148,6 +404,7 @@ function createIncidentRouteDeps(overrides = {}) {
     corsHeaders() {
       return {};
     },
+    async syncPublicTrackingSnapshotForInstallation() {},
     ...overrides,
   };
 }
@@ -507,6 +764,7 @@ test("audit logs handler paginates GET responses", async () => {
 test("records handler applies manual defaults and publishes updates", async () => {
   const publishedEvents = [];
   const statsUpdates = [];
+  const publicTrackingRefreshes = [];
   const { handleRecordsRoute } = createRecordsRouteHandlers({
     jsonResponse,
     async readJsonOrThrowBadRequest() {
@@ -530,6 +788,10 @@ test("records handler applies manual defaults and publishes updates", async () =
         installation_time_seconds: 0,
         os_info: "",
         notes: data.notes,
+        has_site_config: false,
+        site_lat: null,
+        site_lng: null,
+        site_radius_m: null,
       };
     },
     buildDefaultInstallationOperationalSummary() {
@@ -542,6 +804,9 @@ test("records handler applies manual defaults and publishes updates", async () =
     },
     async publishRealtimeStatsUpdate(_env, tenantId) {
       statsUpdates.push(tenantId);
+    },
+    async syncPublicTrackingSnapshotForInstallation(_env, payload) {
+      publicTrackingRefreshes.push(payload);
     },
   });
 
@@ -558,10 +823,20 @@ test("records handler applies manual defaults and publishes updates", async () =
             "Sin cliente",
             "Registro manual",
             0,
-            "manual",
-            "manual note",
-            "tenant-z",
-          ]);
+          "manual",
+          "manual note",
+          null,
+          null,
+          null,
+          null,
+          "none",
+          "pending",
+          "",
+          null,
+          null,
+          null,
+          "tenant-z",
+        ]);
           return this;
         },
         async run() {
@@ -600,6 +875,12 @@ test("records handler applies manual defaults and publishes updates", async () =
     },
   ]);
   assert.deepEqual(statsUpdates, ["tenant-z"]);
+  assert.deepEqual(publicTrackingRefreshes, [
+    {
+      tenantId: "tenant-z",
+      installationId: 123,
+    },
+  ]);
 });
 
 test("installations list handler enriches rows and exposes next cursor", async () => {
@@ -786,17 +1067,37 @@ test("installation by id handler updates notes and emits realtime event", async 
 
   const db = {
     prepare(sql) {
-      assert.match(sql, /UPDATE installations/);
+      if (sql.includes("UPDATE installations")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, ["updated", 180, 55, "tenant-b"]);
+            return this;
+          },
+          async run() {
+            return {
+              meta: {
+                changes: 1,
+              },
+            };
+          },
+        };
+      }
+      assert.match(sql, /SELECT \*/);
       return {
         bind(...args) {
-          assert.deepEqual(args, ["updated", 180, 55, "tenant-b"]);
+          assert.deepEqual(args, [55, "tenant-b"]);
           return this;
         },
-        async run() {
+        async all() {
           return {
-            meta: {
-              changes: 1,
-            },
+            results: [{
+              id: 55,
+              notes: "updated",
+              installation_time_seconds: 180,
+              site_lat: null,
+              site_lng: null,
+              site_radius_m: null,
+            }],
           };
         },
       };
@@ -815,7 +1116,18 @@ test("installation by id handler updates notes and emits realtime event", async 
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.deepEqual(body, { success: true, updated: "55" });
+  assert.deepEqual(body, {
+    success: true,
+    updated: "55",
+    installation: {
+      id: 55,
+      notes: "updated",
+      installation_time_seconds: 180,
+      site_lat: null,
+      site_lng: null,
+      site_radius_m: null,
+    },
+  });
   assert.deepEqual(publishedEvents, [
     {
       payload: {
@@ -824,6 +1136,9 @@ test("installation by id handler updates notes and emits realtime event", async 
           id: 55,
           notes: "updated",
           installation_time_seconds: 180,
+          site_lat: null,
+          site_lng: null,
+          site_radius_m: null,
         },
       },
       tenantId: "tenant-b",
@@ -836,7 +1151,9 @@ test("installation incidents handler creates incident and updates installation s
   const realtimeEvents = [];
   const statsUpdates = [];
   const auditEvents = [];
+  const publicTrackingRefreshes = [];
   const { handleInstallationIncidentsRoute } = createIncidentsRouteHandlers({
+    ...createIncidentRouteDeps(),
     jsonResponse,
     parsePositiveInt(value) {
       return Number(value);
@@ -895,6 +1212,9 @@ test("installation incidents handler creates incident and updates installation s
     },
     async publishRealtimeStatsUpdate(_env, tenantId) {
       statsUpdates.push(tenantId);
+    },
+    async syncPublicTrackingSnapshotForInstallation(_env, payload) {
+      publicTrackingRefreshes.push(payload);
     },
   });
 
@@ -966,6 +1286,12 @@ test("installation incidents handler creates incident and updates installation s
   assert.equal(auditEvents.length, 1);
   assert.equal(realtimeEvents.length, 2);
   assert.deepEqual(statsUpdates, ["tenant-q"]);
+  assert.deepEqual(publicTrackingRefreshes, [
+    {
+      tenantId: "tenant-q",
+      installationId: 45,
+    },
+  ]);
 });
 
 test("installation incidents handler returns runtime timing fields on GET", async () => {
@@ -1256,6 +1582,7 @@ test("incident evidence handler updates checklist and evidence note", async () =
 test("incident status handler resolves incidents through the nested installation route", async () => {
   const auditEvents = [];
   const realtimeEvents = [];
+  const publicTrackingRefreshes = [];
   let adminRole = null;
   const { handleIncidentStatusRoute } = createIncidentsRouteHandlers(createIncidentRouteDeps({
     requireAdminRole(role) {
@@ -1301,6 +1628,9 @@ test("incident status handler resolves incidents through the nested installation
     },
     async publishRealtimeEvent(_env, payload, tenantId) {
       realtimeEvents.push({ payload, tenantId });
+    },
+    async syncPublicTrackingSnapshotForInstallation(_env, payload) {
+      publicTrackingRefreshes.push(payload);
     },
   }));
 
@@ -1376,6 +1706,12 @@ test("incident status handler resolves incidents through the nested installation
         },
       },
       tenantId: "tenant-z",
+    },
+  ]);
+  assert.deepEqual(publicTrackingRefreshes, [
+    {
+      tenantId: "tenant-z",
+      installationId: 45,
     },
   ]);
 });

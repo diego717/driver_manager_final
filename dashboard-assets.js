@@ -1,5 +1,22 @@
 (function attachDashboardAssetsFactory(global) {
     function createDashboardAssets(options) {
+        function setContainerMessage(container, className, message) {
+            if (!(container instanceof HTMLElement)) return;
+            const copy = document.createElement('p');
+            copy.className = className;
+            copy.textContent = message;
+            container.replaceChildren(copy);
+        }
+
+        function renderCountSummary(container, count, singularLabel, pluralLabel = `${singularLabel}s`) {
+            if (!(container instanceof HTMLElement)) return;
+            container.replaceChildren('Mostrando ');
+            const countNode = document.createElement('span');
+            countNode.className = 'count';
+            countNode.textContent = String(Math.max(0, Number(count) || 0));
+            container.append(countNode, ` ${Number(count) === 1 ? singularLabel : pluralLabel}`);
+        }
+
         function formatAssetUpdatedMeta(rawValue) {
             const parsedMs = Date.parse(String(rawValue || ''));
             if (!Number.isFinite(parsedMs)) {
@@ -33,6 +50,250 @@
             return item;
         }
 
+        function formatLoanDateTime(rawValue) {
+            const parsedMs = Date.parse(String(rawValue || ''));
+            if (!Number.isFinite(parsedMs)) return '-';
+            return new Date(parsedMs).toLocaleString('es-ES');
+        }
+
+        function resolveLoanStatusMeta(rawStatus) {
+            const normalized = String(rawStatus || '').trim().toLowerCase();
+            if (normalized === 'returned') {
+                return {
+                    badgeClass: 'loan-returned',
+                    label: 'Devuelto',
+                    bannerClass: 'asset-loan-banner-returned',
+                    title: 'Prestamo cerrado',
+                };
+            }
+            if (normalized === 'overdue') {
+                return {
+                    badgeClass: 'loan-overdue',
+                    label: 'Vencido',
+                    bannerClass: 'asset-loan-banner-overdue',
+                    title: 'Prestamo vencido',
+                };
+            }
+            return {
+                badgeClass: 'loan-active',
+                label: 'Activo',
+                bannerClass: 'asset-loan-banner-active',
+                title: 'Prestamo activo',
+            };
+        }
+
+        function createActionField({ id, label, type = 'text', placeholder = '', value = '', rows = 4 } = {}) {
+            const group = document.createElement('div');
+            group.className = 'input-group';
+            const labelNode = document.createElement('label');
+            labelNode.setAttribute('for', id);
+            labelNode.textContent = label;
+            let control;
+            if (type === 'textarea') {
+                control = document.createElement('textarea');
+                control.rows = rows;
+            } else {
+                control = document.createElement('input');
+                control.type = type;
+            }
+            control.id = id;
+            control.placeholder = placeholder;
+            control.value = value;
+            group.append(labelNode, control);
+            return group;
+        }
+
+        function createLoanHistoryItem(loan) {
+            const item = document.createElement('article');
+            item.className = 'asset-loan-item';
+
+            const header = document.createElement('div');
+            header.className = 'asset-loan-item-header';
+            const route = document.createElement('strong');
+            route.className = 'asset-loan-route';
+            route.textContent = `${loan.original_client || '-'} -> ${loan.borrowing_client || '-'}`;
+            const statusBadge = document.createElement('span');
+            const statusMeta = resolveLoanStatusMeta(loan.status);
+            statusBadge.className = `badge ${statusMeta.badgeClass}`;
+            statusBadge.textContent = statusMeta.label;
+            header.append(route, statusBadge);
+
+            const meta = document.createElement('p');
+            meta.className = 'asset-loan-item-meta';
+            const metaParts = [
+                `Salida: ${formatLoanDateTime(loan.loaned_at)}`,
+                loan.expected_return_at ? `Esperado: ${formatLoanDateTime(loan.expected_return_at)}` : 'Sin retorno estimado',
+                loan.returned_at ? `Devuelto: ${formatLoanDateTime(loan.returned_at)}` : null,
+                loan.loaned_by_username ? `Por: ${loan.loaned_by_username}` : null,
+                loan.returned_by_username ? `Devuelto por: ${loan.returned_by_username}` : null,
+            ].filter(Boolean);
+            meta.textContent = metaParts.join(' | ');
+
+            item.append(header, meta);
+
+            if (loan.notes) {
+                const notes = document.createElement('p');
+                notes.className = 'asset-loan-item-notes';
+                notes.textContent = `Notas: ${loan.notes}`;
+                item.appendChild(notes);
+            }
+
+            if (loan.return_notes) {
+                const returnNotes = document.createElement('p');
+                returnNotes.className = 'asset-loan-item-notes';
+                returnNotes.textContent = `Cierre: ${loan.return_notes}`;
+                item.appendChild(returnNotes);
+            }
+
+            return item;
+        }
+
+        async function refreshAssetOperationalDetail(assetId, successMessage = '') {
+            options.closeActionModal(true);
+            if (successMessage) {
+                options.showNotification(successMessage, 'success');
+            }
+            try {
+                await loadAssetDetail(assetId, { keepSelection: true });
+                await loadAssets();
+            } catch (_error) {
+                options.showNotification('La accion se guardo, pero no pudimos refrescar el detalle del equipo.', 'warning');
+            }
+        }
+
+        function openCreateLoanModal(asset) {
+            if (!options.requireActiveSession()) return;
+            if (!options.canCurrentUserEditAssets()) {
+                options.showNotification('Solo admin/super_admin puede registrar prestamos.', 'warning');
+                return;
+            }
+
+            const assetId = Number.parseInt(String(asset?.id || ''), 10);
+            if (!Number.isInteger(assetId) || assetId <= 0) {
+                options.showNotification('asset_id invalido.', 'error');
+                return;
+            }
+
+            const fields = document.createDocumentFragment();
+            fields.append(
+                createActionField({
+                    id: 'assetLoanBorrowingClientInput',
+                    label: 'Cliente receptor',
+                    placeholder: 'Cliente o sede que recibe el equipo',
+                }),
+                createActionField({
+                    id: 'assetLoanExpectedReturnInput',
+                    label: 'Retorno esperado',
+                    type: 'datetime-local',
+                }),
+                createActionField({
+                    id: 'assetLoanNotesInput',
+                    label: 'Notas operativas',
+                    type: 'textarea',
+                    placeholder: 'Motivo del prestamo, contacto o condiciones de entrega',
+                    rows: 4,
+                }),
+            );
+
+            options.openActionModal({
+                title: 'Prestar equipo',
+                subtitle: `Registra el prestamo temporal de ${asset.external_code || `#${assetId}`}.`,
+                submitLabel: 'Registrar prestamo',
+                focusId: 'assetLoanBorrowingClientInput',
+                fields,
+                onSubmit: async () => {
+                    const borrowingClient = String(
+                        document.getElementById('assetLoanBorrowingClientInput')?.value || '',
+                    ).trim();
+                    const expectedReturnRaw = String(
+                        document.getElementById('assetLoanExpectedReturnInput')?.value || '',
+                    ).trim();
+                    const notes = String(document.getElementById('assetLoanNotesInput')?.value || '').trim();
+
+                    if (!borrowingClient) {
+                        throw new Error('Debes indicar el cliente receptor.');
+                    }
+
+                    let expectedReturnAt = null;
+                    if (expectedReturnRaw) {
+                        const parsed = new Date(expectedReturnRaw);
+                        if (Number.isNaN(parsed.getTime())) {
+                            throw new Error('La fecha de retorno es invalida.');
+                        }
+                        expectedReturnAt = parsed.toISOString();
+                    }
+
+                    await options.api.createAssetLoan(assetId, {
+                        borrowing_client: borrowingClient,
+                        expected_return_at: expectedReturnAt,
+                        notes,
+                    });
+
+                    await refreshAssetOperationalDetail(
+                        assetId,
+                        `Prestamo registrado para ${asset.external_code || `#${assetId}`}.`,
+                    );
+                },
+            });
+        }
+
+        function openReturnLoanModal(asset, loan) {
+            if (!options.requireActiveSession()) return;
+            if (!options.canCurrentUserEditAssets()) {
+                options.showNotification('Solo admin/super_admin puede registrar devoluciones.', 'warning');
+                return;
+            }
+
+            const loanId = Number.parseInt(String(loan?.id || ''), 10);
+            const assetId = Number.parseInt(String(asset?.id || ''), 10);
+            if (!Number.isInteger(loanId) || loanId <= 0 || !Number.isInteger(assetId) || assetId <= 0) {
+                options.showNotification('No pudimos identificar el prestamo activo.', 'error');
+                return;
+            }
+
+            const fields = document.createDocumentFragment();
+            const summary = document.createElement('div');
+            summary.className = 'asset-loan-action-summary';
+            summary.textContent =
+                `${loan.original_client || '-'} -> ${loan.borrowing_client || '-'} | ` +
+                `Salida: ${formatLoanDateTime(loan.loaned_at)} | ` +
+                (loan.expected_return_at
+                    ? `Retorno esperado: ${formatLoanDateTime(loan.expected_return_at)}`
+                    : 'Sin retorno esperado');
+            fields.append(
+                summary,
+                createActionField({
+                    id: 'assetLoanReturnNotesInput',
+                    label: 'Notas de devolucion',
+                    type: 'textarea',
+                    placeholder: 'Estado del equipo al volver, faltantes o observaciones',
+                    rows: 4,
+                }),
+            );
+
+            options.openActionModal({
+                title: 'Registrar devolucion',
+                subtitle: `Cierra el prestamo activo de ${asset.external_code || `#${assetId}`}.`,
+                submitLabel: 'Registrar devolucion',
+                focusId: 'assetLoanReturnNotesInput',
+                fields,
+                onSubmit: async () => {
+                    const returnNotes = String(
+                        document.getElementById('assetLoanReturnNotesInput')?.value || '',
+                    ).trim();
+
+                    await options.api.returnAssetLoan(loanId, {
+                        return_notes: returnNotes,
+                    });
+
+                    await refreshAssetOperationalDetail(
+                        assetId,
+                        `Devolucion registrada para ${asset.external_code || `#${assetId}`}.`,
+                    );
+                },
+            });
+        }
+
         async function renderAssetDetail(data) {
             const container = document.getElementById('assetDetail');
             if (!container) return;
@@ -54,6 +315,11 @@
             const resolvedIncidents = incidents.filter(
                 (incident) => options.normalizeIncidentStatus(incident?.incident_status) === 'resolved',
             );
+            const loans = Array.isArray(data?.loans) ? data.loans : [];
+            const activeLoan = loans.find((loan) => String(loan?.status || '').toLowerCase() !== 'returned') || null;
+            const loanMeta = activeLoan ? resolveLoanStatusMeta(activeLoan.status) : null;
+            const activeLoanCount = Number(data?.active_loan_count) || 0;
+            const overdueLoanCount = Number(data?.overdue_loan_count) || 0;
             const stateMeta = resolveAssetOperationalStateMeta(asset.status);
             const attentionMeta = options.deriveAssetAttentionMetaFromIncidents(incidents);
             const updatedMeta = formatAssetUpdatedMeta(asset.updated_at);
@@ -89,10 +355,16 @@
             const metaGrid = document.createElement('div');
             metaGrid.className = 'asset-meta-grid';
             metaGrid.append(
-                createAssetDetailMetaItem('Cliente', asset.client_name || '-'),
+                createAssetDetailMetaItem('Cliente operativo', asset.client_name || '-'),
                 createAssetDetailMetaItem('Serie', asset.serial_number || '-'),
                 createAssetDetailMetaItem('Actualizado', `${updatedMeta.relative} | ${updatedMeta.absolute}`),
                 createAssetDetailMetaItem('ID interno', `#${asset.id || '-'}`),
+                createAssetDetailMetaItem(
+                    'Prestamos',
+                    activeLoanCount
+                        ? `${activeLoanCount} activo${activeLoanCount === 1 ? '' : 's'} | ${overdueLoanCount} vencido${overdueLoanCount === 1 ? '' : 's'}`
+                        : 'Sin prestamos activos',
+                ),
             );
             summary.appendChild(metaGrid);
             container.appendChild(summary);
@@ -102,12 +374,38 @@
             activeLinkBanner.className = 'asset-active-link-banner';
             if (activeLink?.installation_id) {
                 activeLinkBanner.textContent =
-                    `Instalacion activa #${activeLink.installation_id}` +
+                    `Contexto activo | Registro #${activeLink.installation_id}` +
                     (activeLink.installation_client_name ? ` | ${activeLink.installation_client_name}` : '');
             } else {
-                activeLinkBanner.textContent = 'Sin instalacion activa vinculada';
+                activeLinkBanner.textContent = 'Sin contexto activo. Puedes crear la incidencia y definir el registro durante el flujo.';
             }
             container.appendChild(activeLinkBanner);
+
+            if (activeLoan && loanMeta) {
+                const loanBanner = document.createElement('section');
+                loanBanner.className = `asset-loan-banner ${loanMeta.bannerClass}`;
+
+                const loanCopy = document.createElement('div');
+                loanCopy.className = 'asset-loan-banner-copy';
+                const loanTitle = document.createElement('strong');
+                loanTitle.className = 'asset-loan-banner-title';
+                loanTitle.textContent = `${loanMeta.title} | ${activeLoan.borrowing_client || '-'}`;
+                const loanDescription = document.createElement('p');
+                loanDescription.className = 'asset-loan-banner-description';
+                loanDescription.textContent =
+                    `Origen: ${activeLoan.original_client || '-'} | ` +
+                    `Salida: ${formatLoanDateTime(activeLoan.loaned_at)} | ` +
+                    (activeLoan.expected_return_at
+                        ? `Retorno esperado: ${formatLoanDateTime(activeLoan.expected_return_at)}`
+                        : 'Sin retorno comprometido');
+                loanCopy.append(loanTitle, loanDescription);
+
+                const loanBadge = document.createElement('span');
+                loanBadge.className = `badge ${loanMeta.badgeClass}`;
+                loanBadge.textContent = loanMeta.label;
+                loanBanner.append(loanCopy, loanBadge);
+                container.appendChild(loanBanner);
+            }
 
             const toolbar = document.createElement('div');
             toolbar.className = 'asset-detail-toolbar';
@@ -115,7 +413,7 @@
             const createIncidentBtn = document.createElement('button');
             createIncidentBtn.type = 'button';
             createIncidentBtn.className = 'btn-primary';
-            createIncidentBtn.textContent = 'Crear incidencia';
+            createIncidentBtn.textContent = activeLink?.installation_id ? 'Nueva incidencia' : 'Nueva incidencia + contexto';
             createIncidentBtn.addEventListener('click', () => {
                 void options.createIncidentForAsset(asset.id);
             });
@@ -123,7 +421,7 @@
             const linkBtn = document.createElement('button');
             linkBtn.type = 'button';
             linkBtn.className = 'btn-secondary';
-            linkBtn.textContent = 'Vincular instalacion';
+            linkBtn.textContent = activeLink?.installation_id ? 'Ajustar contexto' : 'Vincular registro';
             linkBtn.addEventListener('click', () => {
                 void linkAssetFromDetail(asset.id);
             });
@@ -138,6 +436,19 @@
             toolbar.append(createIncidentBtn, linkBtn, qrBtn);
 
             if (options.canCurrentUserEditAssets()) {
+                const loanBtn = document.createElement('button');
+                loanBtn.type = 'button';
+                loanBtn.className = activeLoan ? 'btn-primary' : 'btn-secondary';
+                loanBtn.textContent = activeLoan ? 'Registrar devolucion' : 'Prestar equipo';
+                loanBtn.addEventListener('click', () => {
+                    if (activeLoan) {
+                        openReturnLoanModal(asset, activeLoan);
+                    } else {
+                        openCreateLoanModal(asset);
+                    }
+                });
+                toolbar.appendChild(loanBtn);
+
                 const normalizedStatus = String(asset.status || '').trim().toLowerCase();
                 const isInactiveAsset = normalizedStatus === 'inactive' || normalizedStatus === 'retired';
 
@@ -159,6 +470,36 @@
                 toolbar.append(statusBtn, deleteBtn);
             }
             container.appendChild(toolbar);
+
+            if (loans.length || data?.loan_error) {
+                const loansHistory = document.createElement('details');
+                loansHistory.className = 'asset-loans-history';
+                if (activeLoan) {
+                    loansHistory.open = true;
+                }
+
+                const loansSummary = document.createElement('summary');
+                loansSummary.textContent = data?.loan_error
+                    ? 'Prestamos no disponibles'
+                    : `Historial de prestamos (${loans.length})`;
+                loansHistory.appendChild(loansSummary);
+
+                if (data?.loan_error) {
+                    const unavailable = document.createElement('p');
+                    unavailable.className = 'asset-muted asset-loan-unavailable';
+                    unavailable.textContent = data.loan_error;
+                    loansHistory.appendChild(unavailable);
+                } else {
+                    const loansList = document.createElement('div');
+                    loansList.className = 'asset-loans-list';
+                    loans.forEach((loan) => {
+                        loansList.appendChild(createLoanHistoryItem(loan));
+                    });
+                    loansHistory.appendChild(loansList);
+                }
+
+                container.appendChild(loansHistory);
+            }
 
             const links = Array.isArray(data?.links) ? data.links : [];
             if (links.length > 0) {
@@ -242,15 +583,40 @@
 
             const detailContainer = document.getElementById('assetDetail');
             if (detailContainer && !config.keepSelection) {
-                detailContainer.innerHTML = '<p class="loading">Cargando detalle del equipo...</p>';
+                setContainerMessage(detailContainer, 'loading', 'Cargando detalle del equipo...');
             }
 
             try {
-                const data = await options.api.getAssetIncidents(numericAssetId, { limit: 150 });
-                await renderAssetDetail(data);
+                const detailData = await options.api.getAssetIncidents(numericAssetId, { limit: 150 });
+                let loansData = {
+                    items: [],
+                    active_count: 0,
+                    overdue_count: 0,
+                    loan_error: '',
+                };
+
+                try {
+                    const response = await options.api.getAssetLoans(numericAssetId);
+                    loansData = {
+                        items: Array.isArray(response?.items) ? response.items : [],
+                        active_count: Number(response?.active_count) || 0,
+                        overdue_count: Number(response?.overdue_count) || 0,
+                        loan_error: '',
+                    };
+                } catch (loanError) {
+                    loansData.loan_error = loanError?.message || 'No pudimos cargar prestamos.';
+                }
+
+                await renderAssetDetail({
+                    ...detailData,
+                    loans: loansData.items,
+                    active_loan_count: loansData.active_count,
+                    overdue_loan_count: loansData.overdue_count,
+                    loan_error: loansData.loan_error,
+                });
             } catch (err) {
                 if (detailContainer) {
-                    detailContainer.innerHTML = `<p class="error">${options.escapeHtml(err.message || String(err))}</p>`;
+                    setContainerMessage(detailContainer, 'error', err.message || String(err));
                 }
             }
         }
@@ -262,9 +628,9 @@
             const searchInput = document.getElementById('assetsSearchInput');
             if (!tableContainer) return;
 
-            tableContainer.innerHTML = '<p class="loading">Cargando equipos...</p>';
+            setContainerMessage(tableContainer, 'loading', 'Cargando equipos...');
             if (resultsCount) {
-                resultsCount.innerHTML = '<span class="loading">Buscando...</span>';
+                setContainerMessage(resultsCount, 'loading', 'Buscando...');
             }
 
             try {
@@ -280,8 +646,7 @@
                 renderAssetsTable(assets);
 
                 if (resultsCount) {
-                    const count = assets.length;
-                    resultsCount.innerHTML = `Mostrando <span class="count">${count}</span> equipo${count !== 1 ? 's' : ''}`;
+                    renderCountSummary(resultsCount, assets.length, 'equipo');
                 }
 
                 const currentSelectedAssetId = options.getCurrentSelectedAssetId();
@@ -292,7 +657,7 @@
                     }
                 }
             } catch (_err) {
-                tableContainer.innerHTML = '<p class="error">Error cargando equipos</p>';
+                setContainerMessage(tableContainer, 'error', 'Error cargando equipos');
                 if (resultsCount) {
                     resultsCount.textContent = 'Error al cargar';
                 }
@@ -506,7 +871,7 @@
                         options.setCurrentSelectedAssetId(null);
                         const detailContainer = document.getElementById('assetDetail');
                         if (detailContainer) {
-                            detailContainer.innerHTML = '<p class="loading">Selecciona un equipo para ver detalle.</p>';
+                            setContainerMessage(detailContainer, 'loading', 'Selecciona un equipo para ver detalle.');
                         }
                     }
                     options.showNotification('Equipo eliminado correctamente.', 'success');

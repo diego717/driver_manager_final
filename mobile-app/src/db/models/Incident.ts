@@ -2,6 +2,7 @@ import { Model } from '@nozbe/watermelondb'
 import { field, text, readonly, date, children, writer } from '@nozbe/watermelondb/decorators'
 import { Associations } from '@nozbe/watermelondb/Model'
 import Photo from './Photo'
+import type { GpsCaptureStatus, GpsCaptureSource } from '../../types/api'
 
 /** Our app-specific sync state — named to avoid clash with WMDb's own SyncStatus */
 export type LocalSyncStatus = 'pending' | 'syncing' | 'failed' | 'synced'
@@ -33,6 +34,14 @@ export default class Incident extends Model {
   @field('sync_attempts') syncAttempts!: number
   @text('last_sync_error') lastSyncError!: string | null
   @text('client_request_id') clientRequestId!: string
+  @text('gps_capture_status') gpsCaptureStatus!: GpsCaptureStatus
+  @text('gps_capture_source') gpsCaptureSource!: GpsCaptureSource
+  @field('gps_lat') gpsLat!: number | null
+  @field('gps_lng') gpsLng!: number | null
+  @field('gps_accuracy_m') gpsAccuracyM!: number | null
+  @text('gps_captured_at') gpsCapturedAt!: string | null
+  @text('gps_capture_note') gpsCaptureNote!: string
+  @text('geofence_override_note') geofenceOverrideNote!: string
 
   @children('photos') photos!: Photo[]
 

@@ -28,7 +28,7 @@ import ScreenScaffold from "@/src/components/ScreenScaffold";
 import SectionCard from "@/src/components/SectionCard";
 import StatusChip from "@/src/components/StatusChip";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
 import { type Incident } from "@/src/types/api";
 import {
   formatDateTime,
@@ -515,6 +515,8 @@ export default function IncidentDetailScreen() {
               multiline
               placeholder="Nota de resolucion (opcional)"
               placeholderTextColor={palette.textMuted}
+              selectionColor={textInputAccentColor}
+              cursorColor={textInputAccentColor}
             />
           </SectionCard>
 
@@ -723,7 +725,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 13,
-    fontFamily: fontFamilies.regular,
+    fontFamily: inputFontFamily,
     textAlignVertical: "top",
   },
   hintText: {

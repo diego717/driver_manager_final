@@ -21,6 +21,16 @@ export function incidentToApiPayload(
     severity: incident.severity as CreateIncidentInput['severity'],
     source: incident.source as CreateIncidentInput['source'],
     apply_to_installation: false,
+    gps: {
+      status: incident.gpsCaptureStatus,
+      source: incident.gpsCaptureSource,
+      lat: incident.gpsLat ?? undefined,
+      lng: incident.gpsLng ?? undefined,
+      accuracy_m: incident.gpsAccuracyM ?? undefined,
+      captured_at: incident.gpsCapturedAt ?? undefined,
+      note: incident.gpsCaptureNote || undefined,
+    },
+    geofence_override_note: incident.geofenceOverrideNote || undefined,
     client_request_id: incident.clientRequestId || undefined,
   }
 }

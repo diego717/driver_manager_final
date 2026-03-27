@@ -9,6 +9,11 @@ import {
   startOfUtcDay,
   toUtcDayKey,
 } from "../lib/core.js";
+import {
+  GPS_OBSERVABILITY_AUDIT_ACTIONS,
+  createEmptyGpsObservabilitySummary,
+  summarizeGpsObservability,
+} from "../lib/gps-observability.js";
 
 export function createStatisticsRouteHandlers({ jsonResponse, textResponse }) {
   async function handleStatisticsTrendRoute(
@@ -181,6 +186,11 @@ export function createStatisticsRouteHandlers({ jsonResponse, textResponse }) {
         incident_critical_active_count: 0,
         incident_outside_sla_count: 0,
       };
+      let loanSummary = {
+        loan_due_soon_count: 0,
+        loan_overdue_count: 0,
+      };
+      let gpsObservability = createEmptyGpsObservabilitySummary();
       try {
         const { results: incidentSummaryRows } = await env.DB.prepare(`
           SELECT
@@ -201,9 +211,85 @@ export function createStatisticsRouteHandlers({ jsonResponse, textResponse }) {
           incident_critical_active_count: Number(row?.incident_critical_active_count) || 0,
           incident_outside_sla_count: Number(row?.incident_outside_sla_count) || 0,
         };
+
+        const { results: installationGpsRows } = await env.DB.prepare(`
+          SELECT gps_capture_status, gps_accuracy_m
+          FROM installations
+          WHERE tenant_id = ?
+            AND (? IS NULL OR timestamp >= ?)
+            AND (? IS NULL OR timestamp < ?)
+        `)
+          .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
+          .all();
+
+        const { results: incidentGpsRows } = await env.DB.prepare(`
+          SELECT gps_capture_status, gps_accuracy_m
+          FROM incidents
+          WHERE tenant_id = ?
+            AND (? IS NULL OR created_at >= ?)
+            AND (? IS NULL OR created_at < ?)
+        `)
+          .bind(statsTenantId, startFilter, startFilter, endFilter, endFilter)
+          .all();
+
+        const auditActionPlaceholders = GPS_OBSERVABILITY_AUDIT_ACTIONS.map(() => "?").join(", ");
+        const { results: auditActionRows } = await env.DB.prepare(`
+          SELECT action, COUNT(*) AS count
+          FROM audit_logs
+          WHERE tenant_id = ?
+            AND (? IS NULL OR timestamp >= ?)
+            AND (? IS NULL OR timestamp < ?)
+            AND action IN (${auditActionPlaceholders})
+          GROUP BY action
+        `)
+          .bind(
+            statsTenantId,
+            startFilter,
+            startFilter,
+            endFilter,
+            endFilter,
+            ...GPS_OBSERVABILITY_AUDIT_ACTIONS,
+          )
+          .all();
+
+        gpsObservability = summarizeGpsObservability({
+          installationRows: installationGpsRows || [],
+          incidentRows: incidentGpsRows || [],
+          auditActionRows: auditActionRows || [],
+        });
       } catch (error) {
         if (!isMissingIncidentsTableError(error)) {
           console.warn("[statistics] incident summary unavailable", { error: String(error) });
+        }
+      }
+
+      try {
+        const currentIso = new Date().toISOString();
+        const dueSoonCutoffIso = new Date(
+          Date.now() + 48 * 60 * 60 * 1000,
+        ).toISOString();
+        const { results: loanSummaryRows } = await env.DB.prepare(`
+          SELECT
+            SUM(CASE WHEN returned_at IS NULL
+              AND expected_return_at IS NOT NULL
+              AND expected_return_at >= ?
+              AND expected_return_at <= ? THEN 1 ELSE 0 END) AS loan_due_soon_count,
+            SUM(CASE WHEN returned_at IS NULL
+              AND expected_return_at IS NOT NULL
+              AND expected_return_at < ? THEN 1 ELSE 0 END) AS loan_overdue_count
+          FROM asset_loans
+          WHERE tenant_id = ?
+        `)
+          .bind(currentIso, dueSoonCutoffIso, currentIso, statsTenantId)
+          .all();
+        const loanRow = loanSummaryRows?.[0] || {};
+        loanSummary = {
+          loan_due_soon_count: Number(loanRow?.loan_due_soon_count) || 0,
+          loan_overdue_count: Number(loanRow?.loan_overdue_count) || 0,
+        };
+      } catch (error) {
+        if (!String(error?.message || "").toLowerCase().includes("no such table")) {
+          console.warn("[statistics] loan summary unavailable", { error: String(error) });
         }
       }
 
@@ -238,7 +324,10 @@ export function createStatisticsRouteHandlers({ jsonResponse, textResponse }) {
         incident_in_progress_count: incidentSummary.incident_in_progress_count,
         incident_critical_active_count: incidentSummary.incident_critical_active_count,
         incident_outside_sla_count: incidentSummary.incident_outside_sla_count,
+        loan_due_soon_count: loanSummary.loan_due_soon_count,
+        loan_overdue_count: loanSummary.loan_overdue_count,
         incident_sla_minutes: incidentSlaMinutes,
+        gps_observability: gpsObservability,
         top_drivers: topDrivers,
         by_brand: byBrand,
       });

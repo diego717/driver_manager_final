@@ -238,6 +238,12 @@
                     body: JSON.stringify(payload),
                 });
             },
+            updateInstallation(installationId, payload) {
+                return request(`/web/installations/${installationId}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
             createIncident(installationId, payload) {
                 return request(`/web/installations/${installationId}/incidents`, {
                     method: 'POST',
@@ -267,6 +273,28 @@
                     body: JSON.stringify(payload || {}),
                 });
             },
+            getInstallationConformity(installationId) {
+                return request(`/web/installations/${installationId}/conformity`);
+            },
+            createInstallationConformity(installationId, payload) {
+                return request(`/web/installations/${installationId}/conformity`, {
+                    method: 'POST',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
+            getInstallationPublicTrackingLink(installationId) {
+                return request(`/web/installations/${installationId}/public-tracking-link`);
+            },
+            createInstallationPublicTrackingLink(installationId) {
+                return request(`/web/installations/${installationId}/public-tracking-link`, {
+                    method: 'POST',
+                });
+            },
+            deleteInstallationPublicTrackingLink(installationId) {
+                return request(`/web/installations/${installationId}/public-tracking-link`, {
+                    method: 'DELETE',
+                });
+            },
             resolveAsset(payload) {
                 return request('/web/assets/resolve', {
                     method: 'POST',
@@ -281,6 +309,23 @@
                 const query = new URLSearchParams(params).toString();
                 const suffix = query ? `?${query}` : '';
                 return request(`/web/assets/${assetId}/incidents${suffix}`);
+            },
+            getAssetLoans(assetId, params = {}) {
+                const query = new URLSearchParams(params).toString();
+                const suffix = query ? `?${query}` : '';
+                return request(`/web/assets/${assetId}/loans${suffix}`);
+            },
+            createAssetLoan(assetId, payload) {
+                return request(`/web/assets/${assetId}/loans`, {
+                    method: 'POST',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
+            returnAssetLoan(loanId, payload) {
+                return request(`/web/loans/${loanId}/return`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(payload || {}),
+                });
             },
             updateAsset(assetId, payload) {
                 return request(`/web/assets/${assetId}`, {

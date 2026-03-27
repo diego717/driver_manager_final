@@ -1,4 +1,4 @@
-import { Text, TextInput } from "react-native";
+import { Platform, Text, TextInput } from "react-native";
 
 export const fontFamilies = {
   regular: "Inter_400Regular",
@@ -7,6 +7,10 @@ export const fontFamilies = {
   bold: "Inter_700Bold",
   mono: "SpaceMono",
 } as const;
+
+export const inputFontFamily =
+  Platform.OS === "android" ? "sans-serif" : fontFamilies.regular;
+export const textInputAccentColor = "#0f8b84";
 
 let defaultsApplied = false;
 
@@ -33,12 +37,22 @@ export function applyGlobalTypographyDefaults(): void {
     fontFamilies.regular,
   );
 
-  const inputComponent = TextInput as unknown as { defaultProps?: { style?: unknown } };
+  const inputComponent = TextInput as unknown as {
+    defaultProps?: {
+      style?: unknown;
+      selectionColor?: string;
+      cursorColor?: string;
+      underlineColorAndroid?: string;
+    };
+  };
   inputComponent.defaultProps = inputComponent.defaultProps ?? {};
   inputComponent.defaultProps.style = withDefaultFont(
     inputComponent.defaultProps.style,
-    fontFamilies.regular,
+    inputFontFamily,
   );
+  inputComponent.defaultProps.selectionColor = textInputAccentColor;
+  inputComponent.defaultProps.cursorColor = textInputAccentColor;
+  inputComponent.defaultProps.underlineColorAndroid = "transparent";
 
   defaultsApplied = true;
 }

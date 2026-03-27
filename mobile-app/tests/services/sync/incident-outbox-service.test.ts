@@ -23,6 +23,14 @@ const mockCreatedIncident = vi.hoisted(() => ({
   severity: 'medium',
   source: 'mobile',
   timeAdjustmentSeconds: 0,
+  gpsCaptureStatus: 'captured',
+  gpsCaptureSource: 'browser',
+  gpsLat: -34.9011,
+  gpsLng: -56.1645,
+  gpsAccuracyM: 12,
+  gpsCapturedAt: '2026-03-26T12:00:00.000Z',
+  gpsCaptureNote: '',
+  geofenceOverrideNote: '',
 }))
 
 const mockCreatedJob = vi.hoisted(() => ({
@@ -82,6 +90,14 @@ describe('incident-outbox-service', () => {
         reporterUsername: 'ops',
         severity: 'medium',
         source: 'mobile',
+        gps: {
+          status: 'captured',
+          source: 'browser',
+          lat: -34.9011,
+          lng: -56.1645,
+          accuracy_m: 12,
+          captured_at: '2026-03-26T12:00:00.000Z',
+        },
       })
 
       expect(mockIncidentsRepo.createLocalIncident).toHaveBeenCalledOnce()
@@ -93,6 +109,7 @@ describe('incident-outbox-service', () => {
         installationId: 42,
         note: 'Test incident',
         reporterUsername: 'ops',
+        gps: { status: 'pending', source: 'none', note: '' },
       })
 
       expect(mockSyncJobsRepo.createJob).toHaveBeenCalledOnce()
@@ -109,6 +126,7 @@ describe('incident-outbox-service', () => {
         installationId: 42,
         note: 'Test',
         reporterUsername: 'ops',
+        gps: { status: 'pending', source: 'none', note: '' },
       })
 
       expect(result.localId).toBeTruthy()
@@ -120,18 +138,57 @@ describe('incident-outbox-service', () => {
         installationId: 42,
         note: 'Offline incident',
         reporterUsername: 'ops',
+        gps: { status: 'pending', source: 'none', note: '' },
       })
 
       expect(mockCreateIncident).not.toHaveBeenCalled()
     })
 
     it('generates a unique clientRequestId per call', async () => {
-      await enqueueCreateIncident({ installationId: 1, note: 'A', reporterUsername: 'u' })
-      await enqueueCreateIncident({ installationId: 1, note: 'B', reporterUsername: 'u' })
+      await enqueueCreateIncident({
+        installationId: 1,
+        note: 'A',
+        reporterUsername: 'u',
+        gps: { status: 'pending', source: 'none', note: '' },
+      })
+      await enqueueCreateIncident({
+        installationId: 1,
+        note: 'B',
+        reporterUsername: 'u',
+        gps: { status: 'pending', source: 'none', note: '' },
+      })
 
       const firstCallArgs = mockIncidentsRepo.createLocalIncident.mock.calls[0][0]
       const secondCallArgs = mockIncidentsRepo.createLocalIncident.mock.calls[1][0]
       expect(firstCallArgs.clientRequestId).not.toBe(secondCallArgs.clientRequestId)
+    })
+
+    it('persists gps and geofence override data in the local incident payload', async () => {
+      await enqueueCreateIncident({
+        installationId: 42,
+        note: 'Outside geofence',
+        reporterUsername: 'ops',
+        gps: {
+          status: 'captured',
+          source: 'browser',
+          lat: -34.89,
+          lng: -56.15,
+          accuracy_m: 18,
+          captured_at: '2026-03-26T13:00:00.000Z',
+        },
+        geofenceOverrideNote: 'Cliente pidio continuar fuera del sitio.',
+      })
+
+      expect(mockIncidentsRepo.createLocalIncident).toHaveBeenCalledWith(
+        expect.objectContaining({
+          gps: expect.objectContaining({
+            status: 'captured',
+            source: 'browser',
+            lat: -34.89,
+          }),
+          geofenceOverrideNote: 'Cliente pidio continuar fuera del sitio.',
+        }),
+      )
     })
   })
 

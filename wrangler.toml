@@ -29,6 +29,11 @@ binding = "WEB_SESSION_KV"
 id = "d382844605fe4c33892da3446046790b"
 preview_id = "6fbf2ae9b08a4fd0b17d7c26b1ab9ddc"
 
+[[kv_namespaces]]
+binding = "PUBLIC_TRACKING_KV"
+id = "76b918008e1e4abfa004e285f367b634"
+preview_id = "0649959eb2a04efc899bb4512c9a71cc"
+
 [[durable_objects.bindings]]
 name = "REALTIME_EVENTS"
 class_name = "RealtimeEventsBroker"
@@ -36,3 +41,6 @@ class_name = "RealtimeEventsBroker"
 [[migrations]]
 tag = "realtime-events-v1"
 new_sqlite_classes = ["RealtimeEventsBroker"]
+
+[triggers]
+crons = ["0 * * * *"]

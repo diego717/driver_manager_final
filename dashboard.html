@@ -13,7 +13,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script src="/chart.umd.js" defer></script>
 </head>
 
 <body>
@@ -27,8 +26,8 @@
                     <span class="nav-group-label">Operación</span>
                     <ul class="nav-group-list">
                         <li><a href="#" class="active" data-section="dashboard"><span class="material-symbols-outlined">today</span> Hoy</a></li>
-                        <li><a href="#" data-section="installations"><span class="material-symbols-outlined">dns</span> Registros</a></li>
                         <li><a href="#" data-section="incidents"><span class="material-symbols-outlined">warning</span> Incidencias</a></li>
+                        <li><a href="#" data-section="installations"><span class="material-symbols-outlined">dns</span> Registros</a></li>
                     </ul>
                 </div>
                 <div class="nav-group">
@@ -193,6 +192,42 @@
                         <span id="kpiSyncMeta">OK</span>
                     </p>
 
+                    <section class="gps-ops-panel" aria-labelledby="gpsOpsTitle">
+                        <div class="gps-ops-head">
+                            <div>
+                                <p class="gps-ops-eyebrow">Observabilidad GPS</p>
+                                <h3 id="gpsOpsTitle">Salud de captura y geofence</h3>
+                            </div>
+                            <p class="gps-ops-description">Se consolida desde registros, incidencias y auditoría operativa.</p>
+                        </div>
+                        <div class="gps-ops-grid">
+                            <article class="gps-ops-card gps-ops-card-success">
+                                <p class="gps-ops-label">Capturas útiles</p>
+                                <p id="gpsOpsCapturedValue" class="gps-ops-value">-</p>
+                                <p id="gpsOpsCapturedMeta" class="gps-ops-meta">Sin datos todavía</p>
+                            </article>
+                            <article class="gps-ops-card gps-ops-card-warning">
+                                <p class="gps-ops-label">Fallas GPS</p>
+                                <p id="gpsOpsFailuresValue" class="gps-ops-value">-</p>
+                                <p id="gpsOpsFailuresMeta" class="gps-ops-meta">Sin incidencias de captura</p>
+                            </article>
+                            <article class="gps-ops-card gps-ops-card-outside">
+                                <p class="gps-ops-label">Fuera de radio</p>
+                                <p id="gpsOpsOutsideValue" class="gps-ops-value">-</p>
+                                <p id="gpsOpsOutsideMeta" class="gps-ops-meta">Warnings geofence auditados</p>
+                            </article>
+                            <article class="gps-ops-card gps-ops-card-override">
+                                <p class="gps-ops-label">Overrides auditados</p>
+                                <p id="gpsOpsOverridesValue" class="gps-ops-value">-</p>
+                                <p id="gpsOpsOverridesMeta" class="gps-ops-meta">Excepciones justificadas</p>
+                            </article>
+                        </div>
+                        <div class="gps-ops-foot">
+                            <p id="gpsOpsInstallationsMeta" class="gps-ops-foot-note">Registros: sin datos.</p>
+                            <p id="gpsOpsIncidentsMeta" class="gps-ops-foot-note">Incidencias: sin datos.</p>
+                        </div>
+                    </section>
+
                     <div id="actividadChart" class="chart-card dashboard-chart-focus">
                         <div class="dashboard-chart-head">
                             <h3><span class="material-symbols-outlined">trending_up</span> Tendencia de registros</h3>
@@ -201,7 +236,11 @@
                                 <button type="button" data-trend-range="7" class="active" aria-pressed="true">7d</button>
                             </div>
                         </div>
-                        <canvas id="trendChart"></canvas>
+                        <canvas id="trendChart" role="img" aria-labelledby="trendChartTitle" aria-describedby="trendChartSummary"></canvas>
+                        <p id="trendChartTitle" class="sr-only">Tendencia de registros</p>
+                        <p id="trendChartSummary" class="sr-only">Cargando resumen de tendencia.</p>
+                        <p id="successChartSummary" class="sr-only">Cargando resumen de resultado de registros.</p>
+                        <p id="brandChartSummary" class="sr-only">Cargando resumen de distribución por marca.</p>
                         <div class="dashboard-hidden-canvases" aria-hidden="true">
                             <canvas id="successChart"></canvas>
                             <canvas id="brandChart"></canvas>
@@ -226,16 +265,33 @@
                 <div class="filters">
                     <!-- Real-time search -->
                     <div class="search-wrapper">
+                        <label for="searchInput" class="sr-only">Buscar registros</label>
                         <input type="search" id="searchInput" name="records_search" class="search-input" placeholder="Búsqueda en tiempo real..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
                         <span class="search-icon"><span class="material-symbols-outlined icon-inline-md">search</span></span>
                     </div>
                     
                     <!-- Filter row -->
                     <div class="filter-row">
+                        <label for="brandFilter" class="sr-only">Filtrar por marca</label>
                         <select id="brandFilter">
                             <option value="">Todas las marcas</option>
                         </select>
+                        <label for="geofenceFilter" class="sr-only">Filtrar por geofence</label>
+                        <select id="geofenceFilter">
+                            <option value="">Geofence: todos</option>
+                            <option value="configured">Con geofence</option>
+                            <option value="missing">Sin geofence</option>
+                        </select>
+                        <label for="gpsFilter" class="sr-only">Filtrar por GPS</label>
+                        <select id="gpsFilter">
+                            <option value="">GPS: todos</option>
+                            <option value="captured">GPS util</option>
+                            <option value="failed">GPS fallido</option>
+                            <option value="pending">GPS pendiente</option>
+                        </select>
+                        <label for="startDate" class="sr-only">Fecha de inicio</label>
                         <input type="date" id="startDate" placeholder="Fecha inicio">
+                        <label for="endDate" class="sr-only">Fecha de fin</label>
                         <input type="date" id="endDate" placeholder="Fecha fin">
                     </div>
                     
@@ -265,18 +321,24 @@
             
             <div id="incidentsSection" class="section">
                 <div class="filters incidents-toolbar">
+                    <div class="incidents-focus-copy">
+                        <strong>Atiende primero el evento.</strong>
+                        <span>Entra desde un registro o desde un equipo para trabajar con contexto sin cambiar el modelo actual.</span>
+                    </div>
                     <div class="filter-actions">
                         <button id="incidentsScanQrBtn" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">qr_code_scanner</span> Escanear QR</button>
+                        <button id="incidentsGoAssetsBtn" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">inventory_2</span> Ver equipos</button>
                     </div>
                 </div>
                 <div id="incidentsList" class="incidents-grid">
-                    <p class="loading">Cargando incidencias...</p>
+                    <p class="loading">Abre un registro o entra desde Equipos para ver incidencias con contexto.</p>
                 </div>
             </div>
 
             <div id="assetsSection" class="section">
                 <div class="filters">
                     <div class="search-wrapper">
+                        <label for="assetsSearchInput" class="sr-only">Buscar equipos</label>
                         <input type="search" id="assetsSearchInput" name="assets_search" class="search-input" placeholder="Buscar equipo por código, marca, modelo, serie o cliente..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
                         <span class="search-icon"><span class="material-symbols-outlined icon-inline-md">search</span></span>
                     </div>
@@ -297,9 +359,9 @@
                 </div>
 
                 <div id="assetDetailCard" class="recent-section">
-                    <h3><span class="material-symbols-outlined">manage_search</span> Detalle del equipo</h3>
+                    <h3><span class="material-symbols-outlined">manage_search</span> Equipo y contexto</h3>
                     <div id="assetDetail" class="table-container">
-                        <p class="loading">Selecciona un equipo para ver sus incidencias y asociaciones.</p>
+                        <p class="loading">Selecciona un equipo para revisar su contexto operativo y sus incidencias.</p>
                     </div>
                 </div>
             </div>
@@ -340,6 +402,7 @@
              
             <div id="auditSection" class="section">
                 <div class="filters">
+                    <label for="auditActionFilter" class="sr-only">Filtrar auditoría por acción</label>
                     <select id="auditActionFilter">
                         <option value="">Todas las acciones</option>
                         <option value="web_login_success">Login exitoso</option>
@@ -348,6 +411,11 @@
                         <option value="update_web_user">Actualizar usuario</option>
                         <option value="create_incident">Crear incidencia</option>
                         <option value="create_installation">Crear registro</option>
+                        <option value="incident_geofence_warning">Geofence incidencia fuera de radio</option>
+                        <option value="override_incident_geofence">Override geofence incidencia</option>
+                        <option value="installation_conformity_geofence_warning">Geofence conformidad fuera de radio</option>
+                        <option value="override_installation_conformity_geofence">Override geofence conformidad</option>
+                        <option value="override_installation_conformity_gps">Override GPS conformidad</option>
                     </select>
                     <button id="refreshAudit" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">refresh</span> Actualizar</button>
                 </div>
@@ -595,7 +663,7 @@
     
     <script src="/dashboard-qr.js" defer></script>
     <script src="/dashboard-api.js" defer></script>
-    <script src="/jsqr.js" defer></script>
+    <script src="/dashboard-geolocation.js" defer></script>
     <script src="/dashboard-scan.js" defer></script>
     <script src="/dashboard-modals.js" defer></script>
     <script src="/dashboard-incidents.js" defer></script>
@@ -607,6 +675,7 @@
     <script src="/dashboard-auth.js" defer></script>
     <script src="/dashboard-navigation.js" defer></script>
     <script src="/dashboard-bootstrap.js" defer></script>
+    <script src="/xlsx.bundle.js" defer></script>
     <script src="/dashboard.js" defer></script>
     <script src="/dashboard-pwa.js" defer></script>
 </body>

@@ -171,15 +171,177 @@
             };
         }
 
+        function formatGpsAccuracyValue(value) {
+            const numericValue = Number(value);
+            if (!Number.isFinite(numericValue) || numericValue < 0) {
+                return 's/d';
+            }
+            return `${Math.round(numericValue)} m`;
+        }
+
+        function buildGpsFlowMeta(summary, label) {
+            const attemptedCount = Number(summary?.attempted_count) || 0;
+            const captureRate = Number(summary?.capture_success_rate) || 0;
+            const averageAccuracy = formatGpsAccuracyValue(summary?.average_accuracy_m);
+            const p95Accuracy = formatGpsAccuracyValue(summary?.p95_accuracy_m);
+
+            if (attemptedCount <= 0) {
+                return `${label}: sin intentos registrados.`;
+            }
+
+            return `${label}: ${attemptedCount} intentos, ${captureRate}% util, prom. ${averageAccuracy}, p95 ${p95Accuracy}.`;
+        }
+
+        function setSummaryText(elementId, text) {
+            const element = document.getElementById(elementId);
+            if (!element) return;
+            element.textContent = String(text || '').trim();
+        }
+
+        function getChartPalette() {
+            const readToken = typeof options.readThemeToken === 'function'
+                ? options.readThemeToken
+                : (_name, fallbackValue) => fallbackValue;
+            return {
+                accent: readToken('--accent-primary', '#0f756d'),
+                success: readToken('--success', '#16a34a'),
+                warning: readToken('--warning', '#ca8a04'),
+                error: readToken('--error', '#dc2626'),
+                info: readToken('--info', '#2563eb'),
+                text: readToken('--text-primary', '#1f2937'),
+                muted: readToken('--text-secondary', '#64748b'),
+                border: readToken('--border', '#cbd5e1'),
+                background: readToken('--bg-card', '#ffffff'),
+            };
+        }
+
+        function updateSuccessSummary(stats) {
+            const success = Number(stats?.successful_installations) || 0;
+            const failed = Number(stats?.failed_installations) || 0;
+            const total = Math.max(0, Number(stats?.total_installations) || 0);
+            const other = Math.max(0, total - success - failed);
+            setSummaryText(
+                'successChartSummary',
+                `Resultado de registros: ${success} exitosos, ${failed} fallidos y ${other} en otros estados.`,
+            );
+        }
+
+        function updateBrandSummary(stats) {
+            const brands = Object.entries(stats?.by_brand || {})
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3);
+            if (!brands.length) {
+                setSummaryText('brandChartSummary', 'Distribución por marca: todavía no hay datos.');
+                return;
+            }
+            const topBrands = brands.map(([brand, count]) => `${brand}: ${count}`).join(', ');
+            setSummaryText('brandChartSummary', `Distribución por marca: ${topBrands}.`);
+        }
+
+        function updateTrendSummary(labels, data, normalizedDays) {
+            if (!Array.isArray(labels) || !Array.isArray(data) || labels.length === 0 || data.length === 0) {
+                setSummaryText('trendChartSummary', 'Tendencia de registros: todavía no hay datos.');
+                return;
+            }
+            const normalizedPoints = data.map((value) => Number(value) || 0);
+            const total = normalizedPoints.reduce((sum, value) => sum + value, 0);
+            const peakValue = Math.max(...normalizedPoints);
+            const peakIndex = normalizedPoints.indexOf(peakValue);
+            const peakLabel = peakIndex >= 0 ? labels[peakIndex] : 'sin referencia';
+            setSummaryText(
+                'trendChartSummary',
+                `Tendencia ${normalizedDays === 1 ? 'últimas 24 horas' : 'últimos 7 días'}: ${total} registros en total. Pico de ${peakValue} en ${peakLabel}.`,
+            );
+        }
+
+        function renderLoanAttention(stats) {
+            const attentionList = document.getElementById('attentionList');
+            if (!attentionList) return;
+
+            attentionList
+                .querySelectorAll('[data-attention-kind="loan"]')
+                .forEach((node) => node.remove());
+
+            const dueSoonCount = Number(stats?.loan_due_soon_count) || 0;
+            const overdueCount = Number(stats?.loan_overdue_count) || 0;
+            if (dueSoonCount <= 0 && overdueCount <= 0) return;
+
+            const entries = [];
+            if (overdueCount > 0) {
+                entries.push({
+                    badgeClass: 'critical',
+                    title: 'Prestamos vencidos',
+                    body: overdueCount === 1
+                        ? '1 equipo sigue sin devolverse.'
+                        : `${overdueCount} equipos siguen sin devolverse.`,
+                });
+            }
+            if (dueSoonCount > 0) {
+                entries.push({
+                    badgeClass: 'high',
+                    title: 'Prestamos proximos a vencer',
+                    body: dueSoonCount === 1
+                        ? '1 equipo vence dentro de las proximas 48h.'
+                        : `${dueSoonCount} equipos vencen dentro de las proximas 48h.`,
+                });
+            }
+
+            entries.forEach((entry) => {
+                const item = document.createElement('div');
+                item.className = 'attention-item';
+                item.dataset.attentionKind = 'loan';
+
+                const badge = document.createElement('span');
+                badge.className = `severity-badge ${entry.badgeClass}`;
+                badge.textContent = entry.badgeClass === 'critical' ? 'Vencido' : 'Aviso';
+
+                const textWrap = document.createElement('div');
+                const title = document.createElement('strong');
+                title.textContent = entry.title;
+                const body = document.createElement('p');
+                body.textContent = `${entry.body} Revisar desde Equipos.`;
+                textWrap.append(title, body);
+
+                item.append(badge, textWrap);
+
+                if (typeof options.navigateToSectionByKey === 'function') {
+                    const action = document.createElement('button');
+                    action.type = 'button';
+                    action.className = 'btn btn-sm btn-secondary';
+                    action.textContent = 'Abrir';
+                    action.addEventListener('click', () => options.navigateToSectionByKey('assets'));
+                    item.append(action);
+                }
+
+                attentionList.appendChild(item);
+            });
+        }
+
         function updateStats(stats) {
             const criticalCount = Number(stats?.incident_critical_active_count) || 0;
             const inProgressCount = Number(stats?.incident_in_progress_count) || 0;
             const outsideSlaCount = Number(stats?.incident_outside_sla_count) || 0;
+            const loanDueSoonCount = Number(stats?.loan_due_soon_count) || 0;
+            const loanOverdueCount = Number(stats?.loan_overdue_count) || 0;
             const slaMinutes = Number(stats?.incident_sla_minutes) || 30;
+            const gpsObservability = stats?.gps_observability || {};
+            const installationGps = gpsObservability.installations || {};
+            const incidentGps = gpsObservability.incidents || {};
+            const warnings = gpsObservability.warnings || {};
+            const overrides = gpsObservability.overrides || {};
+            const usefulCaptures = (Number(installationGps.captured_count) || 0) + (Number(incidentGps.captured_count) || 0);
+            const captureAttempts = (Number(installationGps.attempted_count) || 0) + (Number(incidentGps.attempted_count) || 0);
+            const gpsFailures = (Number(installationGps.failure_count) || 0) + (Number(incidentGps.failure_count) || 0);
+            const outsideCount = Number(warnings.total_outside_count) || 0;
+            const overrideCount = Number(overrides.total_override_count) || 0;
 
             animateNumber('kpiCriticalIncidentsValue', criticalCount);
             animateNumber('kpiInProgressIncidentsValue', inProgressCount);
             animateNumber('kpiOutsideSlaIncidentsValue', outsideSlaCount);
+            animateNumber('gpsOpsCapturedValue', usefulCaptures);
+            animateNumber('gpsOpsFailuresValue', gpsFailures);
+            animateNumber('gpsOpsOutsideValue', outsideCount);
+            animateNumber('gpsOpsOverridesValue', overrideCount);
 
             const syncClockEl = document.getElementById('kpiLastSyncTimeValue');
             if (syncClockEl) {
@@ -224,7 +386,50 @@
                 syncMetaEl.textContent = syncStatus === 'connected' ? 'OK' : 'Sincronizando';
             }
 
-            options.setNotificationBadgeCount(criticalCount + outsideSlaCount);
+            const gpsCapturedMetaEl = document.getElementById('gpsOpsCapturedMeta');
+            if (gpsCapturedMetaEl) {
+                gpsCapturedMetaEl.textContent = captureAttempts > 0
+                    ? `${usefulCaptures}/${captureAttempts} capturas validas`
+                    : 'Sin intentos registrados';
+            }
+
+            const gpsFailuresMetaEl = document.getElementById('gpsOpsFailuresMeta');
+            if (gpsFailuresMetaEl) {
+                const deniedCount = (Number(installationGps.denied_count) || 0) + (Number(incidentGps.denied_count) || 0);
+                const timeoutCount = (Number(installationGps.timeout_count) || 0) + (Number(incidentGps.timeout_count) || 0);
+                gpsFailuresMetaEl.textContent = gpsFailures > 0
+                    ? `Denegado ${deniedCount} | Timeout ${timeoutCount}`
+                    : 'Sin incidencias de captura';
+            }
+
+            const gpsOutsideMetaEl = document.getElementById('gpsOpsOutsideMeta');
+            if (gpsOutsideMetaEl) {
+                gpsOutsideMetaEl.textContent = outsideCount > 0
+                    ? `Incidencias ${Number(warnings.incident_outside_count) || 0} | Conformidad ${Number(warnings.conformity_outside_count) || 0}`
+                    : 'Warnings geofence auditados';
+            }
+
+            const gpsOverridesMetaEl = document.getElementById('gpsOpsOverridesMeta');
+            if (gpsOverridesMetaEl) {
+                gpsOverridesMetaEl.textContent = overrideCount > 0
+                    ? `Incidencias ${Number(overrides.incident_geofence_count) || 0} | Conformidad ${Number(overrides.conformity_geofence_count) || 0} + GPS ${Number(overrides.conformity_gps_count) || 0}`
+                    : 'Excepciones justificadas';
+            }
+
+            const gpsInstallationsMetaEl = document.getElementById('gpsOpsInstallationsMeta');
+            if (gpsInstallationsMetaEl) {
+                gpsInstallationsMetaEl.textContent = buildGpsFlowMeta(installationGps, 'Registros');
+            }
+
+            const gpsIncidentsMetaEl = document.getElementById('gpsOpsIncidentsMeta');
+            if (gpsIncidentsMetaEl) {
+                gpsIncidentsMetaEl.textContent = buildGpsFlowMeta(incidentGps, 'Incidencias');
+            }
+
+            renderLoanAttention(stats);
+            options.setNotificationBadgeCount(
+                criticalCount + outsideSlaCount + loanDueSoonCount + loanOverdueCount,
+            );
         }
 
         function renderSuccessChart(stats) {
@@ -233,6 +438,7 @@
             if (!canvas) return;
             const ctx = canvas.getContext('2d');
             const charts = options.getCharts();
+            const palette = getChartPalette();
 
             if (charts.success) {
                 charts.success.destroy();
@@ -250,14 +456,14 @@
                     datasets: [{
                         data: [success, failed, Math.max(0, other)],
                         backgroundColor: [
-                            'rgba(16, 185, 129, 0.8)',
-                            'rgba(239, 68, 68, 0.8)',
-                            'rgba(148, 163, 184, 0.3)',
+                            palette.success,
+                            palette.error,
+                            palette.muted,
                         ],
                         borderColor: [
-                            'rgba(16, 185, 129, 1)',
-                            'rgba(239, 68, 68, 1)',
-                            'rgba(148, 163, 184, 0.5)',
+                            palette.success,
+                            palette.error,
+                            palette.muted,
                         ],
                         borderWidth: 2,
                         hoverOffset: 4,
@@ -297,6 +503,7 @@
             if (!canvas) return;
             const ctx = canvas.getContext('2d');
             const charts = options.getCharts();
+            const palette = getChartPalette();
 
             if (charts.brand) {
                 charts.brand.destroy();
@@ -311,12 +518,12 @@
             }
 
             const colors = [
-                'rgba(6, 182, 212, 0.8)',
-                'rgba(139, 92, 246, 0.8)',
-                'rgba(16, 185, 129, 0.8)',
-                'rgba(245, 158, 11, 0.8)',
-                'rgba(239, 68, 68, 0.8)',
-                'rgba(59, 130, 246, 0.8)',
+                palette.accent,
+                palette.info,
+                palette.success,
+                palette.warning,
+                palette.error,
+                palette.muted,
             ];
 
             charts.brand = new Chart(ctx, {
@@ -345,7 +552,7 @@
                         y: {
                             beginAtZero: true,
                             grid: {
-                                color: 'rgba(71, 85, 105, 0.3)',
+                                color: palette.border,
                             },
                             ticks: {
                                 precision: 0,
@@ -399,13 +606,14 @@
         }
 
         async function renderTrendChart(days = options.getCurrentTrendRangeDays()) {
-            if (!options.isChartAvailable()) return;
             const canvas = document.getElementById('trendChart');
             if (!canvas) return;
-            const ctx = canvas.getContext('2d');
             const normalizedDays = normalizeTrendRangeDays(days);
             options.setCurrentTrendRangeDays(normalizedDays);
             syncTrendRangeToggleUI();
+            const chartReady = typeof options.ensureChartsReady === 'function'
+                ? await options.ensureChartsReady()
+                : options.isChartAvailable();
 
             const charts = options.getCharts();
             if (charts.trend) {
@@ -448,6 +656,14 @@
                     }
                 }
 
+                updateTrendSummary(labels, data, normalizedDays);
+
+                if (!chartReady) {
+                    return;
+                }
+
+                const ctx = canvas.getContext('2d');
+                const palette = getChartPalette();
                 charts.trend = new Chart(ctx, {
                     type: 'line',
                     data: {
@@ -455,13 +671,13 @@
                         datasets: [{
                             label: normalizedDays === 1 ? 'Registros (24h)' : 'Registros (7d)',
                             data,
-                            borderColor: 'rgba(6, 182, 212, 1)',
-                            backgroundColor: 'rgba(6, 182, 212, 0.1)',
+                            borderColor: palette.accent,
+                            backgroundColor: palette.accent,
                             borderWidth: 3,
-                            fill: true,
+                            fill: false,
                             tension: 0.4,
-                            pointBackgroundColor: 'rgba(6, 182, 212, 1)',
-                            pointBorderColor: '#fff',
+                            pointBackgroundColor: palette.accent,
+                            pointBorderColor: palette.background,
                             pointBorderWidth: 2,
                             pointRadius: 5,
                             pointHoverRadius: 7,
@@ -483,7 +699,7 @@
                             y: {
                                 beginAtZero: true,
                                 grid: {
-                                    color: 'rgba(71, 85, 105, 0.3)',
+                                    color: palette.border,
                                 },
                                 ticks: {
                                     precision: 0,
@@ -508,11 +724,19 @@
             try {
                 const stats = await options.api.getStatistics();
                 updateStats(stats);
-                renderSuccessChart(stats);
-                renderBrandChart(stats);
+                updateSuccessSummary(stats);
+                updateBrandSummary(stats);
+                const chartsReady = typeof options.ensureChartsReady === 'function'
+                    ? await options.ensureChartsReady()
+                    : options.isChartAvailable();
+                if (chartsReady) {
+                    renderSuccessChart(stats);
+                    renderBrandChart(stats);
+                }
                 await renderTrendChart(options.getCurrentTrendRangeDays());
 
                 const installations = await options.api.getInstallations({ limit: 5 });
+                options.cacheInstallations?.(installations);
                 renderRecentInstallations(installations);
             } catch (err) {
                 console.error('Error cargando dashboard:', err);

@@ -1,5 +1,38 @@
 (function attachDashboardAuditFactory(global) {
     function createDashboardAudit(options) {
+        function summarizeAuditDetails(details) {
+            if (!details || typeof details !== 'object') {
+                return '-';
+            }
+
+            const preferredKeys = [
+                'reason',
+                'geofence_result',
+                'geofence_distance_m',
+                'geofence_radius_m',
+                'gps_capture_status',
+                'gps_accuracy_m',
+                'incident_id',
+                'installation_id',
+            ];
+            const prioritizedEntries = preferredKeys
+                .filter((key) => Object.prototype.hasOwnProperty.call(details, key))
+                .map((key) => [key, details[key]]);
+            const fallbackEntries = Object.entries(details).filter(
+                ([key]) => !preferredKeys.includes(key),
+            );
+            const entries = [...prioritizedEntries, ...fallbackEntries]
+                .filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== '')
+                .slice(0, 3);
+
+            if (entries.length === 0) {
+                return '-';
+            }
+
+            const summary = entries.map(([key, value]) => `${key}: ${value}`).join(', ');
+            return summary.length > 90 ? `${summary.substring(0, 90)}...` : summary;
+        }
+
         async function loadAuditLogs() {
             if (!options.requireActiveSession()) return;
             const container = document.getElementById('auditLogs');
@@ -80,13 +113,9 @@
                 if (log.details) {
                     try {
                         const parsed = typeof log.details === 'string' ? JSON.parse(log.details) : log.details;
-                        details = Object.entries(parsed)
-                            .map(([key, value]) => `${key}: ${value}`)
-                            .slice(0, 2)
-                            .join(', ');
-                        if (details.length > 50) details = `${details.substring(0, 50)}...`;
+                        details = summarizeAuditDetails(parsed);
                     } catch {
-                        details = String(log.details).substring(0, 50);
+                        details = String(log.details).substring(0, 90);
                     }
                 }
 

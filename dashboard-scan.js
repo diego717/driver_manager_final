@@ -323,6 +323,9 @@
                 });
                 refs.video.srcObject = stream;
                 await refs.video.play();
+                if (typeof global.BarcodeDetector !== 'function' && typeof options.ensureJsQrAvailability === 'function') {
+                    await options.ensureJsQrAvailability();
+                }
                 const decoderMode = resolveCameraDecoderMode();
                 if (decoderMode === 'barcode') {
                     setStatus('Camara activa. Apunta al QR para resolver contexto.');

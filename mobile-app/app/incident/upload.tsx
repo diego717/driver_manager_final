@@ -24,7 +24,7 @@ import { extractApiError } from "@/src/api/client";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
 
 type SelectedImage = {
   uri: string;
@@ -640,6 +640,8 @@ export default function UploadIncidentPhotoScreen() {
         ]}
         placeholder="Ej: 15"
         placeholderTextColor={palette.placeholder}
+        selectionColor={textInputAccentColor}
+        cursorColor={textInputAccentColor}
         accessibilityLabel="ID de incidencia para subir evidencia"
       />
 
@@ -701,6 +703,8 @@ export default function UploadIncidentPhotoScreen() {
             multiline
             placeholder="Describe contexto de la evidencia"
             placeholderTextColor={palette.placeholder}
+            selectionColor={textInputAccentColor}
+            cursorColor={textInputAccentColor}
             accessibilityLabel="Nota operativa de la evidencia"
           />
           <Text style={[styles.hintText, { color: palette.hint }]}>Caracteres: {note.trim().length}</Text>
@@ -916,6 +920,9 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 10,
+    fontFamily: inputFontFamily,
+    fontSize: 14,
+    lineHeight: 19,
   },
   noteInput: {
     minHeight: 110,

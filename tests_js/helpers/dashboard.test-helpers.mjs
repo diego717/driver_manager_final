@@ -5,6 +5,7 @@ import { JSDOM } from "jsdom";
 
 const PUBLIC_DIR = path.join(process.cwd(), "public");
 const DEFAULT_DASHBOARD_TEST_URL = "http://localhost:8787/web/dashboard";
+const activeDashboardDoms = new Set();
 
 function resolvePublicAssetPath(assetName) {
   return path.join(PUBLIC_DIR, assetName);
@@ -39,6 +40,35 @@ function buildDefaultStatisticsPayload() {
     failed_installations: 0,
     unique_clients: 1,
     avg_installation_time: 120,
+    gps_observability: {
+      installations: {
+        attempted_count: 0,
+        captured_count: 0,
+        failure_count: 0,
+        capture_success_rate: 0,
+        average_accuracy_m: null,
+        p95_accuracy_m: null,
+      },
+      incidents: {
+        attempted_count: 0,
+        captured_count: 0,
+        failure_count: 0,
+        capture_success_rate: 0,
+        average_accuracy_m: null,
+        p95_accuracy_m: null,
+      },
+      warnings: {
+        total_outside_count: 0,
+        incident_outside_count: 0,
+        conformity_outside_count: 0,
+      },
+      overrides: {
+        total_override_count: 0,
+        incident_geofence_count: 0,
+        conformity_geofence_count: 0,
+        conformity_gps_count: 0,
+      },
+    },
     by_brand: {
       Zebra: 1,
     },
@@ -237,6 +267,14 @@ function installBrowserShims(window, fetchImpl) {
     value() {
       return {
         canvas: this,
+        setTransform() {},
+        clearRect() {},
+        beginPath() {},
+        moveTo() {},
+        lineTo() {},
+        stroke() {},
+        fillRect() {},
+        drawImage() {},
       };
     },
   });
@@ -259,6 +297,11 @@ function runPublicDashboardScripts(dom) {
     filename: "public/dashboard-api.js",
   });
   apiScript.runInContext(context);
+
+  const geolocationScript = new vm.Script(readPublicTextAsset("dashboard-geolocation.js"), {
+    filename: "public/dashboard-geolocation.js",
+  });
+  geolocationScript.runInContext(context);
 
   const jsQrScript = new vm.Script(readPublicTextAsset("jsqr.js"), {
     filename: "public/jsqr.js",
@@ -336,6 +379,7 @@ export async function setupDashboardApp({ fetchImpl, url = DEFAULT_DASHBOARD_TES
     url,
     runScripts: "outside-only",
   });
+  activeDashboardDoms.add(dom);
 
   installBrowserShims(dom.window, fetchImpl || router.fetch);
   runPublicDashboardScripts(dom);
@@ -345,4 +389,13 @@ export async function setupDashboardApp({ fetchImpl, url = DEFAULT_DASHBOARD_TES
     dom,
     router,
   };
+}
+
+export function cleanupDashboardApps() {
+  activeDashboardDoms.forEach((dom) => {
+    try {
+      dom.window.close();
+    } catch {}
+  });
+  activeDashboardDoms.clear();
 }

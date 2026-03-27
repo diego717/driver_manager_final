@@ -76,6 +76,24 @@ const migrations = schemaMigrations({
         }),
       ],
     },
+    {
+      toVersion: 3,
+      steps: [
+        addColumns({
+          table: 'incidents',
+          columns: [
+            { name: 'gps_capture_status', type: 'string' },
+            { name: 'gps_capture_source', type: 'string' },
+            { name: 'gps_lat', type: 'number', isOptional: true },
+            { name: 'gps_lng', type: 'number', isOptional: true },
+            { name: 'gps_accuracy_m', type: 'number', isOptional: true },
+            { name: 'gps_captured_at', type: 'string', isOptional: true },
+            { name: 'gps_capture_note', type: 'string' },
+            { name: 'geofence_override_note', type: 'string' },
+          ],
+        }),
+      ],
+    },
   ],
 })
 

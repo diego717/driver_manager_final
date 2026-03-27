@@ -1,8 +1,16 @@
 import {
   HttpError,
+  isMissingIncidentGeofenceOverrideColumnsError,
+  isMissingIncidentReadModelColumnsError,
   isIncidentStatusConstraintError,
   isMissingIncidentSoftDeleteColumnsError,
 } from "../lib/core.js";
+import { gpsBindValues, normalizeGpsPayload } from "../lib/gps.js";
+import {
+  buildDefaultGeofenceSnapshot,
+  GEOFENCE_FLOW_INCIDENTS,
+  resolveHardGeofenceOverride,
+} from "../lib/geofence.js";
 
 export function createIncidentsRouteHandlers({
   jsonResponse,
@@ -18,6 +26,7 @@ export function createIncidentsRouteHandlers({
   isMissingIncidentTimingColumnsError,
   normalizeIncidentEvidencePayload,
   normalizeIncidentStatusPayload,
+  evaluateGeofence,
   loadIncidentForTenant,
   loadIncidentTimingFieldsForTenant,
   parseIncidentChecklistItems,
@@ -45,6 +54,7 @@ export function createIncidentsRouteHandlers({
   recoverIncidentPhotosFromStorageForTenant,
   sanitizeFileName,
   corsHeaders,
+  syncPublicTrackingSnapshotForInstallation,
 }) {
   function resolveIncidentActorUsername(isWebRoute, webSession, data) {
     return normalizeOptionalString(
@@ -97,86 +107,110 @@ export function createIncidentsRouteHandlers({
           requireSuperAdminRole(webSession?.role);
         }
 
-        const incidentsQuery = `
-          SELECT
-            id,
-            installation_id,
-            asset_id,
-            reporter_username,
-            note,
-            time_adjustment_seconds,
-            estimated_duration_seconds,
-            severity,
-            source,
-            created_at,
-            incident_status,
-            status_updated_at,
-            status_updated_by,
-            resolved_at,
-            resolved_by,
-            resolution_note,
-            checklist_json,
-            evidence_note,
-            work_started_at,
-            work_ended_at,
-            actual_duration_seconds,
-            deleted_at,
-            deleted_by,
-            deletion_reason
-          FROM incidents
-          WHERE installation_id = ?
-            AND tenant_id = ?
-            ${includeDeleted ? "" : "AND deleted_at IS NULL"}
-          ORDER BY created_at DESC, id DESC
-        `;
-        const { results: incidents } = await env.DB.prepare(incidentsQuery)
-          .bind(installationId, incidentsTenantId)
-          .all();
+        try {
+          const incidentsQuery = `
+            SELECT
+              id,
+              installation_id,
+              asset_id,
+              geofence_distance_m,
+              geofence_radius_m,
+              geofence_result,
+              geofence_checked_at,
+              geofence_override_note,
+              geofence_override_by,
+              geofence_override_at,
+              reporter_username,
+              note,
+              time_adjustment_seconds,
+              estimated_duration_seconds,
+              severity,
+              source,
+              created_at,
+              incident_status,
+              status_updated_at,
+              status_updated_by,
+              resolved_at,
+              resolved_by,
+              resolution_note,
+              checklist_json,
+              evidence_note,
+              work_started_at,
+              work_ended_at,
+              actual_duration_seconds,
+              gps_lat,
+              gps_lng,
+              gps_accuracy_m,
+              gps_captured_at,
+              gps_capture_source,
+              gps_capture_status,
+              gps_capture_note,
+              deleted_at,
+              deleted_by,
+              deletion_reason
+            FROM incidents
+            WHERE installation_id = ?
+              AND tenant_id = ?
+              ${includeDeleted ? "" : "AND deleted_at IS NULL"}
+            ORDER BY created_at DESC, id DESC
+          `;
+          const { results: incidents } = await env.DB.prepare(incidentsQuery)
+            .bind(installationId, incidentsTenantId)
+            .all();
 
-        const photosQuery = `
-          SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
-          FROM incident_photos p
-          INNER JOIN incidents i ON i.id = p.incident_id
-          WHERE i.installation_id = ?
-            AND i.tenant_id = ?
-            ${includeDeleted ? "" : "AND i.deleted_at IS NULL"}
-          ORDER BY p.created_at ASC, p.id ASC
-        `;
-        let { results: photos } = await env.DB.prepare(photosQuery)
-          .bind(installationId, incidentsTenantId)
-          .all();
+          const photosQuery = `
+            SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
+            FROM incident_photos p
+            INNER JOIN incidents i ON i.id = p.incident_id
+            WHERE i.installation_id = ?
+              AND i.tenant_id = ?
+              ${includeDeleted ? "" : "AND i.deleted_at IS NULL"}
+            ORDER BY p.created_at ASC, p.id ASC
+          `;
+          let { results: photos } = await env.DB.prepare(photosQuery)
+            .bind(installationId, incidentsTenantId)
+            .all();
 
-        if ((!photos || photos.length === 0) && incidents.length > 0) {
-          const recoveredCount = await recoverIncidentPhotosFromStorageForTenant?.(
-            env,
-            incidents,
-            incidentsTenantId,
+          if ((!photos || photos.length === 0) && incidents.length > 0) {
+            const recoveredCount = await recoverIncidentPhotosFromStorageForTenant?.(
+              env,
+              incidents,
+              incidentsTenantId,
+            );
+            if (Number(recoveredCount) > 0) {
+              const recoveredPhotosResult = await env.DB.prepare(photosQuery)
+                .bind(installationId, incidentsTenantId)
+                .all();
+              photos = recoveredPhotosResult?.results || [];
+            }
+          }
+
+          const photosByIncident = {};
+          for (const photo of photos) {
+            if (!photosByIncident[photo.incident_id]) {
+              photosByIncident[photo.incident_id] = [];
+            }
+            photosByIncident[photo.incident_id].push(photo);
+          }
+
+          const enriched = incidents.map((incident) =>
+            mapIncidentRow(incident, photosByIncident[incident.id] || []),
           );
-          if (Number(recoveredCount) > 0) {
-            const recoveredPhotosResult = await env.DB.prepare(photosQuery)
-              .bind(installationId, incidentsTenantId)
-              .all();
-            photos = recoveredPhotosResult?.results || [];
+
+          return jsonResponse(request, env, corsPolicy, {
+            success: true,
+            installation_id: installationId,
+            incidents: enriched,
+          });
+        } catch (error) {
+          if (isMissingIncidentReadModelColumnsError(error)) {
+            throw new HttpError(
+              500,
+              "La tabla incidents no tiene las migraciones GPS/geofence aplicadas. Ejecuta 0017_geolocation_capture.sql, 0018_geofencing_soft.sql y 0019_geofence_hard_overrides.sql.",
+            );
           }
+          throw error;
         }
-
-        const photosByIncident = {};
-        for (const photo of photos) {
-          if (!photosByIncident[photo.incident_id]) {
-            photosByIncident[photo.incident_id] = [];
-          }
-          photosByIncident[photo.incident_id].push(photo);
-        }
-
-        const enriched = incidents.map((incident) =>
-          mapIncidentRow(incident, photosByIncident[incident.id] || []),
-        );
-
-        return jsonResponse(request, env, corsPolicy, {
-          success: true,
-          installation_id: installationId,
-          incidents: enriched,
-        });
       }
 
       if (request.method === "POST") {
@@ -188,6 +222,7 @@ export function createIncidentsRouteHandlers({
           defaultSource: isWebRoute ? "web" : "mobile",
           defaultReporterUsername: webSession?.sub || "unknown",
         });
+        const gps = normalizeGpsPayload(data?.gps);
         const requestedAssetId = parseOptionalPositiveInt(data?.asset_id, "asset_id");
         const createdAt = nowIso();
 
@@ -207,7 +242,7 @@ export function createIncidentsRouteHandlers({
         }
 
         const { results: installationRows } = await env.DB.prepare(`
-          SELECT id, notes, installation_time_seconds
+          SELECT id, notes, installation_time_seconds, site_lat, site_lng, site_radius_m
           FROM installations
           WHERE id = ?
             AND tenant_id = ?
@@ -219,6 +254,22 @@ export function createIncidentsRouteHandlers({
         if (!installation) {
           throw new HttpError(404, "Instalación no encontrada.");
         }
+
+        const geofence = evaluateGeofence({
+          gps,
+          installation,
+          checkedAt: createdAt,
+        });
+        const requestIp = getClientIpForRateLimit(request);
+        const geofenceOverride = resolveHardGeofenceOverride({
+          env,
+          tenantId: incidentsTenantId,
+          flow: GEOFENCE_FLOW_INCIDENTS,
+          geofence,
+          overrideNote: data?.geofence_override_note,
+          actorUsername: payload.reporterUsername,
+          appliedAt: createdAt,
+        });
 
         let persistedAssetId = requestedAssetId;
         let insertResult;
@@ -240,9 +291,23 @@ export function createIncidentsRouteHandlers({
               status_updated_by,
               work_started_at,
               work_ended_at,
-              actual_duration_seconds
+              actual_duration_seconds,
+              geofence_distance_m,
+              geofence_radius_m,
+              geofence_result,
+              geofence_checked_at,
+              geofence_override_note,
+              geofence_override_by,
+              geofence_override_at,
+              gps_lat,
+              gps_lng,
+              gps_accuracy_m,
+              gps_captured_at,
+              gps_capture_source,
+              gps_capture_status,
+              gps_capture_note
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `)
             .bind(
               installationId,
@@ -261,10 +326,22 @@ export function createIncidentsRouteHandlers({
               null,
               null,
               null,
+              geofence.geofence_distance_m,
+              geofence.geofence_radius_m,
+              geofence.geofence_result,
+              geofence.geofence_checked_at,
+              geofenceOverride.override_note,
+              geofenceOverride.override_by,
+              geofenceOverride.override_at,
+              ...gpsBindValues(gps),
             )
             .run();
         } catch (error) {
-          if (!isMissingIncidentAssetColumnError(error) && !isMissingIncidentTimingColumnsError(error)) {
+          if (
+            !isMissingIncidentAssetColumnError(error) &&
+            !isMissingIncidentTimingColumnsError(error) &&
+            !isMissingIncidentGeofenceOverrideColumnsError(error)
+          ) {
             throw error;
           }
           try {
@@ -281,9 +358,23 @@ export function createIncidentsRouteHandlers({
                 created_at,
                 incident_status,
                 status_updated_at,
-                status_updated_by
+                status_updated_by,
+                geofence_distance_m,
+                geofence_radius_m,
+                geofence_result,
+                geofence_checked_at,
+                geofence_override_note,
+                geofence_override_by,
+                geofence_override_at,
+                gps_lat,
+                gps_lng,
+                gps_accuracy_m,
+                gps_captured_at,
+                gps_capture_source,
+                gps_capture_status,
+                gps_capture_note
               )
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `)
               .bind(
                 installationId,
@@ -298,10 +389,21 @@ export function createIncidentsRouteHandlers({
                 payload.incidentStatus,
                 createdAt,
                 payload.reporterUsername,
+                geofence.geofence_distance_m,
+                geofence.geofence_radius_m,
+                geofence.geofence_result,
+                geofence.geofence_checked_at,
+                geofenceOverride.override_note,
+                geofenceOverride.override_by,
+                geofenceOverride.override_at,
+                ...gpsBindValues(gps),
               )
               .run();
           } catch (legacyError) {
-            if (!isMissingIncidentAssetColumnError(legacyError)) {
+            if (
+              !isMissingIncidentAssetColumnError(legacyError) &&
+              !isMissingIncidentGeofenceOverrideColumnsError(legacyError)
+            ) {
               throw legacyError;
             }
             insertResult = await env.DB.prepare(`
@@ -316,9 +418,23 @@ export function createIncidentsRouteHandlers({
                 created_at,
                 incident_status,
                 status_updated_at,
-                status_updated_by
+                status_updated_by,
+                geofence_distance_m,
+                geofence_radius_m,
+                geofence_result,
+                geofence_checked_at,
+                geofence_override_note,
+                geofence_override_by,
+                geofence_override_at,
+                gps_lat,
+                gps_lng,
+                gps_accuracy_m,
+                gps_captured_at,
+                gps_capture_source,
+                gps_capture_status,
+                gps_capture_note
               )
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `)
               .bind(
                 installationId,
@@ -332,6 +448,14 @@ export function createIncidentsRouteHandlers({
                 payload.incidentStatus,
                 createdAt,
                 payload.reporterUsername,
+                geofence.geofence_distance_m,
+                geofence.geofence_radius_m,
+                geofence.geofence_result,
+                geofence.geofence_checked_at,
+                geofenceOverride.override_note,
+                geofenceOverride.override_by,
+                geofenceOverride.override_at,
+                ...gpsBindValues(gps),
               )
               .run();
             persistedAssetId = null;
@@ -396,12 +520,64 @@ export function createIncidentsRouteHandlers({
             severity: payload.severity,
             source: payload.source,
             note_preview: payload.note.substring(0, 100),
+            geofence_result: geofence.geofence_result,
+            geofence_distance_m: geofence.geofence_distance_m,
+            geofence_radius_m: geofence.geofence_radius_m,
+            geofence_override_note: geofenceOverride.override_note,
+            geofence_override_by: geofenceOverride.override_by,
+            geofence_override_at: geofenceOverride.override_at,
+            gps_accuracy_m: gps.gps_accuracy_m,
             tenant_id: incidentsTenantId,
           },
           computerName: "",
-          ipAddress: getClientIpForRateLimit(request),
+          ipAddress: requestIp,
           platform: payload.source,
         });
+
+        if (geofence.geofence_result === "outside") {
+          await logAuditEvent(env, {
+            action: "incident_geofence_warning",
+            username: payload.reporterUsername,
+            success: true,
+            tenantId: incidentsTenantId,
+            details: {
+              incident_id: incidentId,
+              installation_id: installationId,
+              geofence_result: geofence.geofence_result,
+              geofence_distance_m: geofence.geofence_distance_m,
+              geofence_radius_m: geofence.geofence_radius_m,
+              gps_accuracy_m: gps.gps_accuracy_m,
+              tenant_id: incidentsTenantId,
+            },
+            computerName: "",
+            ipAddress: requestIp,
+            platform: payload.source,
+          });
+        }
+
+        if (geofenceOverride.override_applied) {
+          await logAuditEvent(env, {
+            action: "override_incident_geofence",
+            username: payload.reporterUsername,
+            success: true,
+            tenantId: incidentsTenantId,
+            details: {
+              incident_id: incidentId,
+              installation_id: installationId,
+              asset_id: persistedAssetId,
+              geofence_distance_m: geofence.geofence_distance_m,
+              geofence_radius_m: geofence.geofence_radius_m,
+              gps_accuracy_m: gps.gps_accuracy_m,
+              reason: geofenceOverride.override_note,
+              override_by: geofenceOverride.override_by,
+              override_at: geofenceOverride.override_at,
+              tenant_id: incidentsTenantId,
+            },
+            computerName: "",
+            ipAddress: requestIp,
+            platform: payload.source,
+          });
+        }
 
         const incidentEventPayload = mapIncidentRow({
           id: incidentId,
@@ -422,12 +598,22 @@ export function createIncidentsRouteHandlers({
           resolution_note: null,
           checklist_json: null,
           evidence_note: null,
+          ...buildDefaultGeofenceSnapshot(),
+          ...geofence,
+          geofence_override_note: geofenceOverride.override_note,
+          geofence_override_by: geofenceOverride.override_by,
+          geofence_override_at: geofenceOverride.override_at,
+          ...gps,
         });
 
         await publishRealtimeEvent(env, {
           type: "incident_created",
           incident: incidentEventPayload,
         }, realtimeTenantId);
+        await syncPublicTrackingSnapshotForInstallation(env, {
+          tenantId: incidentsTenantId,
+          installationId,
+        });
         if (payload.applyToInstallation) {
           await publishRealtimeEvent(env, {
             type: "installation_updated",
@@ -543,6 +729,10 @@ export function createIncidentsRouteHandlers({
         type: "incident_evidence_updated",
         incident: incidentEventPayload,
       }, realtimeTenantId);
+      await syncPublicTrackingSnapshotForInstallation(env, {
+        tenantId: incidentsTenantId,
+        installationId: existingIncident.installation_id,
+      });
 
       return jsonResponse(request, env, corsPolicy, {
         success: true,
@@ -798,6 +988,10 @@ export function createIncidentsRouteHandlers({
         type: "incident_status_updated",
         incident: incidentEventPayload,
       }, realtimeTenantId);
+      await syncPublicTrackingSnapshotForInstallation(env, {
+        tenantId: incidentsTenantId,
+        installationId: existingIncident.installation_id,
+      });
 
       return jsonResponse(request, env, corsPolicy, {
         success: true,
@@ -1058,6 +1252,10 @@ export function createIncidentsRouteHandlers({
         deleted_at: deletedAt,
       },
     }, realtimeTenantId);
+    await syncPublicTrackingSnapshotForInstallation(env, {
+      tenantId: incidentsTenantId,
+      installationId: existingIncident?.installation_id || installationIdFromPath,
+    });
     await publishRealtimeStatsUpdate(env, realtimeTenantId);
 
     return jsonResponse(request, env, corsPolicy, {

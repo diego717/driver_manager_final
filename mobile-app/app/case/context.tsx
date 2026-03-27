@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -19,6 +20,7 @@ import { extractApiError } from "@/src/api/client";
 import {
   createInstallationRecord,
   listInstallations,
+  updateInstallationRecord,
 } from "@/src/api/incidents";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
@@ -27,10 +29,12 @@ import ScreenScaffold from "@/src/components/ScreenScaffold";
 import SectionCard from "@/src/components/SectionCard";
 import StatusChip from "@/src/components/StatusChip";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
+import { captureCurrentGpsSnapshot } from "@/src/services/location";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
 import { type InstallationRecord } from "@/src/types/api";
+import { formatGpsStatusLabel, formatGpsSummary, hasInstallationSiteConfig } from "@/src/utils/gps";
 import { deriveRecordIncidentSummary } from "@/src/utils/incidents";
 
 const MIN_TOUCH_TARGET_SIZE = 44;
@@ -67,6 +71,9 @@ export default function CaseContextScreen() {
   );
   const [loadingContext, setLoadingContext] = useState(false);
   const [creatingCase, setCreatingCase] = useState(false);
+  const [capturingSiteGps, setCapturingSiteGps] = useState(false);
+  const [savingSite, setSavingSite] = useState(false);
+  const [siteRadiusInput, setSiteRadiusInput] = useState("120");
   const [feedbackMessage, setFeedbackMessage] = useState<FeedbackState>(null);
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -103,6 +110,8 @@ export default function CaseContextScreen() {
     () => deriveRecordIncidentSummary(selectedCase),
     [selectedCase],
   );
+  const canSendConformity = Boolean(selectedCase) && selectedSummary.active === 0;
+  const caseHasSiteConfig = useMemo(() => hasInstallationSiteConfig(selectedCase), [selectedCase]);
 
   const clearFeedbackSoon = useCallback(() => {
     if (feedbackTimeoutRef.current) {
@@ -134,6 +143,18 @@ export default function CaseContextScreen() {
     [assetDetail?.asset?.external_code, assetDetail?.asset?.id, resolvedAssetId, routeAssetExternalCode],
   );
 
+  const buildConformityRoute = useCallback(
+    (installationId: number) => {
+      const params = new URLSearchParams({ installationId: String(installationId) });
+      const assetId = resolvedAssetId || Number(assetDetail?.asset?.id) || null;
+      if (assetId && assetId > 0) {
+        params.set("assetRecordId", String(assetId));
+      }
+      return `/case/conformity?${params.toString()}` as never;
+    },
+    [assetDetail?.asset?.id, resolvedAssetId],
+  );
+
   const loadContext = useCallback(async () => {
     if (!hasActiveSession || !hasPrefilledContext) return;
 
@@ -159,6 +180,13 @@ export default function CaseContextScreen() {
       const [records, assetResponse] = await Promise.all([recordsPromise, assetPromise]);
       setInstallations(records);
       setAssetDetail(assetResponse);
+      const nextCaseId = routeInstallationId || Number(assetResponse?.active_link?.installation_id) || null;
+      const matchedCase = nextCaseId
+        ? records.find((item) => item.id === nextCaseId) || null
+        : null;
+      if (matchedCase && Number.isFinite(Number(matchedCase.site_radius_m)) && Number(matchedCase.site_radius_m) > 0) {
+        setSiteRadiusInput(String(Math.round(Number(matchedCase.site_radius_m))));
+      }
     } catch (error) {
       notify("error", `No se pudo resolver el contexto: ${extractApiError(error)}`);
     } finally {
@@ -169,6 +197,7 @@ export default function CaseContextScreen() {
     hasPrefilledContext,
     notify,
     resolvedAssetId,
+    routeInstallationId,
     routeAssetExternalCode,
   ]);
 
@@ -193,6 +222,12 @@ export default function CaseContextScreen() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (selectedCase && Number.isFinite(Number(selectedCase.site_radius_m)) && Number(selectedCase.site_radius_m) > 0) {
+      setSiteRadiusInput(String(Math.round(Number(selectedCase.site_radius_m))));
+    }
+  }, [selectedCase?.id, selectedCase?.site_radius_m]);
 
   const openWorkCase = useCallback(
     (installationId: number) => {
@@ -239,6 +274,61 @@ export default function CaseContextScreen() {
       setCreatingCase(false);
     }
   }, [assetDetail, buildIncidentRoute, notify, router]);
+
+  const captureAndSaveSite = useCallback(async () => {
+    if (!selectedCase || capturingSiteGps || savingSite) return;
+
+    const parsedRadius = Number.parseFloat(siteRadiusInput.replace(",", "."));
+    if (!Number.isFinite(parsedRadius) || parsedRadius <= 0) {
+      notify("warning", "Ingresa un radio valido en metros para guardar el sitio.");
+      return;
+    }
+
+    try {
+      setCapturingSiteGps(true);
+      const snapshot = await captureCurrentGpsSnapshot();
+      if (snapshot.status !== "captured" || !Number.isFinite(snapshot.lat) || !Number.isFinite(snapshot.lng)) {
+        notify(
+          "warning",
+          `No se pudo fijar el sitio. ${formatGpsStatusLabel(snapshot.status)}: ${formatGpsSummary(snapshot)}`,
+        );
+        return;
+      }
+
+      setSavingSite(true);
+      await updateInstallationRecord(selectedCase.id, {
+        site_lat: snapshot.lat,
+        site_lng: snapshot.lng,
+        site_radius_m: Math.round(parsedRadius),
+      });
+      await loadContext();
+      notify("success", `Sitio operativo guardado con radio de ${Math.round(parsedRadius)} m.`);
+    } catch (error) {
+      notify("error", `No se pudo guardar el sitio operativo: ${extractApiError(error)}`);
+    } finally {
+      setCapturingSiteGps(false);
+      setSavingSite(false);
+    }
+  }, [capturingSiteGps, loadContext, notify, savingSite, selectedCase, siteRadiusInput]);
+
+  const clearSiteConfig = useCallback(async () => {
+    if (!selectedCase || savingSite) return;
+
+    try {
+      setSavingSite(true);
+      await updateInstallationRecord(selectedCase.id, {
+        site_lat: null,
+        site_lng: null,
+        site_radius_m: null,
+      });
+      await loadContext();
+      notify("success", "Se limpio el sitio operativo del caso.");
+    } catch (error) {
+      notify("error", `No se pudo limpiar el sitio operativo: ${extractApiError(error)}`);
+    } finally {
+      setSavingSite(false);
+    }
+  }, [loadContext, notify, savingSite, selectedCase]);
 
   if (checkingSession) {
     return (
@@ -385,10 +475,11 @@ export default function CaseContextScreen() {
           ) : null}
         </>
       ) : (
-        <SectionCard
-          title="Caso listo"
-          description="Desde aqui sigues sin volver a decidir contexto."
-        >
+        <>
+          <SectionCard
+            title="Caso listo"
+            description="Desde aqui sigues sin volver a decidir contexto."
+          >
           {loadingContext ? (
             <View style={styles.loadingBlock}>
               <ActivityIndicator size="small" color={palette.loadingSpinner} />
@@ -422,6 +513,17 @@ export default function CaseContextScreen() {
                 </Text>
               </View>
 
+              <Text
+                style={[
+                  styles.supportText,
+                  { color: canSendConformity ? palette.successText : palette.warningText },
+                ]}
+              >
+                {canSendConformity
+                  ? "Caso listo para cerrar y enviar la conformidad."
+                  : "Primero resuelve las incidencias activas y luego emite la conformidad."}
+              </Text>
+
               <View style={styles.actionColumn}>
                 <TouchableOpacity
                   style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
@@ -444,6 +546,37 @@ export default function CaseContextScreen() {
                 >
                   <Text style={[styles.secondaryButtonText, { color: palette.secondaryButtonText }]}>
                     Nueva incidencia
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.secondaryButton,
+                    {
+                      backgroundColor: canSendConformity ? palette.secondaryButtonBg : palette.warningBg,
+                      borderColor: canSendConformity ? palette.inputBorder : palette.warningText,
+                    },
+                  ]}
+                  onPress={() =>
+                    canSendConformity
+                      ? router.push(buildConformityRoute(selectedCase.id))
+                      : openWorkCase(selectedCase.id)
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    canSendConformity
+                      ? `Generar conformidad para el caso ${selectedCase.id}`
+                      : `Revisar incidencias antes de generar la conformidad para el caso ${selectedCase.id}`
+                  }
+                >
+                  <Text
+                    style={[
+                      styles.secondaryButtonText,
+                      { color: canSendConformity ? palette.secondaryButtonText : palette.warningText },
+                    ]}
+                  >
+                    {canSendConformity
+                      ? "Enviar conformidad final"
+                      : "Revisar incidencias antes de cerrar"}
                   </Text>
                 </TouchableOpacity>
                 {assetDetail?.asset ? (
@@ -518,7 +651,91 @@ export default function CaseContextScreen() {
               body="Vuelve a escanear, abre inventario o inicia un caso manual para continuar."
             />
           )}
-        </SectionCard>
+          </SectionCard>
+
+          {selectedCase ? (
+            <SectionCard
+              title="Sitio operativo"
+              description="Configura el punto y radio que usaran GPS/geofence para este caso."
+            >
+            <View
+              style={[
+                styles.contextCard,
+                { backgroundColor: palette.surfaceAlt, borderColor: palette.border },
+              ]}
+            >
+              <Text style={[styles.caseTitle, { color: palette.textPrimary }]}>
+                {caseHasSiteConfig ? "Sitio configurado" : "Sin sitio configurado"}
+              </Text>
+              <Text style={[styles.supportText, { color: palette.textSecondary }]}>
+                {caseHasSiteConfig
+                  ? `Lat ${Number(selectedCase.site_lat).toFixed(5)} · Lng ${Number(selectedCase.site_lng).toFixed(5)} · radio ${Math.round(Number(selectedCase.site_radius_m) || 0)} m`
+                  : "Todavia no hay geofence para este caso. Puedes fijarlo desde tu ubicacion actual."}
+              </Text>
+            </View>
+
+            <Text style={[styles.fieldLabel, { color: palette.textPrimary }]}>Radio en metros</Text>
+            <TextInput
+              value={siteRadiusInput}
+              onChangeText={setSiteRadiusInput}
+              keyboardType="numeric"
+              style={[
+                styles.input,
+                { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary },
+              ]}
+              placeholder="120"
+              placeholderTextColor={palette.placeholder}
+              selectionColor={textInputAccentColor}
+              cursorColor={textInputAccentColor}
+              accessibilityLabel="Radio del sitio operativo en metros"
+            />
+
+            <View style={styles.actionColumn}>
+              <TouchableOpacity
+                style={[
+                  styles.primaryButton,
+                  { backgroundColor: palette.primaryButtonBg },
+                  (capturingSiteGps || savingSite) && styles.buttonDisabled,
+                ]}
+                onPress={() => {
+                  void captureAndSaveSite();
+                }}
+                disabled={capturingSiteGps || savingSite}
+                accessibilityRole="button"
+                accessibilityLabel={`Guardar sitio operativo del caso ${selectedCase.id}`}
+                accessibilityState={{ disabled: capturingSiteGps || savingSite, busy: capturingSiteGps || savingSite }}
+              >
+                {capturingSiteGps || savingSite ? (
+                  <ActivityIndicator color={palette.primaryButtonText} />
+                ) : (
+                  <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
+                    Usar ubicacion actual como sitio
+                  </Text>
+                )}
+              </TouchableOpacity>
+              {caseHasSiteConfig ? (
+                <TouchableOpacity
+                  style={[
+                    styles.ghostButton,
+                    { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+                    savingSite && styles.buttonDisabled,
+                  ]}
+                  onPress={() => {
+                    void clearSiteConfig();
+                  }}
+                  disabled={savingSite}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Limpiar sitio operativo del caso ${selectedCase.id}`}
+                >
+                  <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>
+                    Limpiar sitio
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            </SectionCard>
+          ) : null}
+        </>
       )}
     </ScreenScaffold>
   );
@@ -639,6 +856,20 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     lineHeight: 18,
   },
+  fieldLabel: {
+    fontFamily: fontFamilies.semibold,
+    fontSize: 13.5,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    fontFamily: inputFontFamily,
+    fontSize: 14,
+    lineHeight: 19,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+  },
   actionColumn: {
     gap: 10,
   },
@@ -679,5 +910,8 @@ const styles = StyleSheet.create({
   ghostButtonText: {
     fontFamily: fontFamilies.semibold,
     fontSize: 13.5,
+  },
+  buttonDisabled: {
+    opacity: 0.72,
   },
 });

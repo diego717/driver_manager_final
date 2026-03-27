@@ -3,9 +3,14 @@ import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 
 import {
+  cleanupDashboardApps,
   loadPublicDashboardHtml,
   setupDashboardApp,
 } from "./helpers/dashboard.test-helpers.mjs";
+
+test.afterEach(() => {
+  cleanupDashboardApps();
+});
 
 function loadDashboardHtml() {
   return loadPublicDashboardHtml();
@@ -59,6 +64,49 @@ test("all dashboard modals expose accessible dialog semantics", () => {
       assert.ok(document.getElementById(targetId), `${modalId} missing describedby target: ${targetId}`);
     });
   });
+});
+
+test("dashboard filters and chart summaries expose accessible labels", () => {
+  const html = loadDashboardHtml();
+  const dom = new JSDOM(html);
+  const { document } = dom.window;
+
+  [
+    ["searchInput", "Buscar registros"],
+    ["brandFilter", "Filtrar por marca"],
+    ["startDate", "Fecha de inicio"],
+    ["endDate", "Fecha de fin"],
+    ["assetsSearchInput", "Buscar equipos"],
+    ["auditActionFilter", "Filtrar auditoría por acción"],
+  ].forEach(([id, labelText]) => {
+    const control = document.getElementById(id);
+    assert.ok(control, `${id} should exist`);
+    const label = document.querySelector(`label[for="${id}"]`);
+    assert.ok(label, `${id} should have a label`);
+    assert.match(label.textContent || "", new RegExp(labelText, "i"));
+  });
+
+  const trendChart = document.getElementById("trendChart");
+  assert.ok(trendChart);
+  assert.equal(trendChart.getAttribute("role"), "img");
+  assert.equal(trendChart.getAttribute("aria-labelledby"), "trendChartTitle");
+  assert.equal(trendChart.getAttribute("aria-describedby"), "trendChartSummary");
+
+  ["trendChartTitle", "trendChartSummary", "successChartSummary", "brandChartSummary"].forEach((id) => {
+    assert.ok(document.getElementById(id), `${id} should exist`);
+  });
+});
+
+test("gps observability copy renders without mojibake", () => {
+  const html = loadDashboardHtml();
+  const dom = new JSDOM(html);
+  const { document } = dom.window;
+
+  assert.match(document.getElementById("gpsOpsTitle")?.textContent || "", /Salud de captura y geofence/);
+  assert.match(document.body.textContent || "", /auditoría operativa/);
+  assert.match(document.body.textContent || "", /Capturas útiles/);
+  assert.match(document.body.textContent || "", /Sin datos todavía/);
+  assert.doesNotMatch(document.body.textContent || "", /Ã|Â/);
 });
 
 test("login modal keeps keyboard focus trapped and closes on Escape", async () => {
@@ -168,12 +216,16 @@ test("action and photo modals close with Escape and restore focus to trigger", a
   const actionModal = document.getElementById("actionModal");
   const photoModal = document.getElementById("photoModal");
   const photoCloseButton = document.querySelector("#photoModal .close");
+  const probeInput = document.createElement("input");
+  probeInput.id = "actionProbeInput";
+  probeInput.type = "text";
+  probeInput.value = "ok";
 
   trigger.focus();
   window.openActionModal({
     title: "Confirmar",
     submitLabel: "Guardar",
-    fieldsHtml: "<input id=\"actionProbeInput\" type=\"text\" value=\"ok\">",
+    fields: probeInput,
     focusId: "actionProbeInput",
     onSubmit: async () => {},
   });
@@ -278,15 +330,21 @@ test("incidents header action labels keep material icons and readable copy", asy
   assert.ok(heading);
   assert.ok(headingIcon);
   assert.equal(headingIcon.textContent.trim(), "warning");
-  assert.match(heading.textContent, /Incidencias de Registro #31/);
+  assert.match(heading.textContent, /Incidencias del registro #31/i);
 
-  const createButton = document.querySelector("#incidentsList .incidents-header-actions .btn-primary");
-  const backButton = document.querySelector("#incidentsList .incidents-header-actions .btn-secondary");
+  const createButton = document.querySelector('#incidentsList .incidents-header-actions [data-role="create-incident-trigger"]');
+  const conformityButton = document.querySelector('#incidentsList .incidents-header-actions [data-role="conformity-trigger"]');
+  const backButton = Array.from(document.querySelectorAll("#incidentsList .incidents-header-actions .btn-secondary"))
+    .find((button) => button.textContent.includes("Volver"));
+
   assert.ok(createButton);
+  assert.ok(conformityButton);
   assert.ok(backButton);
-  assert.equal(createButton.querySelector(".material-symbols-outlined")?.textContent.trim(), "add_circle");
+  assert.equal(createButton.querySelector(".material-symbols-outlined")?.textContent.trim(), "add_alert");
+  assert.equal(conformityButton.querySelector(".material-symbols-outlined")?.textContent.trim(), "mark_email_read");
   assert.equal(backButton.querySelector(".material-symbols-outlined")?.textContent.trim(), "arrow_back");
-  assert.match(createButton.textContent, /Crear incidencia/);
+  assert.match(createButton.textContent, /Abrir nueva incidencia/);
+  assert.match(conformityButton.textContent, /Enviar conformidad final/);
   assert.match(backButton.textContent, /Volver/);
   assert.equal(backButton.textContent.includes("?"), false);
 });

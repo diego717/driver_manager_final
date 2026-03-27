@@ -69,3 +69,4 @@ secrets-rotation-plan.json
 # Accidental nested Expo workspace and local Expo state
 /mobile-app/mobile-app/
 **/.expo/
+.dev.vars

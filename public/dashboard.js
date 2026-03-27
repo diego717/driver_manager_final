@@ -85,12 +85,18 @@ let webAccessToken = '';
 let charts = {};
 let searchDebounceTimer = null;
 let currentInstallationsData = [];
+const installationCacheById = new Map();
 let currentSelectedInstallationId = null;
 let currentAssetsData = [];
 let currentSelectedAssetId = null;
 let currentDriversData = [];
 let selectedDriverFile = null;
 let currentTrendRangeDays = 7;
+const LAZY_ASSET_PATHS = {
+    chart: '/chart.umd.js',
+    jsqr: '/jsqr.js',
+};
+const lazyAssetPromises = new Map();
 const TREND_RANGE_ALLOWED_DAYS = new Set([1, 7]);
 let lastCriticalIncidentsCount = null;
 let incidentRuntimeTickerId = null;
@@ -109,6 +115,38 @@ const QR_MAX_MODEL_LENGTH = 160;
 const QR_MAX_SERIAL_LENGTH = 128;
 const QR_MAX_CLIENT_LENGTH = 180;
 const QR_MAX_NOTES_LENGTH = 2000;
+
+function normalizeInstallationCacheId(rawId) {
+    const parsedId = Number.parseInt(String(rawId), 10);
+    return Number.isInteger(parsedId) && parsedId > 0 ? parsedId : null;
+}
+
+function upsertInstallationCacheEntries(items) {
+    if (!Array.isArray(items)) return;
+    items.forEach((item) => {
+        const installationId = normalizeInstallationCacheId(item?.id);
+        if (!Number.isInteger(installationId)) {
+            return;
+        }
+        const existingItem = installationCacheById.get(installationId) || {};
+        installationCacheById.set(installationId, {
+            ...existingItem,
+            ...item,
+        });
+    });
+}
+
+function getInstallationFromCache(installationId) {
+    const normalizedId = normalizeInstallationCacheId(installationId);
+    if (!Number.isInteger(normalizedId)) {
+        return null;
+    }
+    return installationCacheById.get(normalizedId) || null;
+}
+
+function clearInstallationCache() {
+    installationCacheById.clear();
+}
 const QR_PREVIEW_SIZE_PX = 320;
 const INCIDENT_CHECKLIST_PRESETS = [
     'Equipo identificado (QR/serie)',
@@ -185,10 +223,10 @@ const SECTION_TITLES = {
 };
 const SECTION_SUBTITLES = {
     dashboard: 'Panorama general en tiempo real',
-    installations: 'Seguimiento fino de registros operativos',
-    assets: 'Inventario vivo con trazabilidad',
+    installations: 'Historial técnico para consultar contexto y registros',
+    assets: 'Equipos con acceso directo a incidencias y contexto',
     drivers: 'Versionado centralizado de controladores',
-    incidents: 'Atención de eventos con prioridad visible',
+    incidents: 'Atiende eventos sin perder el contexto operativo',
     audit: 'Trazas críticas y cumplimiento',
     settings: 'Preferencias operativas y atajos de gestión',
 };
@@ -277,6 +315,7 @@ let dashboardAudit = null;
 let dashboardOverview = null;
 let dashboardRealtime = null;
 let dashboardScan = null;
+let dashboardGeolocation = null;
 
 function openAccessibleModal(modalId, options = {}) {
     return dashboardModals.openAccessibleModal(modalId, options);
@@ -329,6 +368,72 @@ function renderContextualEmptyState(container, options = {}) {
 }
 
 
+function loadLazyScript(src) {
+    const normalizedSrc = String(src || '').trim();
+    if (!normalizedSrc) {
+        return Promise.reject(new Error('No se pudo resolver el script diferido.'));
+    }
+    if (lazyAssetPromises.has(normalizedSrc)) {
+        return lazyAssetPromises.get(normalizedSrc);
+    }
+
+    const loadPromise = new Promise((resolve, reject) => {
+        const existingScript = document.querySelector(`script[src="${normalizedSrc}"]`);
+        if (existingScript) {
+            resolve(existingScript);
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.src = normalizedSrc;
+        script.defer = true;
+        script.onload = () => resolve(script);
+        script.onerror = () => reject(new Error(`No se pudo cargar ${normalizedSrc}.`));
+        document.head.appendChild(script);
+    });
+
+    lazyAssetPromises.set(normalizedSrc, loadPromise);
+    return loadPromise;
+}
+
+function readThemeToken(name, fallbackValue) {
+    try {
+        const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+        return value || fallbackValue;
+    } catch {
+        return fallbackValue;
+    }
+}
+
+async function ensureChartLibrary() {
+    if (isChartAvailable()) {
+        return true;
+    }
+    try {
+        await loadLazyScript(LAZY_ASSET_PATHS.chart);
+        applyChartDefaults(document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
+        return isChartAvailable();
+    } catch (error) {
+        console.error('No se pudo cargar Chart.js:', error);
+        showNotification('No pudimos cargar los gráficos del dashboard.', 'warning');
+        return false;
+    }
+}
+
+async function ensureJsQrLibrary() {
+    if (typeof window.jsQR === 'function') {
+        return true;
+    }
+    try {
+        await loadLazyScript(LAZY_ASSET_PATHS.jsqr);
+        return typeof window.jsQR === 'function';
+    } catch (error) {
+        console.error('No se pudo cargar jsQR:', error);
+        showNotification('No pudimos activar el escaneo QR compatible en este navegador.', 'warning');
+        return false;
+    }
+}
+
 // Chart.js default configuration
 function isChartAvailable() {
     return typeof Chart !== 'undefined' && Chart && Chart.defaults;
@@ -336,17 +441,14 @@ function isChartAvailable() {
 
 function applyChartDefaults(theme = 'light') {
     if (!isChartAvailable()) return;
-    if (theme === 'dark') {
-        Chart.defaults.color = '#8b93a5';
-        Chart.defaults.borderColor = '#2e3240';
-    } else {
-        Chart.defaults.color = '#5f6b7a';
-        Chart.defaults.borderColor = '#dce1e8';
-    }
+    Chart.defaults.color = readThemeToken('--text-secondary', theme === 'dark' ? '#8b93a5' : '#5f6b7a');
+    Chart.defaults.borderColor = readThemeToken('--border', theme === 'dark' ? '#2e3240' : '#dce1e8');
     Chart.defaults.font.family = "'Source Sans 3', 'Segoe UI', sans-serif";
 }
 
-applyChartDefaults('light');
+if (isChartAvailable()) {
+    applyChartDefaults('light');
+}
 
 const apiFactory = window.DashboardApi && typeof window.DashboardApi.createClient === 'function'
     ? window.DashboardApi.createClient
@@ -376,6 +478,10 @@ const api = apiFactory({
         showLogin();
     },
 });
+
+dashboardGeolocation = typeof window.createDashboardGeolocation === 'function'
+    ? window.createDashboardGeolocation()
+    : null;
 
 dashboardModals = window.createDashboardModals({
     api,
@@ -422,6 +528,9 @@ dashboardIncidents = window.createDashboardIncidents({
     escapeHtml,
     formatDurationToHHMM,
     formatDuration,
+    geolocation: dashboardGeolocation,
+    getActiveSectionName,
+    getInstallationById: getInstallationFromCache,
     getCurrentSelectedAssetId: () => currentSelectedAssetId,
     getCurrentSelectedInstallationId: () => currentSelectedInstallationId,
     getCurrentUser: () => currentUser,
@@ -429,6 +538,7 @@ dashboardIncidents = window.createDashboardIncidents({
     incidentEstimatedDurationMaxSeconds: INCIDENT_ESTIMATED_DURATION_MAX_SECONDS,
     incidentEstimatedDurationPresets: INCIDENT_ESTIMATED_DURATION_PRESETS,
     incidentStatusLabel,
+    isSectionActive: (section) => document.getElementById(section + 'Section')?.classList.contains('active') === true,
     loadAssetDetail,
     loadInstallations,
     loadPhotoWithAuth,
@@ -446,6 +556,7 @@ dashboardIncidents = window.createDashboardIncidents({
     resolveIncidentRealDurationSeconds,
     resolveIncidentRuntimeStartMs,
     ensureIncidentRuntimeTicker,
+    navigateToSectionByKey,
     setActionModalError,
     setCurrentSelectedInstallationId: (value) => {
         currentSelectedInstallationId = value;
@@ -468,6 +579,7 @@ dashboardAssets = window.createDashboardAssets({
     normalizeAssetStatusLabel,
     normalizeIncidentStatus,
     openActionConfirmModal,
+    openActionModal,
     openAssetLinkModal,
     parseStrictInteger,
     renderContextualEmptyState,
@@ -498,6 +610,7 @@ dashboardAssets = window.createDashboardAssets({
 
 dashboardScan = window.createDashboardScan({
     api,
+    ensureJsQrAvailability: ensureJsQrLibrary,
     requireActiveSession,
     showNotification,
     openInstallation: async (installationId) => {
@@ -536,7 +649,9 @@ dashboardOverview = window.createDashboardOverview({
     activeKpiAnimations: ACTIVE_KPI_ANIMATIONS,
     allowedTrendRangeDays: TREND_RANGE_ALLOWED_DAYS,
     api,
+    cacheInstallations: upsertInstallationCacheEntries,
     createManualRecord: () => createManualRecordFromWeb(),
+    ensureChartsReady: ensureChartLibrary,
     getCharts: () => charts,
     getConnectionStatus,
     getCurrentTrendRangeDays: () => currentTrendRangeDays,
@@ -544,6 +659,8 @@ dashboardOverview = window.createDashboardOverview({
     getLastCriticalIncidentsCount: () => lastCriticalIncidentsCount,
     isChartAvailable,
     kpiNumberAnimationMs: KPI_NUMBER_ANIMATION_MS,
+    navigateToSectionByKey,
+    readThemeToken,
     renderContextualEmptyState,
     requireActiveSession,
     setCurrentTrendRangeDays: (value) => {
@@ -580,6 +697,7 @@ dashboardRealtime = window.createDashboardRealtime({
     renderTrendChart,
     setCurrentInstallationsData: (value) => {
         currentInstallationsData = Array.isArray(value) ? value : [];
+        upsertInstallationCacheEntries(currentInstallationsData);
     },
     showNotification,
     syncHeaderDelight,
@@ -606,6 +724,7 @@ dashboardAuth = window.createDashboardAuth({
     openAccessibleModal,
     resetDataViews: () => {
         currentInstallationsData = [];
+        clearInstallationCache();
         currentSelectedInstallationId = null;
         currentAssetsData = [];
         currentSelectedAssetId = null;
@@ -723,6 +842,7 @@ function setupMobileNavPanel() {
         if (panel.contains(event.target) || toggleBtn.contains(event.target)) return;
         closeMobileNavPanel();
     });
+
 }
 
 function setNotificationBadgeCount(count) {
@@ -779,40 +899,227 @@ function openActionConfirmModal(config = {}) {
     return dashboardModals.openActionConfirmModal(config);
 }
 
+function createModalInputGroup(labelText, control, { htmlFor = '', className = '' } = {}) {
+    const group = document.createElement('div');
+    group.className = className ? `input-group ${className}` : 'input-group';
+    const label = document.createElement('label');
+    if (htmlFor) {
+        label.setAttribute('for', htmlFor);
+    }
+    label.textContent = labelText;
+    group.append(label, control);
+    return group;
+}
+
+function createGpsCapturePanel({ panelId, statusId, summaryId, buttonId }) {
+    const wrapper = document.createElement('div');
+    wrapper.id = panelId;
+    wrapper.className = 'gps-capture-panel';
+    wrapper.dataset.gpsState = 'pending';
+
+    const header = document.createElement('div');
+    header.className = 'gps-capture-panel-header';
+
+    const copyWrap = document.createElement('div');
+    copyWrap.className = 'gps-capture-panel-copy';
+
+    const title = document.createElement('strong');
+    title.className = 'gps-capture-panel-title';
+    title.textContent = 'Ubicacion puntual';
+
+    const status = document.createElement('span');
+    status.id = statusId;
+    status.className = 'gps-capture-panel-status';
+    status.textContent = 'Capturando ubicacion puntual...';
+
+    copyWrap.append(title, status);
+
+    const retryButton = document.createElement('button');
+    retryButton.type = 'button';
+    retryButton.id = buttonId;
+    retryButton.className = 'btn-secondary';
+    retryButton.textContent = 'Capturar ubicacion';
+
+    header.append(copyWrap, retryButton);
+
+    const summary = document.createElement('p');
+    summary.id = summaryId;
+    summary.className = 'gps-capture-panel-summary';
+    summary.textContent = 'Intentamos obtener una ubicacion puntual para este formulario. No bloquea el guardado.';
+
+    wrapper.append(header, summary);
+    return wrapper;
+}
+
+function buildManualRecordFields(defaultClient) {
+    const fragment = document.createDocumentFragment();
+    const grid = document.createElement('div');
+    grid.className = 'action-modal-grid';
+
+    const clientInput = document.createElement('input');
+    clientInput.type = 'text';
+    clientInput.id = 'actionRecordClient';
+    clientInput.value = defaultClient;
+    clientInput.autocomplete = 'off';
+    grid.appendChild(createModalInputGroup('Cliente (opcional)', clientInput, { htmlFor: 'actionRecordClient' }));
+
+    const brandInput = document.createElement('input');
+    brandInput.type = 'text';
+    brandInput.id = 'actionRecordBrand';
+    brandInput.value = 'N/A';
+    brandInput.autocomplete = 'off';
+    grid.appendChild(createModalInputGroup('Marca/Equipo (opcional)', brandInput, { htmlFor: 'actionRecordBrand' }));
+
+    const versionInput = document.createElement('input');
+    versionInput.type = 'text';
+    versionInput.id = 'actionRecordVersion';
+    versionInput.value = 'N/A';
+    versionInput.autocomplete = 'off';
+    grid.appendChild(createModalInputGroup('Versión/Referencia (opcional)', versionInput, { htmlFor: 'actionRecordVersion' }));
+
+    const notesTextarea = document.createElement('textarea');
+    notesTextarea.id = 'actionRecordNotes';
+    notesTextarea.rows = 4;
+    grid.appendChild(createModalInputGroup('Notas (opcional)', notesTextarea, {
+        htmlFor: 'actionRecordNotes',
+        className: 'full-width',
+    }));
+
+    const siteToggleWrap = document.createElement('div');
+    siteToggleWrap.className = 'input-group full-width';
+    const siteToggleRow = document.createElement('label');
+    siteToggleRow.className = 'checkbox-label';
+    const siteToggleInput = document.createElement('input');
+    siteToggleInput.type = 'checkbox';
+    siteToggleInput.id = 'actionRecordUseGpsAsSite';
+    const siteToggleText = document.createElement('span');
+    siteToggleText.textContent = 'Usar esta captura como referencia del sitio';
+    siteToggleRow.append(siteToggleInput, siteToggleText);
+    const siteToggleHelp = document.createElement('p');
+    siteToggleHelp.className = 'asset-muted';
+    siteToggleHelp.textContent = 'Si la captura es valida, el registro nacera con geofence configurado para incidencias y conformidad.';
+    siteToggleWrap.append(siteToggleRow, siteToggleHelp);
+    grid.appendChild(siteToggleWrap);
+
+    const siteRadiusInput = document.createElement('input');
+    siteRadiusInput.type = 'number';
+    siteRadiusInput.step = '1';
+    siteRadiusInput.min = '1';
+    siteRadiusInput.id = 'actionRecordSiteRadius';
+    siteRadiusInput.placeholder = 'Ej: 60';
+    grid.appendChild(createModalInputGroup('Radio inicial del sitio (m)', siteRadiusInput, {
+        htmlFor: 'actionRecordSiteRadius',
+    }));
+
+    fragment.appendChild(grid);
+    fragment.appendChild(createGpsCapturePanel({
+        panelId: 'actionRecordGpsPanel',
+        statusId: 'actionRecordGpsStatus',
+        summaryId: 'actionRecordGpsSummary',
+        buttonId: 'actionRecordGpsRetryBtn',
+    }));
+    return fragment;
+}
+
+function buildAssetLinkFields({ defaultCode, defaultInstallationId, defaultNotes, needsExternalCode }) {
+    const fragment = document.createDocumentFragment();
+    const grid = document.createElement('div');
+    grid.className = 'action-modal-grid';
+
+    if (needsExternalCode) {
+        const codeInput = document.createElement('input');
+        codeInput.type = 'text';
+        codeInput.id = 'actionAssetCode';
+        codeInput.value = defaultCode;
+        codeInput.autocomplete = 'off';
+        grid.appendChild(createModalInputGroup(
+            'Código externo del equipo (QR/serie)',
+            codeInput,
+            { htmlFor: 'actionAssetCode' },
+        ));
+    }
+
+    const installationInput = document.createElement('input');
+    installationInput.type = 'text';
+    installationInput.id = 'actionAssetInstallationId';
+    installationInput.value = defaultInstallationId;
+    installationInput.autocomplete = 'off';
+    installationInput.placeholder = 'Ej: 245';
+    grid.appendChild(createModalInputGroup(
+        'ID de registro destino',
+        installationInput,
+        {
+            htmlFor: 'actionAssetInstallationId',
+            className: needsExternalCode ? '' : 'full-width',
+        },
+    ));
+
+    const notesTextarea = document.createElement('textarea');
+    notesTextarea.id = 'actionAssetNotes';
+    notesTextarea.rows = 3;
+    notesTextarea.value = defaultNotes;
+    grid.appendChild(createModalInputGroup('Nota de asociacion (opcional)', notesTextarea, {
+        htmlFor: 'actionAssetNotes',
+        className: 'full-width',
+    }));
+
+    fragment.appendChild(grid);
+    return fragment;
+}
+
+function buildAssetLookupFields() {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.id = 'actionLookupAssetCode';
+    input.autocomplete = 'off';
+    input.placeholder = 'Ej: EQ-SL3-001';
+    return createModalInputGroup(
+        'Código externo del equipo',
+        input,
+        { htmlFor: 'actionLookupAssetCode' },
+    );
+}
+
 function createManualRecordFromWeb() {
     if (!requireActiveSession()) return;
 
     const defaultClient = String(currentUser?.username || '').trim();
-    openActionModal({
+    let gpsController = null;
+    const modalOpened = openActionModal({
         title: 'Nuevo registro manual',
         subtitle: 'Crea un registro sin depender de una instalación previa.',
         submitLabel: 'Crear registro',
         focusId: 'actionRecordClient',
-        fieldsHtml: `
-            <div class="action-modal-grid">
-                <div class="input-group">
-                    <label for="actionRecordClient">Cliente (opcional)</label>
-                    <input type="text" id="actionRecordClient" value="${escapeHtml(defaultClient)}" autocomplete="off">
-                </div>
-                <div class="input-group">
-                    <label for="actionRecordBrand">Marca/Equipo (opcional)</label>
-                    <input type="text" id="actionRecordBrand" value="N/A" autocomplete="off">
-                </div>
-                <div class="input-group">
-                    <label for="actionRecordVersion">Versión/Referencia (opcional)</label>
-                    <input type="text" id="actionRecordVersion" value="N/A" autocomplete="off">
-                </div>
-                <div class="input-group full-width">
-                    <label for="actionRecordNotes">Notas (opcional)</label>
-                    <textarea id="actionRecordNotes" rows="4"></textarea>
-                </div>
-            </div>
-        `,
+        fields: buildManualRecordFields(defaultClient),
         onSubmit: async () => {
             const clientName = String(document.getElementById('actionRecordClient')?.value || '').trim();
             const brand = String(document.getElementById('actionRecordBrand')?.value || '').trim();
             const version = String(document.getElementById('actionRecordVersion')?.value || '').trim();
             const notes = String(document.getElementById('actionRecordNotes')?.value || '').trim();
+            const gpsSnapshot = gpsController?.getSnapshotForSubmit?.() || null;
+            const useGpsAsSite = document.getElementById('actionRecordUseGpsAsSite')?.checked === true;
+            const rawSiteRadius = String(document.getElementById('actionRecordSiteRadius')?.value || '').trim();
+            let sitePayload = {};
+
+            if (useGpsAsSite || rawSiteRadius) {
+                const parsedRadius = Number.parseInt(rawSiteRadius, 10);
+                if (!Number.isInteger(parsedRadius) || parsedRadius <= 0) {
+                    setActionModalError('Debes indicar un radio inicial valido para configurar el sitio.');
+                    return;
+                }
+
+                const gpsStatus = String(gpsSnapshot?.status || 'pending').trim().toLowerCase();
+                if (gpsStatus !== 'captured') {
+                    setActionModalError('Para usar la captura como referencia del sitio, primero necesitas una ubicacion valida.');
+                    return;
+                }
+
+                sitePayload = {
+                    site_lat: Number(gpsSnapshot.lat),
+                    site_lng: Number(gpsSnapshot.lng),
+                    site_radius_m: parsedRadius,
+                };
+            }
 
             const result = await api.createRecord({
                 client_name: clientName || 'Sin cliente',
@@ -823,6 +1130,8 @@ function createManualRecordFromWeb() {
                 driver_description: 'Registro manual desde dashboard web',
                 os_info: 'web',
                 installation_time_seconds: 0,
+                gps: gpsSnapshot,
+                ...sitePayload,
             });
 
             const createdRecord = result?.record && typeof result.record === 'object'
@@ -842,6 +1151,117 @@ function createManualRecordFromWeb() {
 
             if (Number.isInteger(recordId) && recordId > 0) {
                 currentSelectedInstallationId = recordId;
+            }
+        },
+    });
+
+    if (modalOpened && dashboardGeolocation) {
+        gpsController = dashboardGeolocation.createController({
+            panelElement: document.getElementById('actionRecordGpsPanel'),
+            statusElement: document.getElementById('actionRecordGpsStatus'),
+            summaryElement: document.getElementById('actionRecordGpsSummary'),
+            captureButton: document.getElementById('actionRecordGpsRetryBtn'),
+        });
+        void gpsController.capture();
+    }
+}
+
+function buildInstallationSiteConfigFields(installation = {}) {
+    const fragment = document.createDocumentFragment();
+    const grid = document.createElement('div');
+    grid.className = 'action-modal-grid';
+
+    const siteLatInput = document.createElement('input');
+    siteLatInput.type = 'number';
+    siteLatInput.step = 'any';
+    siteLatInput.id = 'actionInstallationSiteLat';
+    siteLatInput.value = installation?.site_lat ?? '';
+    grid.appendChild(createModalInputGroup('Latitud sitio', siteLatInput, { htmlFor: siteLatInput.id }));
+
+    const siteLngInput = document.createElement('input');
+    siteLngInput.type = 'number';
+    siteLngInput.step = 'any';
+    siteLngInput.id = 'actionInstallationSiteLng';
+    siteLngInput.value = installation?.site_lng ?? '';
+    grid.appendChild(createModalInputGroup('Longitud sitio', siteLngInput, { htmlFor: siteLngInput.id }));
+
+    const siteRadiusInput = document.createElement('input');
+    siteRadiusInput.type = 'number';
+    siteRadiusInput.step = '1';
+    siteRadiusInput.min = '1';
+    siteRadiusInput.id = 'actionInstallationSiteRadius';
+    siteRadiusInput.value = installation?.site_radius_m ?? '';
+    grid.appendChild(createModalInputGroup('Radio permitido (m)', siteRadiusInput, { htmlFor: siteRadiusInput.id }));
+
+    const help = document.createElement('p');
+    help.className = 'asset-muted';
+    help.textContent = 'Si dejas los tres campos vacios, el geofence queda deshabilitado para este registro.';
+    const helpWrap = document.createElement('div');
+    helpWrap.className = 'input-group full-width';
+    helpWrap.appendChild(help);
+    grid.appendChild(helpWrap);
+
+    fragment.appendChild(grid);
+    return fragment;
+}
+
+async function openInstallationSiteConfigModal(installation) {
+    const installationId = Number.parseInt(String(installation?.id || ''), 10);
+    if (!Number.isInteger(installationId) || installationId <= 0) {
+        showNotification('No se pudo abrir la configuracion del sitio.', 'error');
+        return;
+    }
+
+    openActionModal({
+        title: `Configurar sitio #${installationId}`,
+        subtitle: 'Define la referencia geografica para warnings de geofence en incidencias y conformidad.',
+        submitLabel: 'Guardar sitio',
+        focusId: 'actionInstallationSiteLat',
+        fields: buildInstallationSiteConfigFields(installation),
+        onSubmit: async () => {
+            const rawLat = String(document.getElementById('actionInstallationSiteLat')?.value || '').trim();
+            const rawLng = String(document.getElementById('actionInstallationSiteLng')?.value || '').trim();
+            const rawRadius = String(document.getElementById('actionInstallationSiteRadius')?.value || '').trim();
+            const allEmpty = !rawLat && !rawLng && !rawRadius;
+
+            if (!allEmpty && (!rawLat || !rawLng || !rawRadius)) {
+                setActionModalError('Debes completar latitud, longitud y radio juntos, o dejar los tres vacios.');
+                return;
+            }
+
+            const payload = allEmpty
+                ? {
+                    site_lat: null,
+                    site_lng: null,
+                    site_radius_m: null,
+                }
+                : {
+                    site_lat: Number(rawLat),
+                    site_lng: Number(rawLng),
+                    site_radius_m: Number(rawRadius),
+                };
+
+            const result = await api.updateInstallation(installationId, payload);
+            closeActionModal(true);
+
+            const updatedInstallation = result?.installation && typeof result.installation === 'object'
+                ? result.installation
+                : { ...installation, ...payload };
+            currentInstallationsData = (currentInstallationsData || []).map((item) =>
+                Number(item?.id) === installationId ? { ...item, ...updatedInstallation } : item,
+            );
+            upsertInstallationCacheEntries([{ id: installationId, ...updatedInstallation }]);
+
+            showNotification(
+                payload.site_lat === null
+                    ? `Geofence deshabilitado para registro #${installationId}.`
+                    : `Sitio actualizado para registro #${installationId}.`,
+                payload.site_lat === null ? 'info' : 'success',
+            );
+
+            void loadInstallations();
+            if (Number.isInteger(currentSelectedInstallationId) && currentSelectedInstallationId === installationId) {
+                void showIncidentsForInstallation(installationId);
             }
         },
     });
@@ -868,33 +1288,17 @@ function openAssetLinkModal(options = {}) {
         ? 'Ingresa el código del equipo y el registro destino.'
         : 'Asocia el equipo seleccionado a un registro destino.';
 
-    const codeField = needsExternalCode
-        ? `
-            <div class="input-group">
-                <label for="actionAssetCode">Código externo del equipo (QR/serie)</label>
-                <input type="text" id="actionAssetCode" value="${escapeHtml(defaultCode)}" autocomplete="off">
-            </div>
-        `
-        : '';
-
     openActionModal({
         title,
         subtitle,
         submitLabel: 'Asociar equipo',
         focusId: needsExternalCode ? 'actionAssetCode' : 'actionAssetInstallationId',
-        fieldsHtml: `
-            <div class="action-modal-grid">
-                ${codeField}
-                <div class="input-group ${needsExternalCode ? '' : 'full-width'}">
-                    <label for="actionAssetInstallationId">ID de registro destino</label>
-                    <input type="text" id="actionAssetInstallationId" value="${escapeHtml(defaultInstallationId)}" autocomplete="off" placeholder="Ej: 245">
-                </div>
-                <div class="input-group full-width">
-                    <label for="actionAssetNotes">Nota de asociacion (opcional)</label>
-                    <textarea id="actionAssetNotes" rows="3">${escapeHtml(defaultNotes)}</textarea>
-                </div>
-            </div>
-        `,
+        fields: buildAssetLinkFields({
+            defaultCode,
+            defaultInstallationId,
+            defaultNotes,
+            needsExternalCode,
+        }),
         onSubmit: async () => {
             const installationId = parseStrictInteger(
                 document.getElementById('actionAssetInstallationId')?.value,
@@ -962,12 +1366,7 @@ async function openAssetLookupFromWeb() {
         subtitle: 'Ingresa el código externo para abrir el detalle en modo lectura.',
         submitLabel: 'Buscar',
         focusId: 'actionLookupAssetCode',
-        fieldsHtml: `
-            <div class="input-group">
-                <label for="actionLookupAssetCode">Código externo del equipo</label>
-                <input type="text" id="actionLookupAssetCode" autocomplete="off" placeholder="Ej: EQ-SL3-001">
-            </div>
-        `,
+        fields: buildAssetLookupFields(),
         onSubmit: async () => {
             const code = normalizeAssetCodeForQr(
                 document.getElementById('actionLookupAssetCode')?.value || '',
@@ -1047,17 +1446,21 @@ function renderRecentInstallations(installations) {
 // Advanced Filters Functions
 function getActiveFilters() {
     const filters = {};
-    
+
     const searchValue = document.getElementById('searchInput')?.value?.trim();
     const brandValue = document.getElementById('brandFilter')?.value;
+    const geofenceValue = document.getElementById('geofenceFilter')?.value;
+    const gpsValue = document.getElementById('gpsFilter')?.value;
     const startDate = document.getElementById('startDate')?.value;
     const endDate = document.getElementById('endDate')?.value;
-    
+
     if (searchValue) filters.search = searchValue;
     if (brandValue) filters.brand = brandValue;
+    if (geofenceValue) filters.geofence = geofenceValue;
+    if (gpsValue) filters.gps = gpsValue;
     if (startDate) filters.startDate = startDate;
     if (endDate) filters.endDate = endDate;
-    
+
     return filters;
 }
 
@@ -1065,12 +1468,12 @@ function updateFilterChips() {
     const chipsContainer = document.getElementById('filterChips');
     const clearBtn = document.getElementById('clearFilters');
     const filters = getActiveFilters();
-    
+
     chipsContainer.replaceChildren();
     let hasFilters = Object.keys(filters).length > 0;
-    
+
     clearBtn?.classList.toggle('is-hidden', !hasFilters);
-    
+
     const appendChip = (label, value, filterType) => {
         const chip = document.createElement('span');
         chip.className = 'filter-chip';
@@ -1100,13 +1503,26 @@ function updateFilterChips() {
         appendChip('Marca:', filters.brand, 'brand');
     }
 
+    if (filters.geofence) {
+        appendChip('Geofence:', filters.geofence === 'configured' ? 'Con geofence' : 'Sin geofence', 'geofence');
+    }
+
+    if (filters.gps) {
+        const gpsLabel = filters.gps === 'captured'
+            ? 'GPS util'
+            : filters.gps === 'failed'
+                ? 'GPS fallido'
+                : 'GPS pendiente';
+        appendChip('GPS:', gpsLabel, 'gps');
+    }
+
     if (filters.startDate || filters.endDate) {
-        const dateLabel = filters.startDate && filters.endDate ? 
+        const dateLabel = filters.startDate && filters.endDate ?
             `${filters.startDate} - ${filters.endDate}` :
             filters.startDate ? `Desde: ${filters.startDate}` : `Hasta: ${filters.endDate}`;
         appendChip('Fecha:', dateLabel, 'date');
     }
-    
+
     // Add click handlers to remove buttons
     chipsContainer.querySelectorAll('.chip-remove').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -1124,14 +1540,20 @@ function removeFilter(filterType) {
         case 'brand':
             document.getElementById('brandFilter').value = '';
             break;
+        case 'geofence':
+            document.getElementById('geofenceFilter').value = '';
+            break;
+        case 'gps':
+            document.getElementById('gpsFilter').value = '';
+            break;
         case 'date':
             document.getElementById('startDate').value = '';
             document.getElementById('endDate').value = '';
             break;
     }
-    
+
     updateFilterChips();
-    
+
     // Apply filters immediately when removing
     debouncedSearch();
 }
@@ -1139,11 +1561,47 @@ function removeFilter(filterType) {
 function clearAllFilters() {
     document.getElementById('searchInput').value = '';
     document.getElementById('brandFilter').value = '';
+    document.getElementById('geofenceFilter').value = '';
+    document.getElementById('gpsFilter').value = '';
     document.getElementById('startDate').value = '';
     document.getElementById('endDate').value = '';
-    
+
     updateFilterChips();
     debouncedSearch();
+}
+
+function hasInstallationSiteConfig(installation) {
+    return Number.isFinite(Number(installation?.site_lat))
+        && Number.isFinite(Number(installation?.site_lng))
+        && Number(installation?.site_radius_m) > 0;
+}
+
+function isGpsFailureStatus(status) {
+    return ['denied', 'timeout', 'unavailable', 'unsupported', 'override'].includes(status);
+}
+
+function applyInstallationClientSideFilters(installations, filters) {
+    return (installations || []).filter((installation) => {
+        if (filters.geofence === 'configured' && !hasInstallationSiteConfig(installation)) {
+            return false;
+        }
+        if (filters.geofence === 'missing' && hasInstallationSiteConfig(installation)) {
+            return false;
+        }
+
+        const gpsStatus = String(installation?.gps_capture_status || 'pending').trim().toLowerCase() || 'pending';
+        if (filters.gps === 'captured' && gpsStatus !== 'captured') {
+            return false;
+        }
+        if (filters.gps === 'failed' && !isGpsFailureStatus(gpsStatus)) {
+            return false;
+        }
+        if (filters.gps === 'pending' && gpsStatus !== 'pending') {
+            return false;
+        }
+
+        return true;
+    });
 }
 
 function toDurationSeconds(value) {
@@ -1404,6 +1862,38 @@ function setElementTextWithMaterialIcon(element, iconName, text, sizeClass = 'ic
     element.replaceChildren(iconNode);
 }
 
+function setContainerMessage(container, className, message) {
+    if (!(container instanceof HTMLElement)) return;
+    const copy = document.createElement('p');
+    copy.className = className;
+    copy.textContent = message;
+    container.replaceChildren(copy);
+}
+
+function renderCountSummary(container, count, singularLabel, pluralLabel = `${singularLabel}s`) {
+    if (!(container instanceof HTMLElement)) return;
+    const normalizedCount = Math.max(0, Number(count) || 0);
+    container.replaceChildren('Mostrando ');
+    const countNode = document.createElement('span');
+    countNode.className = 'count';
+    countNode.textContent = String(normalizedCount);
+    container.append(countNode, ` ${normalizedCount === 1 ? singularLabel : pluralLabel}`);
+}
+
+function renderVisibleCountSummary(container, visibleCount, totalCount, singularLabel, pluralLabel = `${singularLabel}s`) {
+    if (!(container instanceof HTMLElement)) return;
+    const normalizedVisible = Math.max(0, Number(visibleCount) || 0);
+    const normalizedTotal = Math.max(0, Number(totalCount) || 0);
+    container.replaceChildren('Mostrando ');
+    const visibleNode = document.createElement('span');
+    visibleNode.className = 'count';
+    visibleNode.textContent = String(normalizedVisible);
+    const totalNode = document.createElement('span');
+    totalNode.className = 'count';
+    totalNode.textContent = String(normalizedTotal);
+    container.append(visibleNode, ' de ', totalNode, ` ${normalizedTotal === 1 ? singularLabel : pluralLabel}`);
+}
+
 function toExcelCell(value) {
     return escapeHtml(sanitizeSpreadsheetCell(value)).replace(/\n/g, '<br>');
 }
@@ -1466,42 +1956,360 @@ function exportToExcel(data, filename = 'registros.xls') {
         return;
     }
 
-    let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
-    html += '<head><meta charset="UTF-8"><style>th { background-color: #06b6d4; color: white; font-weight: bold; }</style></head>';
-    html += '<body><table border="1">';
+    const XLSX = window.XLSX;
+    if (!XLSX?.utils?.book_new || typeof XLSX.writeFile !== 'function') {
+        showNotification('No se pudo cargar el exportador Excel', 'error');
+        return;
+    }
 
-    html += '<tr>';
-    ['ID', 'Cliente', 'Marca', 'Atención', 'Tiempo', 'Notas', 'Fecha'].forEach(header => {
-        html += `<th>${escapeHtml(header)}</th>`;
+    const titleStyle = {
+        font: { bold: true, sz: 16, color: { rgb: '0F172A' } },
+        fill: { fgColor: { rgb: 'D9F4F2' } },
+        alignment: { horizontal: 'left', vertical: 'center' },
+    };
+    const subtitleStyle = {
+        font: { italic: true, color: { rgb: '475569' } },
+        alignment: { horizontal: 'left' },
+    };
+    const headerStyle = {
+        font: { bold: true, color: { rgb: 'FFFFFF' } },
+        fill: { fgColor: { rgb: '0F766E' } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+    };
+    const sectionHeaderStyle = {
+        font: { bold: true, color: { rgb: '0F172A' } },
+        fill: { fgColor: { rgb: 'BAE6E0' } },
+    };
+    const noteStyle = {
+        alignment: { vertical: 'top', wrapText: true },
+    };
+    const dateStyle = {
+        numFmt: 'dd/mm/yyyy hh:mm',
+        alignment: { horizontal: 'left' },
+    };
+    const centeredStyle = {
+        alignment: { horizontal: 'center' },
+    };
+
+    const filters = typeof getActiveFilters === 'function' ? getActiveFilters() : {};
+    const normalizeFilenameSegment = (value) => String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .toLowerCase();
+    const buildFilterSummary = () => {
+        const parts = [];
+        if (filters.startDate && filters.endDate) parts.push(`Periodo: ${filters.startDate} a ${filters.endDate}`);
+        else if (filters.startDate) parts.push(`Periodo: desde ${filters.startDate}`);
+        else if (filters.endDate) parts.push(`Periodo: hasta ${filters.endDate}`);
+        if (filters.brand) parts.push(`Marca: ${filters.brand}`);
+        if (filters.geofence) parts.push(`Geofence: ${filters.geofence}`);
+        if (filters.gps) parts.push(`GPS: ${filters.gps}`);
+        if (filters.search) parts.push(`Busqueda: ${filters.search}`);
+        return parts.length ? parts.join(' | ') : 'Filtros: sin filtros activos';
+    };
+    const buildExportFilename = () => {
+        if (filename && filename !== 'registros.xls') {
+            return String(filename).replace(/\.xls$/i, '.xlsx');
+        }
+        const segments = ['registros'];
+        if (filters.startDate && filters.endDate) segments.push(`${filters.startDate}_a_${filters.endDate}`);
+        else if (filters.startDate) segments.push(`desde_${filters.startDate}`);
+        else if (filters.endDate) segments.push(`hasta_${filters.endDate}`);
+        if (filters.brand) {
+            const brandSegment = normalizeFilenameSegment(filters.brand);
+            if (brandSegment) segments.push(`marca-${brandSegment}`);
+        }
+        return `${segments.join('_')}.xlsx`;
+    };
+    const buildStatusStyle = (fillColor, fontColor = '0F172A') => ({
+        font: { bold: true, color: { rgb: fontColor } },
+        fill: { fgColor: { rgb: fillColor } },
+        alignment: { horizontal: 'center' },
     });
-    html += '</tr>';
 
-    data.forEach(inst => {
-        html += '<tr>';
-        html += `<td>${toExcelCell(inst.id)}</td>`;
-        html += `<td>${toExcelCell(inst.client_name || 'N/A')}</td>`;
-        html += `<td>${toExcelCell(inst.driver_brand || 'N/A')}</td>`;
-        html += `<td>${toExcelCell(buildRecordAttentionBadge(inst).label)}</td>`;
-        html += `<td>${toExcelCell(formatDuration(inst.installation_time_seconds || 0))}</td>`;
-        html += `<td>${toExcelCell(extractInstallationRecordNote(inst.notes).substring(0, 120))}</td>`;
-        html += `<td>${toExcelCell(inst.timestamp)}</td>`;
-        html += '</tr>';
+    const workbook = XLSX.utils.book_new();
+    const generatedAt = new Date();
+    const filterSummary = buildFilterSummary();
+    const normalizedFilename = buildExportFilename();
+    const detailHeaders = [
+        'ID',
+        'Cliente',
+        'Marca',
+        'Version',
+        'PC',
+        'Tecnico',
+        'Atencion',
+        'Tiempo (s)',
+        'Tiempo visible',
+        'GPS',
+        'Precision GPS (m)',
+        'Geofence',
+        'Radio geofence (m)',
+        'Notas',
+        'Fecha/Hora',
+    ];
+    const details = data.map((inst) => {
+        const timestamp = inst?.timestamp ? new Date(inst.timestamp) : null;
+        const gpsStatusRaw = String(inst?.gps_capture_status || 'pending').trim().toLowerCase() || 'pending';
+        const gpsAccuracy = Number(inst?.gps_accuracy_m);
+        const attention = buildRecordAttentionBadge(inst);
+        const hasGeofence = hasInstallationSiteConfig(inst);
+        return {
+            id: Number(inst?.id) || inst?.id || '',
+            clientName: sanitizeSpreadsheetCell(inst?.client_name || 'N/A'),
+            brand: sanitizeSpreadsheetCell(inst?.driver_brand || 'N/A'),
+            version: sanitizeSpreadsheetCell(inst?.driver_version || 'N/A'),
+            pcName: sanitizeSpreadsheetCell(inst?.client_pc_name || 'N/A'),
+            technician: sanitizeSpreadsheetCell(inst?.technician_name || 'N/A'),
+            attentionLabel: sanitizeSpreadsheetCell(attention.label),
+            attentionState: attention.stateClass,
+            durationSeconds: Math.max(0, Number(inst?.installation_time_seconds) || 0),
+            notes: sanitizeSpreadsheetCell(extractInstallationRecordNote(inst?.notes)),
+            timestamp: timestamp instanceof Date && !Number.isNaN(timestamp.getTime()) ? timestamp : null,
+            gpsStatus: sanitizeSpreadsheetCell(gpsStatusRaw),
+            gpsStatusRaw,
+            gpsAccuracy: Number.isFinite(gpsAccuracy) ? Math.max(0, gpsAccuracy) : null,
+            geofenceLabel: hasGeofence ? 'Configurado' : 'Sin geofence',
+            geofenceRadius: hasGeofence ? Math.max(0, Number(inst?.site_radius_m) || 0) : null,
+        };
     });
 
-    html += '</table></body></html>';
+    const summaryRows = [
+        ['Reporte de registros'],
+        [`Generado el ${generatedAt.toLocaleString('es-ES')}`],
+        [filterSummary],
+        [],
+        ['Metrica', 'Valor'],
+        ['Total de registros', details.length],
+        ['Clientes unicos', new Set(details.map(item => item.clientName)).size],
+        ['Marcas unicas', new Set(details.map(item => item.brand)).size],
+        ['Tiempo promedio (s)', details.length ? Math.round(details.reduce((sum, item) => sum + item.durationSeconds, 0) / details.length) : 0],
+        ['GPS capturado', details.filter(item => item.gpsStatusRaw === 'captured').length],
+        ['GPS con falla', details.filter(item => isGpsFailureStatus(item.gpsStatusRaw)).length],
+        ['Registros con geofence', details.filter(item => item.geofenceLabel === 'Configurado').length],
+        [],
+        ['Atencion', 'Cantidad'],
+        ...Array.from(details.reduce((accumulator, item) => {
+            accumulator.set(item.attentionLabel, (accumulator.get(item.attentionLabel) || 0) + 1);
+            return accumulator;
+        }, new Map()).entries()),
+    ];
+    const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
+    summarySheet['!cols'] = [{ wch: 28 }, { wch: 18 }];
+    summarySheet['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 1 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 1 } },
+        { s: { r: 2, c: 0 }, e: { r: 2, c: 1 } },
+    ];
 
-    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
-    const link = document.createElement('a');
-    link.className = 'download-link-hidden';
-    const url = URL.createObjectURL(blob);
+    const detailHeaderRowNumber = 5;
+    const detailRows = [
+        ['Registros exportados'],
+        [`Generado el ${generatedAt.toLocaleString('es-ES')}`],
+        [filterSummary],
+        [],
+        detailHeaders,
+        ...details.map(item => [
+            item.id,
+            item.clientName,
+            item.brand,
+            item.version,
+            item.pcName,
+            item.technician,
+            item.attentionLabel,
+            item.durationSeconds,
+            formatDuration(item.durationSeconds),
+            item.gpsStatus,
+            item.gpsAccuracy,
+            item.geofenceLabel,
+            item.geofenceRadius,
+            item.notes,
+            item.timestamp,
+        ]),
+    ];
+    const detailSheet = XLSX.utils.aoa_to_sheet(detailRows, { cellDates: true });
+    detailSheet['!cols'] = [
+        { wch: 10 },
+        { wch: 24 },
+        { wch: 18 },
+        { wch: 14 },
+        { wch: 18 },
+        { wch: 18 },
+        { wch: 16 },
+        { wch: 12 },
+        { wch: 14 },
+        { wch: 16 },
+        { wch: 16 },
+        { wch: 16 },
+        { wch: 18 },
+        { wch: 48 },
+        { wch: 20 },
+    ];
+    detailSheet['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: detailHeaders.length - 1 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: detailHeaders.length - 1 } },
+        { s: { r: 2, c: 0 }, e: { r: 2, c: detailHeaders.length - 1 } },
+    ];
+    detailSheet['!autofilter'] = { ref: `A${detailHeaderRowNumber}:${XLSX.utils.encode_col(detailHeaders.length - 1)}${detailRows.length}` };
 
-    link.setAttribute('href', url);
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const clientsHeaderRowNumber = 5;
+    const clientsHeaders = [
+        'Cliente',
+        'Total',
+        'Marcas',
+        'Tiempo promedio (s)',
+        'GPS capturado',
+        'Con geofence',
+        'Ultima fecha',
+        'Tecnicos',
+    ];
+    const clientSummaries = Array.from(details.reduce((accumulator, item) => {
+        const bucket = accumulator.get(item.clientName) || {
+            clientName: item.clientName,
+            total: 0,
+            durationSeconds: 0,
+            gpsCaptured: 0,
+            withGeofence: 0,
+            brands: new Set(),
+            technicians: new Set(),
+            lastTimestamp: null,
+        };
+        bucket.total += 1;
+        bucket.durationSeconds += item.durationSeconds;
+        if (item.gpsStatusRaw === 'captured') bucket.gpsCaptured += 1;
+        if (item.geofenceLabel === 'Configurado') bucket.withGeofence += 1;
+        if (item.brand && item.brand !== 'N/A') bucket.brands.add(item.brand);
+        if (item.technician && item.technician !== 'N/A') bucket.technicians.add(item.technician);
+        if (item.timestamp && (!bucket.lastTimestamp || item.timestamp > bucket.lastTimestamp)) bucket.lastTimestamp = item.timestamp;
+        accumulator.set(item.clientName, bucket);
+        return accumulator;
+    }, new Map()).values()).sort((a, b) => b.total - a.total || a.clientName.localeCompare(b.clientName));
+    const clientsRows = [
+        ['Resumen por cliente'],
+        [`Generado el ${generatedAt.toLocaleString('es-ES')}`],
+        [filterSummary],
+        [],
+        clientsHeaders,
+        ...clientSummaries.map(item => [
+            item.clientName,
+            item.total,
+            Array.from(item.brands).join(', ') || 'N/A',
+            item.total ? Math.round(item.durationSeconds / item.total) : 0,
+            item.gpsCaptured,
+            item.withGeofence,
+            item.lastTimestamp,
+            Array.from(item.technicians).join(', ') || 'N/A',
+        ]),
+    ];
+    const clientsSheet = XLSX.utils.aoa_to_sheet(clientsRows, { cellDates: true });
+    clientsSheet['!cols'] = [
+        { wch: 24 },
+        { wch: 10 },
+        { wch: 28 },
+        { wch: 18 },
+        { wch: 14 },
+        { wch: 14 },
+        { wch: 20 },
+        { wch: 24 },
+    ];
+    clientsSheet['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: clientsHeaders.length - 1 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: clientsHeaders.length - 1 } },
+        { s: { r: 2, c: 0 }, e: { r: 2, c: clientsHeaders.length - 1 } },
+    ];
+    clientsSheet['!autofilter'] = { ref: `A${clientsHeaderRowNumber}:${XLSX.utils.encode_col(clientsHeaders.length - 1)}${clientsRows.length}` };
 
-    showNotification(`Exportado: ${filename}`, 'success');
+    function applyCellStyle(sheet, address, style) {
+        if (!sheet[address]) return;
+        sheet[address].s = style;
+    }
+
+    applyCellStyle(summarySheet, 'A1', titleStyle);
+    applyCellStyle(summarySheet, 'A2', subtitleStyle);
+    applyCellStyle(summarySheet, 'A3', subtitleStyle);
+    applyCellStyle(summarySheet, 'A5', sectionHeaderStyle);
+    applyCellStyle(summarySheet, 'B5', sectionHeaderStyle);
+    applyCellStyle(summarySheet, 'A14', sectionHeaderStyle);
+    applyCellStyle(summarySheet, 'B14', sectionHeaderStyle);
+
+    applyCellStyle(detailSheet, 'A1', titleStyle);
+    applyCellStyle(detailSheet, 'A2', subtitleStyle);
+    applyCellStyle(detailSheet, 'A3', subtitleStyle);
+    for (let columnIndex = 0; columnIndex < detailHeaders.length; columnIndex += 1) {
+        applyCellStyle(detailSheet, `${XLSX.utils.encode_col(columnIndex)}${detailHeaderRowNumber}`, headerStyle);
+    }
+
+    applyCellStyle(clientsSheet, 'A1', titleStyle);
+    applyCellStyle(clientsSheet, 'A2', subtitleStyle);
+    applyCellStyle(clientsSheet, 'A3', subtitleStyle);
+    for (let columnIndex = 0; columnIndex < clientsHeaders.length; columnIndex += 1) {
+        applyCellStyle(clientsSheet, `${XLSX.utils.encode_col(columnIndex)}${clientsHeaderRowNumber}`, headerStyle);
+    }
+
+    for (let rowIndex = detailHeaderRowNumber + 1; rowIndex <= detailRows.length; rowIndex += 1) {
+        applyCellStyle(detailSheet, `N${rowIndex}`, noteStyle);
+        applyCellStyle(detailSheet, `O${rowIndex}`, dateStyle);
+        applyCellStyle(detailSheet, `H${rowIndex}`, centeredStyle);
+        applyCellStyle(detailSheet, `J${rowIndex}`, centeredStyle);
+        applyCellStyle(detailSheet, `K${rowIndex}`, centeredStyle);
+        applyCellStyle(detailSheet, `L${rowIndex}`, centeredStyle);
+        applyCellStyle(detailSheet, `M${rowIndex}`, centeredStyle);
+
+        const attentionCell = detailSheet[`G${rowIndex}`];
+        if (attentionCell) {
+            const normalizedAttention = String(attentionCell.v || '').toLowerCase();
+            let fillColor = 'E2E8F0';
+            let fontColor = '334155';
+            if (normalizedAttention.includes('crit')) {
+                fillColor = 'FECACA';
+                fontColor = '991B1B';
+            } else if (normalizedAttention.includes('alert') || normalizedAttention.includes('segu')) {
+                fillColor = 'FDE68A';
+                fontColor = '92400E';
+            } else if (normalizedAttention.includes('ok') || normalizedAttention.includes('normal')) {
+                fillColor = 'BBF7D0';
+                fontColor = '166534';
+            }
+            attentionCell.s = buildStatusStyle(fillColor, fontColor);
+        }
+
+        const gpsCell = detailSheet[`J${rowIndex}`];
+        if (gpsCell) {
+            const gpsValue = String(gpsCell.v || '').toLowerCase();
+            if (gpsValue === 'captured') gpsCell.s = buildStatusStyle('BBF7D0', '166534');
+            else if (gpsValue === 'pending') gpsCell.s = buildStatusStyle('E2E8F0', '334155');
+            else if (gpsValue === 'override') gpsCell.s = buildStatusStyle('FDE68A', '92400E');
+            else gpsCell.s = buildStatusStyle('FECACA', '991B1B');
+        }
+
+        const geofenceCell = detailSheet[`L${rowIndex}`];
+        if (geofenceCell) {
+            const geofenceValue = String(geofenceCell.v || '').toLowerCase();
+            geofenceCell.s = geofenceValue.includes('config')
+                ? buildStatusStyle('BBF7D0', '166534')
+                : buildStatusStyle('FEF3C7', '92400E');
+        }
+    }
+
+    for (let rowIndex = clientsHeaderRowNumber + 1; rowIndex <= clientsRows.length; rowIndex += 1) {
+        applyCellStyle(clientsSheet, `D${rowIndex}`, centeredStyle);
+        applyCellStyle(clientsSheet, `E${rowIndex}`, centeredStyle);
+        applyCellStyle(clientsSheet, `F${rowIndex}`, centeredStyle);
+        applyCellStyle(clientsSheet, `G${rowIndex}`, dateStyle);
+    }
+
+    XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumen');
+    XLSX.utils.book_append_sheet(workbook, detailSheet, 'Registros');
+    XLSX.utils.book_append_sheet(workbook, clientsSheet, 'Por cliente');
+    XLSX.writeFile(workbook, normalizedFilename, {
+        bookType: 'xlsx',
+        compression: true,
+        cellStyles: true,
+    });
+
+    showNotification(`Exportado: ${normalizedFilename}`, 'success');
 }
 
 function setupExportButtons() {
@@ -1511,20 +2319,39 @@ function setupExportButtons() {
 
     const exportDropdown = document.createElement('div');
     exportDropdown.className = 'export-dropdown';
-    exportDropdown.innerHTML = `
-        <button id="exportBtn" class="btn-secondary export-toggle" type="button" aria-expanded="false">
-            <span class="material-symbols-outlined icon-inline-sm">download</span> Exportar
-        </button>
-        <div class="export-menu" role="menu" aria-label="Opciones de exportacion">
-            <button class="export-option" type="button" data-format="csv" role="menuitem">Exportar CSV</button>
-            <button class="export-option" type="button" data-format="excel" role="menuitem">Exportar Excel</button>
-        </div>
-    `;
+    const btn = document.createElement('button');
+    btn.id = 'exportBtn';
+    btn.className = 'btn-secondary export-toggle';
+    btn.type = 'button';
+    btn.setAttribute('aria-expanded', 'false');
+    btn.append(
+        createMaterialIconNode('download'),
+        document.createTextNode(' Exportar'),
+    );
+
+    const menu = document.createElement('div');
+    menu.className = 'export-menu';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', 'Opciones de exportacion');
+
+    const csvOption = document.createElement('button');
+    csvOption.className = 'export-option';
+    csvOption.type = 'button';
+    csvOption.dataset.format = 'csv';
+    csvOption.setAttribute('role', 'menuitem');
+    csvOption.textContent = 'Exportar CSV';
+
+    const excelOption = document.createElement('button');
+    excelOption.className = 'export-option';
+    excelOption.type = 'button';
+    excelOption.dataset.format = 'excel';
+    excelOption.setAttribute('role', 'menuitem');
+    excelOption.textContent = 'Exportar Excel';
+
+    menu.append(csvOption, excelOption);
+    exportDropdown.append(btn, menu);
 
     exportBtn.replaceWith(exportDropdown);
-
-    const btn = exportDropdown.querySelector('#exportBtn');
-    const menu = exportDropdown.querySelector('.export-menu');
 
     const closeMenu = () => {
         exportDropdown.classList.remove('is-open');
@@ -1567,12 +2394,12 @@ function debouncedSearch() {
     if (searchInput) {
         searchInput.classList.add('loading');
     }
-    
+
     // Clear previous timer
     if (searchDebounceTimer) {
         clearTimeout(searchDebounceTimer);
     }
-    
+
     // Set new timer - 300ms delay for real-time search
     searchDebounceTimer = setTimeout(() => {
         loadInstallations();
@@ -1590,7 +2417,7 @@ function setupAdvancedFilters() {
             updateFilterChips();
             debouncedSearch();
         });
-        
+
         // Enter key triggers immediate search
         searchInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
@@ -1601,33 +2428,49 @@ function setupAdvancedFilters() {
             }
         });
     }
-    
+
     // Filter change handlers
     const brandFilter = document.getElementById('brandFilter');
+    const geofenceFilter = document.getElementById('geofenceFilter');
+    const gpsFilter = document.getElementById('gpsFilter');
     const startDate = document.getElementById('startDate');
     const endDate = document.getElementById('endDate');
-    
+
     if (brandFilter) {
         brandFilter.addEventListener('change', () => {
             updateFilterChips();
             debouncedSearch();
         });
     }
-    
+
+    if (geofenceFilter) {
+        geofenceFilter.addEventListener('change', () => {
+            updateFilterChips();
+            debouncedSearch();
+        });
+    }
+
+    if (gpsFilter) {
+        gpsFilter.addEventListener('change', () => {
+            updateFilterChips();
+            debouncedSearch();
+        });
+    }
+
     if (startDate) {
         startDate.addEventListener('change', () => {
             updateFilterChips();
             debouncedSearch();
         });
     }
-    
+
     if (endDate) {
         endDate.addEventListener('change', () => {
             updateFilterChips();
             debouncedSearch();
         });
     }
-    
+
     // Clear filters button
     const clearBtn = document.getElementById('clearFilters');
     if (clearBtn) {
@@ -1678,7 +2521,7 @@ function setupAdvancedFilters() {
         });
         actionsContainer.insertBefore(lookupButton, document.getElementById('applyFilters'));
     }
-    
+
     // Keyboard shortcut: Ctrl+K to focus search
     document.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
@@ -1696,15 +2539,15 @@ async function loadInstallations() {
     if (!requireActiveSession()) return;
     const container = document.getElementById('installationsTable');
     const resultsCount = document.getElementById('resultsCount');
-    container.innerHTML = '<p class="loading">Cargando...</p>';
-    
+    setContainerMessage(container, 'loading', 'Cargando...');
+
     if (resultsCount) {
-        resultsCount.innerHTML = '<span class="loading">Buscando...</span>';
+        setContainerMessage(resultsCount, 'loading', 'Buscando...');
     }
-    
+
     try {
         const filters = getActiveFilters();
-        
+
         const params = {
             client_name: filters.search || '', // Use search for client_name
             brand: filters.brand || '',
@@ -1712,17 +2555,19 @@ async function loadInstallations() {
             end_date: filters.endDate || '',
             limit: 50
         };
-        
+
         const installations = await api.getInstallations(params);
-        currentInstallationsData = installations || [];
-        renderInstallationsTable(installations);
-        
+        const filteredInstallations = applyInstallationClientSideFilters(installations || [], filters);
+        currentInstallationsData = filteredInstallations || [];
+        upsertInstallationCacheEntries(currentInstallationsData);
+        renderInstallationsTable(filteredInstallations);
+
         // Update results count
         if (resultsCount) {
-            const count = installations?.length || 0;
-            resultsCount.innerHTML = `Mostrando <span class="count">${count}</span> resultado${count !== 1 ? 's' : ''}`;
+            const count = filteredInstallations?.length || 0;
+            renderCountSummary(resultsCount, count, 'resultado');
         }
-        
+
         // Update filter chips (in case they were cleared externally)
         updateFilterChips();
     } catch (err) {
@@ -1755,6 +2600,93 @@ function makeTableRowKeyboardAccessible(row, ariaLabel) {
     });
 }
 
+function buildInstallationSiteBadge(installation) {
+    const hasSiteConfig =
+        Number.isFinite(Number(installation?.site_lat))
+        && Number.isFinite(Number(installation?.site_lng))
+        && Number(installation?.site_radius_m) > 0;
+
+    const badge = document.createElement('span');
+    badge.className = `installation-site-badge ${hasSiteConfig ? 'is-configured' : 'is-missing'}`;
+    if (hasSiteConfig) {
+        badge.textContent = `Geofence ${Math.round(Number(installation.site_radius_m))} m`;
+    } else {
+        badge.textContent = 'Sin geofence';
+    }
+    return badge;
+}
+
+function buildInstallationGpsBadge(installation) {
+    const status = String(installation?.gps_capture_status || 'pending').trim().toLowerCase() || 'pending';
+    const accuracy = Number(installation?.gps_accuracy_m);
+    const badge = document.createElement('span');
+    badge.className = 'installation-site-badge installation-gps-badge';
+
+    if (status === 'captured') {
+        badge.classList.add('is-configured');
+        badge.textContent = Number.isFinite(accuracy)
+            ? `GPS +- ${Math.round(Math.max(0, accuracy))} m`
+            : 'GPS capturado';
+        return badge;
+    }
+
+    badge.classList.add('is-missing');
+    if (status === 'denied') {
+        badge.textContent = 'GPS denegado';
+    } else if (status === 'timeout') {
+        badge.textContent = 'GPS timeout';
+    } else if (status === 'unavailable') {
+        badge.textContent = 'GPS no disponible';
+    } else if (status === 'unsupported') {
+        badge.textContent = 'GPS sin soporte';
+    } else if (status === 'override') {
+        badge.textContent = 'GPS override';
+    } else {
+        badge.textContent = 'GPS pendiente';
+    }
+    return badge;
+}
+
+function buildInstallationTimeMetaRow(label, value) {
+    const row = document.createElement('div');
+    row.className = 'installation-time-row';
+
+    const labelNode = document.createElement('span');
+    labelNode.className = 'installation-time-label';
+    labelNode.textContent = label;
+
+    const valueNode = document.createElement('span');
+    valueNode.className = 'installation-time-value';
+    valueNode.textContent = value;
+
+    row.append(labelNode, valueNode);
+    return row;
+}
+
+function buildInstallationTimeSummary(installation) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'installation-time-summary';
+
+    const estimatedCount = Math.max(0, Number(installation?.incident_estimated_duration_count) || 0);
+    const actualCount = Math.max(0, Number(installation?.incident_actual_duration_count) || 0);
+    const estimatedSeconds = Math.max(0, Number(installation?.incident_estimated_duration_seconds_total) || 0);
+    const actualSeconds = Math.max(0, Number(installation?.incident_actual_duration_seconds_total) || 0);
+    const installationSeconds = Math.max(0, Number(installation?.installation_time_seconds) || 0);
+
+    const estimatedText = estimatedCount > 0 ? formatDuration(estimatedSeconds) : '-';
+    const actualText = actualCount > 0
+        ? formatDuration(actualSeconds)
+        : installationSeconds > 0
+            ? formatDuration(installationSeconds)
+            : '-';
+
+    wrapper.append(
+        buildInstallationTimeMetaRow('Est.', estimatedText),
+        buildInstallationTimeMetaRow('Real', actualText),
+    );
+    return wrapper;
+}
+
 function renderInstallationsTable(installations) {
     const container = document.getElementById('installationsTable');
     container.replaceChildren();
@@ -1776,7 +2708,7 @@ function renderInstallationsTable(installations) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'Atención', 'Tiempo', 'Notas', 'Fecha', 'QR'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'Atención', 'Tiempo', 'Notas', 'Fecha', 'Acciones'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -1795,7 +2727,14 @@ function renderInstallationsTable(installations) {
         idCell.appendChild(strong);
 
         const clientCell = document.createElement('td');
-        clientCell.textContent = inst.client_name || 'N/A';
+        const clientPrimary = document.createElement('div');
+        clientPrimary.textContent = inst.client_name || 'N/A';
+        const badgesWrap = document.createElement('div');
+        badgesWrap.className = 'installation-meta-badges';
+        const siteBadge = buildInstallationSiteBadge(inst);
+        const gpsBadge = buildInstallationGpsBadge(inst);
+        badgesWrap.append(siteBadge, gpsBadge);
+        clientCell.append(clientPrimary, badgesWrap);
 
         const brandCell = document.createElement('td');
         brandCell.textContent = inst.driver_brand || 'N/A';
@@ -1808,7 +2747,7 @@ function renderInstallationsTable(installations) {
         attentionCell.appendChild(attentionBadge);
 
         const timeCell = document.createElement('td');
-        timeCell.textContent = formatDuration(inst.installation_time_seconds ?? 0);
+        timeCell.appendChild(buildInstallationTimeSummary(inst));
 
         const notesCell = document.createElement('td');
         notesCell.textContent = formatInstallationRecordNotePreview(inst.notes);
@@ -1817,6 +2756,9 @@ function renderInstallationsTable(installations) {
         dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
 
         const qrCell = document.createElement('td');
+        qrCell.className = 'table-actions-cell';
+        const actionsGroup = document.createElement('div');
+        actionsGroup.className = 'table-actions-group';
         const qrButton = document.createElement('button');
         qrButton.type = 'button';
         qrButton.className = 'btn-secondary table-action-btn';
@@ -1826,7 +2768,23 @@ function renderInstallationsTable(installations) {
             event.stopPropagation();
             showQrModal({ type: 'installation', value: String(inst.id ?? '') });
         });
-        qrCell.appendChild(qrButton);
+        const siteButton = document.createElement('button');
+        siteButton.type = 'button';
+        siteButton.className = 'btn-secondary table-action-btn';
+        setElementTextWithMaterialIcon(
+            siteButton,
+            Number.isFinite(Number(inst.site_lat)) && Number.isFinite(Number(inst.site_lng)) && Number(inst.site_radius_m) > 0
+                ? 'place'
+                : 'add_location_alt',
+            'Sitio',
+        );
+        siteButton.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openInstallationSiteConfigModal(inst);
+        });
+        actionsGroup.append(qrButton, siteButton);
+        qrCell.appendChild(actionsGroup);
 
         row.append(idCell, clientCell, brandCell, attentionCell, timeCell, notesCell, dateCell, qrCell);
         tbody.appendChild(row);
@@ -2481,38 +3439,10 @@ async function printQrLabel() {
         }
     }
 
-    const printableImage = escapeHtml(printableImageUrl);
-    const printHtml = `
-<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <title>Etiqueta QR</title>
-  <style>
-    html, body { margin: 0; padding: 0; background: #ffffff; }
-    .page { padding: 18px; display: flex; justify-content: center; }
-    .label { max-width: 840px; width: 100%; }
-    .img { display: block; width: 100%; height: auto; }
-    @media print {
-      @page { size: auto; margin: 8mm; }
-      .page { padding: 0; }
-    }
-  </style>
-</head>
-<body>
-  <div class="page">
-    <div class="label">
-      <img class="img" src="${printableImage}" alt="Etiqueta QR">
-    </div>
-  </div>
-</body>
-</html>`;
-
     try {
         const printFrame = document.createElement('iframe');
         printFrame.setAttribute('aria-hidden', 'true');
         printFrame.className = 'print-frame-hidden';
-        printFrame.srcdoc = printHtml;
 
         const cleanup = () => {
             if (printFrame.parentNode) {
@@ -2520,14 +3450,50 @@ async function printQrLabel() {
             }
         };
 
-        printFrame.onload = () => {
+        document.body.appendChild(printFrame);
+        const frameWindow = printFrame.contentWindow;
+        const frameDocument = printFrame.contentDocument;
+        if (!frameWindow || !frameDocument) {
+            cleanup();
+            showNotification('No se pudo preparar la impresion.', 'error');
+            return;
+        }
+
+        frameDocument.documentElement.lang = 'es';
+        frameDocument.head.replaceChildren();
+        frameDocument.body.replaceChildren();
+
+        const meta = frameDocument.createElement('meta');
+        meta.setAttribute('charset', 'utf-8');
+        const title = frameDocument.createElement('title');
+        title.textContent = 'Etiqueta QR';
+        const style = frameDocument.createElement('style');
+        style.textContent = `
+            html, body { margin: 0; padding: 0; background: #ffffff; }
+            .page { padding: 18px; display: flex; justify-content: center; }
+            .label { max-width: 840px; width: 100%; }
+            .img { display: block; width: 100%; height: auto; }
+            @media print {
+              @page { size: auto; margin: 8mm; }
+              .page { padding: 0; }
+            }
+        `;
+        frameDocument.head.append(meta, title, style);
+
+        const page = frameDocument.createElement('div');
+        page.className = 'page';
+        const label = frameDocument.createElement('div');
+        label.className = 'label';
+        const image = frameDocument.createElement('img');
+        image.className = 'img';
+        image.src = printableImageUrl;
+        image.alt = 'Etiqueta QR';
+        label.appendChild(image);
+        page.appendChild(label);
+        frameDocument.body.appendChild(page);
+
+        setTimeout(() => {
             try {
-                const frameWindow = printFrame.contentWindow;
-                if (!frameWindow) {
-                    cleanup();
-                    showNotification('No se pudo preparar la impresion.', 'error');
-                    return;
-                }
                 frameWindow.focus();
                 frameWindow.print();
                 setTimeout(cleanup, 1200);
@@ -2535,9 +3501,7 @@ async function printQrLabel() {
                 cleanup();
                 showNotification('No se pudo abrir la impresion.', 'error');
             }
-        };
-
-        document.body.appendChild(printFrame);
+        }, 0);
     } catch (_error) {
         showNotification('No se pudo abrir la impresion.', 'error');
     }
@@ -2630,40 +3594,40 @@ function executeHeaderPrimaryAction(actionKey) {
     if (!requireActiveSession()) return;
 
     switch (actionKey) {
-    case 'createIncident':
-        openIncidentModal({
-            installationId: Number.isInteger(currentSelectedInstallationId) ? currentSelectedInstallationId : '',
-        });
-        return;
-    case 'createAsset':
-        navigateToSectionByKey('assets');
-        showQrModal({ type: 'asset', value: '' });
-        return;
-    case 'pickDriverFile':
-        navigateToSectionByKey('drivers');
-        document.getElementById('driverPickFileBtn')?.click();
-        return;
-    case 'refreshAudit':
-        if (!canCurrentUserAccessAudit()) {
-            showNotification('No tienes permisos para acceder a Auditoría.', 'error');
+        case 'createIncident':
+            openIncidentModal({
+                installationId: Number.isInteger(currentSelectedInstallationId) ? currentSelectedInstallationId : '',
+            });
             return;
-        }
-        navigateToSectionByKey('audit');
-        document.getElementById('refreshAudit')?.click();
-        return;
-    case 'openAudit':
-        if (!canCurrentUserAccessAudit()) {
-            showNotification('No tienes permisos para acceder a Auditoría.', 'error');
+        case 'createAsset':
+            navigateToSectionByKey('assets');
+            showQrModal({ type: 'asset', value: '' });
             return;
-        }
-        navigateToSectionByKey('audit');
-        return;
-    case 'logout':
-        document.getElementById('logoutBtn')?.click();
-        return;
-    case 'createRecord':
-    default:
-        createManualRecordFromWeb();
+        case 'pickDriverFile':
+            navigateToSectionByKey('drivers');
+            document.getElementById('driverPickFileBtn')?.click();
+            return;
+        case 'refreshAudit':
+            if (!canCurrentUserAccessAudit()) {
+                showNotification('No tienes permisos para acceder a Auditoría.', 'error');
+                return;
+            }
+            navigateToSectionByKey('audit');
+            document.getElementById('refreshAudit')?.click();
+            return;
+        case 'openAudit':
+            if (!canCurrentUserAccessAudit()) {
+                showNotification('No tienes permisos para acceder a Auditoría.', 'error');
+                return;
+            }
+            navigateToSectionByKey('audit');
+            return;
+        case 'logout':
+            document.getElementById('logoutBtn')?.click();
+            return;
+        case 'createRecord':
+        default:
+            createManualRecordFromWeb();
     }
 }
 
@@ -2786,6 +3750,7 @@ const dashboardNavigation = window.createDashboardNavigation({
     loadAssets,
     loadAuditLogs,
     loadDrivers,
+    loadIncidentsWorkspace: (...args) => dashboardIncidents.showIncidentsWorkspace(...args),
     loadInstallations,
     prefersReducedMotion,
     sectionTransitionOutMs: SECTION_TRANSITION_OUT_MS,
@@ -2852,10 +3817,10 @@ document.querySelectorAll('.nav-links a').forEach(link => {
         }
         closeHeaderOverflowMenu();
         closeMobileNavPanel();
-        
+
         document.querySelectorAll('.nav-links a').forEach(l => l.classList.remove('active'));
         link.classList.add('active');
-        
+
         void activateSection(section);
     });
 });
@@ -2884,6 +3849,11 @@ document.getElementById('assetsSearchBtn')?.addEventListener('click', () => {
 document.getElementById('assetsRefreshBtn')?.addEventListener('click', () => {
     if (!requireActiveSession()) return;
     void loadAssets();
+});
+
+document.getElementById('incidentsGoAssetsBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    navigateToSectionByKey('assets');
 });
 
 document.getElementById('assetsCreateQrBtn')?.addEventListener('click', () => {
@@ -3164,27 +4134,27 @@ function getCurrentTheme() {
     if (savedTheme) {
         return savedTheme;
     }
-    
+
     // Check system preference
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
         return 'dark';
     }
-    
+
     return 'light';
 }
 
 function setTheme(theme) {
     const html = document.documentElement;
-    
+
     if (theme === 'dark') {
         html.setAttribute('data-theme', 'dark');
     } else {
         html.removeAttribute('data-theme');
     }
-    
+
     // Save to localStorage
     localStorage.setItem('theme', theme);
-    
+
     // Update Chart.js colors if charts exist
     updateChartTheme(theme);
 }
@@ -3193,7 +4163,7 @@ function toggleTheme() {
     const currentTheme = getCurrentTheme();
     const newTheme = currentTheme === 'light' ? 'dark' : 'light';
     setTheme(newTheme);
-    
+
     // Show notification
     const themeLabel = newTheme === 'light' ? 'claro' : 'oscuro';
     showNotification(`Tema ${themeLabel} activado`, 'info');
@@ -3202,7 +4172,7 @@ function toggleTheme() {
 function updateChartTheme(theme) {
     if (!isChartAvailable()) return;
     applyChartDefaults(theme);
-    
+
     // Update existing charts if they exist
     Object.values(charts).forEach(chart => {
         if (chart) {
@@ -3223,7 +4193,7 @@ function setupThemeToggle() {
     themeToggleTargets.forEach((button) => {
         button.addEventListener('click', toggleTheme);
     });
-    
+
     // Listen for system theme changes
     if (window.matchMedia) {
         const mediaQuery = window.matchMedia('(prefers-color-scheme: light)');

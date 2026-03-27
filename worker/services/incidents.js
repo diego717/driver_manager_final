@@ -201,9 +201,11 @@ export async function loadIncidentForTenant(
     SELECT
       i.id,
       i.installation_id,
+      i.asset_id,
       i.reporter_username,
       i.note,
       i.time_adjustment_seconds,
+      i.estimated_duration_seconds,
       i.severity,
       i.source,
       i.created_at,
@@ -214,7 +216,24 @@ export async function loadIncidentForTenant(
       i.resolved_by,
       i.resolution_note,
       i.checklist_json,
-      i.evidence_note
+      i.evidence_note,
+      i.work_started_at,
+      i.work_ended_at,
+      i.actual_duration_seconds,
+      i.geofence_distance_m,
+      i.geofence_radius_m,
+      i.geofence_result,
+      i.geofence_checked_at,
+      i.geofence_override_note,
+      i.geofence_override_by,
+      i.geofence_override_at,
+      i.gps_lat,
+      i.gps_lng,
+      i.gps_accuracy_m,
+      i.gps_captured_at,
+      i.gps_capture_source,
+      i.gps_capture_status,
+      i.gps_capture_note
     FROM incidents i
     INNER JOIN installations inst
       ON inst.id = i.installation_id

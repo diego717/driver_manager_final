@@ -1,12 +1,215 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import vm from "node:vm";
+import { JSDOM } from "jsdom";
 
 import {
+  cleanupDashboardApps,
   createFetchRouter,
   createJsonResponse,
   flushDashboardTasks,
+  readPublicTextAsset,
   setupDashboardApp,
 } from "./helpers/dashboard.test-helpers.mjs";
+
+test.afterEach(() => {
+  cleanupDashboardApps();
+});
+
+test("public tracking page polls automatically while visible and pauses when hidden", async () => {
+  const dom = new JSDOM(
+    `<!doctype html>
+    <html>
+      <body data-tracking-token="token-publico">
+        <h1 id="publicTrackingTitle"></h1>
+        <div id="publicTrackingSummary" hidden>
+          <span id="publicTrackingStatusBadge"></span>
+          <span id="publicTrackingTransition"></span>
+          <p id="publicTrackingSummaryText"></p>
+        </div>
+        <p id="publicTrackingMessage"></p>
+        <div id="publicTrackingMeta"></div>
+        <section id="publicTrackingTimeline"></section>
+        <button id="publicTrackingRefreshBtn" type="button">Actualizar</button>
+      </body>
+    </html>`,
+    {
+      url: "http://localhost:8787/track/token-publico",
+      runScripts: "outside-only",
+    },
+  );
+  const { window } = dom;
+  const fetchCalls = [];
+  const scheduledTimers = new Map();
+  let nextTimerId = 1;
+
+  Object.defineProperty(window.document, "hidden", {
+    configurable: true,
+    value: false,
+  });
+
+  window.fetch = async (input, init = {}) => {
+    fetchCalls.push({
+      input: String(input),
+      method: String(init.method || "GET").toUpperCase(),
+    });
+    return {
+      ok: true,
+      async json() {
+        return {
+          success: true,
+          tracking: {
+            installation_id: 45,
+            public_reference: "Servicio QA",
+            public_status: "pendiente",
+            public_status_label: "Pendiente de atencion",
+            public_previous_status: "cerrado",
+            public_previous_status_label: "Cerrado",
+            public_transition_label: "Cerrado -> Pendiente de atencion",
+            public_message: "Recibimos tu solicitud y esta pendiente de atencion.",
+            last_updated_at: "2026-03-26T12:00:00.000Z",
+            milestones: [],
+          },
+        };
+      },
+    };
+  };
+  window.setTimeout = (callback, delay) => {
+    const timerId = nextTimerId++;
+    scheduledTimers.set(timerId, { callback, delay });
+    return timerId;
+  };
+  window.clearTimeout = (timerId) => {
+    scheduledTimers.delete(timerId);
+  };
+
+  const script = new vm.Script(readPublicTextAsset("public-tracking.js"), {
+    filename: "public/public-tracking.js",
+  });
+  script.runInContext(dom.getInternalVMContext());
+
+  window.dispatchEvent(new window.Event("DOMContentLoaded"));
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const initialFetchCount = fetchCalls.length;
+  assert.ok(initialFetchCount >= 1);
+  assert.equal(fetchCalls[0].input, "/track/token-publico/state");
+  assert.equal(window.document.getElementById("publicTrackingStatusBadge").textContent, "Pendiente de atencion");
+  assert.equal(window.document.getElementById("publicTrackingTransition").textContent, "Cerrado -> Pendiente de atencion");
+  assert.match(window.document.getElementById("publicTrackingMeta").textContent, /Estado actual: Pendiente de atencion/i);
+  assert.match(window.document.getElementById("publicTrackingMeta").textContent, /Cambio reciente: Cerrado -> Pendiente de atencion/i);
+  assert.equal(scheduledTimers.size, 1);
+  assert.equal(Array.from(scheduledTimers.values())[0].delay, 15000);
+
+  const firstTimer = Array.from(scheduledTimers.entries())[0];
+  scheduledTimers.delete(firstTimer[0]);
+  await firstTimer[1].callback();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(fetchCalls.length, initialFetchCount + 1);
+  assert.equal(scheduledTimers.size, 1);
+
+  Object.defineProperty(window.document, "hidden", {
+    configurable: true,
+    value: true,
+  });
+  window.document.dispatchEvent(new window.Event("visibilitychange"));
+  await flushDashboardTasks();
+
+  assert.equal(scheduledTimers.size, 0);
+
+  Object.defineProperty(window.document, "hidden", {
+    configurable: true,
+    value: false,
+  });
+  window.document.dispatchEvent(new window.Event("visibilitychange"));
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(fetchCalls.length, initialFetchCount + 2);
+  assert.equal(scheduledTimers.size, 1);
+  assert.equal(Array.from(scheduledTimers.values())[0].delay, 15000);
+
+  dom.window.close();
+});
+
+test("dashboard html defers heavy chart and jsqr libraries until needed", () => {
+  const html = readPublicTextAsset("dashboard.html");
+  assert.equal(html.includes('/chart.umd.js'), false);
+  assert.equal(html.includes('/jsqr.js'), false);
+});
+
+test("excel export builds a styled xlsx workbook with extra sheets and date-aware filename", async () => {
+  const { dom } = await setupDashboardApp();
+  const { window } = dom;
+  const appendedSheets = [];
+  const workbook = { sheets: appendedSheets };
+  const writtenFiles = [];
+
+  const encodeCol = (index) => {
+    let current = index;
+    let output = "";
+    while (current >= 0) {
+      output = String.fromCharCode((current % 26) + 65) + output;
+      current = Math.floor(current / 26) - 1;
+    }
+    return output;
+  };
+  const aoaToSheet = (rows) => {
+    const sheet = {};
+    rows.forEach((row, rowIndex) => {
+      row.forEach((value, columnIndex) => {
+        sheet[`${encodeCol(columnIndex)}${rowIndex + 1}`] = { v: value };
+      });
+    });
+    return sheet;
+  };
+
+  window.XLSX = {
+    utils: {
+      book_new: () => workbook,
+      aoa_to_sheet: aoaToSheet,
+      encode_col: encodeCol,
+      book_append_sheet: (_workbook, sheet, name) => {
+        appendedSheets.push({ name, sheet });
+      },
+    },
+    writeFile: (_workbook, filename, options) => {
+      writtenFiles.push({ filename, options });
+    },
+  };
+
+  window.document.getElementById("startDate").value = "2026-03-01";
+  window.document.getElementById("endDate").value = "2026-03-27";
+
+  window.exportToExcel([
+    {
+      id: 15,
+      client_name: "Cliente QA",
+      driver_brand: "Zebra",
+      driver_version: "7.4.1",
+      client_pc_name: "PC-01",
+      technician_name: "Diego",
+      gps_capture_status: "captured",
+      gps_accuracy_m: 8,
+      site_lat: -34.9,
+      site_lng: -56.2,
+      site_radius_m: 50,
+      installation_time_seconds: 180,
+      notes: "Instalacion completada sin novedades",
+      timestamp: "2026-03-27T12:00:00.000Z",
+    },
+  ]);
+
+  assert.equal(appendedSheets.length, 3);
+  assert.deepEqual(appendedSheets.map((item) => item.name), ["Resumen", "Registros", "Por cliente"]);
+  assert.equal(writtenFiles.length, 1);
+  assert.equal(writtenFiles[0].filename, "registros_2026-03-01_a_2026-03-27.xlsx");
+  assert.equal(writtenFiles[0].options.bookType, "xlsx");
+  assert.equal(writtenFiles[0].options.cellStyles, true);
+});
 
 function buildWebSessionPayload({ username = "superadmin", role = "admin", tenantId = "default" } = {}) {
   return {
@@ -35,6 +238,15 @@ async function loginThroughForm(dom, credentials = { username: "superadmin", pas
   );
   await flushDashboardTasks();
   await flushDashboardTasks();
+}
+
+function installGeolocationMock(window, implementation) {
+  Object.defineProperty(window.navigator, "geolocation", {
+    configurable: true,
+    value: {
+      getCurrentPosition: implementation,
+    },
+  });
 }
 
 test("dashboard bootstrap shows login and masks protected panels without session", async () => {
@@ -79,6 +291,120 @@ test("dashboard login flow authenticates and renders user context from live publ
   assert.ok(router.calls.some((call) => call.pathname === "/web/statistics/trend"));
   assert.ok(router.calls.some((call) => call.pathname === "/web/installations"));
   assert.doesNotMatch(document.getElementById("recentInstallations").textContent, /Inicia sesi/i);
+});
+
+test("dashboard overview renders gps observability metrics from statistics", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/statistics",
+      resolver: async () => createJsonResponse({
+        total_installations: 5,
+        successful_installations: 4,
+        failed_installations: 1,
+        unique_clients: 3,
+        by_brand: { Zebra: 3, Magicard: 2 },
+        gps_observability: {
+          installations: {
+            attempted_count: 4,
+            captured_count: 3,
+            failure_count: 1,
+            denied_count: 1,
+            timeout_count: 0,
+            capture_success_rate: 75,
+            average_accuracy_m: 11,
+            p95_accuracy_m: 18,
+          },
+          incidents: {
+            attempted_count: 2,
+            captured_count: 1,
+            failure_count: 1,
+            denied_count: 0,
+            timeout_count: 1,
+            capture_success_rate: 50,
+            average_accuracy_m: 14,
+            p95_accuracy_m: 14,
+          },
+          warnings: {
+            total_outside_count: 3,
+            incident_outside_count: 2,
+            conformity_outside_count: 1,
+          },
+          overrides: {
+            total_override_count: 2,
+            incident_geofence_count: 1,
+            conformity_geofence_count: 0,
+            conformity_gps_count: 1,
+          },
+        },
+      }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { document } = dom.window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  assert.equal(document.getElementById("gpsOpsCapturedValue").textContent, "4");
+  assert.match(document.getElementById("gpsOpsCapturedMeta").textContent, /4\/6 capturas/i);
+  assert.equal(document.getElementById("gpsOpsFailuresValue").textContent, "2");
+  assert.match(document.getElementById("gpsOpsOutsideMeta").textContent, /Incidencias 2 \| Conformidad 1/);
+  assert.match(document.getElementById("gpsOpsOverridesMeta").textContent, /Incidencias 1 \| Conformidad 0 \+ GPS 1/);
+  assert.match(document.getElementById("gpsOpsInstallationsMeta").textContent, /Registros: 4 intentos, 75% util, prom. 11 m, p95 18 m\./);
+});
+
+test("dashboard overview surfaces asset loan alerts in attention panel", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/statistics",
+      resolver: async () => createJsonResponse({
+        total_installations: 5,
+        successful_installations: 4,
+        failed_installations: 1,
+        unique_clients: 3,
+        by_brand: { Zebra: 3, Magicard: 2 },
+        incident_critical_active_count: 1,
+        incident_in_progress_count: 2,
+        incident_outside_sla_count: 1,
+        loan_due_soon_count: 2,
+        loan_overdue_count: 1,
+        gps_observability: {
+          installations: {},
+          incidents: {},
+          warnings: {},
+          overrides: {},
+        },
+      }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { document } = dom.window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  assert.match(document.getElementById("attentionList").textContent, /Prestamos vencidos/i);
+  assert.match(document.getElementById("attentionList").textContent, /1 equipo sigue sin devolverse/i);
+  assert.match(document.getElementById("attentionList").textContent, /Prestamos proximos a vencer/i);
+  assert.equal(document.getElementById("notifBadge").textContent, "5");
 });
 
 test("dashboard logout returns UI to protected-empty state and reopens login", async () => {
@@ -268,6 +594,393 @@ test("reopening a resolved incident into in-progress requires confirmation and r
   assert.equal(document.getElementById("actionModal").classList.contains("active"), false);
 });
 
+test("asset detail can register and return a loan from the shared action modal", async () => {
+  const createdLoanPayloads = [];
+  const returnedLoanPayloads = [];
+  let activeLoan = null;
+  const assetDetailPayload = {
+    asset: {
+      id: 77,
+      external_code: "EQ-77",
+      brand: "Entrust",
+      model: "Sigma",
+      serial_number: "SN-77",
+      client_name: "Cliente Base",
+      status: "active",
+      updated_at: "2026-03-18T10:10:00.000Z",
+    },
+    active_link: null,
+    links: [],
+    incidents: [],
+  };
+
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+    {
+      method: "GET",
+      match: "/web/assets",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          items: [assetDetailPayload.asset],
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/assets/77/incidents",
+      resolver: async () => createJsonResponse(assetDetailPayload),
+    },
+    {
+      method: "GET",
+      match: "/web/assets/77/loans",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          items: activeLoan ? [activeLoan] : [],
+          active_count: activeLoan ? 1 : 0,
+          overdue_count: activeLoan?.status === "overdue" ? 1 : 0,
+        }),
+    },
+    {
+      method: "POST",
+      match: "/web/assets/77/loans",
+      resolver: async ({ request }) => {
+        const body = JSON.parse(await request.text());
+        createdLoanPayloads.push(body);
+        activeLoan = {
+          id: 501,
+          asset_id: 77,
+          asset_external_code: "EQ-77",
+          original_client: "Cliente Base",
+          borrowing_client: body.borrowing_client,
+          loaned_at: "2026-03-18T11:00:00.000Z",
+          expected_return_at: body.expected_return_at,
+          returned_at: null,
+          loaned_by_username: "ops-admin",
+          returned_by_username: null,
+          notes: body.notes || "",
+          return_notes: "",
+          status: "active",
+        };
+        return createJsonResponse({
+          success: true,
+          loan: activeLoan,
+        }, { status: 201 });
+      },
+    },
+    {
+      method: "PATCH",
+      match: "/web/loans/501/return",
+      resolver: async ({ request }) => {
+        const body = JSON.parse(await request.text());
+        returnedLoanPayloads.push(body);
+        activeLoan = null;
+        return createJsonResponse({
+          success: true,
+          loan: {
+            id: 501,
+            asset_id: 77,
+            returned_at: "2026-03-18T12:00:00.000Z",
+            return_notes: body.return_notes,
+            status: "returned",
+          },
+        });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  await window.loadAssetDetail(77);
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.match(document.getElementById("assetDetail").textContent, /Sin prestamos activos/i);
+  const createLoanButton = Array.from(document.querySelectorAll("#assetDetail button")).find(
+    (button) => /Prestar equipo/i.test(button.textContent || ""),
+  );
+  createLoanButton.click();
+  await flushDashboardTasks();
+
+  assert.ok(document.getElementById("actionModal").classList.contains("active"));
+  assert.equal(document.getElementById("actionModalTitle").textContent, "Prestar equipo");
+
+  document.getElementById("assetLoanBorrowingClientInput").value = "Cliente Prestado";
+  document.getElementById("assetLoanExpectedReturnInput").value = "2099-03-20T09:30";
+  document.getElementById("assetLoanNotesInput").value = "Prestamo QA";
+  document.getElementById("actionModalSubmitBtn").click();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(createdLoanPayloads.length, 1);
+  assert.equal(createdLoanPayloads[0].borrowing_client, "Cliente Prestado");
+  assert.equal(createdLoanPayloads[0].notes, "Prestamo QA");
+  assert.equal(Number.isNaN(Date.parse(createdLoanPayloads[0].expected_return_at)), false);
+  assert.match(createdLoanPayloads[0].expected_return_at, /^2099-03-20T/);
+  assert.equal(document.getElementById("actionModal").classList.contains("active"), false);
+  assert.match(document.getElementById("assetDetail").textContent, /Prestamo activo/i);
+  assert.match(document.getElementById("assetDetail").textContent, /Cliente Prestado/i);
+  assert.match(document.getElementById("assetDetail").textContent, /Registrar devolucion/i);
+
+  const returnButton = Array.from(document.querySelectorAll("#assetDetail button")).find(
+    (button) => /Registrar devolucion/i.test(button.textContent || ""),
+  );
+  returnButton.click();
+  await flushDashboardTasks();
+
+  document.getElementById("assetLoanReturnNotesInput").value = "Sin novedades";
+  document.getElementById("actionModalSubmitBtn").click();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(returnedLoanPayloads.length, 1);
+  assert.equal(returnedLoanPayloads[0].return_notes, "Sin novedades");
+  assert.match(document.getElementById("assetDetail").textContent, /Prestar equipo/i);
+  assert.doesNotMatch(document.getElementById("assetDetail").textContent, /Prestamo activo \| Cliente Prestado/i);
+});
+
+test("reopening a resolved incident removes the resolution panel immediately", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+    {
+      method: "PATCH",
+      match: "/web/incidents/26/status",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          incident: {
+            id: 26,
+            installation_id: 34,
+            note: "Equipo rehabilitado",
+            severity: "medium",
+            incident_status: "in_progress",
+            created_at: "2026-03-18T10:00:00.000Z",
+            status_updated_at: "2026-03-18T10:08:00.000Z",
+            work_started_at: "2026-03-18T10:08:00.000Z",
+            resolution_note: "",
+            reporter_username: "ops-admin",
+            photos: [],
+          },
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/34/incidents",
+      resolver: async () =>
+        createJsonResponse({
+          incidents: [
+            {
+              id: 26,
+              installation_id: 34,
+              note: "Equipo rehabilitado",
+              severity: "medium",
+              incident_status: "in_progress",
+              created_at: "2026-03-18T10:00:00.000Z",
+              status_updated_at: "2026-03-18T10:08:00.000Z",
+              work_started_at: "2026-03-18T10:08:00.000Z",
+              resolution_note: "",
+              reporter_username: "ops-admin",
+              photos: [],
+            },
+          ],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  await window.renderIncidents(
+    [
+      {
+        id: 26,
+        installation_id: 34,
+        note: "Equipo rehabilitado",
+        severity: "medium",
+        incident_status: "resolved",
+        created_at: "2026-03-18T10:00:00.000Z",
+        status_updated_at: "2026-03-18T10:05:00.000Z",
+        resolved_at: "2026-03-18T10:05:00.000Z",
+        resolution_note: "Se reemplazo el modulo.",
+        reporter_username: "ops-admin",
+        photos: [],
+      },
+    ],
+    34,
+  );
+
+  document.querySelector('.incident-action-btn[data-action="in_progress"]').click();
+  await flushDashboardTasks();
+
+  document.getElementById("actionModalConfirmCheckbox").checked = true;
+  document.getElementById("actionModalSubmitBtn").click();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const card = document.querySelector("#incidentsList .incident-card");
+  assert.ok(card);
+  assert.equal(card.dataset.status, "in_progress");
+  assert.equal(
+    card.querySelector('.incident-resolution-panel[data-panel-role="resolution"]'),
+    null,
+  );
+  window.stopIncidentRuntimeTicker();
+  window.closeSSE();
+});
+
+test("stale SSE errors do not close the latest realtime connection", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const eventSources = [];
+
+  Object.defineProperty(window.document, "visibilityState", {
+    configurable: true,
+    value: "visible",
+  });
+  window.Math.random = () => 0;
+  window.EventSource = class EventSourceMock {
+    constructor(url, options) {
+      this.url = url;
+      this.options = options;
+      this.closed = false;
+      this.onopen = null;
+      this.onmessage = null;
+      this.onerror = null;
+      eventSources.push(this);
+    }
+
+    close() {
+      this.closed = true;
+    }
+  };
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  assert.equal(eventSources.length, 1);
+  await flushDashboardTasks(1400);
+  window.syncSSEForCurrentContext(true);
+  await flushDashboardTasks();
+
+  assert.equal(eventSources.length, 2);
+  assert.equal(eventSources[0].closed, true);
+  eventSources[0].onerror?.({ type: "error" });
+  await flushDashboardTasks(2600);
+
+  assert.equal(eventSources.length, 2);
+  assert.equal(eventSources[1].closed, false);
+  window.closeSSE();
+});
+
+test("force reconnect within the min gap does not downgrade an active SSE connection", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const eventSources = [];
+
+  Object.defineProperty(window.document, "visibilityState", {
+    configurable: true,
+    value: "visible",
+  });
+  window.EventSource = class EventSourceMock {
+    constructor(url, options) {
+      this.url = url;
+      this.options = options;
+      this.closed = false;
+      this.onopen = null;
+      this.onmessage = null;
+      this.onerror = null;
+      eventSources.push(this);
+    }
+
+    close() {
+      this.closed = true;
+    }
+  };
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  assert.equal(eventSources.length, 1);
+  eventSources[0].onopen?.();
+  await flushDashboardTasks();
+
+  assert.equal(window.getConnectionStatus(), "connected");
+  await flushDashboardTasks(1100);
+  window.syncSSEForCurrentContext(true);
+  await flushDashboardTasks();
+
+  assert.equal(eventSources.length, 1);
+  assert.equal(window.getConnectionStatus(), "connected");
+  window.closeSSE();
+});
+
 test("scan qr modal opens from header overflow and keeps manual fallback visible", async () => {
   const router = createFetchRouter([
     {
@@ -324,6 +1037,144 @@ test("manual qr resolution opens incident context for installations", async () =
 
   assert.ok(document.getElementById("incidentsSection").classList.contains("active"));
   assert.ok(router.calls.some((call) => call.pathname === "/web/installations/42/incidents"));
+});
+
+test("clicking a record row opens its incidents view", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload()),
+    },
+    {
+      method: "GET",
+      match: ({ url }) => url.pathname === "/web/installations" && url.searchParams.get("limit") === "50",
+      resolver: async () =>
+        createJsonResponse([
+          {
+            id: 36,
+            client_name: "Prueba pausa tiempo",
+            driver_brand: "Caso manual",
+            attention_state: "in_progress",
+            incident_active_count: 1,
+            installation_time_seconds: 0,
+            notes: "Probando",
+            timestamp: "2026-03-23T21:19:58.000Z",
+          },
+        ]),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/36/incidents",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          installation_id: 36,
+          incidents: [],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { document } = dom.window;
+
+  await loginThroughForm(dom);
+  await dom.window.loadInstallations();
+  await flushDashboardTasks();
+
+  document.querySelector('#installationsTable tr[data-id="36"]').click();
+  await flushDashboardTasks();
+  await flushDashboardTasks(220);
+
+  assert.ok(document.getElementById("incidentsSection").classList.contains("active"));
+  assert.ok(router.calls.some((call) => call.pathname === "/web/installations/36/incidents"));
+});
+
+test("installations filters can narrow records by geofence and gps health", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload()),
+    },
+    {
+      method: "GET",
+      match: ({ url }) => url.pathname === "/web/installations" && url.searchParams.get("limit") === "50",
+      resolver: async () =>
+        createJsonResponse([
+          {
+            id: 36,
+            client_name: "Con geofence y gps util",
+            driver_brand: "Marca A",
+            attention_state: "normal",
+            installation_time_seconds: 0,
+            notes: "",
+            timestamp: "2026-03-23T21:19:58.000Z",
+            site_lat: -34.9,
+            site_lng: -56.16,
+            site_radius_m: 60,
+            gps_capture_status: "captured",
+            gps_accuracy_m: 12,
+          },
+          {
+            id: 37,
+            client_name: "Sin geofence y gps fallido",
+            driver_brand: "Marca B",
+            attention_state: "clear",
+            installation_time_seconds: 0,
+            notes: "",
+            timestamp: "2026-03-23T21:19:58.000Z",
+            site_lat: null,
+            site_lng: null,
+            site_radius_m: null,
+            gps_capture_status: "denied",
+            gps_accuracy_m: null,
+          },
+        ]),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { document } = dom.window;
+
+  await loginThroughForm(dom);
+  await dom.window.loadInstallations();
+  await flushDashboardTasks();
+
+  document.getElementById("geofenceFilter").value = "configured";
+  document.getElementById("applyFilters").click();
+  await flushDashboardTasks(420);
+  assert.match(document.getElementById("installationsTable").textContent, /Con geofence y gps util/);
+  assert.doesNotMatch(document.getElementById("installationsTable").textContent, /Sin geofence y gps fallido/);
+
+  document.getElementById("geofenceFilter").value = "";
+  document.getElementById("gpsFilter").value = "failed";
+  document.getElementById("applyFilters").click();
+  await flushDashboardTasks(420);
+  assert.match(document.getElementById("installationsTable").textContent, /Sin geofence y gps fallido/);
+  assert.doesNotMatch(document.getElementById("installationsTable").textContent, /Con geofence y gps util/);
+});
+
+test("opening incidents without a selected record shows a contextual landing state", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload()),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { document } = dom.window;
+
+  await loginThroughForm(dom);
+  document.querySelector('.nav-links a[data-section="incidents"]').click();
+  await flushDashboardTasks();
+  await flushDashboardTasks(220);
+
+  assert.ok(document.getElementById("incidentsSection").classList.contains("active"));
+  assert.match(document.getElementById("incidentsList").textContent, /Sin registro seleccionado/i);
+  assert.match(document.getElementById("incidentsList").textContent, /Ir a Equipos/i);
 });
 
 test("manual qr resolution opens asset detail when lookup resolves an asset", async () => {
@@ -570,6 +1421,16 @@ test("manual record creation updates the installations view without forcing a bl
   const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
   const { window } = dom;
   const { document, MouseEvent, Event } = window;
+  installGeolocationMock(window, (success) => {
+    success({
+      coords: {
+        latitude: -34.9011,
+        longitude: -56.1645,
+        accuracy: 18,
+      },
+      timestamp: Date.parse("2026-03-20T12:00:00.000Z"),
+    });
+  });
 
   await loginThroughForm(dom, {
     username: "ops-admin",
@@ -585,6 +1446,7 @@ test("manual record creation updates the installations view without forcing a bl
   const installationsCallsBeforeCreate = router.calls.filter((call) => call.pathname === "/web/installations").length;
 
   window.createManualRecordFromWeb();
+  await flushDashboardTasks();
   document.getElementById("actionRecordClient").value = "Cliente QA";
   document.getElementById("actionRecordBrand").value = "Equipo QA";
   document.getElementById("actionRecordVersion").value = "v1";
@@ -596,6 +1458,10 @@ test("manual record creation updates the installations view without forcing a bl
   await flushDashboardTasks();
 
   assert.equal(recordPayloads.length, 1);
+  assert.equal(recordPayloads[0].gps.status, "captured");
+  assert.equal(recordPayloads[0].gps.source, "browser");
+  assert.equal(recordPayloads[0].gps.lat, -34.9011);
+  assert.equal(recordPayloads[0].gps.lng, -56.1645);
   assert.equal(document.getElementById("actionModal").classList.contains("active"), false);
   assert.match(document.getElementById("installationsTable").textContent, /#123/);
   assert.match(document.getElementById("installationsTable").textContent, /Cliente QA/);
@@ -673,6 +1539,16 @@ test("incident creation keeps the modal flow responsive without forcing an insta
   const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
   const { window } = dom;
   const { document, Event } = window;
+  installGeolocationMock(window, (success) => {
+    success({
+      coords: {
+        latitude: -34.9011,
+        longitude: -56.1645,
+        accuracy: 12,
+      },
+      timestamp: Date.parse("2026-03-20T12:15:00.000Z"),
+    });
+  });
 
   await loginThroughForm(dom, {
     username: "ops-admin",
@@ -682,6 +1558,7 @@ test("incident creation keeps the modal flow responsive without forcing an insta
   const installationsCallsBeforeCreate = router.calls.filter((call) => call.pathname === "/web/installations").length;
 
   window.createIncidentFromWeb(45);
+  await flushDashboardTasks();
   document.getElementById("actionIncidentNote").value = "Incidencia creada desde test";
   document.getElementById("actionIncidentSeverity").value = "high";
   document.getElementById("actionModalForm").dispatchEvent(
@@ -691,12 +1568,918 @@ test("incident creation keeps the modal flow responsive without forcing an insta
   await flushDashboardTasks();
 
   assert.equal(incidentPayloads.length, 1);
+  assert.equal(incidentPayloads[0].gps.status, "captured");
+  assert.equal(incidentPayloads[0].gps.source, "browser");
+  assert.equal(incidentPayloads[0].gps.accuracy_m, 12);
   assert.equal(document.getElementById("actionModal").classList.contains("active"), false);
   assert.equal(
     router.calls.filter((call) => call.pathname === "/web/installations").length,
     installationsCallsBeforeCreate,
   );
   assert.ok(router.calls.some((call) => call.pathname === "/web/installations/45/incidents"));
+});
+
+test("manual record submission stores denied geolocation status without blocking the flow", async () => {
+  const recordPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "POST",
+      match: "/web/records",
+      resolver: async ({ request }) => {
+        recordPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({ success: true, record: { id: 301, client_name: "Cliente QA" } }, { status: 201 });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+  installGeolocationMock(window, (_success, error) => {
+    error({ code: 1 });
+  });
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+
+  window.createManualRecordFromWeb();
+  await flushDashboardTasks();
+  document.getElementById("actionRecordClient").value = "Cliente QA";
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(recordPayloads.length, 1);
+  assert.equal(recordPayloads[0].gps.status, "denied");
+  assert.equal(recordPayloads[0].gps.source, "browser");
+});
+
+test("manual record can seed site geofence from the captured gps snapshot", async () => {
+  const recordPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "POST",
+      match: "/web/records",
+      resolver: async ({ request }) => {
+        recordPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({ success: true, record: { id: 306 } }, { status: 201 });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+  installGeolocationMock(window, (success) => {
+    success({
+      coords: {
+        latitude: -34.9011,
+        longitude: -56.1645,
+        accuracy: 18,
+      },
+      timestamp: Date.parse("2026-03-20T12:00:00.000Z"),
+    });
+  });
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+
+  window.createManualRecordFromWeb();
+  await flushDashboardTasks();
+  document.getElementById("actionRecordUseGpsAsSite").checked = true;
+  document.getElementById("actionRecordSiteRadius").value = "60";
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(recordPayloads.length, 1);
+  assert.equal(recordPayloads[0].gps.status, "captured");
+  assert.equal(recordPayloads[0].site_lat, -34.9011);
+  assert.equal(recordPayloads[0].site_lng, -56.1645);
+  assert.equal(recordPayloads[0].site_radius_m, 60);
+});
+
+test("manual record submission preserves timeout geolocation status", async () => {
+  const recordPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "POST",
+      match: "/web/records",
+      resolver: async ({ request }) => {
+        recordPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({ success: true, record: { id: 302 } }, { status: 201 });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+  installGeolocationMock(window, (_success, error) => {
+    error({ code: 3 });
+  });
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+
+  window.createManualRecordFromWeb();
+  await flushDashboardTasks();
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(recordPayloads[0].gps.status, "timeout");
+});
+
+test("manual record submission preserves unavailable geolocation status", async () => {
+  const recordPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "POST",
+      match: "/web/records",
+      resolver: async ({ request }) => {
+        recordPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({ success: true, record: { id: 305 } }, { status: 201 });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+  installGeolocationMock(window, (_success, error) => {
+    error({ code: 2 });
+  });
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+
+  window.createManualRecordFromWeb();
+  await flushDashboardTasks();
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(recordPayloads[0].gps.status, "unavailable");
+});
+
+test("manual record submission marks geolocation as unsupported when navigator API is unavailable", async () => {
+  const recordPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "POST",
+      match: "/web/records",
+      resolver: async ({ request }) => {
+        recordPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({ success: true, record: { id: 303 } }, { status: 201 });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+  Object.defineProperty(window.navigator, "geolocation", {
+    configurable: true,
+    value: undefined,
+  });
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+
+  window.createManualRecordFromWeb();
+  await flushDashboardTasks();
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(recordPayloads[0].gps.status, "unsupported");
+});
+
+test("submitting while geolocation capture is still pending sends a pending snapshot note", async () => {
+  const recordPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "POST",
+      match: "/web/records",
+      resolver: async ({ request }) => {
+        recordPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({ success: true, record: { id: 304 } }, { status: 201 });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+  installGeolocationMock(window, () => {});
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+
+  window.createManualRecordFromWeb();
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(recordPayloads[0].gps.status, "pending");
+  assert.equal(recordPayloads[0].gps.note, "capture_in_progress_at_submit");
+  assert.equal(recordPayloads[0].gps.source, "browser");
+});
+
+test("asset incident creation includes geolocation payload", async () => {
+  const incidentPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "POST",
+      match: "/web/assets/77/incidents",
+      resolver: async ({ request }) => {
+        incidentPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({
+          success: true,
+          installation_id: 12,
+          incident: {
+            id: 401,
+            installation_id: 12,
+            asset_id: 77,
+            note: "Incidencia equipo",
+            severity: "medium",
+            incident_status: "open",
+            created_at: "2026-03-20T12:20:00.000Z",
+            reporter_username: "ops-admin",
+            photos: [],
+          },
+        }, { status: 201 });
+      },
+    },
+    {
+      method: "GET",
+      match: "/web/assets/77/incidents",
+      resolver: async () => createJsonResponse({
+        success: true,
+        asset: { id: 77, external_code: "EQ-77", brand: "Entrust", model: "Sigma", serial_number: "SN-77", client_name: "QA", status: "active" },
+        active_link: { installation_id: 12 },
+        links: [],
+        incidents: [],
+      }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+  installGeolocationMock(window, (success) => {
+    success({
+      coords: {
+        latitude: -34.88,
+        longitude: -56.15,
+        accuracy: 9,
+      },
+      timestamp: Date.parse("2026-03-20T12:20:00.000Z"),
+    });
+  });
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+
+  window.createIncidentFromWeb("", { assetId: 77, activeInstallationId: 12 });
+  await flushDashboardTasks();
+  document.getElementById("actionIncidentNote").value = "Incidencia equipo";
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(incidentPayloads.length, 1);
+  assert.equal(incidentPayloads[0].gps.status, "captured");
+  assert.equal(incidentPayloads[0].gps.source, "browser");
+});
+
+test("incident creation includes geofence override note when capture is outside the site radius", async () => {
+  const incidentPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/installations",
+      resolver: async () => createJsonResponse([
+        {
+          id: 45,
+          client_name: "Acme",
+          driver_brand: "Intel",
+          site_lat: -34.9011,
+          site_lng: -56.1645,
+          site_radius_m: 50,
+        },
+      ]),
+    },
+    {
+      method: "POST",
+      match: "/web/installations/45/incidents",
+      resolver: async ({ request }) => {
+        incidentPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({
+          success: true,
+          incident: {
+            id: 402,
+            installation_id: 45,
+            note: "Fuera del radio",
+            severity: "medium",
+            incident_status: "open",
+            geofence_result: "outside",
+            geofence_distance_m: 180,
+            geofence_radius_m: 50,
+            geofence_override_note: "Se opero desde el acceso perimetral autorizado.",
+            created_at: "2026-03-20T12:20:00.000Z",
+            reporter_username: "ops-admin",
+            photos: [],
+          },
+        }, { status: 201 });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+  installGeolocationMock(window, (success) => {
+    success({
+      coords: {
+        latitude: -34.89,
+        longitude: -56.15,
+        accuracy: 12,
+      },
+      timestamp: Date.parse("2026-03-20T12:20:00.000Z"),
+    });
+  });
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+
+  window.createIncidentFromWeb(45);
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const overrideWrap = document.getElementById("actionIncidentGeofenceOverrideWrap");
+  assert.equal(overrideWrap.hidden, false);
+
+  document.getElementById("actionIncidentNote").value = "Fuera del radio";
+  document.getElementById("actionIncidentGeofenceOverrideNote").value = "Se opero desde el acceso perimetral autorizado.";
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(incidentPayloads.length, 1);
+  assert.equal(incidentPayloads[0].gps.status, "captured");
+  assert.equal(
+    incidentPayloads[0].geofence_override_note,
+    "Se opero desde el acceso perimetral autorizado.",
+  );
+});
+
+test("conformity creation includes captured geolocation payload", async () => {
+  const conformityPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/conformity",
+      resolver: async () => createJsonResponse({ success: true, conformity: null }),
+    },
+    {
+      method: "POST",
+      match: "/web/installations/45/conformity",
+      resolver: async ({ request }) => {
+        conformityPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({
+          success: true,
+          conformity: { id: 90, status: "emailed" },
+        }, { status: 201 });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+  installGeolocationMock(window, (success) => {
+    success({
+      coords: {
+        latitude: -34.9011,
+        longitude: -56.1645,
+        accuracy: 18,
+      },
+      timestamp: Date.parse("2026-03-26T10:01:00.000Z"),
+    });
+  });
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+  await window.renderIncidents([], 45);
+  document.querySelector('[data-role="conformity-trigger"]').click();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const canvas = document.getElementById("actionConformitySignatureCanvas");
+  canvas.onpointerdown?.({
+    preventDefault() {},
+    clientX: 10,
+    clientY: 10,
+    pointerId: 1,
+  });
+  canvas.onpointermove?.({
+    preventDefault() {},
+    clientX: 40,
+    clientY: 24,
+  });
+  canvas.onpointerup?.({});
+
+  document.getElementById("actionConformityEmailTo").value = "cliente@example.com";
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(conformityPayloads.length, 1);
+  assert.equal(conformityPayloads[0].gps.status, "captured");
+  assert.equal(conformityPayloads[0].gps.source, "browser");
+  assert.equal(conformityPayloads[0].gps.lat, -34.9011);
+});
+
+test("conformity creation includes geofence override note when capture is outside the site radius", async () => {
+  const conformityPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/installations",
+      resolver: async () => createJsonResponse([
+        {
+          id: 45,
+          client_name: "Acme",
+          driver_brand: "Intel",
+          site_lat: -34.9011,
+          site_lng: -56.1645,
+          site_radius_m: 50,
+        },
+      ]),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/conformity",
+      resolver: async () => createJsonResponse({ success: true, conformity: null }),
+    },
+    {
+      method: "POST",
+      match: "/web/installations/45/conformity",
+      resolver: async ({ request }) => {
+        conformityPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({
+          success: true,
+          conformity: {
+            id: 92,
+            status: "generated",
+            metadata_json: JSON.stringify({
+              geofence: {
+                result: "outside",
+                distance_m: 180,
+                radius_m: 50,
+                override_note: "Cliente restringio el acceso interno y se firmo en perimetro.",
+              },
+            }),
+          },
+        }, { status: 201 });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+  installGeolocationMock(window, (success) => {
+    success({
+      coords: {
+        latitude: -34.89,
+        longitude: -56.15,
+        accuracy: 18,
+      },
+      timestamp: Date.parse("2026-03-26T10:01:00.000Z"),
+    });
+  });
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+  await window.renderIncidents([], 45);
+  document.querySelector('[data-role="conformity-trigger"]').click();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const overrideWrap = document.getElementById("actionConformityGpsOverrideWrap");
+  assert.equal(overrideWrap.hidden, false);
+
+  const canvas = document.getElementById("actionConformitySignatureCanvas");
+  canvas.onpointerdown?.({
+    preventDefault() {},
+    clientX: 10,
+    clientY: 10,
+    pointerId: 1,
+  });
+  canvas.onpointermove?.({
+    preventDefault() {},
+    clientX: 40,
+    clientY: 24,
+  });
+  canvas.onpointerup?.({});
+
+  document.getElementById("actionConformityEmailTo").value = "cliente@example.com";
+  document.getElementById("actionConformityGpsOverrideNote").value = "Cliente restringio el acceso interno y se firmo en perimetro.";
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(conformityPayloads.length, 1);
+  assert.equal(conformityPayloads[0].gps.status, "captured");
+  assert.equal(
+    conformityPayloads[0].geofence_override_note,
+    "Cliente restringio el acceso interno y se firmo en perimetro.",
+  );
+});
+
+test("conformity creation requires override note when geolocation is not usable", async () => {
+  const conformityPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/conformity",
+      resolver: async () => createJsonResponse({ success: true, conformity: null }),
+    },
+    {
+      method: "POST",
+      match: "/web/installations/45/conformity",
+      resolver: async ({ request }) => {
+        conformityPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({
+          success: true,
+          conformity: { id: 91, status: "generated" },
+        }, { status: 201 });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+  installGeolocationMock(window, (_success, error) => {
+    error({ code: 1 });
+  });
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+  await window.renderIncidents([], 45);
+  document.querySelector('[data-role="conformity-trigger"]').click();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const overrideWrap = document.getElementById("actionConformityGpsOverrideWrap");
+  assert.equal(overrideWrap.hidden, false);
+
+  const canvas = document.getElementById("actionConformitySignatureCanvas");
+  canvas.onpointerdown?.({
+    preventDefault() {},
+    clientX: 10,
+    clientY: 10,
+    pointerId: 1,
+  });
+  canvas.onpointermove?.({
+    preventDefault() {},
+    clientX: 40,
+    clientY: 24,
+  });
+  canvas.onpointerup?.({});
+
+  document.getElementById("actionConformityEmailTo").value = "cliente@example.com";
+  document.getElementById("actionConformityGpsOverrideNote").value = "Sin senal dentro de la sala tecnica.";
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(conformityPayloads.length, 1);
+  assert.deepEqual(conformityPayloads[0].gps, {
+    status: "override",
+    source: "override",
+    note: "Sin senal dentro de la sala tecnica.",
+  });
+});
+
+test("installation site configuration sends site geofence payload", async () => {
+  const installationPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "PUT",
+      match: "/web/installations/45",
+      resolver: async ({ request }) => {
+        installationPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({
+          success: true,
+          updated: "45",
+          installation: {
+            id: 45,
+            site_lat: -34.9,
+            site_lng: -56.16,
+            site_radius_m: 60,
+          },
+        });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+
+  window.renderInstallationsTable([
+    {
+      id: 45,
+      client_name: "Acme",
+      driver_brand: "Intel",
+      installation_time_seconds: 0,
+      notes: "",
+      timestamp: "2026-03-26T10:00:00.000Z",
+      attention_state: "clear",
+      site_lat: null,
+      site_lng: null,
+      site_radius_m: null,
+    },
+  ]);
+
+  const siteButton = Array.from(document.querySelectorAll(".table-action-btn"))
+    .find((button) => button.textContent.includes("Sitio"));
+  siteButton.click();
+  await flushDashboardTasks();
+
+  document.getElementById("actionInstallationSiteLat").value = "-34.9";
+  document.getElementById("actionInstallationSiteLng").value = "-56.16";
+  document.getElementById("actionInstallationSiteRadius").value = "60";
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(installationPayloads.length, 1);
+  assert.deepEqual(installationPayloads[0], {
+    site_lat: -34.9,
+    site_lng: -56.16,
+    site_radius_m: 60,
+  });
+});
+
+test("installations table shows whether the site geofence is configured", async () => {
+  const { dom } = await setupDashboardApp();
+  const { window } = dom;
+
+  window.renderInstallationsTable([
+    {
+      id: 41,
+      client_name: "Cliente sin sitio",
+      driver_brand: "Marca A",
+      installation_time_seconds: 0,
+      notes: "",
+      timestamp: "2026-03-26T10:00:00.000Z",
+      attention_state: "clear",
+      site_lat: null,
+      site_lng: null,
+      site_radius_m: null,
+      gps_capture_status: "denied",
+      gps_accuracy_m: null,
+    },
+    {
+      id: 42,
+      client_name: "Cliente con sitio",
+      driver_brand: "Marca B",
+      installation_time_seconds: 0,
+      notes: "",
+      timestamp: "2026-03-26T10:00:00.000Z",
+      attention_state: "normal",
+      site_lat: -34.9,
+      site_lng: -56.16,
+      site_radius_m: 60,
+      gps_capture_status: "captured",
+      gps_accuracy_m: 14,
+    },
+  ]);
+
+  const tableText = window.document.getElementById("installationsTable").textContent;
+  assert.match(tableText, /Sin geofence/);
+  assert.match(tableText, /Geofence 60 m/);
+  assert.match(tableText, /GPS denegado/);
+  assert.match(tableText, /GPS \+\- 14 m/);
+});
+
+test("installations table shows estimated and actual time summary and aligned actions group", async () => {
+  const { dom } = await setupDashboardApp();
+  const { window } = dom;
+  const { document } = window;
+
+  window.renderInstallationsTable([
+    {
+      id: 51,
+      client_name: "Cliente tiempos",
+      driver_brand: "Entrust",
+      installation_time_seconds: 120,
+      incident_estimated_duration_seconds_total: 5400,
+      incident_estimated_duration_count: 1,
+      incident_actual_duration_seconds_total: 3900,
+      incident_actual_duration_count: 1,
+      notes: "",
+      timestamp: "2026-03-26T10:00:00.000Z",
+      attention_state: "resolved",
+      site_lat: -34.9,
+      site_lng: -56.16,
+      site_radius_m: 60,
+    },
+  ]);
+
+  const timeCellText = document.querySelector("#installationsTable tbody td:nth-child(5)").textContent;
+  assert.match(timeCellText, /Est\./);
+  assert.match(timeCellText, /1h 30m/);
+  assert.match(timeCellText, /Real/);
+  assert.match(timeCellText, /1h 5m/);
+
+  const actionsGroup = document.querySelector("#installationsTable .table-actions-group");
+  assert.ok(actionsGroup, "actions group should exist");
+  assert.equal(actionsGroup.children.length, 2);
+});
+
+test("public tracking modal loads, regenerates, copies and revokes the shared link", async () => {
+  const clipboardWrites = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/public-tracking-link",
+      resolver: async () => createJsonResponse({
+        success: true,
+        link: {
+          active: true,
+          status: "active",
+          short_code: "AB7K9Q2M",
+          tracking_url: "https://worker.example/track/AB7K9Q2M",
+          long_tracking_url: "https://worker.example/track/token-inicial",
+          expires_at: "2026-03-29T10:00:00.000Z",
+          snapshot: {
+            public_status: "pendiente",
+            public_message: "Tu solicitud ya fue registrada y esta pendiente de atencion.",
+          },
+        },
+      }),
+    },
+    {
+      method: "POST",
+      match: "/web/installations/45/public-tracking-link",
+      resolver: async () => createJsonResponse({
+        success: true,
+        link: {
+          active: true,
+          status: "active",
+          short_code: "XZ4N8R6T",
+          tracking_url: "https://worker.example/track/XZ4N8R6T",
+          long_tracking_url: "https://worker.example/track/token-regenerado",
+          expires_at: "2026-03-30T12:00:00.000Z",
+          snapshot: {
+            public_status: "en_progreso",
+            public_message: "Estamos trabajando en tu servicio.",
+          },
+        },
+      }, { status: 201 }),
+    },
+    {
+      method: "DELETE",
+      match: "/web/installations/45/public-tracking-link",
+      resolver: async () => createJsonResponse({
+        success: true,
+        revoked: true,
+      }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+  window.navigator.clipboard.writeText = async (value) => {
+    clipboardWrites.push(value);
+  };
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+  await window.renderIncidents([], 45);
+
+  document.querySelector('[data-role="public-tracking-trigger"]').click();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.ok(document.getElementById("actionModal").classList.contains("active"));
+  assert.equal(
+    document.getElementById("actionPublicTrackingUrl").value,
+    "https://worker.example/track/AB7K9Q2M",
+  );
+  assert.match(document.getElementById("actionPublicTrackingSnapshot").textContent, /pendiente/i);
+
+  document.getElementById("actionPublicTrackingCopyBtn").click();
+  await flushDashboardTasks();
+
+  assert.deepEqual(clipboardWrites, ["https://worker.example/track/AB7K9Q2M"]);
+
+  document.getElementById("actionModalSubmitBtn").click();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(
+    document.getElementById("actionPublicTrackingUrl").value,
+    "https://worker.example/track/XZ4N8R6T",
+  );
+  assert.match(document.getElementById("actionPublicTrackingSnapshot").textContent, /en_progreso/i);
+
+  document.getElementById("actionPublicTrackingRevokeBtn").click();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(document.getElementById("actionPublicTrackingUrl").value, "");
+  assert.equal(document.getElementById("actionPublicTrackingRevokeBtn").disabled, true);
+  assert.ok(
+    router.calls.some((call) => call.pathname === "/web/installations/45/public-tracking-link" && call.method === "DELETE"),
+  );
 });
 
 test("incident photo upload accepts multiple files and limits each batch to five", async () => {
@@ -1188,7 +2971,7 @@ test("resuming an incident keeps the accumulated runtime in the live counter", a
   assert.equal(runtimeChip.dataset.runtimeBaseSeconds, "780");
 
   await new Promise((resolve) => window.setTimeout(resolve, 1100));
-  assert.match(runtimeChip.textContent, /13m 1s \(en curso\)/);
+  assert.match(runtimeChip.textContent, /13m(?: 1s)? \(en curso\)/);
   window.stopIncidentRuntimeTicker();
 });
 
@@ -1226,6 +3009,9 @@ test("incident cards avoid repeating low-priority metadata already shown in chip
 
   const card = document.querySelector("#incidentsList .incident-card");
   assert.ok(card);
+  assert.equal(card.querySelector(".incident-context-primary")?.textContent, "Equipo ARSL1-003");
+  assert.match(card.querySelector(".incident-context-meta")?.textContent || "", /Equipo #6/);
+  assert.match(card.querySelector(".incident-context-meta")?.textContent || "", /Registro #34/);
   assert.equal(card.textContent.includes("Cliente:"), false);
   assert.equal(card.textContent.includes("Estado:"), false);
   assert.equal(

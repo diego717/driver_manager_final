@@ -16,6 +16,7 @@ import { incidentToApiPayload } from './sync-mappers'
 import { createIncident } from '../../api/incidents'
 import { SyncEngineError } from './sync-errors'
 import type SyncJob from '../../db/models/SyncJob'
+import type { GpsCapturePayload } from '../../types/api'
 
 type IncidentInput = {
   installationId: number
@@ -24,6 +25,8 @@ type IncidentInput = {
   timeAdjustmentSeconds?: number
   severity?: string
   source?: string
+  gps: GpsCapturePayload
+  geofenceOverrideNote?: string
 }
 
 export type EnqueueResult = {
@@ -61,6 +64,8 @@ export async function enqueueCreateIncident(input: IncidentInput): Promise<Enque
     severity: input.severity ?? 'medium',
     source: input.source ?? 'mobile',
     clientRequestId,
+    gps: input.gps,
+    geofenceOverrideNote: input.geofenceOverrideNote ?? '',
   }
 
   // 1. Persist locally

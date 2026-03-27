@@ -168,15 +168,43 @@ function createMockDB({
   auditLogs = [],
   webUsers = [],
   deviceTokens = [],
+  assets = [],
+  assetLoans = [],
 } = {}) {
   const calls = [];
+  const withDefaultGps = (row) => ({
+    gps_lat: null,
+    gps_lng: null,
+    gps_accuracy_m: null,
+    gps_captured_at: null,
+    gps_capture_source: "none",
+    gps_capture_status: "pending",
+    gps_capture_note: "",
+    ...row,
+  });
+  const withDefaultGeofence = (row) => ({
+    geofence_distance_m: null,
+    geofence_radius_m: null,
+    geofence_result: "not_applicable",
+    geofence_checked_at: null,
+    geofence_override_note: "",
+    geofence_override_by: null,
+    geofence_override_at: null,
+    ...row,
+  });
   const state = {
     installations: installations.map((row) => ({
+      ...withDefaultGps({}),
+      site_lat: null,
+      site_lng: null,
+      site_radius_m: null,
       tenant_id: "default",
       ...row,
     })),
     byBrand: byBrand.map((row) => ({ ...row })),
     incidents: incidents.map((row) => ({
+      ...withDefaultGps({}),
+      ...withDefaultGeofence({}),
       tenant_id: "default",
       deleted_at: null,
       deleted_by: null,
@@ -201,6 +229,32 @@ function createMockDB({
       tenant_id: "default",
       ...row,
     })),
+    assets: assets.map((row) => ({
+      tenant_id: "default",
+      brand: "",
+      serial_number: "",
+      model: "",
+      client_name: "",
+      notes: "",
+      status: "active",
+      created_at: row.created_at || "2026-01-01T00:00:00.000Z",
+      updated_at: row.updated_at || "2026-01-01T00:00:00.000Z",
+      ...row,
+    })),
+    assetLoans: assetLoans.map((row) => ({
+      tenant_id: "default",
+      original_client: "",
+      expected_return_at: null,
+      returned_at: null,
+      due_soon_reminded_at: null,
+      overdue_reminded_at: null,
+      loaned_by_username: "unknown",
+      returned_by_username: null,
+      notes: "",
+      return_notes: "",
+      status: "active",
+      ...row,
+    })),
   };
 
   let nextInstallationId = 100;
@@ -209,6 +263,7 @@ function createMockDB({
   let nextAuditLogId = 2500;
   let nextWebUserId = 3000;
   let nextDeviceTokenId = 3500;
+  let nextAssetLoanId = 4000;
 
   const normalizeStatus = (value) => String(value ?? "").toLowerCase();
   const parseDate = (value) => {
@@ -216,11 +271,11 @@ function createMockDB({
     const parsed = new Date(String(value));
     return Number.isNaN(parsed.getTime()) ? null : parsed;
   };
-  const applyDateRange = (rows, startIso, endIso) => {
+  const applyDateRange = (rows, startIso, endIso, fieldName = "timestamp") => {
     const start = parseDate(startIso);
     const end = parseDate(endIso);
     return rows.filter((row) => {
-      const ts = parseDate(row.timestamp);
+      const ts = parseDate(row?.[fieldName]);
       if (!ts) return false;
       if (start && ts < start) return false;
       if (end && ts >= end) return false;
@@ -253,6 +308,24 @@ function createMockDB({
                 (item) => String(item.tenant_id ?? "default") === tenantId,
               );
             }
+            return { results: rows.slice(0, 1) };
+          }
+
+          if (
+            normalized.startsWith("SELECT id, timestamp FROM installations WHERE id = ?")
+          ) {
+            const id = Number(call.bound?.[0]);
+            const tenantId = String(call.bound?.[1] ?? "default");
+            const rows = state.installations
+              .filter(
+                (item) =>
+                  Number(item.id) === id &&
+                  String(item.tenant_id ?? "default") === tenantId,
+              )
+              .map((item) => ({
+                id: item.id,
+                timestamp: item.timestamp ?? null,
+              }));
             return { results: rows.slice(0, 1) };
           }
 
@@ -461,13 +534,361 @@ function createMockDB({
             };
           }
 
+          if (
+            normalized.startsWith("SELECT gps_capture_status, gps_accuracy_m FROM installations")
+          ) {
+            let filtered = [...state.installations];
+            let bindOffset = 0;
+            if (normalized.includes("WHERE tenant_id = ?")) {
+              const tenantId = String(call.bound?.[bindOffset++] ?? "default");
+              filtered = filtered.filter(
+                (row) => String(row.tenant_id ?? "default") === tenantId,
+              );
+            }
+            const start = call.bound?.[bindOffset + 1] ?? call.bound?.[bindOffset] ?? null;
+            const end = call.bound?.[bindOffset + 3] ?? call.bound?.[bindOffset + 2] ?? null;
+            filtered = applyDateRange(filtered, start, end);
+            return {
+              results: filtered.map((row) => ({
+                gps_capture_status: row.gps_capture_status,
+                gps_accuracy_m: row.gps_accuracy_m,
+              })),
+            };
+          }
+
+          if (
+            normalized.includes("SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'open' THEN 1 ELSE 0 END) AS incident_open_count") &&
+            normalized.includes("FROM incidents WHERE installation_id = ?")
+          ) {
+            const installationId = Number(call.bound?.[0]);
+            const tenantId = String(call.bound?.[1] ?? "default");
+            const filtered = state.incidents.filter(
+              (row) =>
+                Number(row.installation_id) === installationId &&
+                String(row.tenant_id ?? "default") === tenantId &&
+                !row.deleted_at,
+            );
+            return {
+              results: [
+                {
+                  incident_open_count: filtered.filter((row) => normalizeStatus(row.incident_status || "open") === "open").length,
+                  incident_in_progress_count: filtered.filter((row) => normalizeStatus(row.incident_status || "open") === "in_progress").length,
+                  incident_paused_count: filtered.filter((row) => normalizeStatus(row.incident_status || "open") === "paused").length,
+                  incident_resolved_count: filtered.filter((row) => normalizeStatus(row.incident_status || "open") === "resolved").length,
+                },
+              ],
+            };
+          }
+
+          if (
+            normalized.startsWith("SELECT id, incident_status, created_at, status_updated_at, resolved_at FROM incidents")
+          ) {
+            const installationId = Number(call.bound?.[0]);
+            const tenantId = String(call.bound?.[1] ?? "default");
+            const rows = state.incidents
+              .filter(
+                (row) =>
+                  Number(row.installation_id) === installationId &&
+                  String(row.tenant_id ?? "default") === tenantId &&
+                  !row.deleted_at,
+              )
+              .sort((left, right) => {
+                const leftTs = String(left.status_updated_at ?? left.created_at ?? "");
+                const rightTs = String(right.status_updated_at ?? right.created_at ?? "");
+                const byTs = rightTs.localeCompare(leftTs);
+                if (byTs !== 0) return byTs;
+                return Number(right.id) - Number(left.id);
+              })
+              .map((row) => ({
+                id: row.id,
+                incident_status: row.incident_status,
+                created_at: row.created_at ?? null,
+                status_updated_at: row.status_updated_at ?? null,
+                resolved_at: row.resolved_at ?? null,
+              }));
+            return { results: rows.slice(0, 1) };
+          }
+
+          if (
+            normalized.startsWith("SELECT gps_capture_status, gps_accuracy_m FROM incidents")
+          ) {
+            let filtered = [...state.incidents];
+            let bindOffset = 0;
+            if (normalized.includes("WHERE tenant_id = ?")) {
+              const tenantId = String(call.bound?.[bindOffset++] ?? "default");
+              filtered = filtered.filter(
+                (row) => String(row.tenant_id ?? "default") === tenantId,
+              );
+            }
+            const start = call.bound?.[bindOffset + 1] ?? call.bound?.[bindOffset] ?? null;
+            const end = call.bound?.[bindOffset + 3] ?? call.bound?.[bindOffset + 2] ?? null;
+            filtered = applyDateRange(filtered, start, end, "created_at");
+            return {
+              results: filtered.map((row) => ({
+                gps_capture_status: row.gps_capture_status,
+                gps_accuracy_m: row.gps_accuracy_m,
+              })),
+            };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT id, external_code, client_name, brand, model FROM assets WHERE id = ? AND tenant_id = ? LIMIT 1",
+            )
+          ) {
+            const assetId = Number(call.bound?.[0]);
+            const tenantId = String(call.bound?.[1] ?? "default");
+            const rows = state.assets
+              .filter(
+                (row) =>
+                  Number(row.id) === assetId &&
+                  String(row.tenant_id ?? "default") === tenantId,
+              )
+              .map((row) => ({
+                id: row.id,
+                external_code: row.external_code,
+                client_name: row.client_name,
+                brand: row.brand,
+                model: row.model,
+              }));
+            return { results: rows.slice(0, 1) };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT id FROM asset_loans WHERE tenant_id = ? AND asset_id = ? AND returned_at IS NULL LIMIT 1",
+            )
+          ) {
+            const tenantId = String(call.bound?.[0] ?? "default");
+            const assetId = Number(call.bound?.[1]);
+            const rows = state.assetLoans
+              .filter(
+                (row) =>
+                  String(row.tenant_id ?? "default") === tenantId &&
+                  Number(row.asset_id) === assetId &&
+                  !row.returned_at,
+              )
+              .map((row) => ({ id: row.id }));
+            return { results: rows.slice(0, 1) };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT l.*, a.external_code AS asset_external_code, a.brand AS asset_brand, a.model AS asset_model FROM asset_loans l LEFT JOIN assets a ON a.id = l.asset_id AND a.tenant_id = l.tenant_id WHERE l.tenant_id = ?",
+            )
+          ) {
+            let bindIndex = 0;
+            const tenantId = String(call.bound?.[bindIndex++] ?? "default");
+            let rows = state.assetLoans.filter(
+              (row) => String(row.tenant_id ?? "default") === tenantId,
+            );
+
+            if (normalized.includes("AND l.asset_id = ?")) {
+              const assetId = Number(call.bound?.[bindIndex++]);
+              rows = rows.filter((row) => Number(row.asset_id) === assetId);
+            }
+
+            if (
+              normalized.includes(
+                "AND l.returned_at IS NULL AND (l.expected_return_at IS NULL OR l.expected_return_at >= ?)",
+              )
+            ) {
+              const threshold = String(call.bound?.[bindIndex++] ?? "");
+              rows = rows.filter(
+                (row) =>
+                  !row.returned_at &&
+                  (!row.expected_return_at || String(row.expected_return_at) >= threshold),
+              );
+            } else if (
+              normalized.includes(
+                "AND l.returned_at IS NULL AND l.expected_return_at IS NOT NULL AND l.expected_return_at >= ? AND l.expected_return_at <= ?",
+              )
+            ) {
+              const fromIso = String(call.bound?.[bindIndex++] ?? "");
+              const toIso = String(call.bound?.[bindIndex++] ?? "");
+              rows = rows.filter(
+                (row) =>
+                  !row.returned_at &&
+                  row.expected_return_at &&
+                  String(row.expected_return_at) >= fromIso &&
+                  String(row.expected_return_at) <= toIso,
+              );
+            } else if (
+              normalized.includes(
+                "AND l.returned_at IS NULL AND l.expected_return_at IS NOT NULL AND l.expected_return_at < ?",
+              )
+            ) {
+              const threshold = String(call.bound?.[bindIndex++] ?? "");
+              rows = rows.filter(
+                (row) =>
+                  !row.returned_at &&
+                  row.expected_return_at &&
+                  String(row.expected_return_at) < threshold,
+              );
+            } else if (normalized.includes("AND l.returned_at IS NOT NULL")) {
+              rows = rows.filter((row) => Boolean(row.returned_at));
+            }
+
+            const limit = Math.max(1, Number(call.bound?.[bindIndex] ?? rows.length));
+            rows.sort((left, right) => {
+              const byLoanedAt = String(right.loaned_at ?? "").localeCompare(String(left.loaned_at ?? ""));
+              if (byLoanedAt !== 0) return byLoanedAt;
+              return Number(right.id) - Number(left.id);
+            });
+
+            return {
+              results: rows.slice(0, limit).map((row) => {
+                const asset = state.assets.find(
+                  (entry) =>
+                    Number(entry.id) === Number(row.asset_id) &&
+                    String(entry.tenant_id ?? "default") === String(row.tenant_id ?? "default"),
+                );
+                return {
+                  ...row,
+                  asset_external_code: asset?.external_code || null,
+                  asset_brand: asset?.brand || null,
+                  asset_model: asset?.model || null,
+                };
+              }),
+            };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT l.*, a.external_code AS asset_external_code FROM asset_loans l LEFT JOIN assets a ON a.id = l.asset_id AND a.tenant_id = l.tenant_id WHERE l.id = ? AND l.tenant_id = ? LIMIT 1",
+            )
+          ) {
+            const loanId = Number(call.bound?.[0]);
+            const tenantId = String(call.bound?.[1] ?? "default");
+            const loan = state.assetLoans.find(
+              (row) =>
+                Number(row.id) === loanId &&
+                String(row.tenant_id ?? "default") === tenantId,
+            );
+            if (!loan) return { results: [] };
+            const asset = state.assets.find(
+              (entry) =>
+                Number(entry.id) === Number(loan.asset_id) &&
+                String(entry.tenant_id ?? "default") === tenantId,
+            );
+            return {
+              results: [{
+                ...loan,
+                asset_external_code: asset?.external_code || null,
+              }],
+            };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT l.*, a.external_code AS asset_external_code, a.brand AS asset_brand, a.model AS asset_model FROM asset_loans l LEFT JOIN assets a ON a.id = l.asset_id AND a.tenant_id = l.tenant_id WHERE l.returned_at IS NULL AND l.expected_return_at IS NOT NULL ORDER BY l.expected_return_at ASC, l.id ASC",
+            )
+          ) {
+            const rows = [...state.assetLoans]
+              .filter((row) => !row.returned_at && row.expected_return_at)
+              .sort((left, right) => {
+                const byExpected = String(left.expected_return_at ?? "").localeCompare(String(right.expected_return_at ?? ""));
+                if (byExpected !== 0) return byExpected;
+                return Number(left.id) - Number(right.id);
+              })
+              .map((row) => {
+                const asset = state.assets.find(
+                  (entry) =>
+                    Number(entry.id) === Number(row.asset_id) &&
+                    String(entry.tenant_id ?? "default") === String(row.tenant_id ?? "default"),
+                );
+                return {
+                  ...row,
+                  asset_external_code: asset?.external_code || null,
+                  asset_brand: asset?.brand || null,
+                  asset_model: asset?.model || null,
+                };
+              });
+            return { results: rows };
+          }
+
+          if (
+            normalized.startsWith(
+              "SELECT SUM(CASE WHEN returned_at IS NULL AND expected_return_at IS NOT NULL AND expected_return_at >= ? AND expected_return_at <= ? THEN 1 ELSE 0 END) AS loan_due_soon_count, SUM(CASE WHEN returned_at IS NULL AND expected_return_at IS NOT NULL AND expected_return_at < ? THEN 1 ELSE 0 END) AS loan_overdue_count FROM asset_loans WHERE tenant_id = ?",
+            )
+          ) {
+            const [currentIso, dueSoonCutoffIso, overdueCurrentIso, tenantId] = call.bound || [];
+            const filtered = state.assetLoans.filter(
+              (row) => String(row.tenant_id ?? "default") === String(tenantId ?? "default"),
+            );
+            return {
+              results: [{
+                loan_due_soon_count: filtered.filter(
+                  (row) =>
+                    !row.returned_at &&
+                    row.expected_return_at &&
+                    String(row.expected_return_at) >= String(currentIso) &&
+                    String(row.expected_return_at) <= String(dueSoonCutoffIso),
+                ).length,
+                loan_overdue_count: filtered.filter(
+                  (row) =>
+                    !row.returned_at &&
+                    row.expected_return_at &&
+                    String(row.expected_return_at) < String(overdueCurrentIso),
+                ).length,
+              }],
+            };
+          }
+
+          if (
+            normalized.startsWith("SELECT action, COUNT(*) AS count FROM audit_logs")
+          ) {
+            let filtered = [...state.auditLogs];
+            let bindOffset = 0;
+            if (normalized.includes("WHERE tenant_id = ?")) {
+              const tenantId = String(call.bound?.[bindOffset++] ?? "default");
+              filtered = filtered.filter(
+                (row) => String(row.tenant_id ?? "default") === tenantId,
+              );
+            }
+            const start = call.bound?.[bindOffset + 1] ?? call.bound?.[bindOffset] ?? null;
+            const end = call.bound?.[bindOffset + 3] ?? call.bound?.[bindOffset + 2] ?? null;
+            filtered = applyDateRange(filtered, start, end);
+            bindOffset += normalized.includes("(? IS NULL OR timestamp < ?)") ? 4 : 0;
+            const allowedActions = new Set(
+              (call.bound || [])
+                .slice(bindOffset)
+                .map((value) => String(value || "").trim())
+                .filter(Boolean),
+            );
+            if (allowedActions.size > 0) {
+              filtered = filtered.filter((row) => allowedActions.has(String(row.action || "").trim()));
+            }
+            const counts = new Map();
+            for (const row of filtered) {
+              const action = String(row.action || "").trim();
+              if (!action) continue;
+              counts.set(action, (counts.get(action) || 0) + 1);
+            }
+            return {
+              results: [...counts.entries()].map(([action, count]) => ({ action, count })),
+            };
+          }
+
           if (normalized.startsWith("SELECT driver_brand, COUNT(*) as count FROM installations")) {
             return { results: state.byBrand };
           }
 
-          if (normalized.startsWith("SELECT id, notes, installation_time_seconds FROM installations WHERE id = ?")) {
+          if (
+            normalized.startsWith(
+              "SELECT id, notes, installation_time_seconds, site_lat, site_lng, site_radius_m FROM installations WHERE id = ?",
+            ) ||
+            normalized.startsWith("SELECT id, notes, installation_time_seconds FROM installations WHERE id = ?")
+          ) {
             const id = Number(call.bound?.[0]);
-            const row = state.installations.find((item) => Number(item.id) === id);
+            const tenantId = normalized.includes("tenant_id = ?")
+              ? String(call.bound?.[1] ?? "default")
+              : null;
+            const row = state.installations.find(
+              (item) =>
+                Number(item.id) === id &&
+                (!tenantId || String(item.tenant_id ?? "default") === tenantId),
+            );
             return { results: row ? [row] : [] };
           }
 
@@ -799,9 +1220,11 @@ function createMockDB({
           }
 
           if (
-            normalized.startsWith(
-              "SELECT i.id, i.installation_id, i.reporter_username, i.note, i.time_adjustment_seconds, i.severity, i.source, i.created_at, i.incident_status, i.status_updated_at, i.status_updated_by, i.resolved_at, i.resolved_by, i.resolution_note, i.checklist_json, i.evidence_note FROM incidents i INNER JOIN installations inst ON inst.id = i.installation_id WHERE i.id = ? AND i.tenant_id = ? AND inst.tenant_id = ?",
-            )
+            normalized.startsWith("SELECT i.id, i.installation_id") &&
+            normalized.includes("FROM incidents i INNER JOIN installations inst ON inst.id = i.installation_id") &&
+            normalized.includes("WHERE i.id = ?") &&
+            normalized.includes("i.tenant_id = ?") &&
+            normalized.includes("inst.tenant_id = ?")
           ) {
             const incidentId = Number(call.bound?.[0]);
             const incidentTenantId = String(call.bound?.[1] ?? "default");
@@ -838,9 +1261,11 @@ function createMockDB({
                 {
                   id: incident.id,
                   installation_id: incident.installation_id,
+                  asset_id: incident.asset_id ?? null,
                   reporter_username: incident.reporter_username,
                   note: incident.note,
                   time_adjustment_seconds: incident.time_adjustment_seconds,
+                  estimated_duration_seconds: incident.estimated_duration_seconds ?? null,
                   severity: incident.severity,
                   source: incident.source,
                   created_at: incident.created_at,
@@ -852,6 +1277,20 @@ function createMockDB({
                   resolution_note: incident.resolution_note ?? null,
                   checklist_json: incident.checklist_json ?? null,
                   evidence_note: incident.evidence_note ?? null,
+                  work_started_at: incident.work_started_at ?? null,
+                  work_ended_at: incident.work_ended_at ?? null,
+                  actual_duration_seconds: incident.actual_duration_seconds ?? null,
+                  geofence_distance_m: incident.geofence_distance_m ?? null,
+                  geofence_radius_m: incident.geofence_radius_m ?? null,
+                  geofence_result: incident.geofence_result ?? "not_applicable",
+                  geofence_checked_at: incident.geofence_checked_at ?? null,
+                  gps_lat: incident.gps_lat ?? null,
+                  gps_lng: incident.gps_lng ?? null,
+                  gps_accuracy_m: incident.gps_accuracy_m ?? null,
+                  gps_captured_at: incident.gps_captured_at ?? null,
+                  gps_capture_source: incident.gps_capture_source ?? "none",
+                  gps_capture_status: incident.gps_capture_status ?? "pending",
+                  gps_capture_note: incident.gps_capture_note ?? "",
                 },
               ],
             };
@@ -1115,8 +1554,44 @@ function createMockDB({
             return { success: true, meta: { last_row_id: id, changes: 1 } };
           }
 
+          if (
+            normalized.startsWith(
+              "INSERT INTO asset_loans ( tenant_id, asset_id, original_client, borrowing_client, loaned_at, expected_return_at, loaned_by_username, notes, status ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')",
+            )
+          ) {
+            const [
+              tenantId,
+              assetId,
+              originalClient,
+              borrowingClient,
+              loanedAt,
+              expectedReturnAt,
+              loanedByUsername,
+              notes,
+            ] = call.bound || [];
+            const inserted = {
+              id: nextAssetLoanId++,
+              tenant_id: String(tenantId ?? "default"),
+              asset_id: Number(assetId),
+              original_client: String(originalClient ?? ""),
+              borrowing_client: String(borrowingClient ?? ""),
+              loaned_at: String(loanedAt ?? ""),
+              expected_return_at: expectedReturnAt || null,
+              returned_at: null,
+              loaned_by_username: String(loanedByUsername ?? "unknown"),
+              returned_by_username: null,
+              notes: String(notes ?? ""),
+              return_notes: "",
+              status: "active",
+            };
+            state.assetLoans.push(inserted);
+            return { success: true, meta: { last_row_id: inserted.id, changes: 1 } };
+          }
+
           if (normalized.startsWith("INSERT INTO installations")) {
             const id = nextInstallationId++;
+            const gpsOffset = call.bound.length >= 17 ? 9 : -1;
+            const siteOffset = call.bound.length >= 20 ? gpsOffset + 7 : -1;
             const [
               timestamp,
               driverBrand,
@@ -1127,9 +1602,8 @@ function createMockDB({
               installationTime,
               osInfo,
               notes,
-              tenantId,
-            ] =
-              call.bound;
+            ] = call.bound;
+            const tenantId = call.bound[call.bound.length - 1];
             state.installations.push({
               id,
               timestamp,
@@ -1141,13 +1615,24 @@ function createMockDB({
               installation_time_seconds: installationTime,
               os_info: osInfo,
               notes,
+              gps_lat: gpsOffset >= 0 ? call.bound[gpsOffset] : null,
+              gps_lng: gpsOffset >= 0 ? call.bound[gpsOffset + 1] : null,
+              gps_accuracy_m: gpsOffset >= 0 ? call.bound[gpsOffset + 2] : null,
+              gps_captured_at: gpsOffset >= 0 ? call.bound[gpsOffset + 3] : null,
+              gps_capture_source: gpsOffset >= 0 ? call.bound[gpsOffset + 4] : "none",
+              gps_capture_status: gpsOffset >= 0 ? call.bound[gpsOffset + 5] : "pending",
+              gps_capture_note: gpsOffset >= 0 ? call.bound[gpsOffset + 6] : "",
+              site_lat: siteOffset >= 0 ? call.bound[siteOffset] : null,
+              site_lng: siteOffset >= 0 ? call.bound[siteOffset + 1] : null,
+              site_radius_m: siteOffset >= 0 ? call.bound[siteOffset + 2] : null,
               tenant_id: tenantId || "default",
             });
             return { success: true, meta: { last_row_id: id, changes: 1 } };
           }
 
-          if (normalized.startsWith("UPDATE installations SET notes = ?, installation_time_seconds = ? WHERE id = ?")) {
-            const [notes, installationTimeSeconds, id, tenantId] = call.bound;
+          if (normalized.startsWith("UPDATE installations SET")) {
+            const id = call.bound[call.bound.length - 2];
+            const tenantId = call.bound[call.bound.length - 1];
             const row = state.installations.find(
               (item) =>
                 String(item.id) === String(id) &&
@@ -1155,8 +1640,18 @@ function createMockDB({
                   String(item.tenant_id ?? "default") === String(tenantId ?? "default")),
             );
             if (row) {
-              row.notes = notes;
-              row.installation_time_seconds = installationTimeSeconds;
+              let bindingIndex = 0;
+              if (normalized.includes("notes = ?")) {
+                row.notes = call.bound[bindingIndex++];
+              }
+              if (normalized.includes("installation_time_seconds = ?")) {
+                row.installation_time_seconds = call.bound[bindingIndex++];
+              }
+              if (normalized.includes("site_lat = ?, site_lng = ?, site_radius_m = ?")) {
+                row.site_lat = call.bound[bindingIndex++];
+                row.site_lng = call.bound[bindingIndex++];
+                row.site_radius_m = call.bound[bindingIndex++];
+              }
             }
             return { success: true, meta: { changes: row ? 1 : 0 } };
           }
@@ -1390,20 +1885,476 @@ function createMockDB({
             return { success: true };
           }
 
-          if (normalized.startsWith("INSERT INTO incidents (installation_id, reporter_username, note, time_adjustment_seconds, severity, source, created_at)")) {
+          if (normalized.startsWith("INSERT INTO incidents")) {
             const id = nextIncidentId++;
-            const [installationId, reporterUsername, note, timeAdjustmentSeconds, severity, source, createdAt] =
-              call.bound;
-            state.incidents.push({
+            const values = call.bound;
+            let incidentRow = {
               id,
-              installation_id: installationId,
-              reporter_username: reporterUsername,
-              note,
-              time_adjustment_seconds: timeAdjustmentSeconds,
-              severity,
-              source,
-              created_at: createdAt,
-            });
+              tenant_id: "default",
+              deleted_at: null,
+              deleted_by: null,
+              deletion_reason: null,
+              asset_id: null,
+              estimated_duration_seconds: null,
+              incident_status: "open",
+              status_updated_at: null,
+              status_updated_by: null,
+              work_started_at: null,
+              work_ended_at: null,
+              actual_duration_seconds: null,
+              resolved_at: null,
+              resolved_by: null,
+              resolution_note: null,
+              checklist_json: null,
+              evidence_note: null,
+              ...withDefaultGeofence({}),
+              ...withDefaultGps({}),
+            };
+
+            if (values.length === 30) {
+              const [
+                installationId,
+                assetId,
+                tenantId,
+                reporterUsername,
+                note,
+                timeAdjustmentSeconds,
+                estimatedDurationSeconds,
+                severity,
+                source,
+                createdAt,
+                incidentStatus,
+                statusUpdatedAt,
+                statusUpdatedBy,
+                workStartedAt,
+                workEndedAt,
+                actualDurationSeconds,
+                geofenceDistanceM,
+                geofenceRadiusM,
+                geofenceResult,
+                geofenceCheckedAt,
+                geofenceOverrideNote,
+                geofenceOverrideBy,
+                geofenceOverrideAt,
+                gpsLat,
+                gpsLng,
+                gpsAccuracy,
+                gpsCapturedAt,
+                gpsSource,
+                gpsStatus,
+                gpsNote,
+              ] = values;
+              incidentRow = {
+                ...incidentRow,
+                installation_id: installationId,
+                asset_id: assetId,
+                tenant_id: tenantId || "default",
+                reporter_username: reporterUsername,
+                note,
+                time_adjustment_seconds: timeAdjustmentSeconds,
+                estimated_duration_seconds: estimatedDurationSeconds,
+                severity,
+                source,
+                created_at: createdAt,
+                incident_status: incidentStatus,
+                status_updated_at: statusUpdatedAt,
+                status_updated_by: statusUpdatedBy,
+                work_started_at: workStartedAt,
+                work_ended_at: workEndedAt,
+                actual_duration_seconds: actualDurationSeconds,
+                geofence_distance_m: geofenceDistanceM,
+                geofence_radius_m: geofenceRadiusM,
+                geofence_result: geofenceResult,
+                geofence_checked_at: geofenceCheckedAt,
+                geofence_override_note: geofenceOverrideNote,
+                geofence_override_by: geofenceOverrideBy,
+                geofence_override_at: geofenceOverrideAt,
+                gps_lat: gpsLat,
+                gps_lng: gpsLng,
+                gps_accuracy_m: gpsAccuracy,
+                gps_captured_at: gpsCapturedAt,
+                gps_capture_source: gpsSource,
+                gps_capture_status: gpsStatus,
+                gps_capture_note: gpsNote,
+              };
+            } else if (values.length === 27) {
+              const [
+                installationId,
+                assetId,
+                tenantId,
+                reporterUsername,
+                note,
+                timeAdjustmentSeconds,
+                estimatedDurationSeconds,
+                severity,
+                source,
+                createdAt,
+                incidentStatus,
+                statusUpdatedAt,
+                statusUpdatedBy,
+                workStartedAt,
+                workEndedAt,
+                actualDurationSeconds,
+                geofenceDistanceM,
+                geofenceRadiusM,
+                geofenceResult,
+                geofenceCheckedAt,
+                gpsLat,
+                gpsLng,
+                gpsAccuracy,
+                gpsCapturedAt,
+                gpsSource,
+                gpsStatus,
+                gpsNote,
+              ] = values;
+              incidentRow = {
+                ...incidentRow,
+                installation_id: installationId,
+                asset_id: assetId,
+                tenant_id: tenantId || "default",
+                reporter_username: reporterUsername,
+                note,
+                time_adjustment_seconds: timeAdjustmentSeconds,
+                estimated_duration_seconds: estimatedDurationSeconds,
+                severity,
+                source,
+                created_at: createdAt,
+                incident_status: incidentStatus,
+                status_updated_at: statusUpdatedAt,
+                status_updated_by: statusUpdatedBy,
+                work_started_at: workStartedAt,
+                work_ended_at: workEndedAt,
+                actual_duration_seconds: actualDurationSeconds,
+                geofence_distance_m: geofenceDistanceM,
+                geofence_radius_m: geofenceRadiusM,
+                geofence_result: geofenceResult,
+                geofence_checked_at: geofenceCheckedAt,
+                gps_lat: gpsLat,
+                gps_lng: gpsLng,
+                gps_accuracy_m: gpsAccuracy,
+                gps_captured_at: gpsCapturedAt,
+                gps_capture_source: gpsSource,
+                gps_capture_status: gpsStatus,
+                gps_capture_note: gpsNote,
+              };
+            } else if (values.length === 26) {
+              const [
+                installationId,
+                assetId,
+                tenantId,
+                reporterUsername,
+                note,
+                timeAdjustmentSeconds,
+                severity,
+                source,
+                createdAt,
+                incidentStatus,
+                statusUpdatedAt,
+                statusUpdatedBy,
+                geofenceDistanceM,
+                geofenceRadiusM,
+                geofenceResult,
+                geofenceCheckedAt,
+                geofenceOverrideNote,
+                geofenceOverrideBy,
+                geofenceOverrideAt,
+                gpsLat,
+                gpsLng,
+                gpsAccuracy,
+                gpsCapturedAt,
+                gpsSource,
+                gpsStatus,
+                gpsNote,
+              ] = values;
+              incidentRow = {
+                ...incidentRow,
+                installation_id: installationId,
+                asset_id: assetId,
+                tenant_id: tenantId || "default",
+                reporter_username: reporterUsername,
+                note,
+                time_adjustment_seconds: timeAdjustmentSeconds,
+                severity,
+                source,
+                created_at: createdAt,
+                incident_status: incidentStatus,
+                status_updated_at: statusUpdatedAt,
+                status_updated_by: statusUpdatedBy,
+                geofence_distance_m: geofenceDistanceM,
+                geofence_radius_m: geofenceRadiusM,
+                geofence_result: geofenceResult,
+                geofence_checked_at: geofenceCheckedAt,
+                geofence_override_note: geofenceOverrideNote,
+                geofence_override_by: geofenceOverrideBy,
+                geofence_override_at: geofenceOverrideAt,
+                gps_lat: gpsLat,
+                gps_lng: gpsLng,
+                gps_accuracy_m: gpsAccuracy,
+                gps_captured_at: gpsCapturedAt,
+                gps_capture_source: gpsSource,
+                gps_capture_status: gpsStatus,
+                gps_capture_note: gpsNote,
+              };
+            } else if (values.length === 23) {
+              const [
+                installationId,
+                assetId,
+                tenantId,
+                reporterUsername,
+                note,
+                timeAdjustmentSeconds,
+                severity,
+                source,
+                createdAt,
+                incidentStatus,
+                statusUpdatedAt,
+                statusUpdatedBy,
+                geofenceDistanceM,
+                geofenceRadiusM,
+                geofenceResult,
+                geofenceCheckedAt,
+                gpsLat,
+                gpsLng,
+                gpsAccuracy,
+                gpsCapturedAt,
+                gpsSource,
+                gpsStatus,
+                gpsNote,
+              ] = values;
+              incidentRow = {
+                ...incidentRow,
+                installation_id: installationId,
+                asset_id: assetId,
+                tenant_id: tenantId || "default",
+                reporter_username: reporterUsername,
+                note,
+                time_adjustment_seconds: timeAdjustmentSeconds,
+                severity,
+                source,
+                created_at: createdAt,
+                incident_status: incidentStatus,
+                status_updated_at: statusUpdatedAt,
+                status_updated_by: statusUpdatedBy,
+                geofence_distance_m: geofenceDistanceM,
+                geofence_radius_m: geofenceRadiusM,
+                geofence_result: geofenceResult,
+                geofence_checked_at: geofenceCheckedAt,
+                gps_lat: gpsLat,
+                gps_lng: gpsLng,
+                gps_accuracy_m: gpsAccuracy,
+                gps_captured_at: gpsCapturedAt,
+                gps_capture_source: gpsSource,
+                gps_capture_status: gpsStatus,
+                gps_capture_note: gpsNote,
+              };
+            } else if (values.length === 19) {
+              const [
+                installationId,
+                assetId,
+                tenantId,
+                reporterUsername,
+                note,
+                timeAdjustmentSeconds,
+                severity,
+                source,
+                createdAt,
+                incidentStatus,
+                statusUpdatedAt,
+                statusUpdatedBy,
+                gpsLat,
+                gpsLng,
+                gpsAccuracy,
+                gpsCapturedAt,
+                gpsSource,
+                gpsStatus,
+                gpsNote,
+              ] = values;
+              incidentRow = {
+                ...incidentRow,
+                installation_id: installationId,
+                asset_id: assetId,
+                tenant_id: tenantId || "default",
+                reporter_username: reporterUsername,
+                note,
+                time_adjustment_seconds: timeAdjustmentSeconds,
+                severity,
+                source,
+                created_at: createdAt,
+                incident_status: incidentStatus,
+                status_updated_at: statusUpdatedAt,
+                status_updated_by: statusUpdatedBy,
+                gps_lat: gpsLat,
+                gps_lng: gpsLng,
+                gps_accuracy_m: gpsAccuracy,
+                gps_captured_at: gpsCapturedAt,
+                gps_capture_source: gpsSource,
+                gps_capture_status: gpsStatus,
+                gps_capture_note: gpsNote,
+              };
+            } else if (values.length === 25) {
+              const [
+                installationId,
+                tenantId,
+                reporterUsername,
+                note,
+                timeAdjustmentSeconds,
+                severity,
+                source,
+                createdAt,
+                incidentStatus,
+                statusUpdatedAt,
+                statusUpdatedBy,
+                geofenceDistanceM,
+                geofenceRadiusM,
+                geofenceResult,
+                geofenceCheckedAt,
+                geofenceOverrideNote,
+                geofenceOverrideBy,
+                geofenceOverrideAt,
+                gpsLat,
+                gpsLng,
+                gpsAccuracy,
+                gpsCapturedAt,
+                gpsSource,
+                gpsStatus,
+                gpsNote,
+              ] = values;
+              incidentRow = {
+                ...incidentRow,
+                installation_id: installationId,
+                tenant_id: tenantId || "default",
+                reporter_username: reporterUsername,
+                note,
+                time_adjustment_seconds: timeAdjustmentSeconds,
+                severity,
+                source,
+                created_at: createdAt,
+                incident_status: incidentStatus,
+                status_updated_at: statusUpdatedAt,
+                status_updated_by: statusUpdatedBy,
+                geofence_distance_m: geofenceDistanceM,
+                geofence_radius_m: geofenceRadiusM,
+                geofence_result: geofenceResult,
+                geofence_checked_at: geofenceCheckedAt,
+                geofence_override_note: geofenceOverrideNote,
+                geofence_override_by: geofenceOverrideBy,
+                geofence_override_at: geofenceOverrideAt,
+                gps_lat: gpsLat,
+                gps_lng: gpsLng,
+                gps_accuracy_m: gpsAccuracy,
+                gps_captured_at: gpsCapturedAt,
+                gps_capture_source: gpsSource,
+                gps_capture_status: gpsStatus,
+                gps_capture_note: gpsNote,
+              };
+            } else if (values.length === 22) {
+              const [
+                installationId,
+                tenantId,
+                reporterUsername,
+                note,
+                timeAdjustmentSeconds,
+                severity,
+                source,
+                createdAt,
+                incidentStatus,
+                statusUpdatedAt,
+                statusUpdatedBy,
+                geofenceDistanceM,
+                geofenceRadiusM,
+                geofenceResult,
+                geofenceCheckedAt,
+                gpsLat,
+                gpsLng,
+                gpsAccuracy,
+                gpsCapturedAt,
+                gpsSource,
+                gpsStatus,
+                gpsNote,
+              ] = values;
+              incidentRow = {
+                ...incidentRow,
+                installation_id: installationId,
+                tenant_id: tenantId || "default",
+                reporter_username: reporterUsername,
+                note,
+                time_adjustment_seconds: timeAdjustmentSeconds,
+                severity,
+                source,
+                created_at: createdAt,
+                incident_status: incidentStatus,
+                status_updated_at: statusUpdatedAt,
+                status_updated_by: statusUpdatedBy,
+                geofence_distance_m: geofenceDistanceM,
+                geofence_radius_m: geofenceRadiusM,
+                geofence_result: geofenceResult,
+                geofence_checked_at: geofenceCheckedAt,
+                gps_lat: gpsLat,
+                gps_lng: gpsLng,
+                gps_accuracy_m: gpsAccuracy,
+                gps_captured_at: gpsCapturedAt,
+                gps_capture_source: gpsSource,
+                gps_capture_status: gpsStatus,
+                gps_capture_note: gpsNote,
+              };
+            } else if (values.length === 18) {
+              const [
+                installationId,
+                tenantId,
+                reporterUsername,
+                note,
+                timeAdjustmentSeconds,
+                severity,
+                source,
+                createdAt,
+                incidentStatus,
+                statusUpdatedAt,
+                statusUpdatedBy,
+                gpsLat,
+                gpsLng,
+                gpsAccuracy,
+                gpsCapturedAt,
+                gpsSource,
+                gpsStatus,
+                gpsNote,
+              ] = values;
+              incidentRow = {
+                ...incidentRow,
+                installation_id: installationId,
+                tenant_id: tenantId || "default",
+                reporter_username: reporterUsername,
+                note,
+                time_adjustment_seconds: timeAdjustmentSeconds,
+                severity,
+                source,
+                created_at: createdAt,
+                incident_status: incidentStatus,
+                status_updated_at: statusUpdatedAt,
+                status_updated_by: statusUpdatedBy,
+                gps_lat: gpsLat,
+                gps_lng: gpsLng,
+                gps_accuracy_m: gpsAccuracy,
+                gps_captured_at: gpsCapturedAt,
+                gps_capture_source: gpsSource,
+                gps_capture_status: gpsStatus,
+                gps_capture_note: gpsNote,
+              };
+            } else {
+              const [installationId, reporterUsername, note, timeAdjustmentSeconds, severity, source, createdAt] =
+                values;
+              incidentRow = {
+                ...incidentRow,
+                installation_id: installationId,
+                reporter_username: reporterUsername,
+                note,
+                time_adjustment_seconds: timeAdjustmentSeconds,
+                severity,
+                source,
+                created_at: createdAt,
+              };
+            }
+
+            state.incidents.push(incidentRow);
             return { success: true, meta: { last_row_id: id } };
           }
 
@@ -1504,6 +2455,60 @@ function createMockDB({
               row.updated_at = updatedAt;
             }
             return { success: true };
+          }
+
+          if (
+            normalized.startsWith(
+              "UPDATE asset_loans SET returned_at = ?, returned_by_username = ?, return_notes = ?, status = 'returned' WHERE id = ? AND tenant_id = ?",
+            )
+          ) {
+            const [returnedAt, returnedByUsername, returnNotes, loanId, tenantId] = call.bound || [];
+            const row = state.assetLoans.find(
+              (item) =>
+                Number(item.id) === Number(loanId) &&
+                String(item.tenant_id ?? "default") === String(tenantId ?? "default"),
+            );
+            if (row) {
+              row.returned_at = String(returnedAt ?? "");
+              row.returned_by_username = String(returnedByUsername ?? "");
+              row.return_notes = String(returnNotes ?? "");
+              row.status = "returned";
+            }
+            return { success: true, meta: { changes: row ? 1 : 0 } };
+          }
+
+          if (
+            normalized.startsWith(
+              "UPDATE asset_loans SET due_soon_reminded_at = ? WHERE id = ? AND tenant_id = ?",
+            )
+          ) {
+            const [sentAt, loanId, tenantId] = call.bound || [];
+            const row = state.assetLoans.find(
+              (item) =>
+                Number(item.id) === Number(loanId) &&
+                String(item.tenant_id ?? "default") === String(tenantId ?? "default"),
+            );
+            if (row) {
+              row.due_soon_reminded_at = sentAt || null;
+            }
+            return { success: true, meta: { changes: row ? 1 : 0 } };
+          }
+
+          if (
+            normalized.startsWith(
+              "UPDATE asset_loans SET overdue_reminded_at = ? WHERE id = ? AND tenant_id = ?",
+            )
+          ) {
+            const [sentAt, loanId, tenantId] = call.bound || [];
+            const row = state.assetLoans.find(
+              (item) =>
+                Number(item.id) === Number(loanId) &&
+                String(item.tenant_id ?? "default") === String(tenantId ?? "default"),
+            );
+            if (row) {
+              row.overdue_reminded_at = sentAt || null;
+            }
+            return { success: true, meta: { changes: row ? 1 : 0 } };
           }
 
           if (
@@ -1838,6 +2843,7 @@ test("Dashboard assets include hardened security headers", async () => {
     "https://worker.example/web/chart.umd.js",
     "https://worker.example/web/dashboard-qr.js",
     "https://worker.example/web/dashboard-api.js",
+    "https://worker.example/web/dashboard-geolocation.js",
     "https://worker.example/web/dashboard-modals.js",
     "https://worker.example/web/dashboard-incidents.js",
     "https://worker.example/web/dashboard-assets.js",
@@ -1850,6 +2856,8 @@ test("Dashboard assets include hardened security headers", async () => {
     "https://worker.example/web/dashboard-bootstrap.js",
     "https://worker.example/web/dashboard.js",
     "https://worker.example/web/dashboard-pwa.js",
+    "https://worker.example/web/public-tracking.js",
+    "https://worker.example/web/public-tracking.css",
     "https://worker.example/web/manifest.json",
   ];
 
@@ -1858,7 +2866,7 @@ test("Dashboard assets include hardened security headers", async () => {
     assert.equal(response.status, 200, `Expected 200 for ${url}`);
     assert.equal(response.headers.get("X-Frame-Options"), "DENY");
     assert.equal(response.headers.get("Referrer-Policy"), "no-referrer");
-    assert.equal(response.headers.get("Permissions-Policy"), "geolocation=(), microphone=(), camera=(self)");
+    assert.equal(response.headers.get("Permissions-Policy"), "geolocation=(self), microphone=(), camera=(self)");
     assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
 
     const csp = response.headers.get("Content-Security-Policy") || "";
@@ -1871,6 +2879,7 @@ test("Dashboard assets include hardened security headers", async () => {
       url.endsWith("/web/chart.umd.js") ||
       url.endsWith("/web/dashboard-qr.js") ||
       url.endsWith("/web/dashboard-api.js") ||
+      url.endsWith("/web/dashboard-geolocation.js") ||
       url.endsWith("/web/dashboard-modals.js") ||
       url.endsWith("/web/dashboard-incidents.js") ||
       url.endsWith("/web/dashboard-assets.js") ||
@@ -1881,7 +2890,9 @@ test("Dashboard assets include hardened security headers", async () => {
       url.endsWith("/web/dashboard-auth.js") ||
       url.endsWith("/web/dashboard-navigation.js") ||
       url.endsWith("/web/dashboard-bootstrap.js") ||
-      url.endsWith("/web/dashboard.js")
+      url.endsWith("/web/dashboard.js") ||
+      url.endsWith("/web/public-tracking.js") ||
+      url.endsWith("/web/public-tracking.css")
     ) {
       const bodyText = await response.text();
       assert.ok(bodyText.length > 0, `Expected non-empty content for ${url}`);
@@ -1913,6 +2924,16 @@ test("GET /installations returns DB rows as JSON", async () => {
       id: 1,
       driver_brand: "Zebra",
       status: "success",
+      gps_lat: null,
+      gps_lng: null,
+      gps_accuracy_m: null,
+      gps_captured_at: null,
+      gps_capture_source: "none",
+      gps_capture_status: "pending",
+      gps_capture_note: "",
+      site_lat: null,
+      site_lng: null,
+      site_radius_m: null,
       tenant_id: "default",
       incident_open_count: 0,
       incident_in_progress_count: 0,
@@ -1920,6 +2941,10 @@ test("GET /installations returns DB rows as JSON", async () => {
       incident_resolved_count: 0,
       incident_active_count: 0,
       incident_critical_active_count: 0,
+      incident_estimated_duration_seconds_total: 0,
+      incident_estimated_duration_count: 0,
+      incident_actual_duration_seconds_total: 0,
+      incident_actual_duration_count: 0,
       attention_state: "clear",
     },
   ]);
@@ -2113,6 +3138,95 @@ test("POST /records respects provided fields", async () => {
   assert.equal(body.record.os_info, "Windows 11");
 });
 
+test("POST /records accepts captured gps payload and returns gps fields", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/records", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_name: "Cliente GPS",
+      gps: {
+        lat: -34.9011,
+        lng: -56.1645,
+        accuracy_m: 18,
+        captured_at: "2026-03-25T22:00:00.000Z",
+        source: "browser",
+        status: "captured",
+        note: "",
+      },
+    }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 201);
+  assert.equal(body.record.gps_capture_status, "captured");
+  assert.equal(body.record.gps_capture_source, "browser");
+  assert.equal(body.record.gps_lat, -34.9011);
+  assert.equal(body.record.gps_lng, -56.1645);
+  assert.equal(db.state.installations[0].gps_capture_status, "captured");
+});
+
+test("POST /records can create initial site geofence from the captured gps snapshot", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/records", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_name: "Cliente GPS",
+      site_lat: -34.9011,
+      site_lng: -56.1645,
+      site_radius_m: 60,
+      gps: {
+        lat: -34.9011,
+        lng: -56.1645,
+        accuracy_m: 18,
+        captured_at: "2026-03-25T22:00:00.000Z",
+        source: "browser",
+        status: "captured",
+        note: "",
+      },
+    }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 201);
+  assert.equal(body.record.site_lat, -34.9011);
+  assert.equal(body.record.site_lng, -56.1645);
+  assert.equal(body.record.site_radius_m, 60);
+  assert.equal(db.state.installations[0].site_lat, -34.9011);
+  assert.equal(db.state.installations[0].site_lng, -56.1645);
+  assert.equal(db.state.installations[0].site_radius_m, 60);
+});
+
+test("POST /records rejects gps payload with invalid latitude", async () => {
+  const db = createMockDB();
+  const request = new Request("https://worker.example/records", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      gps: {
+        lat: -190,
+        lng: -56.1645,
+        accuracy_m: 18,
+        captured_at: "2026-03-25T22:00:00.000Z",
+        source: "browser",
+        status: "captured",
+        note: "",
+      },
+    }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.match(String(body?.error?.message || ""), /gps\.lat/i);
+});
+
 test("PUT /installations/:id updates notes and installation time", async () => {
   const db = createMockDB({
     installations: [{ id: 42, notes: "", installation_time_seconds: 0 }],
@@ -2130,7 +3244,37 @@ test("PUT /installations/:id updates notes and installation time", async () => {
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.deepEqual(body, { success: true, updated: "42" });
+  assert.deepEqual(body, {
+    success: true,
+    updated: "42",
+    installation: {
+      id: 42,
+      notes: "Actualizado",
+      installation_time_seconds: 150,
+      gps_lat: null,
+      gps_lng: null,
+      gps_accuracy_m: null,
+      gps_captured_at: null,
+      gps_capture_source: "none",
+      gps_capture_status: "pending",
+      gps_capture_note: "",
+      site_lat: null,
+      site_lng: null,
+      site_radius_m: null,
+      tenant_id: "default",
+      incident_open_count: 0,
+      incident_in_progress_count: 0,
+      incident_paused_count: 0,
+      incident_resolved_count: 0,
+      incident_active_count: 0,
+      incident_critical_active_count: 0,
+      incident_estimated_duration_seconds_total: 0,
+      incident_estimated_duration_count: 0,
+      incident_actual_duration_seconds_total: 0,
+      incident_actual_duration_count: 0,
+      attention_state: "clear",
+    },
+  });
 
   const updateCall = db.calls.find((c) => c.sql.startsWith("UPDATE installations"));
   assert.ok(updateCall);
@@ -2151,7 +3295,37 @@ test("PUT /installations/:id with missing fields binds null values", async () =>
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.deepEqual(body, { success: true, updated: "77" });
+  assert.deepEqual(body, {
+    success: true,
+    updated: "77",
+    installation: {
+      id: 77,
+      notes: null,
+      installation_time_seconds: null,
+      gps_lat: null,
+      gps_lng: null,
+      gps_accuracy_m: null,
+      gps_captured_at: null,
+      gps_capture_source: "none",
+      gps_capture_status: "pending",
+      gps_capture_note: "",
+      site_lat: null,
+      site_lng: null,
+      site_radius_m: null,
+      tenant_id: "default",
+      incident_open_count: 0,
+      incident_in_progress_count: 0,
+      incident_paused_count: 0,
+      incident_resolved_count: 0,
+      incident_active_count: 0,
+      incident_critical_active_count: 0,
+      incident_estimated_duration_seconds_total: 0,
+      incident_estimated_duration_count: 0,
+      incident_actual_duration_seconds_total: 0,
+      incident_actual_duration_count: 0,
+      attention_state: "clear",
+    },
+  });
 
   const updateCall = db.calls.find((c) => c.sql.startsWith("UPDATE installations"));
   assert.ok(updateCall);
@@ -2406,6 +3580,104 @@ test("POST /installations/:id/incidents creates incident and can apply installat
   assert.equal(installationUpdate.bound[2], 45);
 });
 
+test("POST /installations/:id/incidents blocks outside geofence without override when hard policy is enabled", async () => {
+  const db = createMockDB({
+    installations: [{
+      id: 45,
+      notes: "",
+      installation_time_seconds: 0,
+      site_lat: -34.9011,
+      site_lng: -56.1645,
+      site_radius_m: 50,
+    }],
+  });
+  const request = new Request("https://worker.example/installations/45/incidents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      note: "Fuera de radio sin excepcion",
+      severity: "high",
+      source: "mobile",
+      reporter_username: "ops-admin",
+      gps: {
+        lat: -34.89,
+        lng: -56.15,
+        accuracy_m: 12,
+        captured_at: "2026-03-26T12:00:00.000Z",
+        source: "browser",
+        status: "captured",
+        note: "",
+      },
+    }),
+  });
+
+  const response = await workerFetch(request, {
+    DB: db,
+    GEOFENCE_HARD_ENABLED: "true",
+    GEOFENCE_HARD_FLOWS: "incidents",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.match(String(body?.error?.message || ""), /override/i);
+  assert.equal(db.state.incidents.length, 0);
+});
+
+test("POST /installations/:id/incidents accepts outside geofence with override when hard policy is enabled", async () => {
+  const db = createMockDB({
+    installations: [{
+      id: 45,
+      notes: "",
+      installation_time_seconds: 0,
+      site_lat: -34.9011,
+      site_lng: -56.1645,
+      site_radius_m: 50,
+    }],
+  });
+  const request = new Request("https://worker.example/installations/45/incidents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      note: "Fuera de radio con excepcion",
+      severity: "high",
+      source: "mobile",
+      reporter_username: "ops-admin",
+      geofence_override_note: "Acceso temporal desde la vereda por restriccion del cliente.",
+      gps: {
+        lat: -34.89,
+        lng: -56.15,
+        accuracy_m: 12,
+        captured_at: "2026-03-26T12:05:00.000Z",
+        source: "browser",
+        status: "captured",
+        note: "",
+      },
+    }),
+  });
+
+  const response = await workerFetch(request, {
+    DB: db,
+    GEOFENCE_HARD_ENABLED: "true",
+    GEOFENCE_HARD_FLOWS: "incidents",
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 201);
+  assert.equal(body.incident.geofence_result, "outside");
+  assert.equal(
+    body.incident.geofence_override_note,
+    "Acceso temporal desde la vereda por restriccion del cliente.",
+  );
+  assert.equal(
+    db.state.incidents[0].geofence_override_note,
+    "Acceso temporal desde la vereda por restriccion del cliente.",
+  );
+  assert.equal(
+    db.state.auditLogs.some((entry) => entry.action === "override_incident_geofence"),
+    true,
+  );
+});
+
 test("POST /installations/:id/incidents with severity critical sends FCM push to admin devices", async () => {
   const db = createMockDB({
     installations: [{ id: 45, notes: "", installation_time_seconds: 0 }],
@@ -2622,6 +3894,37 @@ test("GET /installations/:id/incidents returns incidents with nested photos", as
   assert.equal(body.incidents.length, 1);
   assert.equal(body.incidents[0].photos.length, 1);
   assert.equal(body.incidents[0].photos[0].file_name, "photo1.jpg");
+});
+
+test("GET /installations/:id/incidents returns actionable error when GPS/geofence migrations are missing", async () => {
+  const db = {
+    prepare(sql) {
+      const normalized = normalizeSql(sql);
+      return {
+        bind() {
+          return this;
+        },
+        async all() {
+          if (normalized.includes("geofence_distance_m") || normalized.includes("gps_lat")) {
+            throw new Error("no such column: geofence_distance_m");
+          }
+          return { results: [] };
+        },
+      };
+    },
+  };
+
+  const response = await workerFetch(
+    new Request("https://worker.example/installations/45/incidents", {
+      method: "GET",
+    }),
+    { DB: db },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 500);
+  assert.match(String(body?.error?.message || ""), /0017_geolocation_capture\.sql/i);
+  assert.match(String(body?.error?.message || ""), /0019_geofence_hard_overrides\.sql/i);
 });
 
 test("PATCH /incidents/:id/evidence updates checklist_items and evidence_note", async () => {
@@ -3452,6 +4755,8 @@ test("GET /statistics returns full stats with brand grouping", async () => {
         status: "success",
         client_name: "ACME",
         installation_time_seconds: 120,
+        gps_capture_status: "captured",
+        gps_accuracy_m: 8,
       },
       {
         id: 2,
@@ -3461,6 +4766,7 @@ test("GET /statistics returns full stats with brand grouping", async () => {
         status: "failed",
         client_name: "BETA",
         installation_time_seconds: 60,
+        gps_capture_status: "denied",
       },
       {
         id: 3,
@@ -3470,6 +4776,8 @@ test("GET /statistics returns full stats with brand grouping", async () => {
         status: "success",
         client_name: "ACME",
         installation_time_seconds: 180,
+        gps_capture_status: "captured",
+        gps_accuracy_m: 14,
       },
     ],
     incidents: [
@@ -3480,6 +4788,42 @@ test("GET /statistics returns full stats with brand grouping", async () => {
         created_at: "2026-02-15T09:00:00.000Z",
         incident_status: "paused",
         severity: "critical",
+      },
+      {
+        id: 11,
+        installation_id: 1,
+        tenant_id: "default",
+        created_at: "2026-07-12T09:00:00.000Z",
+        incident_status: "open",
+        severity: "medium",
+        gps_capture_status: "captured",
+        gps_accuracy_m: 12,
+      },
+      {
+        id: 12,
+        installation_id: 2,
+        tenant_id: "default",
+        created_at: "2026-07-12T12:00:00.000Z",
+        incident_status: "resolved",
+        severity: "low",
+        gps_capture_status: "timeout",
+      },
+    ],
+    auditLogs: [
+      {
+        id: 1,
+        timestamp: "2026-07-12T13:00:00.000Z",
+        action: "incident_geofence_warning",
+      },
+      {
+        id: 2,
+        timestamp: "2026-07-12T13:02:00.000Z",
+        action: "override_incident_geofence",
+      },
+      {
+        id: 3,
+        timestamp: "2026-07-13T13:02:00.000Z",
+        action: "override_installation_conformity_gps",
       },
     ],
   });
@@ -3500,6 +4844,14 @@ test("GET /statistics returns full stats with brand grouping", async () => {
   assert.equal(body.incident_critical_active_count, 1);
   assert.equal(body.incident_outside_sla_count, 1);
   assert.deepEqual(body.by_brand, { Zebra: 1, Magicard: 1 });
+  assert.equal(body.gps_observability.installations.captured_count, 1);
+  assert.equal(body.gps_observability.installations.denied_count, 1);
+  assert.equal(body.gps_observability.installations.capture_success_rate, 50);
+  assert.equal(body.gps_observability.installations.p95_accuracy_m, 8);
+  assert.equal(body.gps_observability.incidents.captured_count, 1);
+  assert.equal(body.gps_observability.incidents.timeout_count, 1);
+  assert.equal(body.gps_observability.warnings.total_outside_count, 1);
+  assert.equal(body.gps_observability.overrides.total_override_count, 2);
 });
 
 test("GET /statistics/trend returns daily buckets with zero-filled gaps", async () => {
@@ -4046,6 +5398,16 @@ test("POST /web/auth/login creates cookie session for web routes", async () => {
       id: 1,
       driver_brand: "Zebra",
       status: "success",
+      gps_lat: null,
+      gps_lng: null,
+      gps_accuracy_m: null,
+      gps_captured_at: null,
+      gps_capture_source: "none",
+      gps_capture_status: "pending",
+      gps_capture_note: "",
+      site_lat: null,
+      site_lng: null,
+      site_radius_m: null,
       tenant_id: "default",
       incident_open_count: 0,
       incident_in_progress_count: 0,
@@ -4053,6 +5415,10 @@ test("POST /web/auth/login creates cookie session for web routes", async () => {
       incident_resolved_count: 0,
       incident_active_count: 0,
       incident_critical_active_count: 0,
+      incident_estimated_duration_seconds_total: 0,
+      incident_estimated_duration_count: 0,
+      incident_actual_duration_seconds_total: 0,
+      incident_actual_duration_count: 0,
       attention_state: "clear",
     },
   ]);
@@ -4597,6 +5963,309 @@ test("POST/GET/DELETE /web/drivers smoke flow uploads, lists and deletes a drive
   assert.deepEqual(manifest.drivers, []);
 });
 
+test("asset loans flow creates, lists and returns a loan", async () => {
+  const db = createMockDB({
+    assets: [{
+      id: 91,
+      tenant_id: "default",
+      external_code: "EQ-091",
+      brand: "Zebra",
+      model: "TC52",
+      client_name: "Cliente Original",
+    }],
+  });
+  const env = {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+    WEB_SESSION_KV: createMockKV(),
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "asset_admin",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const loginResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: "asset_admin",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  const loginBody = await loginResponse.json();
+  assert.equal(loginResponse.status, 200);
+
+  const expectedReturnAt = "2099-02-01T10:00:00.000Z";
+  const createResponse = await workerFetch(
+    new Request("https://worker.example/web/assets/91/loans", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...webAuthorizationHeadersFromBody(loginBody),
+      },
+      body: JSON.stringify({
+        borrowing_client: "Cliente Prestado",
+        expected_return_at: expectedReturnAt,
+        notes: "Prestamo temporal",
+      }),
+    }),
+    env,
+  );
+  const createBody = await createResponse.json();
+
+  assert.equal(createResponse.status, 201);
+  assert.equal(createBody.success, true);
+  assert.equal(createBody.loan.asset_id, 91);
+  assert.equal(createBody.loan.original_client, "Cliente Original");
+  assert.equal(createBody.loan.borrowing_client, "Cliente Prestado");
+  assert.equal(createBody.loan.status, "active");
+
+  const listResponse = await workerFetch(
+    new Request("https://worker.example/web/loans?status=active", {
+      method: "GET",
+      headers: webAuthorizationHeadersFromBody(loginBody),
+    }),
+    env,
+  );
+  const listBody = await listResponse.json();
+  assert.equal(listResponse.status, 200);
+  assert.equal(listBody.success, true);
+  assert.equal(listBody.items.length, 1);
+  assert.equal(listBody.items[0].asset_external_code, "EQ-091");
+
+  const assetHistoryResponse = await workerFetch(
+    new Request("https://worker.example/web/assets/91/loans", {
+      method: "GET",
+      headers: webAuthorizationHeadersFromBody(loginBody),
+    }),
+    env,
+  );
+  const assetHistoryBody = await assetHistoryResponse.json();
+  assert.equal(assetHistoryResponse.status, 200);
+  assert.equal(assetHistoryBody.items.length, 1);
+  assert.equal(assetHistoryBody.active_count, 1);
+  assert.equal(assetHistoryBody.overdue_count, 0);
+
+  const returnResponse = await workerFetch(
+    new Request(`https://worker.example/web/loans/${createBody.loan.id}/return`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...webAuthorizationHeadersFromBody(loginBody),
+      },
+      body: JSON.stringify({
+        return_notes: "Devuelto sin novedad",
+      }),
+    }),
+    env,
+  );
+  const returnBody = await returnResponse.json();
+
+  assert.equal(returnResponse.status, 200);
+  assert.equal(returnBody.success, true);
+  assert.equal(returnBody.loan.status, "returned");
+  assert.equal(returnBody.loan.return_notes, "Devuelto sin novedad");
+
+  const returnedListResponse = await workerFetch(
+    new Request("https://worker.example/web/loans?status=returned", {
+      method: "GET",
+      headers: webAuthorizationHeadersFromBody(loginBody),
+    }),
+    env,
+  );
+  const returnedListBody = await returnedListResponse.json();
+  assert.equal(returnedListResponse.status, 200);
+  assert.equal(returnedListBody.items.length, 1);
+  assert.equal(returnedListBody.items[0].status, "returned");
+  assert.equal(db.state.assetLoans[0].returned_by_username, "asset_admin");
+});
+
+test("scheduled asset loan reminders deliver email and persist reminder timestamps", async () => {
+  const now = Date.now();
+  const dueSoonIso = new Date(now + 24 * 60 * 60 * 1000).toISOString();
+  const overdueIso = new Date(now - 6 * 60 * 60 * 1000).toISOString();
+  const db = createMockDB({
+    assets: [
+      {
+        id: 91,
+        tenant_id: "default",
+        external_code: "EQ-091",
+        brand: "Zebra",
+        model: "TC52",
+      },
+      {
+        id: 92,
+        tenant_id: "default",
+        external_code: "EQ-092",
+        brand: "Entrust",
+        model: "Sigma",
+      },
+    ],
+    assetLoans: [
+      {
+        id: 7001,
+        tenant_id: "default",
+        asset_id: 91,
+        original_client: "Cliente Base",
+        borrowing_client: "Cliente Prestado",
+        loaned_at: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(),
+        expected_return_at: dueSoonIso,
+      },
+      {
+        id: 7002,
+        tenant_id: "default",
+        asset_id: 92,
+        original_client: "Cliente Base 2",
+        borrowing_client: "Cliente Prestado 2",
+        loaned_at: new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString(),
+        expected_return_at: overdueIso,
+      },
+    ],
+  });
+
+  const originalFetch = globalThis.fetch;
+  const resendCalls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url) === "https://api.resend.com/emails") {
+      resendCalls.push({
+        url: String(url),
+        body: JSON.parse(String(init.body || "{}")),
+      });
+      return new Response(JSON.stringify({ id: "email_123" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return originalFetch(url, init);
+  };
+
+  try {
+    const summary = await worker.scheduled(
+      { cron: "0 * * * *" },
+      {
+        DB: db,
+        RESEND_API_KEY: "resend-test",
+        RESEND_FROM_EMAIL: "SiteOps <alerts@example.com>",
+        LOAN_REMINDER_EMAIL_TO: "ops@example.com",
+      },
+      {
+        waitUntil() {},
+      },
+    );
+
+    assert.equal(summary.processed, true);
+    assert.equal(summary.due_soon_count, 1);
+    assert.equal(summary.overdue_count, 1);
+    assert.equal(summary.tenants_notified, 1);
+    assert.equal(resendCalls.length, 1);
+    assert.match(resendCalls[0].body.subject, /Prestamos 1 vencido \| 1 por vencer/i);
+    assert.match(resendCalls[0].body.text, /EQ-091/);
+    assert.match(resendCalls[0].body.text, /EQ-092/);
+    assert.ok(db.state.assetLoans.find((loan) => loan.id === 7001)?.due_soon_reminded_at);
+    assert.ok(db.state.assetLoans.find((loan) => loan.id === 7002)?.overdue_reminded_at);
+    assert.equal(
+      db.state.auditLogs.some((entry) => entry.action === "asset_loan_due_soon_reminder_sent"),
+      true,
+    );
+    assert.equal(
+      db.state.auditLogs.some((entry) => entry.action === "asset_loan_overdue_reminder_sent"),
+      true,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("web statistics includes due soon and overdue asset loans", async () => {
+  const now = Date.now();
+  const db = createMockDB({
+    assetLoans: [
+      {
+        id: 7101,
+        asset_id: 90,
+        borrowing_client: "Cliente Uno",
+        loaned_at: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
+        expected_return_at: new Date(now + 12 * 60 * 60 * 1000).toISOString(),
+      },
+      {
+        id: 7102,
+        asset_id: 91,
+        borrowing_client: "Cliente Dos",
+        loaned_at: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
+        expected_return_at: new Date(now - 12 * 60 * 60 * 1000).toISOString(),
+      },
+      {
+        id: 7103,
+        asset_id: 92,
+        borrowing_client: "Cliente Tres",
+        loaned_at: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
+        expected_return_at: new Date(now + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      },
+    ],
+  });
+  const env = {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+    WEB_SESSION_KV: createMockKV(),
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "stats_admin",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const loginResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: "stats_admin",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  const loginBody = await loginResponse.json();
+  assert.equal(loginResponse.status, 200);
+
+  const response = await workerFetch(
+    new Request("https://worker.example/web/statistics", {
+      method: "GET",
+      headers: webAuthorizationHeadersFromBody(loginBody),
+    }),
+    env,
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.loan_due_soon_count, 1);
+  assert.equal(body.loan_overdue_count, 1);
+});
+
 test("POST /web/auth/verify-password validates current user password without re-login", async () => {
   const db = createMockDB();
 
@@ -4713,6 +6382,15 @@ test("POST /web/installations/:id/incidents uses web session user as reporter by
     },
     body: JSON.stringify({
       note: "Incidencia creada desde web",
+      gps: {
+        lat: -34.9011,
+        lng: -56.1645,
+        accuracy_m: 12,
+        captured_at: "2026-03-25T22:15:00.000Z",
+        source: "browser",
+        status: "captured",
+        note: "",
+      },
     }),
   });
 
@@ -4727,6 +6405,469 @@ test("POST /web/installations/:id/incidents uses web session user as reporter by
   assert.equal(createIncidentBody.success, true);
   assert.equal(createIncidentBody.incident.reporter_username, "admin_root");
   assert.equal(createIncidentBody.incident.source, "web");
+  assert.equal(createIncidentBody.incident.gps_capture_status, "captured");
+  assert.equal(createIncidentBody.incident.gps_lat, -34.9011);
+});
+
+test("public tracking link can be issued from web and consumed without DB reads", async () => {
+  const db = createMockDB({
+    installations: [
+      {
+        id: 45,
+        timestamp: "2026-03-26T10:00:00.000Z",
+        client_name: "Acme Norte",
+      },
+    ],
+    incidents: [
+      {
+        id: 91,
+        installation_id: 45,
+        incident_status: "open",
+        created_at: "2026-03-26T10:05:00.000Z",
+        status_updated_at: "2026-03-26T10:05:00.000Z",
+      },
+    ],
+  });
+  const publicTrackingKv = createMockKV();
+  const env = {
+    DB: db,
+    PUBLIC_TRACKING_KV: publicTrackingKv,
+    PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+    PUBLIC_TRACKING_BASE_URL: "https://estado.example.com",
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_root",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const createResponse = await workerFetch(
+    new Request("https://worker.example/web/installations/45/public-tracking-link", {
+      method: "POST",
+      headers: {
+        ...webSessionHeadersFromResponse(bootstrapResponse),
+      },
+    }),
+    env,
+  );
+  const createBody = await createResponse.json();
+
+  assert.equal(createResponse.status, 201);
+  assert.equal(createBody.success, true);
+  assert.equal(createBody.link.active, true);
+  assert.equal(createBody.link.snapshot.public_status, "pendiente");
+  assert.match(createBody.link.tracking_url, /^https:\/\/estado\.example\.com\/track\//);
+  assert.equal(typeof createBody.link.short_code, "string");
+  assert.ok(createBody.link.short_code.length >= 6);
+  assert.match(createBody.link.long_tracking_url, /^https:\/\/estado\.example\.com\/track\//);
+
+  const shortCode = decodeURIComponent(new URL(createBody.link.tracking_url).pathname.split("/").pop() || "");
+  assert.equal(shortCode, createBody.link.short_code);
+
+  const dbCallsBeforePublicRead = db.calls.length;
+  const publicStateResponse = await workerFetch(
+    new Request(`https://worker.example/track/${encodeURIComponent(shortCode)}/state`, {
+      method: "GET",
+    }),
+    {
+      PUBLIC_TRACKING_KV: publicTrackingKv,
+      PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+    },
+  );
+  const publicStateBody = await publicStateResponse.json();
+
+  assert.equal(publicStateResponse.status, 200);
+  assert.equal(publicStateBody.success, true);
+  assert.equal(publicStateBody.tracking.installation_id, 45);
+  assert.equal(publicStateBody.tracking.public_status, "pendiente");
+  assert.equal(db.calls.length, dbCallsBeforePublicRead);
+});
+
+test("public tracking link can be listed and revoked from web", async () => {
+  const db = createMockDB({
+    installations: [
+      {
+        id: 45,
+        timestamp: "2026-03-26T10:00:00.000Z",
+      },
+    ],
+    incidents: [
+      {
+        id: 95,
+        installation_id: 45,
+        incident_status: "in_progress",
+        created_at: "2026-03-26T10:05:00.000Z",
+        status_updated_at: "2026-03-26T10:08:00.000Z",
+      },
+    ],
+  });
+  const publicTrackingKv = createMockKV();
+  const env = {
+    DB: db,
+    PUBLIC_TRACKING_KV: publicTrackingKv,
+    PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+    PUBLIC_TRACKING_BASE_URL: "https://estado.example.com",
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_root",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const createResponse = await workerFetch(
+    new Request("https://worker.example/web/installations/45/public-tracking-link", {
+      method: "POST",
+      headers: {
+        ...webSessionHeadersFromResponse(bootstrapResponse),
+      },
+    }),
+    env,
+  );
+  const createBody = await createResponse.json();
+  const shortCode = decodeURIComponent(new URL(createBody.link.tracking_url).pathname.split("/").pop() || "");
+
+  const getResponse = await workerFetch(
+    new Request("https://worker.example/web/installations/45/public-tracking-link", {
+      method: "GET",
+      headers: {
+        ...webSessionHeadersFromResponse(bootstrapResponse),
+      },
+    }),
+    env,
+  );
+  const getBody = await getResponse.json();
+
+  assert.equal(getResponse.status, 200);
+  assert.equal(getBody.link.active, true);
+  assert.equal(getBody.link.snapshot.public_status, "en_progreso");
+  assert.match(getBody.link.tracking_url, /^https:\/\/estado\.example\.com\/track\//);
+  assert.equal(getBody.link.short_code, shortCode);
+  assert.match(getBody.link.long_tracking_url, /^https:\/\/estado\.example\.com\/track\//);
+
+  const revokeResponse = await workerFetch(
+    new Request("https://worker.example/web/installations/45/public-tracking-link", {
+      method: "DELETE",
+      headers: {
+        ...webSessionHeadersFromResponse(bootstrapResponse),
+      },
+    }),
+    env,
+  );
+  const revokeBody = await revokeResponse.json();
+
+  assert.equal(revokeResponse.status, 200);
+  assert.equal(revokeBody.success, true);
+  assert.equal(revokeBody.revoked, true);
+
+  const revokedPublicResponse = await workerFetch(
+    new Request(`https://worker.example/track/${encodeURIComponent(shortCode)}/state`, {
+      method: "GET",
+    }),
+    {
+      PUBLIC_TRACKING_KV: publicTrackingKv,
+      PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+    },
+  );
+  const revokedPublicBody = await revokedPublicResponse.json();
+
+  assert.equal(revokedPublicResponse.status, 410);
+  assert.equal(revokedPublicBody.success, false);
+  assert.match(String(revokedPublicBody.error?.message || ""), /disponible/i);
+});
+
+test("public tracking snapshot refreshes after incident creation and status changes", async () => {
+  const db = createMockDB({
+    installations: [
+      {
+        id: 45,
+        timestamp: "2026-03-26T10:00:00.000Z",
+      },
+    ],
+  });
+  const publicTrackingKv = createMockKV();
+  const env = {
+    DB: db,
+    PUBLIC_TRACKING_KV: publicTrackingKv,
+    PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_root",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const createLinkResponse = await workerFetch(
+    new Request("https://worker.example/web/installations/45/public-tracking-link", {
+      method: "POST",
+      headers: {
+        ...webSessionHeadersFromResponse(bootstrapResponse),
+      },
+    }),
+    env,
+  );
+  const createLinkBody = await createLinkResponse.json();
+  const shortCode = decodeURIComponent(new URL(createLinkBody.link.tracking_url).pathname.split("/").pop() || "");
+
+  assert.equal(createLinkBody.link.snapshot.public_status, "registrado");
+  assert.equal(createLinkBody.link.short_code, shortCode);
+
+  const createIncidentResponse = await workerFetch(
+    new Request("https://worker.example/web/installations/45/incidents", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...webSessionHeadersFromResponse(bootstrapResponse),
+      },
+      body: JSON.stringify({
+        note: "Seguimiento en curso",
+        severity: "medium",
+      }),
+    }),
+    env,
+  );
+  assert.equal(createIncidentResponse.status, 201);
+
+  const pendingStateResponse = await workerFetch(
+    new Request(`https://worker.example/track/${encodeURIComponent(shortCode)}/state`, {
+      method: "GET",
+    }),
+    {
+      PUBLIC_TRACKING_KV: publicTrackingKv,
+      PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+    },
+  );
+  const pendingStateBody = await pendingStateResponse.json();
+  assert.equal(pendingStateResponse.status, 200);
+  assert.equal(pendingStateBody.tracking.public_status, "pendiente");
+
+  const createdIncidentId = Number(db.state.incidents[0]?.id);
+  assert.ok(Number.isInteger(createdIncidentId) && createdIncidentId > 0);
+
+  const patchStatusResponse = await workerFetch(
+    new Request(`https://worker.example/web/incidents/${createdIncidentId}/status`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...webSessionHeadersFromResponse(bootstrapResponse),
+      },
+      body: JSON.stringify({
+        incident_status: "in_progress",
+      }),
+    }),
+    env,
+  );
+  assert.equal(patchStatusResponse.status, 200);
+
+  const inProgressStateResponse = await workerFetch(
+    new Request(`https://worker.example/track/${encodeURIComponent(shortCode)}/state`, {
+      method: "GET",
+    }),
+    {
+      PUBLIC_TRACKING_KV: publicTrackingKv,
+      PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+    },
+  );
+  const inProgressStateBody = await inProgressStateResponse.json();
+  assert.equal(inProgressStateResponse.status, 200);
+  assert.equal(inProgressStateBody.tracking.public_status, "en_progreso");
+});
+
+test("POST /assets/:id/incidents auto-creates installation context and copies gps snapshot", async () => {
+  const baseDb = createMockDB();
+  const assetLinks = [];
+  const assets = [
+    {
+      id: 9,
+      tenant_id: "default",
+      external_code: "ATM-009",
+      brand: "Entrust",
+      serial_number: "SN-009",
+      model: "Sigma",
+      client_name: "Cliente GPS",
+      notes: "",
+      status: "active",
+      created_at: "2026-03-25T21:00:00.000Z",
+      updated_at: "2026-03-25T21:00:00.000Z",
+    },
+  ];
+  const db = {
+    calls: baseDb.calls,
+    state: baseDb.state,
+    prepare(sql) {
+      const normalized = normalizeSql(sql);
+
+      if (normalized.startsWith("SELECT id, tenant_id, external_code, brand, serial_number, model, client_name, notes, status, created_at, updated_at FROM assets WHERE id = ? AND tenant_id = ? LIMIT 1")) {
+        return {
+          bind(...args) {
+            this.args = args;
+            return this;
+          },
+          async all() {
+            const [assetId, tenantId] = this.args;
+            return {
+              results: assets.filter((asset) =>
+                Number(asset.id) === Number(assetId) &&
+                String(asset.tenant_id) === String(tenantId),
+              ),
+            };
+          },
+        };
+      }
+
+      if (normalized.startsWith("SELECT installation_id FROM asset_installation_links WHERE tenant_id = ? AND asset_id = ? AND unlinked_at IS NULL ORDER BY linked_at DESC, id DESC LIMIT 1")) {
+        return {
+          bind(...args) {
+            this.args = args;
+            return this;
+          },
+          async all() {
+            const [tenantId, assetId] = this.args;
+            const activeLink = assetLinks.find((link) =>
+              String(link.tenant_id) === String(tenantId) &&
+              Number(link.asset_id) === Number(assetId) &&
+              !link.unlinked_at,
+            );
+            return {
+              results: activeLink ? [{ installation_id: activeLink.installation_id }] : [],
+            };
+          },
+        };
+      }
+
+      if (normalized.startsWith("UPDATE asset_installation_links SET unlinked_at = ? WHERE tenant_id = ? AND asset_id = ? AND unlinked_at IS NULL AND installation_id <> ?")) {
+        return {
+          bind(...args) {
+            this.args = args;
+            return this;
+          },
+          async run() {
+            const [unlinkedAt, tenantId, assetId, installationId] = this.args;
+            let changes = 0;
+            assetLinks.forEach((link) => {
+              if (
+                String(link.tenant_id) === String(tenantId) &&
+                Number(link.asset_id) === Number(assetId) &&
+                !link.unlinked_at &&
+                Number(link.installation_id) !== Number(installationId)
+              ) {
+                link.unlinked_at = unlinkedAt;
+                changes += 1;
+              }
+            });
+            return { meta: { changes } };
+          },
+        };
+      }
+
+      if (normalized.startsWith("SELECT id FROM asset_installation_links WHERE tenant_id = ? AND asset_id = ? AND installation_id = ? AND unlinked_at IS NULL LIMIT 1")) {
+        return {
+          bind(...args) {
+            this.args = args;
+            return this;
+          },
+          async all() {
+            const [tenantId, assetId, installationId] = this.args;
+            const activeLink = assetLinks.find((link) =>
+              String(link.tenant_id) === String(tenantId) &&
+              Number(link.asset_id) === Number(assetId) &&
+              Number(link.installation_id) === Number(installationId) &&
+              !link.unlinked_at,
+            );
+            return {
+              results: activeLink ? [{ id: activeLink.id }] : [],
+            };
+          },
+        };
+      }
+
+      if (normalized.startsWith("INSERT INTO asset_installation_links")) {
+        return {
+          bind(...args) {
+            this.args = args;
+            return this;
+          },
+          async run() {
+            const [tenantId, assetId, installationId, linkedAt, linkedByUsername, notes] = this.args;
+            assetLinks.push({
+              id: assetLinks.length + 1,
+              tenant_id: tenantId,
+              asset_id: assetId,
+              installation_id: installationId,
+              linked_at: linkedAt,
+              unlinked_at: null,
+              linked_by_username: linkedByUsername,
+              notes,
+            });
+            return { meta: { last_row_id: assetLinks.length, changes: 1 } };
+          },
+        };
+      }
+
+      return baseDb.prepare(sql);
+    },
+  };
+
+  const request = new Request("https://worker.example/assets/9/incidents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      note: "Contexto auto con GPS",
+      gps: {
+        lat: -34.9011,
+        lng: -56.1645,
+        accuracy_m: 14,
+        captured_at: "2026-03-25T22:30:00.000Z",
+        source: "browser",
+        status: "captured",
+        note: "",
+      },
+    }),
+  });
+
+  const response = await workerFetch(request, { DB: db });
+  const body = await response.json();
+
+  assert.equal(response.status, 201);
+  assert.equal(body.context_record_created, true);
+  assert.equal(body.incident.gps_capture_status, "captured");
+  assert.equal(db.state.installations.length, 1);
+  assert.equal(db.state.installations[0].gps_capture_status, "captured");
+  assert.equal(db.state.installations[0].gps_lat, -34.9011);
+  assert.equal(db.state.incidents[0].gps_capture_status, "captured");
+  assert.equal(db.state.incidents[0].gps_lat, -34.9011);
 });
 
 test("POST /web/devices registers fcm token for authenticated web user", async () => {
@@ -5740,6 +7881,16 @@ test("accepts signed requests when auth secrets are configured", async () => {
       id: 1,
       driver_brand: "Zebra",
       status: "success",
+      gps_lat: null,
+      gps_lng: null,
+      gps_accuracy_m: null,
+      gps_captured_at: null,
+      gps_capture_source: "none",
+      gps_capture_status: "pending",
+      gps_capture_note: "",
+      site_lat: null,
+      site_lng: null,
+      site_radius_m: null,
       tenant_id: "default",
       incident_open_count: 0,
       incident_in_progress_count: 0,
@@ -5747,6 +7898,10 @@ test("accepts signed requests when auth secrets are configured", async () => {
       incident_resolved_count: 0,
       incident_active_count: 0,
       incident_critical_active_count: 0,
+      incident_estimated_duration_seconds_total: 0,
+      incident_estimated_duration_count: 0,
+      incident_actual_duration_seconds_total: 0,
+      incident_actual_duration_count: 0,
       attention_state: "clear",
     },
   ]);

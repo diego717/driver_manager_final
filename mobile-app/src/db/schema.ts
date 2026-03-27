@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb'
 
 export const mySchema = appSchema({
-  version: 2,
+  version: 3,
   tables: [
     tableSchema({
       name: 'incidents',
@@ -24,6 +24,14 @@ export const mySchema = appSchema({
         { name: 'sync_attempts', type: 'number' },
         { name: 'last_sync_error', type: 'string', isOptional: true },
         { name: 'client_request_id', type: 'string' },
+        { name: 'gps_capture_status', type: 'string' },
+        { name: 'gps_capture_source', type: 'string' },
+        { name: 'gps_lat', type: 'number', isOptional: true },
+        { name: 'gps_lng', type: 'number', isOptional: true },
+        { name: 'gps_accuracy_m', type: 'number', isOptional: true },
+        { name: 'gps_captured_at', type: 'string', isOptional: true },
+        { name: 'gps_capture_note', type: 'string' },
+        { name: 'geofence_override_note', type: 'string' },
       ],
     }),
     tableSchema({

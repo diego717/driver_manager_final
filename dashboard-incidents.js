@@ -10,13 +10,40 @@
             paused: { label: 'Pausar', icon: 'pause_circle' },
             resolved: { label: 'Resolver', icon: 'task_alt' },
         };
+        const CONFORMITY_GPS_PANEL_ID = 'actionConformityGpsPanel';
+        const CONFORMITY_GPS_STATUS_ID = 'actionConformityGpsStatus';
+        const CONFORMITY_GPS_SUMMARY_ID = 'actionConformityGpsSummary';
+        const CONFORMITY_GPS_RETRY_ID = 'actionConformityGpsRetryBtn';
+        const CONFORMITY_GPS_OVERRIDE_WRAP_ID = 'actionConformityGpsOverrideWrap';
+        const CONFORMITY_GPS_OVERRIDE_INPUT_ID = 'actionConformityGpsOverrideNote';
+        const CONFORMITY_GPS_OVERRIDE_HELP_ID = 'actionConformityGpsOverrideHelp';
+        const INCIDENT_GEOFENCE_OVERRIDE_WRAP_ID = 'actionIncidentGeofenceOverrideWrap';
+        const INCIDENT_GEOFENCE_OVERRIDE_INPUT_ID = 'actionIncidentGeofenceOverrideNote';
+        const INCIDENT_GEOFENCE_OVERRIDE_HELP_ID = 'actionIncidentGeofenceOverrideHelp';
+        const PUBLIC_TRACKING_URL_INPUT_ID = 'actionPublicTrackingUrl';
+        const PUBLIC_TRACKING_STATUS_ID = 'actionPublicTrackingStatus';
+        const PUBLIC_TRACKING_EXPIRES_ID = 'actionPublicTrackingExpires';
+        const PUBLIC_TRACKING_SNAPSHOT_ID = 'actionPublicTrackingSnapshot';
+        const PUBLIC_TRACKING_COPY_ID = 'actionPublicTrackingCopyBtn';
+        const PUBLIC_TRACKING_REVOKE_ID = 'actionPublicTrackingRevokeBtn';
+        const CONFORMITY_SIGNATURE_CANVAS_ID = 'actionConformitySignatureCanvas';
+        const CONFORMITY_SIGNATURE_CLEAR_ID = 'actionConformitySignatureClearBtn';
+        let currentConformitySignaturePad = null;
 
         function canCurrentUserAuditDeletedIncidents() {
             const role = String(options.getCurrentUser?.()?.role || '').toLowerCase();
             return role === 'super_admin';
         }
 
+        function canCurrentUserManagePublicTracking() {
+            const role = String(options.getCurrentUser?.()?.role || '').toLowerCase();
+            return role === 'admin' || role === 'super_admin';
+        }
+
         let includeDeletedIncidentsAudit = false;
+        const recentLocalStatusUpdates = new Map();
+        const LOCAL_STATUS_UPDATE_TTL_MS = 5000;
+        let incidentsRenderSequence = 0;
 
         function formatPhotoBytes(bytes) {
             const numericBytes = Math.max(0, Number(bytes) || 0);
@@ -33,6 +60,38 @@
             void refreshIncidentContext(config).catch(() => {
                 options.showNotification(failureMessage, 'warning');
             });
+        }
+
+        function pruneRecentLocalStatusUpdates(now = Date.now()) {
+            recentLocalStatusUpdates.forEach((entry, incidentId) => {
+                if (!entry || (now - entry.at) > LOCAL_STATUS_UPDATE_TTL_MS) {
+                    recentLocalStatusUpdates.delete(incidentId);
+                }
+            });
+        }
+
+        function rememberRecentLocalStatusUpdate(incident, fallbackStatus = '') {
+            const incidentId = options.parseStrictInteger(incident?.id);
+            if (!Number.isInteger(incidentId) || incidentId <= 0) return;
+            recentLocalStatusUpdates.set(incidentId, {
+                at: Date.now(),
+                status: options.normalizeIncidentStatus(incident?.incident_status || fallbackStatus),
+            });
+            pruneRecentLocalStatusUpdates();
+        }
+
+        function consumeRecentLocalStatusUpdate(incident) {
+            pruneRecentLocalStatusUpdates();
+            const incidentId = options.parseStrictInteger(incident?.id);
+            if (!Number.isInteger(incidentId) || incidentId <= 0) return false;
+            const recentEntry = recentLocalStatusUpdates.get(incidentId);
+            if (!recentEntry) return false;
+            const incomingStatus = options.normalizeIncidentStatus(incident?.incident_status);
+            if (recentEntry.status && recentEntry.status !== incomingStatus) {
+                return false;
+            }
+            recentLocalStatusUpdates.delete(incidentId);
+            return true;
         }
 
         async function refreshIncidentContext(config = {}) {
@@ -113,6 +172,59 @@
             return chip;
         }
 
+        function normalizeIncidentContextText(value) {
+            const normalized = String(value || '').trim();
+            if (!normalized) return '';
+            const collapsed = normalized.replace(/\s+/g, ' ');
+            if (['-', 'sin cliente', 'sin contexto', 'n/a'].includes(collapsed.toLowerCase())) {
+                return '';
+            }
+            return collapsed;
+        }
+
+        function appendIncidentContextSummary(parent, incident, config = {}) {
+            const installationId = options.parseStrictInteger(config.installationId ?? incident?.installation_id);
+            const assetId = options.parseStrictInteger(config.assetId ?? incident?.asset_id);
+            const clientName = normalizeIncidentContextText(incident?.installation_client_name);
+
+            const title = clientName
+                || (Number.isInteger(assetId) && assetId > 0 ? `Equipo #${assetId}` : '')
+                || (Number.isInteger(installationId) && installationId > 0 ? `Registro #${installationId}` : '');
+            if (!title) return;
+
+            const contextBlock = document.createElement('div');
+            contextBlock.className = 'incident-context-summary';
+
+            const primary = document.createElement('strong');
+            primary.className = 'incident-context-primary';
+            primary.textContent = title;
+            contextBlock.appendChild(primary);
+
+            const metaParts = [];
+            if (Number.isInteger(assetId) && assetId > 0) {
+                metaParts.push(`Equipo #${assetId}`);
+            }
+            if (Number.isInteger(installationId) && installationId > 0) {
+                metaParts.push(`Registro #${installationId}`);
+            }
+
+            const installationBrand = normalizeIncidentContextText(incident?.installation_brand);
+            const installationVersion = normalizeIncidentContextText(incident?.installation_version);
+            const productLabel = [installationBrand, installationVersion].filter(Boolean).join(' ');
+            if (productLabel) {
+                metaParts.push(productLabel);
+            }
+
+            if (metaParts.length) {
+                const secondary = document.createElement('small');
+                secondary.className = 'incident-context-meta';
+                secondary.textContent = metaParts.join(' | ');
+                contextBlock.appendChild(secondary);
+            }
+
+            parent.appendChild(contextBlock);
+        }
+
         function appendIncidentHighlights(parent, incident, config = {}) {
             const highlights = document.createElement('div');
             highlights.className = 'incident-highlights';
@@ -132,12 +244,11 @@
 
             if (Number.isInteger(realDurationSeconds) && realDurationSeconds >= 0) {
                 const runtimeChip = createIncidentHighlightChip(
-                    `Tiempo real: ${options.formatDuration(realDurationSeconds)}${
-                        statusValue === 'in_progress'
-                            ? ' (en curso)'
-                            : statusValue === 'paused'
-                                ? ' (en pausa)'
-                                : ''
+                    `Tiempo real: ${options.formatDuration(realDurationSeconds)}${statusValue === 'in_progress'
+                        ? ' (en curso)'
+                        : statusValue === 'paused'
+                            ? ' (en pausa)'
+                            : ''
                     }`,
                     statusValue === 'resolved' ? 'resolved' : statusValue,
                 );
@@ -156,31 +267,1166 @@
                 highlights.appendChild(runtimeChip);
             }
 
-            highlights.appendChild(
-                createIncidentHighlightChip(
-                    Number.isInteger(installationId) && installationId > 0
-                        ? `Registro #${installationId}`
-                        : 'Registro: auto/contexto',
-                    'info',
-                ),
-            );
-
-            if (Number.isInteger(assetId) && assetId > 0) {
+            const geofenceResult = String(incident?.geofence_result || '').trim().toLowerCase();
+            const geofenceDistance = Number(incident?.geofence_distance_m);
+            const geofenceRadius = Number(incident?.geofence_radius_m);
+            if (geofenceResult === 'inside') {
                 highlights.appendChild(
                     createIncidentHighlightChip(
-                        `Equipo #${assetId}`,
-                        config.assetTone || 'neutral',
+                        Number.isFinite(geofenceDistance) && Number.isFinite(geofenceRadius)
+                            ? `Geofence: dentro (${Math.round(geofenceDistance)} / ${Math.round(geofenceRadius)} m)`
+                            : 'Geofence: dentro del radio',
+                        'resolved',
+                    ),
+                );
+            } else if (geofenceResult === 'outside') {
+                highlights.appendChild(
+                    createIncidentHighlightChip(
+                        Number.isFinite(geofenceDistance) && Number.isFinite(geofenceRadius)
+                            ? `Geofence: fuera (${Math.round(geofenceDistance)} / ${Math.round(geofenceRadius)} m)`
+                            : 'Geofence: fuera del radio',
+                        'high',
                     ),
                 );
             }
+            if (String(incident?.geofence_override_note || '').trim()) {
+                highlights.appendChild(
+                    createIncidentHighlightChip('Override geofence auditado', 'warning'),
+                );
+            }
+
+            if (
+                (!Number.isInteger(installationId) || installationId <= 0)
+                && (!Number.isInteger(assetId) || assetId <= 0)
+            ) {
+                highlights.appendChild(createIncidentHighlightChip('Contexto automatico', 'info'));
+            }
 
             parent.appendChild(highlights);
+        }
+
+        function notifyGeofenceWarning(result, entityLabel) {
+            const geofenceResult = String(result?.geofence_result || result?.incident?.geofence_result || '').trim().toLowerCase();
+            if (geofenceResult !== 'outside') return;
+            const distance = Number(result?.geofence_distance_m ?? result?.incident?.geofence_distance_m);
+            const radius = Number(result?.geofence_radius_m ?? result?.incident?.geofence_radius_m);
+            const detail = Number.isFinite(distance) && Number.isFinite(radius)
+                ? ` (${Math.round(distance)}m / ${Math.round(radius)}m)`
+                : '';
+            options.showNotification(`${entityLabel} fuera del radio configurado${detail}.`, 'warning');
+        }
+
+        function hasValidSiteConfig(installation) {
+            return Number.isFinite(Number(installation?.site_lat))
+                && Number.isFinite(Number(installation?.site_lng))
+                && Number(installation?.site_radius_m) > 0;
+        }
+
+        function haversineDistanceMeters(fromLat, fromLng, toLat, toLng) {
+            const earthRadiusM = 6371000;
+            const toRadians = (value) => (Number(value) * Math.PI) / 180;
+            const lat1 = toRadians(fromLat);
+            const lat2 = toRadians(toLat);
+            const deltaLat = toRadians(Number(toLat) - Number(fromLat));
+            const deltaLng = toRadians(Number(toLng) - Number(fromLng));
+            const sinLat = Math.sin(deltaLat / 2);
+            const sinLng = Math.sin(deltaLng / 2);
+            const a = sinLat * sinLat
+                + Math.cos(lat1) * Math.cos(lat2) * sinLng * sinLng;
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return earthRadiusM * c;
+        }
+
+        function evaluateClientGeofence(snapshot, installation) {
+            if (!hasValidSiteConfig(installation)) return null;
+            const status = String(snapshot?.status || '').trim().toLowerCase();
+            if (status !== 'captured') {
+                return {
+                    result: 'not_applicable',
+                    distance_m: null,
+                    radius_m: Number(installation.site_radius_m),
+                };
+            }
+
+            const lat = Number(snapshot?.lat);
+            const lng = Number(snapshot?.lng);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+                return {
+                    result: 'not_applicable',
+                    distance_m: null,
+                    radius_m: Number(installation.site_radius_m),
+                };
+            }
+
+            const radius = Number(installation.site_radius_m);
+            const distance = haversineDistanceMeters(
+                Number(installation.site_lat),
+                Number(installation.site_lng),
+                lat,
+                lng,
+            );
+            return {
+                result: distance <= radius ? 'inside' : 'outside',
+                distance_m: distance,
+                radius_m: radius,
+            };
+        }
+
+        async function copyTextToClipboard(value) {
+            const normalizedValue = String(value || '').trim();
+            if (!normalizedValue) {
+                throw new Error('No hay enlace activo para copiar.');
+            }
+
+            if (navigator?.clipboard?.writeText) {
+                await navigator.clipboard.writeText(normalizedValue);
+                return;
+            }
+
+            const fallbackInput = document.createElement('textarea');
+            fallbackInput.value = normalizedValue;
+            fallbackInput.setAttribute('readonly', 'true');
+            fallbackInput.style.position = 'fixed';
+            fallbackInput.style.opacity = '0';
+            document.body.appendChild(fallbackInput);
+            fallbackInput.select();
+            const copied = document.execCommand('copy');
+            document.body.removeChild(fallbackInput);
+            if (!copied) {
+                throw new Error('No se pudo copiar el enlace.');
+            }
+        }
+
+        function buildPublicTrackingManagementFields() {
+            const fragment = document.createDocumentFragment();
+
+            const summary = document.createElement('p');
+            summary.id = PUBLIC_TRACKING_STATUS_ID;
+            summary.className = 'gps-capture-panel-summary';
+            summary.textContent = 'Cargando estado del enlace...';
+
+            const urlGroup = document.createElement('div');
+            urlGroup.className = 'input-group';
+            const urlLabel = document.createElement('label');
+            urlLabel.setAttribute('for', PUBLIC_TRACKING_URL_INPUT_ID);
+            urlLabel.textContent = 'Enlace corto compartible';
+            const urlInput = document.createElement('input');
+            urlInput.type = 'text';
+            urlInput.id = PUBLIC_TRACKING_URL_INPUT_ID;
+            urlInput.readOnly = true;
+            urlInput.placeholder = 'Aun no hay un enlace activo';
+            urlGroup.append(urlLabel, urlInput);
+
+            const expires = document.createElement('p');
+            expires.id = PUBLIC_TRACKING_EXPIRES_ID;
+            expires.className = 'gps-capture-panel-summary';
+            expires.textContent = 'Expiracion: s/d';
+
+            const snapshot = document.createElement('p');
+            snapshot.id = PUBLIC_TRACKING_SNAPSHOT_ID;
+            snapshot.className = 'gps-capture-panel-summary';
+            snapshot.textContent = 'Estado publico cacheado: s/d';
+
+            const actions = document.createElement('div');
+            actions.className = 'action-form-actions-inline';
+            const copyBtn = document.createElement('button');
+            copyBtn.type = 'button';
+            copyBtn.id = PUBLIC_TRACKING_COPY_ID;
+            copyBtn.className = 'btn-secondary';
+            copyBtn.textContent = 'Copiar enlace';
+            const revokeBtn = document.createElement('button');
+            revokeBtn.type = 'button';
+            revokeBtn.id = PUBLIC_TRACKING_REVOKE_ID;
+            revokeBtn.className = 'btn-secondary';
+            revokeBtn.textContent = 'Revocar';
+            actions.append(copyBtn, revokeBtn);
+
+            fragment.append(summary, urlGroup, expires, snapshot, actions);
+            return fragment;
+        }
+
+        async function openPublicTrackingModal(installationId) {
+            if (!options.requireActiveSession()) return;
+            if (!canCurrentUserManagePublicTracking()) {
+                options.showNotification('Solo admin o super_admin puede gestionar enlaces publicos.', 'error');
+                return;
+            }
+            const targetInstallationId = options.parseStrictInteger(installationId);
+            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
+                options.showNotification('installation_id invalido para tracking publico.', 'error');
+                return;
+            }
+
+            let currentLink = null;
+            const modalOpened = options.openActionModal({
+                title: `Seguimiento publico #${targetInstallationId}`,
+                subtitle: 'Genera un Magic Link de solo lectura para compartir el estado actual del servicio.',
+                submitLabel: 'Crear enlace',
+                focusId: PUBLIC_TRACKING_URL_INPUT_ID,
+                fields: buildPublicTrackingManagementFields(),
+                onSubmit: async () => {
+                    const result = await options.api.createInstallationPublicTrackingLink(targetInstallationId);
+                    currentLink = result?.link || null;
+                    syncPublicTrackingModalUi();
+                    options.showNotification(
+                        currentLink?.tracking_url ? 'Enlace publico listo para compartir.' : 'Enlace publico actualizado.',
+                        'success',
+                    );
+                },
+            });
+
+            if (!modalOpened) return;
+
+            const statusEl = document.getElementById(PUBLIC_TRACKING_STATUS_ID);
+            const urlInput = document.getElementById(PUBLIC_TRACKING_URL_INPUT_ID);
+            const expiresEl = document.getElementById(PUBLIC_TRACKING_EXPIRES_ID);
+            const snapshotEl = document.getElementById(PUBLIC_TRACKING_SNAPSHOT_ID);
+            const copyBtn = document.getElementById(PUBLIC_TRACKING_COPY_ID);
+            const revokeBtn = document.getElementById(PUBLIC_TRACKING_REVOKE_ID);
+            const submitBtn = document.getElementById('actionModalSubmitBtn');
+
+            function syncPublicTrackingModalUi() {
+                const hasActiveLink = currentLink?.active === true && String(currentLink?.tracking_url || '').trim();
+                if (statusEl instanceof HTMLElement) {
+                    const shortCode = String(currentLink?.short_code || '').trim();
+                    statusEl.textContent = hasActiveLink
+                        ? shortCode
+                            ? `Link corto activo (${shortCode}).`
+                            : `Link activo (${String(currentLink?.status || 'active')}).`
+                        : currentLink?.status === 'expired'
+                            ? 'El ultimo enlace ya expiro.'
+                            : 'No hay un enlace publico activo.';
+                }
+                if (urlInput instanceof HTMLInputElement) {
+                    urlInput.value = hasActiveLink ? String(currentLink.tracking_url) : '';
+                }
+                if (expiresEl instanceof HTMLElement) {
+                    expiresEl.textContent = hasActiveLink && currentLink?.expires_at
+                        ? `Expira: ${new Date(currentLink.expires_at).toLocaleString('es-ES')}`
+                        : 'Expiracion: s/d';
+                }
+                if (snapshotEl instanceof HTMLElement) {
+                    const snapshot = currentLink?.snapshot || {};
+                    snapshotEl.textContent = snapshot?.public_status
+                        ? `Estado publico cacheado: ${snapshot.public_status} (${snapshot.public_message || 'sin mensaje'})`
+                        : 'Estado publico cacheado: s/d';
+                }
+                if (copyBtn instanceof HTMLButtonElement) {
+                    copyBtn.disabled = !hasActiveLink;
+                }
+                if (revokeBtn instanceof HTMLButtonElement) {
+                    revokeBtn.disabled = !hasActiveLink;
+                }
+                if (submitBtn instanceof HTMLButtonElement) {
+                    submitBtn.textContent = hasActiveLink ? 'Regenerar enlace' : 'Crear enlace';
+                    submitBtn.dataset.defaultLabel = submitBtn.textContent;
+                }
+            }
+
+            copyBtn?.addEventListener('click', async () => {
+                try {
+                    await copyTextToClipboard(currentLink?.tracking_url || '');
+                    options.showNotification('Enlace copiado al portapapeles.', 'success');
+                } catch (error) {
+                    options.showNotification(error?.message || 'No se pudo copiar el enlace.', 'warning');
+                }
+            });
+
+            revokeBtn?.addEventListener('click', async () => {
+                if (!(currentLink?.active === true)) return;
+                await options.api.deleteInstallationPublicTrackingLink(targetInstallationId);
+                currentLink = {
+                    active: false,
+                    status: 'revoked',
+                    tracking_url: null,
+                    snapshot: currentLink?.snapshot || null,
+                };
+                syncPublicTrackingModalUi();
+                options.showNotification('Enlace publico revocado.', 'info');
+            });
+
+            try {
+                const result = await options.api.getInstallationPublicTrackingLink(targetInstallationId);
+                currentLink = result?.link || null;
+            } catch (error) {
+                currentLink = null;
+                if (statusEl instanceof HTMLElement) {
+                    statusEl.textContent = error?.message || 'No se pudo cargar el estado del enlace.';
+                }
+            }
+            syncPublicTrackingModalUi();
         }
 
         function formatIncidentCreatedAtText(value) {
             return value
                 ? `Creada: ${new Date(value).toLocaleString('es-ES')}`
                 : 'Creada: -';
+        }
+
+        function createInputGroup(labelText, control, { htmlFor = '', className = '' } = {}) {
+            const group = document.createElement('div');
+            group.className = className ? `input-group ${className}` : 'input-group';
+            const label = document.createElement('label');
+            if (htmlFor) {
+                label.setAttribute('for', htmlFor);
+            }
+            label.textContent = labelText;
+            group.append(label, control);
+            return group;
+        }
+
+        function createGpsCapturePanel({ panelId, statusId, summaryId, buttonId }) {
+            const wrapper = document.createElement('div');
+            wrapper.id = panelId;
+            wrapper.className = 'gps-capture-panel';
+            wrapper.dataset.gpsState = 'pending';
+
+            const header = document.createElement('div');
+            header.className = 'gps-capture-panel-header';
+
+            const copyWrap = document.createElement('div');
+            copyWrap.className = 'gps-capture-panel-copy';
+
+            const title = document.createElement('strong');
+            title.className = 'gps-capture-panel-title';
+            title.textContent = 'Ubicacion puntual';
+
+            const status = document.createElement('span');
+            status.id = statusId;
+            status.className = 'gps-capture-panel-status';
+            status.textContent = 'Capturando ubicacion puntual...';
+
+            copyWrap.append(title, status);
+
+            const retryButton = document.createElement('button');
+            retryButton.type = 'button';
+            retryButton.id = buttonId;
+            retryButton.className = 'btn-secondary';
+            retryButton.textContent = 'Capturar ubicacion';
+
+            header.append(copyWrap, retryButton);
+
+            const summary = document.createElement('p');
+            summary.id = summaryId;
+            summary.className = 'gps-capture-panel-summary';
+            summary.textContent = 'Intentamos obtener una ubicacion puntual para este formulario. No bloquea el guardado.';
+
+            wrapper.append(header, summary);
+            return wrapper;
+        }
+
+        function countActiveIncidents(incidents) {
+            return (Array.isArray(incidents) ? incidents : []).filter((incident) => {
+                if (String(incident?.deleted_at || '').trim()) return false;
+                return options.normalizeIncidentStatus(incident?.incident_status) !== 'resolved';
+            }).length;
+        }
+
+        function formatConformityStatusLabel(status) {
+            const normalized = String(status || '').trim().toLowerCase();
+            if (normalized === 'emailed') return 'Email enviado';
+            if (normalized === 'email_failed') return 'Email con error';
+            return 'Generada';
+        }
+
+        function formatConformityGeneratedAt(value) {
+            const date = value ? new Date(value) : null;
+            if (!date || Number.isNaN(date.getTime())) return 'Sin fecha';
+            return date.toLocaleString('es-ES');
+        }
+
+        function createConformityStatusChip(label, tone = 'neutral') {
+            const chip = document.createElement('span');
+            chip.className = 'incident-highlight-chip';
+            chip.dataset.tone = tone;
+            chip.textContent = label;
+            return chip;
+        }
+
+        function formatActiveIncidentsLabel(activeIncidentCount) {
+            const count = Math.max(0, Number(activeIncidentCount) || 0);
+            return count === 0
+                ? 'Sin incidencias activas, listo para cerrar'
+                : `${count} incidencia${count === 1 ? '' : 's'} activa${count === 1 ? '' : 's'}`;
+        }
+
+        function resolveClosureBannerState(activeIncidentCount, latestConformityStatus = '') {
+            const count = Math.max(0, Number(activeIncidentCount) || 0);
+            const latestStatus = String(latestConformityStatus || '').trim().toLowerCase();
+            if (count > 0) {
+                return {
+                    tone: 'warning',
+                    eyebrow: 'En atencion',
+                    title: 'Caso en atencion operativa',
+                    description: 'Todavia hay incidencias activas. Resuelvelas antes de emitir la conformidad final.',
+                };
+            }
+            if (latestStatus === 'emailed') {
+                return {
+                    tone: 'resolved',
+                    eyebrow: 'Conformidad enviada',
+                    title: 'Cierre operativo completado',
+                    description: 'La ultima conformidad ya fue generada y enviada por email. Puedes descargar el PDF o reabrir trabajo si surge una novedad.',
+                };
+            }
+            if (latestStatus === 'email_failed') {
+                return {
+                    tone: 'warning',
+                    eyebrow: 'Envio pendiente',
+                    title: 'La conformidad existe pero el email fallo',
+                    description: 'El PDF ya fue generado. Revisa la constancia anterior o vuelve a emitirla para intentar otro envio.',
+                };
+            }
+            if (latestStatus === 'generated') {
+                return {
+                    tone: 'info',
+                    eyebrow: 'Conformidad generada',
+                    title: 'El PDF ya esta disponible',
+                    description: 'La constancia ya fue generada, pero no se envio por email. Puedes revisarla o generar una nueva desde este registro.',
+                };
+            }
+            return {
+                tone: 'resolved',
+                eyebrow: 'Listo para cierre',
+                title: 'Caso listo para conformidad',
+                description: 'No quedan incidencias activas. Genera la conformidad final y envia el PDF desde aqui.',
+            };
+        }
+
+        function applyClosureBannerState(banner, activeIncidentCount, latestConformityStatus = '') {
+            if (!(banner instanceof HTMLElement)) return;
+            const state = resolveClosureBannerState(activeIncidentCount, latestConformityStatus);
+            banner.dataset.tone = state.tone;
+
+            const eyebrow = banner.querySelector('[data-role="closure-banner-eyebrow"]');
+            if (eyebrow instanceof HTMLElement) {
+                eyebrow.textContent = state.eyebrow;
+            }
+
+            const title = banner.querySelector('[data-role="closure-banner-title"]');
+            if (title instanceof HTMLElement) {
+                title.textContent = state.title;
+            }
+
+            const description = banner.querySelector('[data-role="closure-banner-description"]');
+            if (description instanceof HTMLElement) {
+                description.textContent = state.description;
+            }
+        }
+
+        function applyConformityButtonState(button, activeIncidentCount) {
+            if (!(button instanceof HTMLButtonElement)) return;
+            const count = Math.max(0, Number(activeIncidentCount) || 0);
+            button.dataset.activeIncidentCount = String(count);
+            button.className = count === 0 ? 'btn-primary' : 'btn-secondary';
+            const iconName = count === 0 ? 'mark_email_read' : 'rule';
+            const label = count === 0
+                ? 'Enviar conformidad final'
+                : 'Revisar incidencias antes de cerrar';
+            const icon = options.createMaterialIconNode(iconName);
+            if (icon) {
+                button.replaceChildren(icon, document.createTextNode(` ${label}`));
+            } else {
+                button.textContent = label;
+            }
+        }
+
+        function applyCreateIncidentButtonState(button, activeIncidentCount) {
+            if (!(button instanceof HTMLButtonElement)) return;
+            const count = Math.max(0, Number(activeIncidentCount) || 0);
+            button.dataset.activeIncidentCount = String(count);
+            const iconName = count === 0 ? 'add_alert' : 'add_circle';
+            const label = count === 0 ? 'Abrir nueva incidencia' : 'Crear incidencia';
+            button.className = count === 0 ? 'btn-secondary' : 'btn-primary';
+            const icon = options.createMaterialIconNode(iconName);
+            if (icon) {
+                button.replaceChildren(icon, document.createTextNode(` ${label}`));
+            } else {
+                button.textContent = label;
+            }
+            if (count === 0) {
+                button.title = 'El caso quedo listo para conformidad. Usa esto solo si necesitas reabrir trabajo con una incidencia nueva.';
+            } else {
+                button.removeAttribute('title');
+            }
+        }
+
+        function syncVisibleIncidentsHeaderState() {
+            const container = document.getElementById('incidentsList');
+            if (!(container instanceof HTMLElement)) return;
+            const header = container.querySelector('.incidents-header');
+            if (!(header instanceof HTMLElement)) return;
+
+            const cards = Array.from(container.querySelectorAll('.incident-card'));
+            const activeIncidentCount = cards.filter((card) => {
+                if (!(card instanceof HTMLElement)) return false;
+                if (card.classList.contains('incident-card-deleted')) return false;
+                return options.normalizeIncidentStatus(card.dataset.status) !== 'resolved';
+            }).length;
+
+            header.dataset.activeIncidentCount = String(activeIncidentCount);
+            const latestConformityStatus = String(header.dataset.latestConformityStatus || '').trim().toLowerCase();
+
+            const summaryChip = header.querySelector('[data-role="active-incidents-chip"]');
+            if (summaryChip instanceof HTMLElement) {
+                summaryChip.textContent = formatActiveIncidentsLabel(activeIncidentCount);
+                summaryChip.dataset.tone = activeIncidentCount === 0 ? 'resolved' : 'high';
+            }
+
+            const closureBanner = header.querySelector('[data-role="closure-banner"]');
+            if (closureBanner instanceof HTMLElement) {
+                applyClosureBannerState(closureBanner, activeIncidentCount, latestConformityStatus);
+            }
+
+            const conformityButton = header.querySelector('[data-role="conformity-trigger"]');
+            if (conformityButton instanceof HTMLButtonElement) {
+                applyConformityButtonState(conformityButton, activeIncidentCount);
+            }
+
+            const createIncidentButton = header.querySelector('[data-role="create-incident-trigger"]');
+            if (createIncidentButton instanceof HTMLButtonElement) {
+                applyCreateIncidentButtonState(createIncidentButton, activeIncidentCount);
+            }
+        }
+
+        function buildInstallationConformityFields({
+            installationId,
+            activeIncidentCount,
+            latestConformity,
+        }) {
+            const fragment = document.createDocumentFragment();
+            const grid = document.createElement('div');
+            grid.className = 'action-modal-grid';
+
+            const summaryWrap = document.createElement('div');
+            summaryWrap.className = 'conformity-modal-summary';
+            const summaryTitle = document.createElement('strong');
+            summaryTitle.textContent = `Registro #${installationId}`;
+            const summaryBody = document.createElement('p');
+            summaryBody.textContent = activeIncidentCount === 0
+                ? 'No quedan incidencias activas. El caso esta listo para emitir la conformidad final y enviar el PDF por email.'
+                : `Todavia hay ${activeIncidentCount} incidencia${activeIncidentCount === 1 ? '' : 's'} activa${activeIncidentCount === 1 ? '' : 's'}.`;
+            const summaryMeta = document.createElement('div');
+            summaryMeta.className = 'conformity-modal-meta';
+            summaryMeta.appendChild(
+                createConformityStatusChip(
+                    activeIncidentCount === 0 ? 'Listo para cerrar' : `${activeIncidentCount} activas`,
+                    activeIncidentCount === 0 ? 'resolved' : 'high',
+                ),
+            );
+            if (latestConformity) {
+                summaryMeta.appendChild(
+                    createConformityStatusChip(
+                        `Ultima: ${formatConformityStatusLabel(latestConformity.status)}`,
+                        latestConformity.status === 'emailed' ? 'resolved' : latestConformity.status === 'email_failed' ? 'high' : 'info',
+                    ),
+                );
+            }
+            summaryWrap.append(summaryTitle, summaryBody, summaryMeta);
+            grid.appendChild(summaryWrap);
+
+            if (latestConformity) {
+                const latestWrap = document.createElement('div');
+                latestWrap.className = 'conformity-modal-latest';
+                const latestTitle = document.createElement('strong');
+                latestTitle.textContent = 'Ultima conformidad registrada';
+                const latestBody = document.createElement('p');
+                latestBody.textContent = `${latestConformity.signed_by_name || 'Sin firmante'} · ${formatConformityGeneratedAt(latestConformity.generated_at)} · ${formatConformityStatusLabel(latestConformity.status)}`;
+                latestWrap.append(latestTitle, latestBody);
+                if (latestConformity.pdf_download_path) {
+                    const latestLink = document.createElement('a');
+                    latestLink.href = latestConformity.pdf_download_path;
+                    latestLink.target = '_blank';
+                    latestLink.rel = 'noreferrer';
+                    latestLink.className = 'conformity-modal-link';
+                    latestLink.textContent = 'Ver ultimo PDF';
+                    latestWrap.appendChild(latestLink);
+                }
+                grid.appendChild(latestWrap);
+            }
+
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.id = 'actionConformitySignedByName';
+            nameInput.autocomplete = 'off';
+            nameInput.value = String(options.getCurrentUser?.()?.username || '').trim();
+            nameInput.placeholder = 'Nombre y apellido';
+            grid.appendChild(createInputGroup('Firmante', nameInput, { htmlFor: nameInput.id }));
+
+            const documentInput = document.createElement('input');
+            documentInput.type = 'text';
+            documentInput.id = 'actionConformitySignedByDocument';
+            documentInput.autocomplete = 'off';
+            documentInput.placeholder = 'CI, DNI o referencia';
+            grid.appendChild(createInputGroup('Documento', documentInput, { htmlFor: documentInput.id }));
+
+            const emailInput = document.createElement('input');
+            emailInput.type = 'email';
+            emailInput.id = 'actionConformityEmailTo';
+            emailInput.autocomplete = 'email';
+            emailInput.placeholder = 'cliente@empresa.com';
+            grid.appendChild(createInputGroup('Email destino', emailInput, { htmlFor: emailInput.id }));
+
+            const summaryInput = document.createElement('textarea');
+            summaryInput.id = 'actionConformitySummary';
+            summaryInput.rows = 3;
+            summaryInput.value = 'Instalacion validada en sitio.';
+            grid.appendChild(createInputGroup('Resumen', summaryInput, {
+                htmlFor: summaryInput.id,
+                className: 'full-width',
+            }));
+
+            const technicianNoteInput = document.createElement('textarea');
+            technicianNoteInput.id = 'actionConformityTechnicianNote';
+            technicianNoteInput.rows = 3;
+            technicianNoteInput.value = 'Se entrega constancia operativa con firma y evidencia asociada.';
+            grid.appendChild(createInputGroup('Nota tecnica', technicianNoteInput, {
+                htmlFor: technicianNoteInput.id,
+                className: 'full-width',
+            }));
+
+            grid.appendChild(createGpsCapturePanel({
+                panelId: CONFORMITY_GPS_PANEL_ID,
+                statusId: CONFORMITY_GPS_STATUS_ID,
+                summaryId: CONFORMITY_GPS_SUMMARY_ID,
+                buttonId: CONFORMITY_GPS_RETRY_ID,
+            }));
+
+            const gpsOverrideInput = document.createElement('textarea');
+            gpsOverrideInput.id = CONFORMITY_GPS_OVERRIDE_INPUT_ID;
+            gpsOverrideInput.rows = 3;
+            gpsOverrideInput.placeholder = 'Explica por que cierras sin coordenada valida.';
+            const gpsOverrideGroup = createInputGroup('Motivo de override GPS', gpsOverrideInput, {
+                htmlFor: gpsOverrideInput.id,
+                className: 'full-width',
+            });
+            gpsOverrideGroup.id = CONFORMITY_GPS_OVERRIDE_WRAP_ID;
+            gpsOverrideGroup.hidden = true;
+            const gpsOverrideHelp = document.createElement('p');
+            gpsOverrideHelp.id = CONFORMITY_GPS_OVERRIDE_HELP_ID;
+            gpsOverrideHelp.className = 'asset-muted';
+            gpsOverrideHelp.textContent = 'Si no hay captura usable, deja una justificacion operativa antes de generar el PDF.';
+            gpsOverrideGroup.appendChild(gpsOverrideHelp);
+            grid.appendChild(gpsOverrideGroup);
+
+            const signatureGroup = document.createElement('div');
+            signatureGroup.className = 'input-group full-width';
+            const signatureLabel = document.createElement('label');
+            signatureLabel.setAttribute('for', CONFORMITY_SIGNATURE_CANVAS_ID);
+            signatureLabel.textContent = 'Firma';
+            const signaturePad = document.createElement('div');
+            signaturePad.className = 'conformity-signature-pad';
+            const canvas = document.createElement('canvas');
+            canvas.id = CONFORMITY_SIGNATURE_CANVAS_ID;
+            canvas.className = 'conformity-signature-canvas';
+            canvas.width = 640;
+            canvas.height = 220;
+            const signatureHint = document.createElement('div');
+            signatureHint.className = 'conformity-signature-hint';
+            signatureHint.textContent = 'Firma aqui con mouse, touch o lapiz.';
+            const signatureToolbar = document.createElement('div');
+            signatureToolbar.className = 'conformity-signature-toolbar';
+            const clearSignatureBtn = document.createElement('button');
+            clearSignatureBtn.type = 'button';
+            clearSignatureBtn.id = CONFORMITY_SIGNATURE_CLEAR_ID;
+            clearSignatureBtn.className = 'btn-secondary';
+            clearSignatureBtn.textContent = 'Limpiar firma';
+            signatureToolbar.appendChild(clearSignatureBtn);
+            signaturePad.append(canvas, signatureHint);
+            signatureGroup.append(signatureLabel, signaturePad, signatureToolbar);
+            grid.appendChild(signatureGroup);
+
+            const sendEmailWrap = document.createElement('label');
+            sendEmailWrap.className = 'action-checkbox full-width';
+            const sendEmailInput = document.createElement('input');
+            sendEmailInput.type = 'checkbox';
+            sendEmailInput.id = 'actionConformitySendEmail';
+            sendEmailInput.checked = true;
+            const sendEmailText = document.createElement('span');
+            sendEmailText.textContent = 'Enviar email al generar la conformidad';
+            sendEmailWrap.append(sendEmailInput, sendEmailText);
+            grid.appendChild(sendEmailWrap);
+
+            fragment.appendChild(grid);
+            return fragment;
+        }
+
+        function initializeConformitySignaturePad() {
+            const canvas = document.getElementById(CONFORMITY_SIGNATURE_CANVAS_ID);
+            const clearBtn = document.getElementById(CONFORMITY_SIGNATURE_CLEAR_ID);
+            if (!(canvas instanceof HTMLCanvasElement)) {
+                currentConformitySignaturePad = null;
+                return;
+            }
+
+            const ratio = Math.max(window.devicePixelRatio || 1, 1);
+            const width = Math.max(canvas.clientWidth || 0, 640);
+            const height = 220;
+            canvas.width = Math.round(width * ratio);
+            canvas.height = Math.round(height * ratio);
+            const context = canvas.getContext('2d');
+            if (!context) {
+                currentConformitySignaturePad = null;
+                return;
+            }
+
+            context.setTransform(ratio, 0, 0, ratio, 0, 0);
+            context.lineCap = 'round';
+            context.lineJoin = 'round';
+            context.lineWidth = 2.6;
+            context.strokeStyle = '#0f8b84';
+
+            let drawing = false;
+            let hasInk = false;
+            let lastX = 0;
+            let lastY = 0;
+
+            function hideHint() {
+                canvas.parentElement?.classList.add('has-ink');
+            }
+
+            function showHint() {
+                canvas.parentElement?.classList.remove('has-ink');
+            }
+
+            function clearPad() {
+                context.clearRect(0, 0, width, height);
+                hasInk = false;
+                showHint();
+            }
+
+            function getPoint(event) {
+                const rect = canvas.getBoundingClientRect();
+                return {
+                    x: event.clientX - rect.left,
+                    y: event.clientY - rect.top,
+                };
+            }
+
+            function beginStroke(event) {
+                drawing = true;
+                const point = getPoint(event);
+                lastX = point.x;
+                lastY = point.y;
+                context.beginPath();
+                context.moveTo(point.x, point.y);
+                context.lineTo(point.x + 0.01, point.y + 0.01);
+                context.stroke();
+                hasInk = true;
+                hideHint();
+            }
+
+            function continueStroke(event) {
+                if (!drawing) return;
+                const point = getPoint(event);
+                context.beginPath();
+                context.moveTo(lastX, lastY);
+                context.lineTo(point.x, point.y);
+                context.stroke();
+                lastX = point.x;
+                lastY = point.y;
+            }
+
+            function endStroke() {
+                drawing = false;
+            }
+
+            clearPad();
+            canvas.onpointerdown = (event) => {
+                event.preventDefault();
+                canvas.setPointerCapture?.(event.pointerId);
+                beginStroke(event);
+            };
+            canvas.onpointermove = (event) => {
+                event.preventDefault();
+                continueStroke(event);
+            };
+            canvas.onpointerup = () => endStroke();
+            canvas.onpointerleave = () => endStroke();
+            canvas.onpointercancel = () => endStroke();
+
+            if (clearBtn instanceof HTMLButtonElement) {
+                clearBtn.onclick = () => clearPad();
+            }
+
+            currentConformitySignaturePad = {
+                hasInk: () => hasInk,
+                clear: clearPad,
+                exportDataUrl: () => {
+                    if (!hasInk) return '';
+                    const exportCanvas = document.createElement('canvas');
+                    exportCanvas.width = canvas.width;
+                    exportCanvas.height = canvas.height;
+                    const exportContext = exportCanvas.getContext('2d');
+                    if (!exportContext) return '';
+                    exportContext.fillStyle = '#ffffff';
+                    exportContext.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+                    exportContext.drawImage(canvas, 0, 0);
+                    return exportCanvas.toDataURL('image/png');
+                },
+            };
+        }
+
+        async function openInstallationConformityModal(installationId, config = {}) {
+            if (!options.requireActiveSession()) return;
+            const targetInstallationId = options.parseStrictInteger(installationId);
+            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
+                options.showNotification('installation_id invalido para generar conformidad.', 'error');
+                return;
+            }
+
+            const activeIncidentCount = Math.max(0, Number(config.activeIncidentCount) || 0);
+            if (activeIncidentCount > 0) {
+                options.showNotification('Primero resuelve las incidencias activas antes de emitir la conformidad.', 'warning');
+                return;
+            }
+
+            let latestConformity = config.latestConformity || null;
+            if (!latestConformity) {
+                try {
+                    const result = await options.api.getInstallationConformity(targetInstallationId);
+                    latestConformity = result?.conformity || null;
+                } catch {
+                    latestConformity = null;
+                }
+            }
+
+            let gpsController = null;
+            let latestGpsSnapshot = null;
+            const targetInstallation = options.getInstallationById?.(targetInstallationId) || null;
+
+            function syncConformityGpsOverrideUi(snapshot, state = {}) {
+                latestGpsSnapshot = snapshot && typeof snapshot === 'object'
+                    ? { ...snapshot }
+                    : null;
+                const overrideWrap = document.getElementById(CONFORMITY_GPS_OVERRIDE_WRAP_ID);
+                const overrideInput = document.getElementById(CONFORMITY_GPS_OVERRIDE_INPUT_ID);
+                const overrideHelp = document.getElementById(CONFORMITY_GPS_OVERRIDE_HELP_ID);
+                if (!(overrideWrap instanceof HTMLElement) || !(overrideInput instanceof HTMLTextAreaElement)) {
+                    return;
+                }
+
+                const status = String(snapshot?.status || 'pending').trim().toLowerCase() || 'pending';
+                const geofencePreview = evaluateClientGeofence(snapshot, targetInstallation);
+                const requiresGpsOverride = status !== 'captured' && state?.inflight !== true;
+                const requiresGeofenceOverride = status === 'captured' && geofencePreview?.result === 'outside';
+                const requiresOverride = requiresGpsOverride || requiresGeofenceOverride;
+                overrideWrap.hidden = !requiresOverride;
+                overrideInput.required = requiresOverride;
+                if (overrideHelp instanceof HTMLElement) {
+                    if (requiresGpsOverride) {
+                        overrideHelp.textContent = `La captura GPS quedo en estado "${status}". Para cerrar la conformidad debes dejar motivo de override.`;
+                    } else if (requiresGeofenceOverride) {
+                        const detail = Number.isFinite(geofencePreview?.distance_m) && Number.isFinite(geofencePreview?.radius_m)
+                            ? ` (${Math.round(geofencePreview.distance_m)}m / ${Math.round(geofencePreview.radius_m)}m)`
+                            : '';
+                        overrideHelp.textContent = `La captura GPS quedo fuera del radio configurado${detail}. Para continuar debes justificar la excepcion.`;
+                    } else {
+                        overrideHelp.textContent = 'GPS listo para adjuntar en la conformidad.';
+                    }
+                }
+            }
+
+            const modalOpened = options.openActionModal({
+                title: `Conformidad del registro #${targetInstallationId}`,
+                subtitle: 'Captura la firma final y envia el PDF de conformidad al cliente.',
+                submitLabel: 'Generar y enviar conformidad',
+                focusId: 'actionConformitySignedByName',
+                fields: buildInstallationConformityFields({
+                    installationId: targetInstallationId,
+                    activeIncidentCount,
+                    latestConformity,
+                }),
+                onSubmit: async () => {
+                    const signedByName = String(document.getElementById('actionConformitySignedByName')?.value || '').trim();
+                    const signedByDocument = String(document.getElementById('actionConformitySignedByDocument')?.value || '').trim();
+                    const emailTo = String(document.getElementById('actionConformityEmailTo')?.value || '').trim();
+                    const summaryNote = String(document.getElementById('actionConformitySummary')?.value || '').trim();
+                    const technicianNote = String(document.getElementById('actionConformityTechnicianNote')?.value || '').trim();
+                    const sendEmail = document.getElementById('actionConformitySendEmail')?.checked === true;
+                    const signatureDataUrl = currentConformitySignaturePad?.exportDataUrl?.() || '';
+
+                    if (!signedByName) {
+                        options.setActionModalError('El nombre del firmante es obligatorio.');
+                        return;
+                    }
+                    if (!emailTo) {
+                        options.setActionModalError('El email destino es obligatorio.');
+                        return;
+                    }
+                    if (!signatureDataUrl || currentConformitySignaturePad?.hasInk?.() !== true) {
+                        options.setActionModalError('La conformidad requiere una firma.');
+                        return;
+                    }
+
+                    const gpsSnapshot = gpsController?.getSnapshotForSubmit?.() || latestGpsSnapshot || null;
+                    const gpsStatus = String(gpsSnapshot?.status || 'pending').trim().toLowerCase() || 'pending';
+                    const gpsOverrideNote = String(document.getElementById(CONFORMITY_GPS_OVERRIDE_INPUT_ID)?.value || '').trim();
+                    const geofencePreview = evaluateClientGeofence(gpsSnapshot, targetInstallation);
+                    let gpsPayload = gpsSnapshot;
+                    let geofenceOverrideNote = '';
+                    if (gpsStatus !== 'captured') {
+                        if (!gpsOverrideNote) {
+                            options.setActionModalError('Si no hay una captura GPS valida, debes registrar motivo de override.');
+                            return;
+                        }
+                        gpsPayload = {
+                            status: 'override',
+                            source: 'override',
+                            note: gpsOverrideNote,
+                        };
+                    } else if (geofencePreview?.result === 'outside') {
+                        if (!gpsOverrideNote) {
+                            options.setActionModalError('La captura GPS quedo fuera del radio configurado. Debes justificar la excepcion.');
+                            return;
+                        }
+                        geofenceOverrideNote = gpsOverrideNote;
+                    }
+
+                    const result = await options.api.createInstallationConformity(targetInstallationId, {
+                        signed_by_name: signedByName,
+                        signed_by_document: signedByDocument,
+                        email_to: emailTo,
+                        signature_data_url: signatureDataUrl,
+                        summary_note: summaryNote,
+                        technician_note: technicianNote,
+                        include_all_incident_photos: true,
+                        send_email: sendEmail,
+                        gps: gpsPayload,
+                        geofence_override_note: geofenceOverrideNote,
+                    });
+
+                    options.closeActionModal(true);
+                    const conformityId = options.parseStrictInteger(result?.conformity?.id);
+                    const statusLabel = formatConformityStatusLabel(result?.conformity?.status);
+                    options.showNotification(
+                        Number.isInteger(conformityId) && conformityId > 0
+                            ? `Conformidad #${conformityId} generada (${statusLabel}).`
+                            : `Conformidad generada (${statusLabel}).`,
+                        result?.conformity?.status === 'email_failed' ? 'warning' : 'success',
+                    );
+                    const metadata = (() => {
+                        try {
+                            return JSON.parse(String(result?.conformity?.metadata_json || '{}'));
+                        } catch {
+                            return {};
+                        }
+                    })();
+                    if (String(metadata?.geofence?.override_note || '').trim()) {
+                        options.showNotification('Conformidad generada con override geofence auditado.', 'warning');
+                    }
+                    notifyGeofenceWarning(metadata?.geofence || null, 'Advertencia geofence conformidad');
+                    runIncidentRefreshInBackground(
+                        { installationId: targetInstallationId },
+                        'La conformidad se genero, pero no pudimos refrescar el registro.',
+                    );
+                },
+            });
+
+            if (modalOpened) {
+                requestAnimationFrame(() => {
+                    initializeConformitySignaturePad();
+                    if (options.geolocation) {
+                        gpsController = options.geolocation.createController({
+                            panelElement: document.getElementById(CONFORMITY_GPS_PANEL_ID),
+                            statusElement: document.getElementById(CONFORMITY_GPS_STATUS_ID),
+                            summaryElement: document.getElementById(CONFORMITY_GPS_SUMMARY_ID),
+                            captureButton: document.getElementById(CONFORMITY_GPS_RETRY_ID),
+                            onSnapshotChange: syncConformityGpsOverrideUi,
+                        });
+                        void gpsController.capture();
+                    } else {
+                        syncConformityGpsOverrideUi({
+                            status: 'unsupported',
+                            source: 'browser',
+                            note: '',
+                        }, {
+                            inflight: false,
+                        });
+                    }
+                });
+            }
+        }
+
+        function buildIncidentCreateFields({
+            defaultApply,
+            defaultEstimatedDurationSeconds,
+            defaultInstallationId,
+            defaultNote,
+            defaultSeverity,
+            isAssetContext,
+        }) {
+            const fragment = document.createDocumentFragment();
+            const grid = document.createElement('div');
+            grid.className = 'action-modal-grid';
+
+            const installationInput = document.createElement('input');
+            installationInput.type = 'text';
+            installationInput.id = 'actionIncidentInstallationId';
+            installationInput.value = defaultInstallationId;
+            installationInput.autocomplete = 'off';
+            installationInput.placeholder = isAssetContext
+                ? 'Opcional. Se usa vinculo activo o se crea contexto automatico'
+                : 'Ej: 245';
+            grid.appendChild(createInputGroup(
+                isAssetContext ? 'ID de registro (opcional)' : 'ID de registro',
+                installationInput,
+                { htmlFor: 'actionIncidentInstallationId' },
+            ));
+
+            const severitySelect = document.createElement('select');
+            severitySelect.id = 'actionIncidentSeverity';
+            ['low', 'medium', 'high', 'critical'].forEach((severity) => {
+                severitySelect.appendChild(
+                    new Option(severity, severity, severity === defaultSeverity, severity === defaultSeverity),
+                );
+            });
+            grid.appendChild(createInputGroup('Severidad', severitySelect, { htmlFor: 'actionIncidentSeverity' }));
+
+            const estimatedPresetSelect = document.createElement('select');
+            estimatedPresetSelect.id = 'actionIncidentEstimatedPreset';
+            options.incidentEstimatedDurationPresets.forEach((preset) => {
+                estimatedPresetSelect.appendChild(new Option(preset.label, String(preset.seconds)));
+            });
+            estimatedPresetSelect.appendChild(new Option('Personalizado (HH:MM)', '__custom__'));
+            grid.appendChild(createInputGroup(
+                'Tiempo estimado',
+                estimatedPresetSelect,
+                { htmlFor: 'actionIncidentEstimatedPreset' },
+            ));
+
+            const estimatedCustomInput = document.createElement('input');
+            estimatedCustomInput.type = 'text';
+            estimatedCustomInput.id = 'actionIncidentEstimatedCustom';
+            estimatedCustomInput.value = options.formatDurationToHHMM(defaultEstimatedDurationSeconds);
+            estimatedCustomInput.autocomplete = 'off';
+            estimatedCustomInput.placeholder = 'Ej: 01:30';
+            const estimatedCustomWrap = createInputGroup(
+                'Tiempo personalizado (HH:MM)',
+                estimatedCustomInput,
+                { htmlFor: 'actionIncidentEstimatedCustom', className: 'is-hidden' },
+            );
+            estimatedCustomWrap.id = 'actionIncidentEstimatedCustomWrap';
+            grid.appendChild(estimatedCustomWrap);
+
+            const noteTextarea = document.createElement('textarea');
+            noteTextarea.id = 'actionIncidentNote';
+            noteTextarea.rows = 4;
+            noteTextarea.placeholder = 'Describe el problema y el contexto';
+            noteTextarea.value = defaultNote;
+            grid.appendChild(createInputGroup(
+                'Detalle de la incidencia',
+                noteTextarea,
+                { htmlFor: 'actionIncidentNote', className: 'full-width' },
+            ));
+
+            fragment.appendChild(grid);
+            fragment.appendChild(createGpsCapturePanel({
+                panelId: 'actionIncidentGpsPanel',
+                statusId: 'actionIncidentGpsStatus',
+                summaryId: 'actionIncidentGpsSummary',
+                buttonId: 'actionIncidentGpsRetryBtn',
+            }));
+
+            const geofenceOverrideInput = document.createElement('textarea');
+            geofenceOverrideInput.id = INCIDENT_GEOFENCE_OVERRIDE_INPUT_ID;
+            geofenceOverrideInput.rows = 3;
+            geofenceOverrideInput.placeholder = 'Explica por que continuas fuera del radio configurado.';
+            const geofenceOverrideGroup = createInputGroup('Motivo de excepcion geofence', geofenceOverrideInput, {
+                htmlFor: geofenceOverrideInput.id,
+                className: 'full-width',
+            });
+            geofenceOverrideGroup.id = INCIDENT_GEOFENCE_OVERRIDE_WRAP_ID;
+            geofenceOverrideGroup.hidden = true;
+            const geofenceOverrideHelp = document.createElement('p');
+            geofenceOverrideHelp.id = INCIDENT_GEOFENCE_OVERRIDE_HELP_ID;
+            geofenceOverrideHelp.className = 'asset-muted';
+            geofenceOverrideHelp.textContent = 'Solo se usa cuando la captura queda fuera del radio del sitio.';
+            geofenceOverrideGroup.appendChild(geofenceOverrideHelp);
+            fragment.appendChild(geofenceOverrideGroup);
+
+            const applyLabel = document.createElement('label');
+            applyLabel.className = 'action-checkbox';
+            applyLabel.setAttribute('for', 'actionIncidentApplyToRecord');
+            const applyCheckbox = document.createElement('input');
+            applyCheckbox.type = 'checkbox';
+            applyCheckbox.id = 'actionIncidentApplyToRecord';
+            applyCheckbox.checked = defaultApply;
+            const applyCopy = document.createElement('span');
+            applyCopy.textContent = 'Aplicar nota y tiempo al registro de instalacion.';
+            applyLabel.append(applyCheckbox, applyCopy);
+            fragment.appendChild(applyLabel);
+
+            return fragment;
+        }
+
+        function buildIncidentEvidenceFields({
+            currentEvidenceNote,
+            customChecklistItems,
+            selectedPresetItems,
+        }) {
+            const fragment = document.createDocumentFragment();
+
+            const checklistGroup = document.createElement('div');
+            checklistGroup.className = 'input-group';
+            const checklistLabel = document.createElement('label');
+            checklistLabel.textContent = 'Checklist sugerido';
+            const checklistGrid = document.createElement('div');
+            checklistGrid.className = 'incident-checklist-grid';
+            options.incidentChecklistPresets.forEach((label, index) => {
+                const itemLabel = document.createElement('label');
+                itemLabel.className = 'action-checkbox';
+                itemLabel.setAttribute('for', `actionIncidentChecklistPreset-${index}`);
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `actionIncidentChecklistPreset-${index}`;
+                checkbox.name = 'actionIncidentChecklistPreset';
+                checkbox.value = label;
+                checkbox.checked = selectedPresetItems.includes(label);
+                const text = document.createElement('span');
+                text.textContent = label;
+                itemLabel.append(checkbox, text);
+                checklistGrid.appendChild(itemLabel);
+            });
+            checklistGroup.append(checklistLabel, checklistGrid);
+            fragment.appendChild(checklistGroup);
+
+            const customChecklistTextarea = document.createElement('textarea');
+            customChecklistTextarea.id = 'actionIncidentChecklistCustom';
+            customChecklistTextarea.rows = 3;
+            customChecklistTextarea.placeholder = 'Ej: Foto del serial\nValidacion con supervisor';
+            customChecklistTextarea.value = customChecklistItems.join('\n');
+            fragment.appendChild(createInputGroup(
+                'Checklist adicional (una linea por item)',
+                customChecklistTextarea,
+                { htmlFor: 'actionIncidentChecklistCustom' },
+            ));
+
+            const evidenceNoteTextarea = document.createElement('textarea');
+            evidenceNoteTextarea.id = 'actionIncidentEvidenceNote';
+            evidenceNoteTextarea.rows = 4;
+            evidenceNoteTextarea.placeholder = 'Resumen operativo de evidencia';
+            evidenceNoteTextarea.value = currentEvidenceNote;
+            fragment.appendChild(createInputGroup(
+                'Nota operativa',
+                evidenceNoteTextarea,
+                { htmlFor: 'actionIncidentEvidenceNote' },
+            ));
+
+            return fragment;
+        }
+
+        function buildIncidentResolutionFields(defaultNote) {
+            const resolutionNoteTextarea = document.createElement('textarea');
+            resolutionNoteTextarea.id = 'actionIncidentResolutionNote';
+            resolutionNoteTextarea.rows = 4;
+            resolutionNoteTextarea.placeholder = 'Resumen de la solucion aplicada';
+            resolutionNoteTextarea.value = defaultNote;
+            return createInputGroup(
+                'Nota de resolucion (opcional)',
+                resolutionNoteTextarea,
+                { htmlFor: 'actionIncidentResolutionNote' },
+            );
         }
 
         function appendIncidentResolutionSummary(parent, incident) {
@@ -190,6 +1436,7 @@
 
             const resolutionPanel = document.createElement('div');
             resolutionPanel.className = 'incident-resolution-panel';
+            resolutionPanel.dataset.panelRole = 'resolution';
             resolutionPanel.dataset.status = statusValue;
 
             const resolutionHeader = document.createElement('div');
@@ -226,11 +1473,34 @@
             if (metaParts.length) {
                 const resolutionMeta = document.createElement('small');
                 resolutionMeta.className = 'incident-resolution-meta';
-                resolutionMeta.textContent = metaParts.join(' · ');
+            resolutionMeta.textContent = metaParts.join(' | ');
                 resolutionPanel.appendChild(resolutionMeta);
             }
 
             parent.appendChild(resolutionPanel);
+        }
+
+        function syncIncidentResolutionPanel(card, incident) {
+            if (!(card instanceof HTMLElement)) return;
+            card.querySelectorAll('.incident-resolution-panel[data-panel-role="resolution"]').forEach((panel) => {
+                panel.remove();
+            });
+
+            const statusValue = options.normalizeIncidentStatus(incident?.incident_status);
+            const resolutionNote = String(incident?.resolution_note || '').trim();
+            if (!resolutionNote && statusValue !== 'resolved') return;
+
+            const anchor = card.querySelector('.incident-actions');
+            const fragmentHost = document.createElement('div');
+            appendIncidentResolutionSummary(fragmentHost, incident);
+            const resolutionPanel = fragmentHost.firstElementChild;
+            if (!(resolutionPanel instanceof HTMLElement)) return;
+
+            if (anchor instanceof HTMLElement) {
+                card.insertBefore(resolutionPanel, anchor);
+                return;
+            }
+            card.appendChild(resolutionPanel);
         }
 
         function decorateIncidentActionButton(button, actionKey, label, iconName) {
@@ -290,9 +1560,8 @@
             if (isSoftDeleted) {
                 const auditNotice = document.createElement('small');
                 auditNotice.className = 'asset-muted';
-                auditNotice.textContent = `Eliminada: ${new Date(incident.deleted_at).toLocaleString('es-ES')}${
-                    incident?.deleted_by ? ` por ${incident.deleted_by}` : ''
-                }`;
+                auditNotice.textContent = `Eliminada: ${new Date(incident.deleted_at).toLocaleString('es-ES')}${incident?.deleted_by ? ` por ${incident.deleted_by}` : ''
+                    }`;
                 parent.appendChild(auditNotice);
             }
 
@@ -525,6 +1794,32 @@
             parent.appendChild(evidenceWrap);
         }
 
+        function syncIncidentEvidenceSummary(card, incident) {
+            if (!(card instanceof HTMLElement)) return;
+            card.querySelectorAll('.incident-evidence-block').forEach((block) => {
+                block.remove();
+            });
+
+            const fragmentHost = document.createElement('div');
+            appendIncidentEvidenceSummary(fragmentHost, incident);
+            const evidenceBlock = fragmentHost.firstElementChild;
+            if (!(evidenceBlock instanceof HTMLElement)) return;
+
+            const highlights = card.querySelector('.incident-highlights');
+            if (highlights instanceof HTMLElement) {
+                highlights.insertAdjacentElement('afterend', evidenceBlock);
+                return;
+            }
+
+            const anchor = card.querySelector('.incident-resolution-panel[data-panel-role="resolution"], .incident-actions');
+            if (anchor instanceof HTMLElement) {
+                card.insertBefore(evidenceBlock, anchor);
+                return;
+            }
+
+            card.appendChild(evidenceBlock);
+        }
+
         function applyVisibleIncidentUpdate(incident) {
             const incidentId = options.parseStrictInteger(incident?.id);
             if (!Number.isInteger(incidentId) || incidentId <= 0) return;
@@ -535,12 +1830,11 @@
             const statusValue = options.normalizeIncidentStatus(incident?.incident_status);
             const canUpdateIncident = options.canCurrentUserEditAssets();
             const runtimeText = Number.isInteger(options.resolveIncidentRealDurationSeconds(incident))
-                ? `Tiempo real: ${options.formatDuration(options.resolveIncidentRealDurationSeconds(incident))}${
-                    statusValue === 'in_progress'
-                        ? ' (en curso)'
-                        : statusValue === 'paused'
-                            ? ' (en pausa)'
-                            : ''
+                ? `Tiempo real: ${options.formatDuration(options.resolveIncidentRealDurationSeconds(incident))}${statusValue === 'in_progress'
+                    ? ' (en curso)'
+                    : statusValue === 'paused'
+                        ? ' (en pausa)'
+                        : ''
                 }`
                 : '';
 
@@ -552,6 +1846,9 @@
                     installationId: options.parseStrictInteger(incident?.installation_id),
                     assetId: options.parseStrictInteger(incident?.asset_id),
                 });
+                syncIncidentEvidenceSummary(card, incident);
+                syncIncidentResolutionPanel(card, incident);
+                syncVisibleIncidentsHeaderState();
 
                 const statusBadge = card.querySelector('.incident-status-badge');
                 if (statusBadge instanceof HTMLElement) {
@@ -686,6 +1983,11 @@
             incidentHeader.append(headingBlock, createdAt);
             incidentCard.appendChild(incidentHeader);
 
+            appendIncidentContextSummary(incidentCard, incident, {
+                installationId: options.parseStrictInteger(config.installationId ?? incident?.installation_id),
+                assetId: options.parseStrictInteger(config.assetId ?? incident?.asset_id),
+            });
+
             const note = document.createElement('p');
             note.className = 'incident-note-text';
             note.textContent = String(incident?.note || '').trim() || 'Sin detalle operativo.';
@@ -735,7 +2037,7 @@
                     `Fecha: ${new Date(deletedAtText).toLocaleString('es-ES')}`,
                     deletedBy ? `por ${deletedBy}` : '',
                     deletionReason ? `motivo: ${deletionReason}` : '',
-                ].filter(Boolean).join(' · ');
+                ].filter(Boolean).join(' | ');
                 deletedPanel.appendChild(deletedMeta);
                 incidentCard.appendChild(deletedPanel);
             }
@@ -758,19 +2060,143 @@
         async function renderIncidents(incidents, installationId) {
             const container = document.getElementById('incidentsList');
             if (!container) return;
-            container.replaceChildren();
+            const renderSequence = ++incidentsRenderSequence;
+            const fragment = document.createDocumentFragment();
+            const activeIncidentCount = countActiveIncidents(incidents);
+            let latestConformity = null;
+            try {
+                const result = await options.api.getInstallationConformity(installationId);
+                latestConformity = result?.conformity || null;
+            } catch {
+                latestConformity = null;
+            }
+            if (renderSequence !== incidentsRenderSequence) {
+                return;
+            }
 
             const header = document.createElement('div');
             header.className = 'incidents-header';
-            header.classList.add('incidents-header');
+            header.dataset.installationId = String(options.parseStrictInteger(installationId) || '');
+            header.dataset.activeIncidentCount = String(activeIncidentCount);
+            header.dataset.latestConformityStatus = String(latestConformity?.status || '').trim().toLowerCase();
+            const headerMain = document.createElement('div');
+            headerMain.className = 'incidents-header-main';
 
             const heading = document.createElement('h3');
             const headingIcon = options.createMaterialIconNode('warning');
             if (headingIcon) {
-                heading.replaceChildren(headingIcon, document.createTextNode(` Incidencias de Registro #${installationId}`));
+                heading.replaceChildren(headingIcon, document.createTextNode(` Incidencias del registro #${installationId}`));
             } else {
-                heading.textContent = `Incidencias de Registro #${installationId}`;
+                heading.textContent = `Incidencias del registro #${installationId}`;
             }
+            headerMain.appendChild(heading);
+
+            const headerMeta = document.createElement('div');
+            headerMeta.className = 'incidents-header-meta';
+            const activeIncidentsChip = createConformityStatusChip(
+                formatActiveIncidentsLabel(activeIncidentCount),
+                activeIncidentCount === 0 ? 'resolved' : 'high',
+            );
+            activeIncidentsChip.dataset.role = 'active-incidents-chip';
+            headerMeta.appendChild(activeIncidentsChip);
+            if (latestConformity) {
+                headerMeta.appendChild(
+                    createConformityStatusChip(
+                        `Ultima conformidad: ${formatConformityStatusLabel(latestConformity.status)}`,
+                        latestConformity.status === 'emailed'
+                            ? 'resolved'
+                            : latestConformity.status === 'email_failed'
+                                ? 'high'
+                                : 'info',
+                    ),
+                );
+                headerMeta.appendChild(
+                    createConformityStatusChip(
+                        formatConformityGeneratedAt(latestConformity.generated_at),
+                        'neutral',
+                    ),
+                );
+            }
+            headerMain.appendChild(headerMeta);
+
+            const closureBanner = document.createElement('div');
+            closureBanner.className = 'incidents-closure-banner';
+            closureBanner.dataset.role = 'closure-banner';
+
+            const closureBannerCopy = document.createElement('div');
+            closureBannerCopy.className = 'incidents-closure-banner-copy';
+
+            const closureBannerEyebrow = document.createElement('span');
+            closureBannerEyebrow.className = 'incidents-closure-banner-eyebrow';
+            closureBannerEyebrow.dataset.role = 'closure-banner-eyebrow';
+
+            const closureBannerTitle = document.createElement('strong');
+            closureBannerTitle.className = 'incidents-closure-banner-title';
+            closureBannerTitle.dataset.role = 'closure-banner-title';
+
+            const closureBannerDescription = document.createElement('p');
+            closureBannerDescription.className = 'incidents-closure-banner-description';
+            closureBannerDescription.dataset.role = 'closure-banner-description';
+
+            closureBannerCopy.append(
+                closureBannerEyebrow,
+                closureBannerTitle,
+                closureBannerDescription,
+            );
+            closureBanner.appendChild(closureBannerCopy);
+
+            if (latestConformity) {
+                const latestSummary = document.createElement('div');
+                latestSummary.className = 'incidents-conformity-summary';
+
+                const latestSummaryLabel = document.createElement('small');
+                latestSummaryLabel.className = 'incidents-conformity-summary-label';
+                latestSummaryLabel.textContent = 'Ultima conformidad';
+
+                const latestSummaryPrimary = document.createElement('strong');
+                latestSummaryPrimary.className = 'incidents-conformity-summary-primary';
+                latestSummaryPrimary.textContent = latestConformity.signed_by_name || 'Sin firmante';
+
+                const latestSummaryMeta = document.createElement('div');
+                latestSummaryMeta.className = 'incidents-conformity-summary-meta';
+                latestSummaryMeta.appendChild(
+                    createConformityStatusChip(
+                        formatConformityStatusLabel(latestConformity.status),
+                        latestConformity.status === 'emailed'
+                            ? 'resolved'
+                            : latestConformity.status === 'email_failed'
+                                ? 'high'
+                                : 'info',
+                    ),
+                );
+                latestSummaryMeta.appendChild(
+                    createConformityStatusChip(
+                        formatConformityGeneratedAt(latestConformity.generated_at),
+                        'neutral',
+                    ),
+                );
+
+                latestSummary.append(
+                    latestSummaryLabel,
+                    latestSummaryPrimary,
+                    latestSummaryMeta,
+                );
+
+                if (latestConformity.pdf_download_path) {
+                    const latestSummaryLink = document.createElement('a');
+                    latestSummaryLink.href = latestConformity.pdf_download_path;
+                    latestSummaryLink.target = '_blank';
+                    latestSummaryLink.rel = 'noreferrer';
+                    latestSummaryLink.className = 'conformity-modal-link';
+                    latestSummaryLink.textContent = 'Descargar ultima constancia';
+                    latestSummary.appendChild(latestSummaryLink);
+                }
+
+                closureBanner.appendChild(latestSummary);
+            }
+
+            applyClosureBannerState(closureBanner, activeIncidentCount, latestConformity?.status);
+            headerMain.appendChild(closureBanner);
 
             const backButton = document.createElement('button');
             backButton.type = 'button';
@@ -787,15 +2213,64 @@
 
             const createIncidentBtn = document.createElement('button');
             createIncidentBtn.type = 'button';
-            createIncidentBtn.className = 'btn-primary';
-            const createIcon = options.createMaterialIconNode('add_circle');
-            if (createIcon) {
-                createIncidentBtn.replaceChildren(createIcon, document.createTextNode(' Crear incidencia'));
-            } else {
-                createIncidentBtn.textContent = 'Crear incidencia';
-            }
+            createIncidentBtn.dataset.role = 'create-incident-trigger';
+            applyCreateIncidentButtonState(createIncidentBtn, activeIncidentCount);
             createIncidentBtn.addEventListener('click', () => {
+                const currentActiveIncidentCount = Math.max(
+                    0,
+                    Number.parseInt(String(createIncidentBtn.dataset.activeIncidentCount || header.dataset.activeIncidentCount || '0'), 10) || 0,
+                );
+                if (currentActiveIncidentCount === 0) {
+                    options.openActionConfirmModal({
+                        title: `Reabrir trabajo en registro #${installationId}`,
+                        subtitle: 'Este registro ya quedo listo para conformidad. Crear una nueva incidencia vuelve a abrir el trabajo operativo.',
+                        submitLabel: 'Abrir nueva incidencia',
+                        acknowledgementText: 'Confirmo que necesito reabrir el trabajo con una nueva incidencia.',
+                        missingConfirmationMessage: 'Debes confirmar la reapertura para continuar.',
+                        onSubmit: async () => {
+                            options.closeActionModal(true);
+                            createIncidentFromWeb(installationId);
+                        },
+                    });
+                    return;
+                }
                 createIncidentFromWeb(installationId);
+            });
+
+            const conformityBtn = document.createElement('button');
+            conformityBtn.type = 'button';
+            conformityBtn.dataset.role = 'conformity-trigger';
+            applyConformityButtonState(conformityBtn, activeIncidentCount);
+            conformityBtn.addEventListener('click', () => {
+                const currentActiveIncidentCount = Math.max(
+                    0,
+                    Number.parseInt(String(conformityBtn.dataset.activeIncidentCount || header.dataset.activeIncidentCount || '0'), 10) || 0,
+                );
+                if (currentActiveIncidentCount > 0) {
+                    options.showNotification(
+                        `Quedan ${currentActiveIncidentCount} incidencia${currentActiveIncidentCount === 1 ? '' : 's'} activa${currentActiveIncidentCount === 1 ? '' : 's'}. Resuelvelas antes de emitir la conformidad.`,
+                        'warning',
+                    );
+                    return;
+                }
+                void openInstallationConformityModal(installationId, {
+                    activeIncidentCount: currentActiveIncidentCount,
+                    latestConformity,
+                });
+            });
+
+            const shareTrackingBtn = document.createElement('button');
+            shareTrackingBtn.type = 'button';
+            shareTrackingBtn.className = 'btn-secondary';
+            shareTrackingBtn.dataset.role = 'public-tracking-trigger';
+            const shareTrackingIcon = options.createMaterialIconNode('share');
+            if (shareTrackingIcon) {
+                shareTrackingBtn.replaceChildren(shareTrackingIcon, document.createTextNode(' Compartir seguimiento'));
+            } else {
+                shareTrackingBtn.textContent = 'Compartir seguimiento';
+            }
+            shareTrackingBtn.addEventListener('click', () => {
+                void openPublicTrackingModal(installationId);
             });
 
             const actions = document.createElement('div');
@@ -821,24 +2296,33 @@
                 actions.appendChild(auditToggleWrap);
             }
 
-            actions.append(createIncidentBtn, backButton);
+            if (canCurrentUserManagePublicTracking()) {
+                actions.appendChild(shareTrackingBtn);
+            }
+            actions.append(conformityBtn, createIncidentBtn, backButton);
 
-            header.append(heading, actions);
-            container.appendChild(header);
+            header.append(headerMain, actions);
+            fragment.appendChild(header);
 
             if (!incidents || !incidents.length) {
-                options.renderContextualEmptyState(container, {
+                const emptyStateHost = document.createElement('div');
+                options.renderContextualEmptyState(emptyStateHost, {
                     title: 'Sin incidencias para este registro',
-                    description: 'Si detectas un problema, crea la primera incidencia desde aqui.',
+                    description: 'Si detectas un problema, crea la primera incidencia desde aqui. Si ya cerraste el caso, puedes emitir la conformidad desde el encabezado.',
                     actionLabel: 'Crear incidencia',
                     onAction: () => createIncidentBtn.click(),
                     tone: 'neutral',
                 });
+                if (renderSequence !== incidentsRenderSequence) {
+                    return;
+                }
+                fragment.appendChild(emptyStateHost);
+                container.replaceChildren(fragment);
                 return;
             }
 
             for (const incident of incidents) {
-                await appendIncidentCard(container, incident, {
+                await appendIncidentCard(fragment, incident, {
                     installationId: Number.parseInt(String(installationId), 10),
                     assetId: options.parseStrictInteger(incident?.asset_id),
                     includeAssetChip: true,
@@ -848,7 +2332,36 @@
                     uploadLabel: INCIDENT_PHOTO_UPLOAD_LABEL,
                     uploadIcon: 'add_a_photo',
                 });
+                if (renderSequence !== incidentsRenderSequence) {
+                    return;
+                }
             }
+            container.replaceChildren(fragment);
+        }
+
+        function showIncidentsWorkspaceLanding() {
+            const container = document.getElementById('incidentsList');
+            if (!container) return;
+            container.replaceChildren();
+            options.renderContextualEmptyState(container, {
+                title: 'Sin registro seleccionado',
+                description: 'Abre un registro desde Historial o entra desde Equipos para atender incidencias con el contexto correcto.',
+                actionLabel: 'Ir a Equipos',
+                onAction: () => {
+                    options.navigateToSectionByKey?.('assets');
+                },
+                tone: 'info',
+            });
+        }
+
+        function showIncidentsWorkspace() {
+            if (!options.requireActiveSession()) return;
+            const currentInstallationId = options.parseStrictInteger(options.getCurrentSelectedInstallationId?.());
+            if (Number.isInteger(currentInstallationId) && currentInstallationId > 0) {
+                void showIncidentsForInstallation(currentInstallationId);
+                return;
+            }
+            showIncidentsWorkspaceLanding();
         }
 
         function openIncidentModal(config = {}) {
@@ -876,9 +2389,52 @@
             const numericAssetId = options.parseStrictInteger(config.assetId);
             const activeInstallationId = options.parseStrictInteger(config.activeInstallationId);
             const isAssetContext = Number.isInteger(numericAssetId) && numericAssetId > 0;
-            const estimatedPresetOptions = options.incidentEstimatedDurationPresets.map((preset) => `
-                <option value="${preset.seconds}">${options.escapeHtml(preset.label)}</option>
-            `).join('');
+            let gpsController = null;
+            let latestIncidentGpsSnapshot = null;
+
+            function resolveTargetInstallationForGeofence() {
+                const installationInput = document.getElementById('actionIncidentInstallationId');
+                const rawValue = String(installationInput?.value || '').trim();
+                const parsedValue = rawValue ? options.parseStrictInteger(rawValue) : null;
+                if (Number.isInteger(parsedValue) && parsedValue > 0) {
+                    return options.getInstallationById?.(parsedValue) || null;
+                }
+                if (Number.isInteger(activeInstallationId) && activeInstallationId > 0) {
+                    return options.getInstallationById?.(activeInstallationId) || null;
+                }
+                return null;
+            }
+
+            function syncIncidentGeofenceOverrideUi(snapshot) {
+                latestIncidentGpsSnapshot = snapshot && typeof snapshot === 'object'
+                    ? { ...snapshot }
+                    : null;
+                const overrideWrap = document.getElementById(INCIDENT_GEOFENCE_OVERRIDE_WRAP_ID);
+                const overrideInput = document.getElementById(INCIDENT_GEOFENCE_OVERRIDE_INPUT_ID);
+                const overrideHelp = document.getElementById(INCIDENT_GEOFENCE_OVERRIDE_HELP_ID);
+                if (!(overrideWrap instanceof HTMLElement) || !(overrideInput instanceof HTMLTextAreaElement)) {
+                    return;
+                }
+
+                const installation = resolveTargetInstallationForGeofence();
+                const preview = evaluateClientGeofence(snapshot, installation);
+                const requiresOverride = String(snapshot?.status || '').trim().toLowerCase() === 'captured'
+                    && preview?.result === 'outside';
+                overrideWrap.hidden = !requiresOverride;
+                overrideInput.required = requiresOverride;
+                if (overrideHelp instanceof HTMLElement) {
+                    if (requiresOverride) {
+                        const detail = Number.isFinite(preview?.distance_m) && Number.isFinite(preview?.radius_m)
+                            ? ` (${Math.round(preview.distance_m)}m / ${Math.round(preview.radius_m)}m)`
+                            : '';
+                        overrideHelp.textContent = `La captura GPS quedo fuera del radio configurado${detail}. Si la policy hard esta activa, este motivo sera obligatorio.`;
+                    } else if (hasValidSiteConfig(installation)) {
+                        overrideHelp.textContent = 'GPS listo. Solo se pedira excepcion si la captura queda fuera del radio.';
+                    } else {
+                        overrideHelp.textContent = 'No hay geofence configurado para este registro.';
+                    }
+                }
+            }
 
             const modalOpened = options.openActionModal({
                 title: isAssetContext ? `Nueva incidencia para equipo #${numericAssetId}` : 'Nueva incidencia',
@@ -887,42 +2443,14 @@
                     : 'Completa detalle, severidad y tiempo estimado.',
                 submitLabel: 'Crear incidencia',
                 focusId: 'actionIncidentNote',
-                fieldsHtml: `
-                    <div class="action-modal-grid">
-                        <div class="input-group">
-                            <label for="actionIncidentInstallationId">${isAssetContext ? 'ID de registro (opcional)' : 'ID de registro'}</label>
-                            <input type="text" id="actionIncidentInstallationId" value="${options.escapeHtml(defaultInstallationId)}" autocomplete="off" placeholder="${options.escapeHtml(isAssetContext ? 'Opcional. Se usa vinculo activo o se crea contexto automatico' : 'Ej: 245')}">
-                        </div>
-                        <div class="input-group">
-                            <label for="actionIncidentSeverity">Severidad</label>
-                            <select id="actionIncidentSeverity">
-                                <option value="low" ${defaultSeverity === 'low' ? 'selected' : ''}>low</option>
-                                <option value="medium" ${defaultSeverity === 'medium' ? 'selected' : ''}>medium</option>
-                                <option value="high" ${defaultSeverity === 'high' ? 'selected' : ''}>high</option>
-                                <option value="critical" ${defaultSeverity === 'critical' ? 'selected' : ''}>critical</option>
-                            </select>
-                        </div>
-                        <div class="input-group">
-                            <label for="actionIncidentEstimatedPreset">Tiempo estimado</label>
-                            <select id="actionIncidentEstimatedPreset">
-                                ${estimatedPresetOptions}
-                                <option value="__custom__">Personalizado (HH:MM)</option>
-                            </select>
-                        </div>
-                        <div class="input-group is-hidden" id="actionIncidentEstimatedCustomWrap">
-                            <label for="actionIncidentEstimatedCustom">Tiempo personalizado (HH:MM)</label>
-                            <input type="text" id="actionIncidentEstimatedCustom" value="${options.escapeHtml(options.formatDurationToHHMM(defaultEstimatedDurationSeconds))}" autocomplete="off" placeholder="Ej: 01:30">
-                        </div>
-                        <div class="input-group full-width">
-                            <label for="actionIncidentNote">Detalle de la incidencia</label>
-                            <textarea id="actionIncidentNote" rows="4" placeholder="Describe el problema y el contexto">${options.escapeHtml(defaultNote)}</textarea>
-                        </div>
-                    </div>
-                    <label class="action-checkbox" for="actionIncidentApplyToRecord">
-                        <input type="checkbox" id="actionIncidentApplyToRecord" ${defaultApply ? 'checked' : ''}>
-                        <span>Aplicar nota y tiempo al registro de instalacion.</span>
-                    </label>
-                `,
+                fields: buildIncidentCreateFields({
+                    defaultApply,
+                    defaultEstimatedDurationSeconds,
+                    defaultInstallationId,
+                    defaultNote,
+                    defaultSeverity,
+                    isAssetContext,
+                }),
                 onSubmit: async () => {
                     const installationRaw = String(document.getElementById('actionIncidentInstallationId')?.value || '').trim();
                     const targetInstallationId = installationRaw ? options.parseStrictInteger(installationRaw) : null;
@@ -958,7 +2486,20 @@
                         severity,
                         source: 'web',
                         apply_to_installation: applyToInstallation,
+                        gps: gpsController?.getSnapshotForSubmit?.(),
                     };
+                    const geofencePreview = evaluateClientGeofence(
+                        payload.gps || latestIncidentGpsSnapshot,
+                        resolveTargetInstallationForGeofence(),
+                    );
+                    const geofenceOverrideNote = String(document.getElementById(INCIDENT_GEOFENCE_OVERRIDE_INPUT_ID)?.value || '').trim();
+                    if (geofencePreview?.result === 'outside' && !geofenceOverrideNote) {
+                        options.setActionModalError('La captura GPS quedo fuera del radio configurado. Debes justificar la excepcion para continuar cuando la policy hard este activa.');
+                        return;
+                    }
+                    if (geofencePreview?.result === 'outside' && geofenceOverrideNote) {
+                        payload.geofence_override_note = geofenceOverrideNote;
+                    }
 
                     let result;
                     let resolvedInstallationId = Number.isInteger(targetInstallationId) ? targetInstallationId : null;
@@ -994,9 +2535,13 @@
                             ? `Incidencia creada (#${incidentId}) en registro #${resolvedInstallationId}`
                             : Number.isInteger(incidentId) && incidentId > 0
                                 ? `Incidencia creada (#${incidentId})`
-                                : 'Incidencia creada',
+                            : 'Incidencia creada',
                         'success',
                     );
+                    if (String(result?.incident?.geofence_override_note || '').trim()) {
+                        options.showNotification('Incidencia registrada con override geofence auditado.', 'warning');
+                    }
+                    notifyGeofenceWarning(result, 'Advertencia geofence incidencia');
 
                     if (isAssetContext) {
                         runIncidentRefreshInBackground(
@@ -1014,6 +2559,27 @@
 
             if (modalOpened) {
                 options.bindIncidentEstimatedDurationFields(defaultEstimatedDurationSeconds);
+                document.getElementById('actionIncidentInstallationId')?.addEventListener('input', () => {
+                    syncIncidentGeofenceOverrideUi(
+                        gpsController?.getSnapshotForSubmit?.() || latestIncidentGpsSnapshot,
+                    );
+                });
+                if (options.geolocation) {
+                    gpsController = options.geolocation.createController({
+                        panelElement: document.getElementById('actionIncidentGpsPanel'),
+                        statusElement: document.getElementById('actionIncidentGpsStatus'),
+                        summaryElement: document.getElementById('actionIncidentGpsSummary'),
+                        captureButton: document.getElementById('actionIncidentGpsRetryBtn'),
+                        onSnapshotChange: syncIncidentGeofenceOverrideUi,
+                    });
+                    void gpsController.capture();
+                } else {
+                    syncIncidentGeofenceOverrideUi({
+                        status: 'unsupported',
+                        source: 'browser',
+                        note: '',
+                    });
+                }
             }
         }
 
@@ -1037,7 +2603,10 @@
             if (!options.requireActiveSession()) return;
             options.setCurrentSelectedInstallationId(Number.parseInt(String(installationId), 10));
             const container = document.getElementById('incidentsList');
-            document.querySelector('[data-section="incidents"]')?.click();
+            const isActive = options.getActiveSectionName() === 'incidents';
+            if (!isActive) {
+                document.querySelector('[data-section="incidents"]')?.click();
+            }
             if (container) container.innerHTML = '<p class="loading">Cargando incidencias...</p>';
 
             try {
@@ -1045,8 +2614,17 @@
                     includeDeleted: includeDeletedIncidentsAudit && canCurrentUserAuditDeletedIncidents(),
                 });
                 await renderIncidents(data.incidents || [], installationId);
-            } catch (_error) {
-                if (container) container.innerHTML = '<p class="error">Error cargando incidencias</p>';
+            } catch (error) {
+                const message = String(error?.message || '').trim()
+                    || 'Error cargando incidencias';
+                if (container) {
+                    container.innerHTML = '';
+                    const errorNode = document.createElement('p');
+                    errorNode.className = 'error';
+                    errorNode.textContent = message;
+                    container.appendChild(errorNode);
+                }
+                options.showNotification(message, 'error');
             }
         }
 
@@ -1180,35 +2758,17 @@
             const currentEvidenceNote = String(incident?.evidence_note || '').trim();
             const selectedPresetItems = currentChecklist.filter((item) => options.incidentChecklistPresets.includes(item));
             const customChecklistItems = currentChecklist.filter((item) => !options.incidentChecklistPresets.includes(item));
-            const presetChecklistHtml = options.incidentChecklistPresets.map((label, index) => {
-                const checked = selectedPresetItems.includes(label) ? 'checked' : '';
-                return `
-                    <label class="action-checkbox" for="actionIncidentChecklistPreset-${index}">
-                        <input type="checkbox" id="actionIncidentChecklistPreset-${index}" name="actionIncidentChecklistPreset" value="${options.escapeHtml(label)}" ${checked}>
-                        <span>${options.escapeHtml(label)}</span>
-                    </label>
-                `;
-            }).join('');
 
             options.openActionModal({
                 title: `Evidencia incidencia #${incidentId}`,
                 subtitle: 'Actualiza checklist y nota operativa en el registro de evidencia.',
                 submitLabel: 'Guardar evidencia',
                 focusId: 'actionIncidentEvidenceNote',
-                fieldsHtml: `
-                    <div class="input-group">
-                        <label>Checklist sugerido</label>
-                        <div class="incident-checklist-grid">${presetChecklistHtml}</div>
-                    </div>
-                    <div class="input-group">
-                        <label for="actionIncidentChecklistCustom">Checklist adicional (una linea por item)</label>
-                        <textarea id="actionIncidentChecklistCustom" rows="3" placeholder="Ej: Foto del serial\nValidacion con supervisor">${options.escapeHtml(customChecklistItems.join('\n'))}</textarea>
-                    </div>
-                    <div class="input-group">
-                        <label for="actionIncidentEvidenceNote">Nota operativa</label>
-                        <textarea id="actionIncidentEvidenceNote" rows="4" placeholder="Resumen operativo de evidencia">${options.escapeHtml(currentEvidenceNote)}</textarea>
-                    </div>
-                `,
+                fields: buildIncidentEvidenceFields({
+                    currentEvidenceNote,
+                    customChecklistItems,
+                    selectedPresetItems,
+                }),
                 onSubmit: async () => {
                     const selectedPresets = Array.from(
                         document.querySelectorAll('input[name="actionIncidentChecklistPreset"]:checked'),
@@ -1256,6 +2816,12 @@
                     });
                     if (result?.incident && typeof result.incident === 'object') {
                         applyVisibleIncidentUpdate(result.incident);
+                        rememberRecentLocalStatusUpdate(result.incident);
+                    } else {
+                        rememberRecentLocalStatusUpdate(
+                            { id: incidentId, incident_status: normalizedStatus },
+                            normalizedStatus,
+                        );
                     }
                     options.showNotification(`Incidencia #${incidentId} actualizada a "${options.incidentStatusLabel(normalizedStatus)}".`, 'success');
                     runIncidentRefreshInBackground(
@@ -1275,12 +2841,7 @@
                     subtitle: 'Agrega una nota de resolucion opcional antes de cerrar la incidencia.',
                     submitLabel: 'Resolver incidencia',
                     focusId: 'actionIncidentResolutionNote',
-                    fieldsHtml: `
-                        <div class="input-group">
-                            <label for="actionIncidentResolutionNote">Nota de resolucion (opcional)</label>
-                            <textarea id="actionIncidentResolutionNote" rows="4" placeholder="Resumen de la solucion aplicada">${options.escapeHtml(defaultNote)}</textarea>
-                        </div>
-                    `,
+                    fields: buildIncidentResolutionFields(defaultNote),
                     onSubmit: async () => {
                         const resolutionNote = String(document.getElementById('actionIncidentResolutionNote')?.value || '').trim();
                         await applyStatusUpdate(resolutionNote);
@@ -1361,22 +2922,36 @@
             options.showNotification(`${severityIcon} Nueva incidencia en registro #${incident.installation_id}`, 'warning');
         }
 
+        let lastRefreshAt = 0;
+        const REFRESH_THROTTLE_MS = 2000;
+
         function handleRealtimeIncidentStatusUpdate(incident) {
             if (!incident || !incident.id) return;
+            const isLocalEcho = consumeRecentLocalStatusUpdate(incident);
             const isDeleted = String(incident?.deleted_at || '').trim().length > 0;
             if (isDeleted) {
                 options.showNotification(`Incidencia #${incident.id} eliminada.`, 'info');
             } else {
                 applyVisibleIncidentUpdate(incident);
+                if (isLocalEcho) {
+                    return;
+                }
                 options.showNotification(
                     `Incidencia #${incident.id} ahora esta "${options.incidentStatusLabel(incident.incident_status)}".`,
                     'info',
                 );
             }
 
-            const activeIncidentsSection = document.getElementById('incidentsSection')?.classList.contains('active');
-            const activeAssetsSection = document.getElementById('assetsSection')?.classList.contains('active');
-            const activeDashboardSection = document.getElementById('dashboardSection')?.classList.contains('active');
+            const now = Date.now();
+            if (now - lastRefreshAt < REFRESH_THROTTLE_MS) {
+                console.log('[SSE] Refresh throttled');
+                return;
+            }
+            lastRefreshAt = now;
+
+            const activeIncidentsSection = options.isSectionActive('incidents');
+            const activeAssetsSection = options.isSectionActive('assets');
+            const activeDashboardSection = options.isSectionActive('dashboard');
             const currentSelectedInstallationId = options.getCurrentSelectedInstallationId();
             const currentSelectedAssetId = options.getCurrentSelectedAssetId();
 
@@ -1400,9 +2975,11 @@
             handleRealtimeIncident,
             handleRealtimeIncidentStatusUpdate,
             openIncidentModal,
+            openInstallationConformityModal,
             renderIncidents,
             selectAndUploadIncidentPhoto,
             showIncidentsForInstallation,
+            showIncidentsWorkspace,
             sortAssetIncidentsByPriority,
             updateIncidentEvidenceFromWeb,
             updateIncidentStatusFromWeb,

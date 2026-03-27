@@ -175,7 +175,7 @@ describe("IncidentDetailScreen accessibility", () => {
 
   it("exposes loading state for refresh button and interactive labels for actions", async () => {
     const { fireEvent, render, waitFor } = await import("@testing-library/react-native/pure");
-    const deferredList = createDeferred({
+    const deferredList = createDeferred<any>(); //
       success: true,
       installation_id: 7,
       incidents: [

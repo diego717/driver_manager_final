@@ -1,6 +1,7 @@
 import { database } from '../index'
 import Incident from '../models/Incident'
 import type { LocalSyncStatus } from '../models/Incident'
+import type { GpsCapturePayload } from '../../types/api'
 
 export interface CreateLocalIncidentParams {
   localId: string
@@ -12,6 +13,8 @@ export interface CreateLocalIncidentParams {
   severity: string
   source: string
   clientRequestId: string
+  gps: GpsCapturePayload
+  geofenceOverrideNote?: string
 }
 
 /**
@@ -31,6 +34,14 @@ export const incidentsRepository = {
         incident.severity = params.severity
         incident.source = params.source
         incident.clientRequestId = params.clientRequestId
+        incident.gpsCaptureStatus = params.gps.status
+        incident.gpsCaptureSource = params.gps.source ?? (params.gps.status === 'pending' ? 'none' : 'browser')
+        incident.gpsLat = typeof params.gps.lat === 'number' ? params.gps.lat : null
+        incident.gpsLng = typeof params.gps.lng === 'number' ? params.gps.lng : null
+        incident.gpsAccuracyM = typeof params.gps.accuracy_m === 'number' ? params.gps.accuracy_m : null
+        incident.gpsCapturedAt = params.gps.captured_at ?? null
+        incident.gpsCaptureNote = params.gps.note ?? ''
+        incident.geofenceOverrideNote = params.geofenceOverrideNote ?? ''
         incident.localSyncStatus = 'pending'
         incident.syncAttempts = 0
         incident.lastSyncError = null

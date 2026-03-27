@@ -1,3 +1,5 @@
+import { gpsBindValues, normalizeGpsPayload } from "../lib/gps.js";
+
 export function createRecordsRouteHandlers({
   jsonResponse,
   readJsonOrThrowBadRequest,
@@ -7,6 +9,7 @@ export function createRecordsRouteHandlers({
   buildDefaultInstallationOperationalSummary,
   publishRealtimeEvent,
   publishRealtimeStatsUpdate,
+  syncPublicTrackingSnapshotForInstallation,
 }) {
   async function handleRecordsRoute(
     request,
@@ -26,6 +29,7 @@ export function createRecordsRouteHandlers({
       );
       const data = await readJsonOrThrowBadRequest(request);
       const payload = normalizeInstallationPayload(data, "manual");
+      const gps = normalizeGpsPayload(data?.gps);
 
       if (!payload.driver_brand) payload.driver_brand = "N/A";
       if (!payload.driver_version) payload.driver_version = "N/A";
@@ -44,9 +48,19 @@ export function createRecordsRouteHandlers({
           installation_time_seconds,
           os_info,
           notes,
+          gps_lat,
+          gps_lng,
+          gps_accuracy_m,
+          gps_captured_at,
+          gps_capture_source,
+          gps_capture_status,
+          gps_capture_note,
+          site_lat,
+          site_lng,
+          site_radius_m,
           tenant_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
         .bind(
           payload.timestamp,
@@ -58,6 +72,10 @@ export function createRecordsRouteHandlers({
           payload.installation_time_seconds,
           payload.os_info,
           payload.notes,
+          ...gpsBindValues(gps),
+          payload.site_lat,
+          payload.site_lng,
+          payload.site_radius_m,
           recordsTenantId,
         )
         .run();
@@ -65,6 +83,7 @@ export function createRecordsRouteHandlers({
         id: insertResult?.meta?.last_row_id || null,
         tenant_id: recordsTenantId,
         ...payload,
+        ...gps,
         ...buildDefaultInstallationOperationalSummary(),
       };
 
@@ -73,6 +92,10 @@ export function createRecordsRouteHandlers({
         installation: record,
       }, realtimeTenantId);
       await publishRealtimeStatsUpdate(env, realtimeTenantId);
+      await syncPublicTrackingSnapshotForInstallation(env, {
+        tenantId: recordsTenantId,
+        installationId: record.id,
+      });
 
       return jsonResponse(
         request,

@@ -90,7 +90,39 @@ export function isMissingIncidentTimingColumnsError(error) {
     message.includes("estimated_duration_seconds") ||
     message.includes("work_started_at") ||
     message.includes("work_ended_at") ||
-    message.includes("actual_duration_seconds")
+      message.includes("actual_duration_seconds")
+  );
+}
+
+export function isMissingIncidentGeofenceOverrideColumnsError(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  if (!(message.includes("no such column") || message.includes("has no column named"))) {
+    return false;
+  }
+  return (
+    message.includes("geofence_override_note") ||
+    message.includes("geofence_override_by") ||
+    message.includes("geofence_override_at")
+  );
+}
+
+export function isMissingIncidentReadModelColumnsError(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  if (!(message.includes("no such column") || message.includes("has no column named"))) {
+    return false;
+  }
+  return (
+    message.includes("geofence_distance_m") ||
+    message.includes("geofence_radius_m") ||
+    message.includes("geofence_result") ||
+    message.includes("geofence_checked_at") ||
+    message.includes("gps_lat") ||
+    message.includes("gps_lng") ||
+    message.includes("gps_accuracy_m") ||
+    message.includes("gps_captured_at") ||
+    message.includes("gps_capture_source") ||
+    message.includes("gps_capture_status") ||
+    message.includes("gps_capture_note")
   );
 }
 

@@ -8,6 +8,8 @@ import {
   type IncidentPhoto,
   type InstallationRecord,
   type ListIncidentsResponse,
+  type UpdateInstallationInput,
+  type UpdateInstallationResponse,
   type UpdateIncidentEvidenceInput,
   type UpdateIncidentStatusInput,
 } from "../types/api";
@@ -42,6 +44,10 @@ type RawCreateRecordResponse = Omit<CreateRecordResponse, "record"> & {
   record: RawInstallationRecord;
 };
 
+type RawUpdateInstallationResponse = Omit<UpdateInstallationResponse, "installation"> & {
+  installation: RawInstallationRecord;
+};
+
 function normalizeInstallationId(rawId: number | string): number {
   if (typeof rawId === "number" && Number.isInteger(rawId) && rawId > 0) {
     return rawId;
@@ -64,6 +70,12 @@ function normalizeInstallationRecord(record: RawInstallationRecord): Installatio
     if (!Number.isFinite(parsed) || parsed < 0) return 0;
     return Math.trunc(parsed);
   };
+  const asOptionalFiniteNumber = (value: unknown): number | null | undefined => {
+    if (value === null || value === undefined || value === "") return undefined;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    return parsed;
+  };
 
   return {
     ...record,
@@ -74,6 +86,9 @@ function normalizeInstallationRecord(record: RawInstallationRecord): Installatio
     incident_resolved_count: asOptionalNonNegativeInt(record.incident_resolved_count),
     incident_active_count: asOptionalNonNegativeInt(record.incident_active_count),
     incident_critical_active_count: asOptionalNonNegativeInt(record.incident_critical_active_count),
+    site_lat: asOptionalFiniteNumber(record.site_lat),
+    site_lng: asOptionalFiniteNumber(record.site_lng),
+    site_radius_m: asOptionalFiniteNumber(record.site_radius_m),
   };
 }
 
@@ -222,5 +237,22 @@ export async function createInstallationRecord(
   return {
     ...response,
     record: normalizeInstallationRecord(response.record),
+  };
+}
+
+export async function updateInstallationRecord(
+  installationId: number,
+  payload: UpdateInstallationInput,
+): Promise<UpdateInstallationResponse> {
+  ensurePositiveInt(installationId, "installationId");
+  const response = await signedJsonRequest<RawUpdateInstallationResponse>({
+    method: "PUT",
+    path: `/installations/${installationId}`,
+    data: payload,
+  });
+  clearInstallationsCache();
+  return {
+    ...response,
+    installation: normalizeInstallationRecord(response.installation),
   };
 }

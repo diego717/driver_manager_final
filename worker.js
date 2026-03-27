@@ -4,6 +4,7 @@ import {
   HttpError,
   isMissingAssetsTableError,
   isMissingIncidentAssetColumnError,
+  isMissingIncidentGeofenceOverrideColumnsError,
   isMissingIncidentTimingColumnsError,
   isMissingIncidentsTableError,
   normalizeOptionalString,
@@ -39,6 +40,7 @@ import { createWebAuthRouteHandlers } from "./worker/auth/web.js";
 import { createWebSessionHelpers } from "./worker/auth/web-session.js";
 import { createAuditLogsRouteHandlers } from "./worker/routes/audit-logs.js";
 import { createDevicesRouteHandlers } from "./worker/routes/devices.js";
+import { createConformitiesRouteHandlers } from "./worker/routes/conformities.js";
 import { createIncidentsRouteHandlers } from "./worker/routes/incidents.js";
 import { createInstallationsRouteHandlers } from "./worker/routes/installations.js";
 import { createLookupRouteHandlers } from "./worker/routes/lookup.js";
@@ -46,6 +48,7 @@ import { createMaintenanceRouteHandlers } from "./worker/routes/maintenance.js";
 import { createRecordsRouteHandlers } from "./worker/routes/records.js";
 import { createStatisticsRouteHandlers } from "./worker/routes/statistics.js";
 import { createSystemRouteHandlers } from "./worker/routes/system.js";
+import { createPublicTrackingRouteHandlers } from "./worker/routes/public-tracking.js";
 import {
   ALLOWED_INCIDENT_PHOTO_TYPES,
   buildIncidentPhotoDescriptor,
@@ -61,6 +64,45 @@ import {
   resolveIncidentPhotoMetadata,
   validateAndProcessPhoto,
 } from "./worker/services/incidents.js";
+import {
+  buildGpsMapsUrl,
+  buildGpsMetadataSnapshot,
+  buildDefaultGpsSnapshot,
+  gpsBindValues,
+  normalizeGpsPayload,
+} from "./worker/lib/gps.js";
+import {
+  GPS_OBSERVABILITY_AUDIT_ACTIONS,
+  createEmptyGpsObservabilitySummary,
+  summarizeGpsObservability,
+} from "./worker/lib/gps-observability.js";
+import {
+  getActivePublicTrackingLink,
+  issuePublicTrackingLink,
+  publicTrackingHeaders,
+  resolvePublicTrackingOrigin,
+  syncPublicTrackingSnapshotForInstallation,
+  renderPublicTrackingHtml,
+  resolvePublicTrackingRequest,
+  revokePublicTrackingLink,
+} from "./worker/lib/public-tracking.js";
+import {
+  buildDefaultGeofenceSnapshot,
+  evaluateGeofence,
+  GEOFENCE_FLOW_INCIDENTS,
+  resolveHardGeofenceOverride,
+  normalizeInstallationSitePayload,
+} from "./worker/lib/geofence.js";
+import {
+  generateConformityPdf,
+  loadInstallationConformityContext,
+  loadInstallationConformityPdfById,
+  loadLatestInstallationConformity,
+  persistInstallationConformity,
+  sendConformityEmail,
+  storeConformityPdf,
+  storeSignatureAsset,
+} from "./worker/services/conformities.js";
 
 const AUTH_WINDOW_SECONDS = 300;
 const AUTH_NONCE_TTL_SECONDS = AUTH_WINDOW_SECONDS + 60;
@@ -104,8 +146,9 @@ let fcmAccessTokenCache = null;
 let fcmAccessTokenRefreshState = null;
 const SSE_POLL_INTERVAL_MS = 10000;
 const SSE_KEEP_ALIVE_INTERVAL_MS = 30000;
-const SSE_MAX_CONNECTION_MS = 2 * 60 * 1000;
+const SSE_MAX_CONNECTION_MS = 30 * 60 * 1000;
 const SSE_MAX_CLIENTS_PER_BROKER = 200;
+const SSE_CLIENT_WRITE_TIMEOUT_MS = 1500;
 const SSE_CLIENT_KEY_PATTERN = /^[a-z0-9._:-]{1,96}$/;
 const REALTIME_BROKER_INSTANCE = "global";
 const ASSET_EXTERNAL_CODE_MAX_LENGTH = 128;
@@ -124,12 +167,15 @@ const MAX_DRIVER_UPLOAD_BYTES = 300 * 1024 * 1024;
 const MAX_INCIDENT_ESTIMATED_DURATION_SECONDS = 7 * 24 * 60 * 60;
 const WEB_AUTH_ALLOW_INSECURE_FALLBACK_ENV = "ALLOW_INSECURE_WEB_AUTH_FALLBACK";
 const LEGACY_API_TENANT_ENV_NAME = "DRIVER_MANAGER_API_TENANT_ID";
+const LOAN_DUE_SOON_HOURS = 48;
+const LOAN_OVERDUE_REPEAT_HOURS = 24;
+const RESEND_API_URL = "https://api.resend.com/emails";
 
 function dashboardAssetSecurityHeaders() {
   return {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
-    "Permissions-Policy": "geolocation=(), microphone=(), camera=(self)",
+    "Permissions-Policy": "geolocation=(self), microphone=(), camera=(self)",
     "X-Content-Type-Options": "nosniff",
     "Content-Security-Policy": [
       "default-src 'self'",
@@ -152,6 +198,7 @@ const DASHBOARD_ASSET_PATHS = {
   "chart.umd.js": "/chart.umd.js",
   "dashboard-qr.js": "/dashboard-qr.js",
   "dashboard-api.js": "/dashboard-api.js",
+  "dashboard-geolocation.js": "/dashboard-geolocation.js",
   "dashboard-modals.js": "/dashboard-modals.js",
   "dashboard-incidents.js": "/dashboard-incidents.js",
   "dashboard-assets.js": "/dashboard-assets.js",
@@ -164,6 +211,8 @@ const DASHBOARD_ASSET_PATHS = {
   "dashboard-bootstrap.js": "/dashboard-bootstrap.js",
   "dashboard.js": "/dashboard.js",
   "dashboard-pwa.js": "/dashboard-pwa.js",
+  "public-tracking.js": "/public-tracking.js",
+  "public-tracking.css": "/public-tracking.css",
   "manifest.json": "/manifest.json",
   "sw.js": "/sw.js",
   "favicon.ico": "/icons/icon-192x192.png",
@@ -191,6 +240,7 @@ function dashboardAssetContentType(assetPath) {
     assetPath === "/chart.umd.js" ||
     assetPath === "/dashboard-qr.js" ||
     assetPath === "/dashboard-api.js" ||
+    assetPath === "/dashboard-geolocation.js" ||
     assetPath === "/dashboard-modals.js" ||
     assetPath === "/dashboard-incidents.js" ||
     assetPath === "/dashboard-assets.js" ||
@@ -203,10 +253,12 @@ function dashboardAssetContentType(assetPath) {
     assetPath === "/dashboard-bootstrap.js" ||
     assetPath === "/dashboard.js" ||
     assetPath === "/dashboard-pwa.js" ||
+    assetPath === "/public-tracking.js" ||
     assetPath === "/sw.js"
   ) {
     return "application/javascript; charset=utf-8";
   }
+  if (assetPath === "/public-tracking.css") return "text/css; charset=utf-8";
   if (assetPath === "/manifest.json") return "application/manifest+json; charset=utf-8";
   if (assetPath.startsWith("/icons/")) return "image/png";
   return null;
@@ -378,6 +430,7 @@ function normalizeNonNegativeInteger(value, fallback = 0) {
 
 function normalizeInstallationPayload(data, defaultStatus = "unknown") {
   const source = data && typeof data === "object" ? data : {};
+  const siteConfig = normalizeInstallationSitePayload(source);
 
   return {
     timestamp: normalizeOptionalString(source.timestamp, nowIso()),
@@ -395,6 +448,10 @@ function normalizeInstallationPayload(data, defaultStatus = "unknown") {
     ),
     os_info: normalizeOptionalString(source.os_info, ""),
     notes: normalizeOptionalString(source.notes || source.error_message, ""),
+    has_site_config: siteConfig.hasSiteConfig,
+    site_lat: siteConfig.site_lat,
+    site_lng: siteConfig.site_lng,
+    site_radius_m: siteConfig.site_radius_m,
   };
 }
 
@@ -402,6 +459,7 @@ function normalizeInstallationUpdatePayload(data) {
   const source = data && typeof data === "object" ? data : {};
   const hasNotes = Object.prototype.hasOwnProperty.call(source, "notes");
   const hasInstallationTime = Object.prototype.hasOwnProperty.call(source, "installation_time_seconds");
+  const siteConfig = normalizeInstallationSitePayload(source);
 
   let notes = null;
   if (hasNotes) {
@@ -438,6 +496,10 @@ function normalizeInstallationUpdatePayload(data) {
   return {
     notes,
     installation_time_seconds: installationTimeSeconds,
+    has_site_config: siteConfig.hasSiteConfig,
+    site_lat: siteConfig.site_lat,
+    site_lng: siteConfig.site_lng,
+    site_radius_m: siteConfig.site_radius_m,
   };
 }
 
@@ -476,6 +538,10 @@ function buildDefaultInstallationOperationalSummary() {
     incident_resolved_count: 0,
     incident_active_count: 0,
     incident_critical_active_count: 0,
+    incident_estimated_duration_seconds_total: 0,
+    incident_estimated_duration_count: 0,
+    incident_actual_duration_seconds_total: 0,
+    incident_actual_duration_count: 0,
     attention_state: "clear",
   };
 }
@@ -517,6 +583,22 @@ async function loadInstallationOperationalSummaries(env, installationIds, tenant
           row?.incident_critical_active_count,
           0,
         ),
+        incident_estimated_duration_seconds_total: normalizeNonNegativeInteger(
+          row?.incident_estimated_duration_seconds_total,
+          0,
+        ),
+        incident_estimated_duration_count: normalizeNonNegativeInteger(
+          row?.incident_estimated_duration_count,
+          0,
+        ),
+        incident_actual_duration_seconds_total: normalizeNonNegativeInteger(
+          row?.incident_actual_duration_seconds_total,
+          0,
+        ),
+        incident_actual_duration_count: normalizeNonNegativeInteger(
+          row?.incident_actual_duration_count,
+          0,
+        ),
       };
       summary.attention_state = deriveInstallationAttentionState(summary);
       summaryById.set(installationId, summary);
@@ -532,7 +614,11 @@ async function loadInstallationOperationalSummaries(env, installationIds, tenant
         SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'paused' THEN 1 ELSE 0 END) AS incident_paused_count,
         SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'resolved' THEN 1 ELSE 0 END) AS incident_resolved_count,
         SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused') THEN 1 ELSE 0 END) AS incident_active_count,
-        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count
+        SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count,
+        SUM(CASE WHEN estimated_duration_seconds IS NOT NULL AND estimated_duration_seconds >= 0 THEN estimated_duration_seconds ELSE 0 END) AS incident_estimated_duration_seconds_total,
+        SUM(CASE WHEN estimated_duration_seconds IS NOT NULL AND estimated_duration_seconds >= 0 THEN 1 ELSE 0 END) AS incident_estimated_duration_count,
+        SUM(CASE WHEN actual_duration_seconds IS NOT NULL AND actual_duration_seconds >= 0 THEN actual_duration_seconds ELSE 0 END) AS incident_actual_duration_seconds_total,
+        SUM(CASE WHEN actual_duration_seconds IS NOT NULL AND actual_duration_seconds >= 0 THEN 1 ELSE 0 END) AS incident_actual_duration_count
       FROM incidents
       WHERE tenant_id = ?
         AND deleted_at IS NULL
@@ -560,7 +646,11 @@ async function loadInstallationOperationalSummaries(env, installationIds, tenant
       SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'paused' THEN 1 ELSE 0 END) AS incident_paused_count,
       SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) = 'resolved' THEN 1 ELSE 0 END) AS incident_resolved_count,
       SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused') THEN 1 ELSE 0 END) AS incident_active_count,
-      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count
+      SUM(CASE WHEN LOWER(COALESCE(incident_status, 'open')) IN ('open', 'in_progress', 'paused') AND LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS incident_critical_active_count,
+      SUM(CASE WHEN estimated_duration_seconds IS NOT NULL AND estimated_duration_seconds >= 0 THEN estimated_duration_seconds ELSE 0 END) AS incident_estimated_duration_seconds_total,
+      SUM(CASE WHEN estimated_duration_seconds IS NOT NULL AND estimated_duration_seconds >= 0 THEN 1 ELSE 0 END) AS incident_estimated_duration_count,
+      SUM(CASE WHEN actual_duration_seconds IS NOT NULL AND actual_duration_seconds >= 0 THEN actual_duration_seconds ELSE 0 END) AS incident_actual_duration_seconds_total,
+      SUM(CASE WHEN actual_duration_seconds IS NOT NULL AND actual_duration_seconds >= 0 THEN 1 ELSE 0 END) AS incident_actual_duration_count
     FROM incidents
     WHERE deleted_at IS NULL
       AND installation_id IN (${placeholders})
@@ -661,6 +751,78 @@ function parseAssetSearchQuery(searchParams) {
     status: normalizeOptionalString(searchParams.get("status"), "").toLowerCase(),
     search: normalizeOptionalString(searchParams.get("search"), "").toLowerCase(),
   };
+}
+
+function deriveLoanStatus(row, currentIso = nowIso()) {
+  if (normalizeOptionalString(row?.returned_at, "").trim()) return "returned";
+  const expectedReturnAt = normalizeOptionalString(row?.expected_return_at, "").trim();
+  if (expectedReturnAt && expectedReturnAt < currentIso) return "overdue";
+  return "active";
+}
+
+function mapLoanRow(row, currentIso = nowIso()) {
+  return {
+    id: row.id,
+    tenant_id: row.tenant_id,
+    asset_id: row.asset_id,
+    asset_external_code: row.asset_external_code || null,
+    asset_brand: row.asset_brand || null,
+    asset_model: row.asset_model || null,
+    original_client: row.original_client || "",
+    borrowing_client: row.borrowing_client || "",
+    loaned_at: row.loaned_at || null,
+    expected_return_at: row.expected_return_at || null,
+    returned_at: row.returned_at || null,
+    loaned_by_username: row.loaned_by_username || "",
+    returned_by_username: row.returned_by_username || null,
+    notes: row.notes || "",
+    return_notes: row.return_notes || "",
+    status: deriveLoanStatus(row, currentIso),
+  };
+}
+
+function resolveLoanReminderType(row, currentIso = nowIso(), options = {}) {
+  if (normalizeOptionalString(row?.returned_at, "").trim()) return null;
+  const expectedReturnAt = normalizeOptionalString(row?.expected_return_at, "").trim();
+  if (!expectedReturnAt) return null;
+  const currentDate = new Date(currentIso);
+  const currentTime = Number.isFinite(currentDate.getTime()) ? currentDate.getTime() : Date.now();
+
+  const dueSoonCutoffIso = normalizeOptionalString(
+    options.dueSoonCutoffIso,
+    new Date(currentTime + LOAN_DUE_SOON_HOURS * 60 * 60 * 1000).toISOString(),
+  );
+  const overdueRepeatCutoffIso = normalizeOptionalString(
+    options.overdueRepeatCutoffIso,
+    new Date(currentTime - LOAN_OVERDUE_REPEAT_HOURS * 60 * 60 * 1000).toISOString(),
+  );
+
+  if (expectedReturnAt < currentIso) {
+    const lastOverdueReminderAt = normalizeOptionalString(row?.overdue_reminded_at, "").trim();
+    return !lastOverdueReminderAt || lastOverdueReminderAt < overdueRepeatCutoffIso
+      ? "overdue"
+      : null;
+  }
+
+  if (expectedReturnAt <= dueSoonCutoffIso) {
+    const dueSoonReminderAt = normalizeOptionalString(row?.due_soon_reminded_at, "").trim();
+    return dueSoonReminderAt ? null : "due_soon";
+  }
+
+  return null;
+}
+
+function buildLoanReminderStatusLabel(reminderType) {
+  return reminderType === "overdue" ? "vencido" : "proximo a vencer";
+}
+
+function normalizeEmailRecipients(value) {
+  return [...new Set(
+    String(value || "")
+      .split(/[,\n;]+/)
+      .map((entry) => normalizeOptionalString(entry, "").trim())
+      .filter((entry) => entry),
+  )];
 }
 
 async function readJsonOrThrowBadRequest(request, message = "Payload invalido.", options = {}) {
@@ -995,7 +1157,17 @@ async function getInstallationsAfterId(
       driver_description,
       installation_time_seconds,
       os_info,
-      notes
+      notes,
+      site_lat,
+      site_lng,
+      site_radius_m,
+      gps_lat,
+      gps_lng,
+      gps_accuracy_m,
+      gps_captured_at,
+      gps_capture_source,
+      gps_capture_status,
+      gps_capture_note
     FROM installations
     WHERE tenant_id = ?
       AND id > ?
@@ -1038,7 +1210,21 @@ async function getIncidentsAfterId(
         evidence_note,
         work_started_at,
         work_ended_at,
-        actual_duration_seconds
+        actual_duration_seconds,
+        geofence_distance_m,
+        geofence_radius_m,
+        geofence_result,
+        geofence_checked_at,
+        geofence_override_note,
+        geofence_override_by,
+        geofence_override_at,
+        gps_lat,
+        gps_lng,
+        gps_accuracy_m,
+        gps_captured_at,
+        gps_capture_source,
+        gps_capture_status,
+        gps_capture_note
       FROM incidents
       WHERE tenant_id = ?
         AND deleted_at IS NULL
@@ -1071,7 +1257,21 @@ async function getIncidentsAfterId(
         resolved_by,
         resolution_note,
         checklist_json,
-        evidence_note
+        evidence_note,
+        geofence_distance_m,
+        geofence_radius_m,
+        geofence_result,
+        geofence_checked_at,
+        geofence_override_note,
+        geofence_override_by,
+        geofence_override_at,
+        gps_lat,
+        gps_lng,
+        gps_accuracy_m,
+        gps_captured_at,
+        gps_capture_source,
+        gps_capture_status,
+        gps_capture_note
       FROM incidents
       WHERE tenant_id = ?
         AND deleted_at IS NULL
@@ -1117,6 +1317,7 @@ async function getSseStatisticsSnapshot(env, tenantId = DEFAULT_REALTIME_TENANT_
     incident_critical_active_count: 0,
     incident_outside_sla_count: 0,
   };
+  let gpsObservability = createEmptyGpsObservabilitySummary();
   try {
     const { results: incidentSummaryRows } = await env.DB.prepare(`
       SELECT
@@ -1137,6 +1338,39 @@ async function getSseStatisticsSnapshot(env, tenantId = DEFAULT_REALTIME_TENANT_
       incident_critical_active_count: Number(row?.incident_critical_active_count) || 0,
       incident_outside_sla_count: Number(row?.incident_outside_sla_count) || 0,
     };
+
+    const { results: installationGpsRows } = await env.DB.prepare(`
+      SELECT gps_capture_status, gps_accuracy_m
+      FROM installations
+      WHERE tenant_id = ?
+    `)
+      .bind(normalizedTenantId)
+      .all();
+
+    const { results: incidentGpsRows } = await env.DB.prepare(`
+      SELECT gps_capture_status, gps_accuracy_m
+      FROM incidents
+      WHERE tenant_id = ?
+    `)
+      .bind(normalizedTenantId)
+      .all();
+
+    const auditActionPlaceholders = GPS_OBSERVABILITY_AUDIT_ACTIONS.map(() => "?").join(", ");
+    const { results: auditActionRows } = await env.DB.prepare(`
+      SELECT action, COUNT(*) AS count
+      FROM audit_logs
+      WHERE tenant_id = ?
+        AND action IN (${auditActionPlaceholders})
+      GROUP BY action
+    `)
+      .bind(normalizedTenantId, ...GPS_OBSERVABILITY_AUDIT_ACTIONS)
+      .all();
+
+    gpsObservability = summarizeGpsObservability({
+      installationRows: installationGpsRows || [],
+      incidentRows: incidentGpsRows || [],
+      auditActionRows: auditActionRows || [],
+    });
   } catch (error) {
     if (!isMissingIncidentsTableError(error)) {
       throw error;
@@ -1147,6 +1381,7 @@ async function getSseStatisticsSnapshot(env, tenantId = DEFAULT_REALTIME_TENANT_
     ...baseStats,
     ...incidentSummary,
     incident_sla_minutes: incidentSlaMinutes,
+    gps_observability: gpsObservability,
   };
 }
 
@@ -1242,7 +1477,7 @@ export class RealtimeEventsBroker {
     this.clientKeyToId = new Map();
 
     this.keepAliveTimer = setInterval(() => {
-      this.broadcastComment("ping").catch(() => {});
+      this.broadcastComment("ping").catch(() => { });
     }, SSE_KEEP_ALIVE_INTERVAL_MS);
   }
 
@@ -1296,7 +1531,7 @@ export class RealtimeEventsBroker {
         message: "Reconexión requerida",
         reconnect_after_ms: reconnectAfterMs,
         timestamp: nowIso(),
-      }).catch(() => {});
+      }).catch(() => { });
     }, SSE_MAX_CONNECTION_MS);
 
     this.clients.set(clientId, {
@@ -1378,7 +1613,10 @@ export class RealtimeEventsBroker {
     const staleClientIds = [];
     for (const [clientId, client] of this.clients.entries()) {
       try {
-        await client.writer.write(this.encoder.encode(`:${comment}\n\n`));
+        await this.writeChunkWithTimeout(
+          client.writer,
+          this.encoder.encode(`:${comment}\n\n`),
+        );
       } catch {
         staleClientIds.push(clientId);
       }
@@ -1388,8 +1626,29 @@ export class RealtimeEventsBroker {
     }
   }
 
+  async writeChunkWithTimeout(writer, chunk, timeoutMs = SSE_CLIENT_WRITE_TIMEOUT_MS) {
+    let timeoutId = null;
+    try {
+      await Promise.race([
+        writer.write(chunk),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(new Error("SSE client write timeout"));
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
+  }
+
   async writeData(writer, payload) {
-    await writer.write(this.encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+    await this.writeChunkWithTimeout(
+      writer,
+      this.encoder.encode(`data: ${JSON.stringify(payload)}\n\n`),
+    );
   }
 
   async closeClient(clientId, finalPayload = null) {
@@ -1404,10 +1663,10 @@ export class RealtimeEventsBroker {
       if (finalPayload) {
         await this.writeData(client.writer, finalPayload);
       }
-    } catch {}
+    } catch { }
     try {
       await client.writer.close();
-    } catch {}
+    } catch { }
   }
 }
 
@@ -2362,29 +2621,29 @@ async function sendPushNotification(env, fcmTokens, notification) {
     const response = await fetch(
       `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(access.projectId)}/messages:send`,
       {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${access.accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        message: {
-          token,
-          notification: {
-            title,
-            body,
-          },
-          data: dataPayload,
-          android: {
-            priority: "HIGH",
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${access.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: {
+            token,
             notification: {
-              sound: "default",
-              channel_id: "incidents",
+              title,
+              body,
+            },
+            data: dataPayload,
+            android: {
+              priority: "HIGH",
+              notification: {
+                sound: "default",
+                channel_id: "incidents",
+              },
             },
           },
-        },
-      }),
-    },
+        }),
+      },
     );
 
     if (response.ok) {
@@ -2397,6 +2656,82 @@ async function sendPushNotification(env, fcmTokens, notification) {
     request_count: tokenSubset.length,
     successful_requests: successfulRequests,
     token_count: tokenSubset.length,
+  };
+}
+
+async function sendLoanReminderEmail(env, { tenantId, dueSoonLoans = [], overdueLoans = [] }) {
+  const recipients = normalizeEmailRecipients(env?.LOAN_REMINDER_EMAIL_TO);
+  if (!env?.RESEND_API_KEY || !env?.RESEND_FROM_EMAIL) {
+    return { delivered: false, skipped: true, reason: "resend_not_configured" };
+  }
+  if (!recipients.length) {
+    return { delivered: false, skipped: true, reason: "loan_reminder_recipients_missing" };
+  }
+
+  const dueSoonCount = dueSoonLoans.length;
+  const overdueCount = overdueLoans.length;
+  if (!dueSoonCount && !overdueCount) {
+    return { delivered: false, skipped: true, reason: "no_loans_to_notify" };
+  }
+
+  const subjectParts = [];
+  if (overdueCount) subjectParts.push(`${overdueCount} vencido${overdueCount === 1 ? "" : "s"}`);
+  if (dueSoonCount) subjectParts.push(`${dueSoonCount} por vencer`);
+  const subject = `[SiteOps] Prestamos ${subjectParts.join(" | ")} | tenant ${tenantId}`;
+
+  const lines = [`Tenant: ${tenantId}`, ""];
+
+  if (overdueCount) {
+    lines.push("Prestamos vencidos:");
+    overdueLoans.forEach((loan) => {
+      lines.push(
+        `- ${loan.asset_external_code || `#${loan.asset_id}`}: ${loan.borrowing_client || "-"} | ` +
+        `esperado ${normalizeOptionalString(loan.expected_return_at, "-")} | ` +
+        `origen ${loan.original_client || "-"}`,
+      );
+    });
+    lines.push("");
+  }
+
+  if (dueSoonCount) {
+    lines.push("Prestamos proximos a vencer:");
+    dueSoonLoans.forEach((loan) => {
+      lines.push(
+        `- ${loan.asset_external_code || `#${loan.asset_id}`}: ${loan.borrowing_client || "-"} | ` +
+        `esperado ${normalizeOptionalString(loan.expected_return_at, "-")} | ` +
+        `origen ${loan.original_client || "-"}`,
+      );
+    });
+    lines.push("");
+  }
+
+  const response = await fetch(RESEND_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: env.RESEND_FROM_EMAIL,
+      to: recipients,
+      subject,
+      text: lines.join("\n"),
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    return {
+      delivered: false,
+      skipped: false,
+      reason: normalizeOptionalString(errorText, `HTTP ${response.status}`),
+    };
+  }
+
+  return {
+    delivered: true,
+    skipped: false,
+    recipient_count: recipients.length,
   };
 }
 
@@ -2518,6 +2853,26 @@ function normalizeIncidentEvidencePayload(data) {
 function mapIncidentRow(incident, photos = undefined) {
   const safeIncident = incident && typeof incident === "object" ? incident : {};
   const { checklist_json: _ignoredChecklistJson, ...rest } = safeIncident;
+  const gps = {
+    ...buildDefaultGpsSnapshot(),
+    gps_lat: safeIncident.gps_lat ?? null,
+    gps_lng: safeIncident.gps_lng ?? null,
+    gps_accuracy_m: safeIncident.gps_accuracy_m ?? null,
+    gps_captured_at: safeIncident.gps_captured_at ?? null,
+    gps_capture_source: normalizeOptionalString(safeIncident.gps_capture_source, "none").toLowerCase(),
+    gps_capture_status: normalizeOptionalString(safeIncident.gps_capture_status, "pending").toLowerCase(),
+    gps_capture_note: normalizeOptionalString(safeIncident.gps_capture_note, ""),
+  };
+  const geofence = {
+    ...buildDefaultGeofenceSnapshot(),
+    geofence_distance_m: safeIncident.geofence_distance_m ?? null,
+    geofence_radius_m: safeIncident.geofence_radius_m ?? null,
+    geofence_result: normalizeOptionalString(safeIncident.geofence_result, "not_applicable").toLowerCase(),
+    geofence_checked_at: safeIncident.geofence_checked_at ?? null,
+    geofence_override_note: normalizeOptionalString(safeIncident.geofence_override_note, ""),
+    geofence_override_by: normalizeOptionalString(safeIncident.geofence_override_by, "") || null,
+    geofence_override_at: safeIncident.geofence_override_at ?? null,
+  };
   const normalizedStatus = normalizeOptionalString(safeIncident.incident_status, "open")
     .toLowerCase();
   const estimatedDurationSeconds = normalizeNonNegativeInteger(
@@ -2573,6 +2928,8 @@ function mapIncidentRow(incident, photos = undefined) {
 
   const mapped = {
     ...rest,
+    ...gps,
+    ...geofence,
     checklist_items: parseIncidentChecklistItems(safeIncident.checklist_json),
     evidence_note: normalizeOptionalString(safeIncident.evidence_note, "").trim() || null,
     estimated_duration_seconds: estimatedDurationSeconds,
@@ -2662,7 +3019,7 @@ async function handleSseEventsRoute(request, env, url, corsPolicy, routeParts) {
   try {
     sseWebSession = await verifyWebAccessToken(request, env);
   } catch (err) {
-    return jsonResponse(request, env, corsPolicy,{ error: "Unauthorized" }, 401);
+    return jsonResponse(request, env, corsPolicy, { error: "Unauthorized" }, 401);
   }
   const sseTenantId = resolveRealtimeTenantId(request, sseWebSession);
   const sseClientKey = buildRealtimeClientKeyFromSession(sseWebSession);
@@ -2779,7 +3136,7 @@ async function handleSseEventsRoute(request, env, url, corsPolicy, routeParts) {
       // Try immediately so clients don't wait a full interval after connect.
       await pollAndEmit();
       pollTimer = setInterval(() => {
-        pollAndEmit().catch(() => {});
+        pollAndEmit().catch(() => { });
       }, SSE_POLL_INTERVAL_MS);
 
       // Keep connection alive with ping every 30 seconds
@@ -2808,7 +3165,7 @@ async function handleSseEventsRoute(request, env, url, corsPolicy, routeParts) {
               timestamp: nowIso()
             });
             controller.close();
-          } catch {}
+          } catch { }
         }
       }, SSE_MAX_CONNECTION_MS);
     },
@@ -2840,18 +3197,18 @@ async function handleAssetsRoute(
   webSession,
   realtimeTenantId,
 ) {
-      if (routeParts.length >= 1 && routeParts[0] === "assets") {
-        const assetsTenantId = normalizeRealtimeTenantId(
-          isWebRoute ? webSession?.tenant_id : realtimeTenantId,
-        );
+  if (routeParts.length >= 1 && routeParts[0] === "assets") {
+    const assetsTenantId = normalizeRealtimeTenantId(
+      isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+    );
 
-        if (routeParts.length === 1 && request.method === "GET") {
-          const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
-          const pageSize = limit + 1;
-          const cursor = parseTimestampIdCursor(url.searchParams.get("cursor"));
-          const filters = parseAssetSearchQuery(url.searchParams);
+    if (routeParts.length === 1 && request.method === "GET") {
+      const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
+      const pageSize = limit + 1;
+      const cursor = parseTimestampIdCursor(url.searchParams.get("cursor"));
+      const filters = parseAssetSearchQuery(url.searchParams);
 
-          let query = `
+      let query = `
             SELECT
               id,
               tenant_id,
@@ -2867,25 +3224,25 @@ async function handleAssetsRoute(
             FROM assets
             WHERE tenant_id = ?
           `;
-          const bindings = [assetsTenantId];
+      const bindings = [assetsTenantId];
 
-          if (filters.code) {
-            query += " AND LOWER(external_code) = ?";
-            bindings.push(filters.code);
-          }
+      if (filters.code) {
+        query += " AND LOWER(external_code) = ?";
+        bindings.push(filters.code);
+      }
 
-          if (filters.brand) {
-            query += " AND LOWER(brand) = ?";
-            bindings.push(filters.brand);
-          }
+      if (filters.brand) {
+        query += " AND LOWER(brand) = ?";
+        bindings.push(filters.brand);
+      }
 
-          if (filters.status) {
-            query += " AND status = ?";
-            bindings.push(normalizeAssetStatus(filters.status));
-          }
+      if (filters.status) {
+        query += " AND status = ?";
+        bindings.push(normalizeAssetStatus(filters.status));
+      }
 
-          if (filters.search) {
-            query += `
+      if (filters.search) {
+        query += `
               AND (
                 LOWER(external_code) LIKE ?
                 OR LOWER(brand) LIKE ?
@@ -2894,63 +3251,63 @@ async function handleAssetsRoute(
                 OR LOWER(client_name) LIKE ?
               )
             `;
-            const wildcard = `%${filters.search}%`;
-            bindings.push(wildcard, wildcard, wildcard, wildcard, wildcard);
-          }
+        const wildcard = `%${filters.search}%`;
+        bindings.push(wildcard, wildcard, wildcard, wildcard, wildcard);
+      }
 
-          if (cursor) {
-            query += " AND (updated_at < ? OR (updated_at = ? AND id < ?))";
-            bindings.push(cursor.timestamp, cursor.timestamp, cursor.id);
-          }
+      if (cursor) {
+        query += " AND (updated_at < ? OR (updated_at = ? AND id < ?))";
+        bindings.push(cursor.timestamp, cursor.timestamp, cursor.id);
+      }
 
-          query += " ORDER BY updated_at DESC, id DESC LIMIT ?";
-          bindings.push(pageSize);
+      query += " ORDER BY updated_at DESC, id DESC LIMIT ?";
+      bindings.push(pageSize);
 
-          let results;
-          try {
-            ({ results } = await env.DB.prepare(query).bind(...bindings).all());
-          } catch (error) {
-            if (isMissingAssetsTableError(error)) {
-              throw new HttpError(
-                503,
-                "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
-              );
-            }
-            throw error;
-          }
-
-          const rows = results || [];
-          const hasMore = rows.length > limit;
-          const items = hasMore ? rows.slice(0, limit) : rows;
-          const nextCursor = hasMore
-            ? buildTimestampIdCursor(
-                items[items.length - 1].updated_at,
-                items[items.length - 1].id,
-              )
-            : null;
-
-          const response = jsonResponse(request, env, corsPolicy, {
-            success: true,
-            items,
-          });
-          appendPaginationHeader(response, nextCursor);
-          return response;
+      let results;
+      try {
+        ({ results } = await env.DB.prepare(query).bind(...bindings).all());
+      } catch (error) {
+        if (isMissingAssetsTableError(error)) {
+          throw new HttpError(
+            503,
+            "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
+          );
         }
+        throw error;
+      }
 
-        if (routeParts.length === 1 && request.method === "POST") {
-          if (!isWebRoute) {
-            throw new HttpError(401, "Gestion de equipos requiere sesion web.");
-          }
-          requireAdminRole(webSession?.role);
+      const rows = results || [];
+      const hasMore = rows.length > limit;
+      const items = hasMore ? rows.slice(0, limit) : rows;
+      const nextCursor = hasMore
+        ? buildTimestampIdCursor(
+          items[items.length - 1].updated_at,
+          items[items.length - 1].id,
+        )
+        : null;
 
-          const data = await readJsonOrThrowBadRequest(request);
-          const payload = normalizeAssetPayload(data);
-          const createdAt = nowIso();
-          const updatedAt = createdAt;
-          const createdBy = normalizeWebUsername(webSession?.sub || "unknown");
+      const response = jsonResponse(request, env, corsPolicy, {
+        success: true,
+        items,
+      });
+      appendPaginationHeader(response, nextCursor);
+      return response;
+    }
 
-          try {
-            const insertResult = await env.DB.prepare(`
+    if (routeParts.length === 1 && request.method === "POST") {
+      if (!isWebRoute) {
+        throw new HttpError(401, "Gestion de equipos requiere sesion web.");
+      }
+      requireAdminRole(webSession?.role);
+
+      const data = await readJsonOrThrowBadRequest(request);
+      const payload = normalizeAssetPayload(data);
+      const createdAt = nowIso();
+      const updatedAt = createdAt;
+      const createdBy = normalizeWebUsername(webSession?.sub || "unknown");
+
+      try {
+        const insertResult = await env.DB.prepare(`
               INSERT INTO assets (
                 tenant_id,
                 external_code,
@@ -2966,79 +3323,79 @@ async function handleAssetsRoute(
               )
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `)
-              .bind(
-                assetsTenantId,
-                payload.external_code,
-                payload.brand,
-                payload.serial_number,
-                payload.model,
-                payload.client_name,
-                payload.notes,
-                payload.status,
-                createdAt,
-                updatedAt,
-                createdBy,
-              )
-              .run();
+          .bind(
+            assetsTenantId,
+            payload.external_code,
+            payload.brand,
+            payload.serial_number,
+            payload.model,
+            payload.client_name,
+            payload.notes,
+            payload.status,
+            createdAt,
+            updatedAt,
+            createdBy,
+          )
+          .run();
 
-            return jsonResponse(request, env, corsPolicy, {
-              success: true,
-              asset: {
-                id: insertResult?.meta?.last_row_id || null,
-                tenant_id: assetsTenantId,
-                external_code: payload.external_code,
-                brand: payload.brand,
-                serial_number: payload.serial_number,
-                model: payload.model,
-                client_name: payload.client_name,
-                notes: payload.notes,
-                status: payload.status,
-                created_at: createdAt,
-                updated_at: updatedAt,
-                created_by_username: createdBy,
-              },
-            }, 201);
-          } catch (error) {
-            const message = normalizeOptionalString(error?.message, "").toLowerCase();
-            if (message.includes("unique")) {
-              throw new HttpError(409, "Ya existe un equipo con ese external_code.");
-            }
-            if (isMissingAssetsTableError(error)) {
-              throw new HttpError(
-                503,
-                "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
-              );
-            }
-            throw error;
-          }
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          asset: {
+            id: insertResult?.meta?.last_row_id || null,
+            tenant_id: assetsTenantId,
+            external_code: payload.external_code,
+            brand: payload.brand,
+            serial_number: payload.serial_number,
+            model: payload.model,
+            client_name: payload.client_name,
+            notes: payload.notes,
+            status: payload.status,
+            created_at: createdAt,
+            updated_at: updatedAt,
+            created_by_username: createdBy,
+          },
+        }, 201);
+      } catch (error) {
+        const message = normalizeOptionalString(error?.message, "").toLowerCase();
+        if (message.includes("unique")) {
+          throw new HttpError(409, "Ya existe un equipo con ese external_code.");
         }
-
-        if (routeParts.length === 2 && routeParts[1] === "resolve" && request.method === "POST") {
-          if (isWebRoute) {
-            requireWebWriteRole(webSession?.role);
-          }
-          const data = await readJsonOrThrowBadRequest(request);
-          const externalCode = normalizeAssetExternalCode(
-            data?.external_code ?? data?.asset_id ?? data?.code,
+        if (isMissingAssetsTableError(error)) {
+          throw new HttpError(
+            503,
+            "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
           );
-          const brand = normalizeOptionalString(data?.brand, "")
-            .slice(0, ASSET_BRAND_MAX_LENGTH);
-          const serialNumber = normalizeOptionalString(data?.serial_number, "")
-            .slice(0, ASSET_SERIAL_MAX_LENGTH);
-          const model = normalizeOptionalString(data?.model, "")
-            .slice(0, ASSET_MODEL_MAX_LENGTH);
-          const clientName = normalizeOptionalString(data?.client_name, "")
-            .slice(0, ASSET_CLIENT_NAME_MAX_LENGTH);
-          const notes = normalizeOptionalString(data?.notes, "")
-            .slice(0, ASSET_NOTES_MAX_LENGTH);
-          const status = Object.prototype.hasOwnProperty.call(data || {}, "status")
-            ? normalizeAssetStatus(data?.status)
-            : "active";
-          const updateExisting = Boolean(data?.update_existing);
-          const normalizedCode = externalCode.toLowerCase();
-          const actorUsername = normalizeWebUsername(webSession?.sub || "unknown");
-          const now = nowIso();
-          const selectByCodeQuery = `
+        }
+        throw error;
+      }
+    }
+
+    if (routeParts.length === 2 && routeParts[1] === "resolve" && request.method === "POST") {
+      if (isWebRoute) {
+        requireWebWriteRole(webSession?.role);
+      }
+      const data = await readJsonOrThrowBadRequest(request);
+      const externalCode = normalizeAssetExternalCode(
+        data?.external_code ?? data?.asset_id ?? data?.code,
+      );
+      const brand = normalizeOptionalString(data?.brand, "")
+        .slice(0, ASSET_BRAND_MAX_LENGTH);
+      const serialNumber = normalizeOptionalString(data?.serial_number, "")
+        .slice(0, ASSET_SERIAL_MAX_LENGTH);
+      const model = normalizeOptionalString(data?.model, "")
+        .slice(0, ASSET_MODEL_MAX_LENGTH);
+      const clientName = normalizeOptionalString(data?.client_name, "")
+        .slice(0, ASSET_CLIENT_NAME_MAX_LENGTH);
+      const notes = normalizeOptionalString(data?.notes, "")
+        .slice(0, ASSET_NOTES_MAX_LENGTH);
+      const status = Object.prototype.hasOwnProperty.call(data || {}, "status")
+        ? normalizeAssetStatus(data?.status)
+        : "active";
+      const updateExisting = Boolean(data?.update_existing);
+      const normalizedCode = externalCode.toLowerCase();
+      const actorUsername = normalizeWebUsername(webSession?.sub || "unknown");
+      const now = nowIso();
+      const selectByCodeQuery = `
             SELECT
               id,
               tenant_id,
@@ -3057,29 +3414,29 @@ async function handleAssetsRoute(
             LIMIT 1
           `;
 
-          try {
-            const { results: existingRows } = await env.DB.prepare(selectByCodeQuery)
-              .bind(assetsTenantId, normalizedCode)
-              .all();
+      try {
+        const { results: existingRows } = await env.DB.prepare(selectByCodeQuery)
+          .bind(assetsTenantId, normalizedCode)
+          .all();
 
-            const existing = existingRows?.[0];
-            if (existing) {
-              const nextBrand = brand || existing.brand || "";
-              const nextSerial = serialNumber || existing.serial_number || "";
-              const nextModel = model || existing.model || "";
-              const nextClient = clientName || existing.client_name || "";
-              const nextNotes = notes || existing.notes || "";
-              const nextStatus = status || existing.status || "active";
-              const shouldPersistUpdate =
-                updateExisting ||
-                (!existing.brand && Boolean(brand)) ||
-                (!existing.serial_number && Boolean(serialNumber)) ||
-                (!existing.model && Boolean(model)) ||
-                (!existing.client_name && Boolean(clientName)) ||
-                (!existing.notes && Boolean(notes));
+        const existing = existingRows?.[0];
+        if (existing) {
+          const nextBrand = brand || existing.brand || "";
+          const nextSerial = serialNumber || existing.serial_number || "";
+          const nextModel = model || existing.model || "";
+          const nextClient = clientName || existing.client_name || "";
+          const nextNotes = notes || existing.notes || "";
+          const nextStatus = status || existing.status || "active";
+          const shouldPersistUpdate =
+            updateExisting ||
+            (!existing.brand && Boolean(brand)) ||
+            (!existing.serial_number && Boolean(serialNumber)) ||
+            (!existing.model && Boolean(model)) ||
+            (!existing.client_name && Boolean(clientName)) ||
+            (!existing.notes && Boolean(notes));
 
-              if (shouldPersistUpdate) {
-                await env.DB.prepare(`
+          if (shouldPersistUpdate) {
+            await env.DB.prepare(`
                   UPDATE assets
                   SET brand = ?,
                       serial_number = ?,
@@ -3092,38 +3449,38 @@ async function handleAssetsRoute(
                   WHERE id = ?
                     AND tenant_id = ?
                 `)
-                  .bind(
-                    nextBrand,
-                    nextSerial,
-                    nextModel,
-                    nextClient,
-                    nextNotes,
-                    nextStatus,
-                    now,
-                    actorUsername,
-                    existing.id,
-                    assetsTenantId,
-                  )
-                  .run();
+              .bind(
+                nextBrand,
+                nextSerial,
+                nextModel,
+                nextClient,
+                nextNotes,
+                nextStatus,
+                now,
+                actorUsername,
+                existing.id,
+                assetsTenantId,
+              )
+              .run();
 
-                const { results: refreshedRows } = await env.DB.prepare(selectByCodeQuery)
-                  .bind(assetsTenantId, normalizedCode)
-                  .all();
-                return jsonResponse(request, env, corsPolicy, {
-                  success: true,
-                  created: false,
-                  asset: refreshedRows?.[0] || existing,
-                });
-              }
+            const { results: refreshedRows } = await env.DB.prepare(selectByCodeQuery)
+              .bind(assetsTenantId, normalizedCode)
+              .all();
+            return jsonResponse(request, env, corsPolicy, {
+              success: true,
+              created: false,
+              asset: refreshedRows?.[0] || existing,
+            });
+          }
 
-              return jsonResponse(request, env, corsPolicy, {
-                success: true,
-                created: false,
-                asset: existing,
-              });
-            }
+          return jsonResponse(request, env, corsPolicy, {
+            success: true,
+            created: false,
+            asset: existing,
+          });
+        }
 
-            const insertResult = await env.DB.prepare(`
+        const insertResult = await env.DB.prepare(`
               INSERT INTO assets (
                 tenant_id,
                 external_code,
@@ -3139,73 +3496,73 @@ async function handleAssetsRoute(
               )
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `)
-              .bind(
-                assetsTenantId,
-                externalCode,
-                brand,
-                serialNumber,
-                model,
-                clientName,
-                notes,
-                status,
-                now,
-                now,
-                actorUsername,
-              )
-              .run();
+          .bind(
+            assetsTenantId,
+            externalCode,
+            brand,
+            serialNumber,
+            model,
+            clientName,
+            notes,
+            status,
+            now,
+            now,
+            actorUsername,
+          )
+          .run();
 
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          created: true,
+          asset: {
+            id: insertResult?.meta?.last_row_id || null,
+            tenant_id: assetsTenantId,
+            external_code: externalCode,
+            brand,
+            serial_number: serialNumber,
+            model,
+            client_name: clientName,
+            notes,
+            status,
+            created_at: now,
+            updated_at: now,
+            created_by_username: actorUsername,
+          },
+        }, 201);
+      } catch (error) {
+        const message = normalizeOptionalString(error?.message, "").toLowerCase();
+        if (message.includes("unique")) {
+          const { results: existingRows } = await env.DB.prepare(selectByCodeQuery)
+            .bind(assetsTenantId, normalizedCode)
+            .all();
+          if (existingRows?.[0]) {
             return jsonResponse(request, env, corsPolicy, {
               success: true,
-              created: true,
-              asset: {
-                id: insertResult?.meta?.last_row_id || null,
-                tenant_id: assetsTenantId,
-                external_code: externalCode,
-                brand,
-                serial_number: serialNumber,
-                model,
-                client_name: clientName,
-                notes,
-                status,
-                created_at: now,
-                updated_at: now,
-                created_by_username: actorUsername,
-              },
-            }, 201);
-          } catch (error) {
-            const message = normalizeOptionalString(error?.message, "").toLowerCase();
-            if (message.includes("unique")) {
-              const { results: existingRows } = await env.DB.prepare(selectByCodeQuery)
-                .bind(assetsTenantId, normalizedCode)
-                .all();
-              if (existingRows?.[0]) {
-                return jsonResponse(request, env, corsPolicy, {
-                  success: true,
-                  created: false,
-                  asset: existingRows[0],
-                });
-              }
-            }
-            if (isMissingAssetsTableError(error)) {
-              throw new HttpError(
-                503,
-                "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
-              );
-            }
-            throw error;
+              created: false,
+              asset: existingRows[0],
+            });
           }
         }
+        if (isMissingAssetsTableError(error)) {
+          throw new HttpError(
+            503,
+            "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
+          );
+        }
+        throw error;
+      }
+    }
 
-        if (routeParts.length === 2) {
-          if (routeParts[1] === "resolve") {
-            throw new HttpError(405, "Metodo no permitido para /assets/resolve.");
-          }
-          const assetId = parsePositiveInt(routeParts[1], "asset_id");
+    if (routeParts.length === 2) {
+      if (routeParts[1] === "resolve") {
+        throw new HttpError(405, "Metodo no permitido para /assets/resolve.");
+      }
+      const assetId = parsePositiveInt(routeParts[1], "asset_id");
 
-          if (request.method === "GET") {
-            let results;
-            try {
-              ({ results } = await env.DB.prepare(`
+      if (request.method === "GET") {
+        let results;
+        try {
+          ({ results } = await env.DB.prepare(`
                 SELECT
                   id,
                   tenant_id,
@@ -3223,64 +3580,64 @@ async function handleAssetsRoute(
                   AND tenant_id = ?
                 LIMIT 1
               `)
-                .bind(assetId, assetsTenantId)
-                .all());
-            } catch (error) {
-              if (isMissingAssetsTableError(error)) {
-                throw new HttpError(
-                  503,
-                  "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
-                );
-              }
-              throw error;
-            }
-
-            const asset = results?.[0];
-            if (!asset) {
-              throw new HttpError(404, "Equipo no encontrado.");
-            }
-            return jsonResponse(request, env, corsPolicy, {
-              success: true,
-              asset,
-            });
+            .bind(assetId, assetsTenantId)
+            .all());
+        } catch (error) {
+          if (isMissingAssetsTableError(error)) {
+            throw new HttpError(
+              503,
+              "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
+            );
           }
+          throw error;
+        }
 
-          if (request.method === "PATCH") {
-            if (!isWebRoute) {
-              throw new HttpError(401, "Gestion de equipos requiere sesion web.");
-            }
-            requireAdminRole(webSession?.role);
+        const asset = results?.[0];
+        if (!asset) {
+          throw new HttpError(404, "Equipo no encontrado.");
+        }
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          asset,
+        });
+      }
 
-            const data = await readJsonOrThrowBadRequest(request);
-            const updates = normalizeAssetPayload(data, { allowPartial: true });
-            const { results: existingRows } = await env.DB.prepare(`
+      if (request.method === "PATCH") {
+        if (!isWebRoute) {
+          throw new HttpError(401, "Gestion de equipos requiere sesion web.");
+        }
+        requireAdminRole(webSession?.role);
+
+        const data = await readJsonOrThrowBadRequest(request);
+        const updates = normalizeAssetPayload(data, { allowPartial: true });
+        const { results: existingRows } = await env.DB.prepare(`
               SELECT id, external_code, brand, serial_number, model, client_name, notes, status
               FROM assets
               WHERE id = ?
                 AND tenant_id = ?
               LIMIT 1
             `)
-              .bind(assetId, assetsTenantId)
-              .all();
-            const existing = existingRows?.[0];
-            if (!existing) {
-              throw new HttpError(404, "Equipo no encontrado.");
-            }
+          .bind(assetId, assetsTenantId)
+          .all();
+        const existing = existingRows?.[0];
+        if (!existing) {
+          throw new HttpError(404, "Equipo no encontrado.");
+        }
 
-            const nextExternalCode =
-              updates.external_code === undefined ? existing.external_code : updates.external_code;
-            const nextBrand = updates.brand === undefined ? existing.brand : updates.brand;
-            const nextSerial =
-              updates.serial_number === undefined ? existing.serial_number : updates.serial_number;
-            const nextModel = updates.model === undefined ? existing.model : updates.model;
-            const nextClient =
-              updates.client_name === undefined ? existing.client_name : updates.client_name;
-            const nextNotes = updates.notes === undefined ? existing.notes : updates.notes;
-            const nextStatus = updates.status === undefined ? existing.status : updates.status;
-            const nextUpdatedAt = nowIso();
+        const nextExternalCode =
+          updates.external_code === undefined ? existing.external_code : updates.external_code;
+        const nextBrand = updates.brand === undefined ? existing.brand : updates.brand;
+        const nextSerial =
+          updates.serial_number === undefined ? existing.serial_number : updates.serial_number;
+        const nextModel = updates.model === undefined ? existing.model : updates.model;
+        const nextClient =
+          updates.client_name === undefined ? existing.client_name : updates.client_name;
+        const nextNotes = updates.notes === undefined ? existing.notes : updates.notes;
+        const nextStatus = updates.status === undefined ? existing.status : updates.status;
+        const nextUpdatedAt = nowIso();
 
-            try {
-              await env.DB.prepare(`
+        try {
+          await env.DB.prepare(`
                 UPDATE assets
                 SET external_code = ?,
                     brand = ?,
@@ -3294,92 +3651,92 @@ async function handleAssetsRoute(
                 WHERE id = ?
                   AND tenant_id = ?
               `)
-                .bind(
-                  nextExternalCode,
-                  nextBrand,
-                  nextSerial,
-                  nextModel,
-                  nextClient,
-                  nextNotes,
-                  nextStatus,
-                  nextUpdatedAt,
-                  normalizeWebUsername(webSession?.sub || "unknown"),
-                  assetId,
-                  assetsTenantId,
-                )
-                .run();
-            } catch (error) {
-              const message = normalizeOptionalString(error?.message, "").toLowerCase();
-              if (message.includes("unique")) {
-                throw new HttpError(409, "Ya existe un equipo con ese external_code.");
-              }
-              throw error;
-            }
-
-            return jsonResponse(request, env, corsPolicy, {
-              success: true,
-              asset: {
-                id: assetId,
-                tenant_id: assetsTenantId,
-                external_code: nextExternalCode,
-                brand: nextBrand,
-                serial_number: nextSerial,
-                model: nextModel,
-                client_name: nextClient,
-                notes: nextNotes,
-                status: nextStatus,
-                updated_at: nextUpdatedAt,
-              },
-            });
+            .bind(
+              nextExternalCode,
+              nextBrand,
+              nextSerial,
+              nextModel,
+              nextClient,
+              nextNotes,
+              nextStatus,
+              nextUpdatedAt,
+              normalizeWebUsername(webSession?.sub || "unknown"),
+              assetId,
+              assetsTenantId,
+            )
+            .run();
+        } catch (error) {
+          const message = normalizeOptionalString(error?.message, "").toLowerCase();
+          if (message.includes("unique")) {
+            throw new HttpError(409, "Ya existe un equipo con ese external_code.");
           }
+          throw error;
+        }
 
-          if (request.method === "DELETE") {
-            if (!isWebRoute) {
-              throw new HttpError(401, "Gestion de equipos requiere sesion web.");
-            }
-            requireAdminRole(webSession?.role);
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          asset: {
+            id: assetId,
+            tenant_id: assetsTenantId,
+            external_code: nextExternalCode,
+            brand: nextBrand,
+            serial_number: nextSerial,
+            model: nextModel,
+            client_name: nextClient,
+            notes: nextNotes,
+            status: nextStatus,
+            updated_at: nextUpdatedAt,
+          },
+        });
+      }
 
-            const { results: existingRows } = await env.DB.prepare(`
+      if (request.method === "DELETE") {
+        if (!isWebRoute) {
+          throw new HttpError(401, "Gestion de equipos requiere sesion web.");
+        }
+        requireAdminRole(webSession?.role);
+
+        const { results: existingRows } = await env.DB.prepare(`
               SELECT id
               FROM assets
               WHERE id = ?
                 AND tenant_id = ?
               LIMIT 1
             `)
-              .bind(assetId, assetsTenantId)
-              .all();
-            if (!existingRows?.[0]) {
-              throw new HttpError(404, "Equipo no encontrado.");
-            }
+          .bind(assetId, assetsTenantId)
+          .all();
+        if (!existingRows?.[0]) {
+          throw new HttpError(404, "Equipo no encontrado.");
+        }
 
-            await env.DB.prepare(`
+        await env.DB.prepare(`
               DELETE FROM assets
               WHERE id = ?
                 AND tenant_id = ?
             `)
-              .bind(assetId, assetsTenantId)
-              .run();
+          .bind(assetId, assetsTenantId)
+          .run();
 
-            return jsonResponse(request, env, corsPolicy, {
-              success: true,
-              deleted_asset_id: assetId,
-            });
-          }
-        }
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          deleted_asset_id: assetId,
+        });
+      }
+    }
 
-        if (
-          routeParts.length === 3 &&
-          routeParts[2] === "incidents"
-        ) {
-          const assetId = parsePositiveInt(routeParts[1], "asset_id");
-          if (request.method !== "GET" && request.method !== "POST") {
-            throw new HttpError(405, "Metodo no permitido para /assets/:id/incidents.");
-          }
+    if (
+      routeParts.length === 3 &&
+      routeParts[2] === "incidents"
+    ) {
+      const assetId = parsePositiveInt(routeParts[1], "asset_id");
+      if (request.method !== "GET" && request.method !== "POST") {
+        throw new HttpError(405, "Metodo no permitido para /assets/:id/incidents.");
+      }
 
-          const incidentLimit = parsePageLimit(url.searchParams, { fallback: 100, max: 300 });
+      const incidentLimit = parsePageLimit(url.searchParams, { fallback: 100, max: 300 });
 
-          try {
-            const { results: assetRows } = await env.DB.prepare(`
+      try {
+        const { results: assetRows } = await env.DB.prepare(`
               SELECT
                 id,
                 tenant_id,
@@ -3397,57 +3754,58 @@ async function handleAssetsRoute(
                 AND tenant_id = ?
               LIMIT 1
             `)
-              .bind(assetId, assetsTenantId)
-              .all();
+          .bind(assetId, assetsTenantId)
+          .all();
 
-            const asset = assetRows?.[0];
-            if (!asset) {
-              throw new HttpError(404, "Equipo no encontrado.");
-            }
+        const asset = assetRows?.[0];
+        if (!asset) {
+          throw new HttpError(404, "Equipo no encontrado.");
+        }
 
-            if (request.method === "POST") {
-              if (isWebRoute) {
-                requireWebWriteRole(webSession?.role);
-              }
+        if (request.method === "POST") {
+          if (isWebRoute) {
+            requireWebWriteRole(webSession?.role);
+          }
 
-              const data = await readJsonOrThrowBadRequest(request);
-              const payload = validateIncidentPayload(data, {
-                defaultSource: isWebRoute ? "web" : "mobile",
-                defaultReporterUsername: webSession?.sub || "unknown",
-              });
-              const requestedInstallationId = parseOptionalPositiveInt(
-                data?.installation_id,
-                "installation_id",
-              );
-              const createdAt = nowIso();
-              const actorUsername = normalizeWebUsername(
-                webSession?.sub || payload.reporterUsername || "unknown",
-              );
+          const data = await readJsonOrThrowBadRequest(request);
+          const payload = validateIncidentPayload(data, {
+            defaultSource: isWebRoute ? "web" : "mobile",
+            defaultReporterUsername: webSession?.sub || "unknown",
+          });
+          const gps = normalizeGpsPayload(data?.gps);
+          const requestedInstallationId = parseOptionalPositiveInt(
+            data?.installation_id,
+            "installation_id",
+          );
+          const createdAt = nowIso();
+          const actorUsername = normalizeWebUsername(
+            webSession?.sub || payload.reporterUsername || "unknown",
+          );
 
-              let resolvedInstallationId = requestedInstallationId;
-              let installation = null;
-              let contextRecordCreated = false;
+          let resolvedInstallationId = requestedInstallationId;
+          let installation = null;
+          let contextRecordCreated = false;
 
-              const loadInstallationById = async (installationId) => {
-                const { results: installationRows } = await env.DB.prepare(`
-                  SELECT id, notes, installation_time_seconds
+          const loadInstallationById = async (installationId) => {
+            const { results: installationRows } = await env.DB.prepare(`
+                  SELECT id, notes, installation_time_seconds, site_lat, site_lng, site_radius_m
                   FROM installations
                   WHERE id = ?
                     AND tenant_id = ?
                   LIMIT 1
                 `)
-                  .bind(installationId, assetsTenantId)
-                  .all();
-                return installationRows?.[0] || null;
-              };
+              .bind(installationId, assetsTenantId)
+              .all();
+            return installationRows?.[0] || null;
+          };
 
-              if (resolvedInstallationId !== null) {
-                installation = await loadInstallationById(resolvedInstallationId);
-                if (!installation) {
-                  throw new HttpError(404, "Instalacion no encontrada.");
-                }
-              } else {
-                const { results: activeLinkRows } = await env.DB.prepare(`
+          if (resolvedInstallationId !== null) {
+            installation = await loadInstallationById(resolvedInstallationId);
+            if (!installation) {
+              throw new HttpError(404, "Instalacion no encontrada.");
+            }
+          } else {
+            const { results: activeLinkRows } = await env.DB.prepare(`
                   SELECT installation_id
                   FROM asset_installation_links
                   WHERE tenant_id = ?
@@ -3456,26 +3814,26 @@ async function handleAssetsRoute(
                   ORDER BY linked_at DESC, id DESC
                   LIMIT 1
                 `)
-                  .bind(assetsTenantId, assetId)
-                  .all();
-                const activeInstallationId = Number(activeLinkRows?.[0]?.installation_id);
-                if (Number.isInteger(activeInstallationId) && activeInstallationId > 0) {
-                  resolvedInstallationId = activeInstallationId;
-                  installation = await loadInstallationById(activeInstallationId);
-                }
-              }
+              .bind(assetsTenantId, assetId)
+              .all();
+            const activeInstallationId = Number(activeLinkRows?.[0]?.installation_id);
+            if (Number.isInteger(activeInstallationId) && activeInstallationId > 0) {
+              resolvedInstallationId = activeInstallationId;
+              installation = await loadInstallationById(activeInstallationId);
+            }
+          }
 
-              if (!installation) {
-                const normalizedAssetCode = normalizeOptionalString(asset.external_code, `#${assetId}`);
-                const autoClientName =
-                  normalizeOptionalString(asset.client_name, "").trim() ||
-                  `Equipo ${normalizedAssetCode}`;
-                const autoBrand = normalizeOptionalString(asset.brand, "").trim() || "ASSET";
-                const autoVersion = normalizeOptionalString(asset.model, "").trim() || "N/A";
-                const autoDescription = `Contexto automatico para incidencias del equipo ${normalizedAssetCode}`;
-                const autoNotes = `Registro automatico generado desde incidencia de equipo ${normalizedAssetCode}.`;
+          if (!installation) {
+            const normalizedAssetCode = normalizeOptionalString(asset.external_code, `#${assetId}`);
+            const autoClientName =
+              normalizeOptionalString(asset.client_name, "").trim() ||
+              `Equipo ${normalizedAssetCode}`;
+            const autoBrand = normalizeOptionalString(asset.brand, "").trim() || "ASSET";
+            const autoVersion = normalizeOptionalString(asset.model, "").trim() || "N/A";
+            const autoDescription = `Contexto automatico para incidencias del equipo ${normalizedAssetCode}`;
+            const autoNotes = `Registro automatico generado desde incidencia de equipo ${normalizedAssetCode}.`;
 
-                const insertRecordResult = await env.DB.prepare(`
+            const insertRecordResult = await env.DB.prepare(`
                   INSERT INTO installations (
                     timestamp,
                     driver_brand,
@@ -3486,55 +3844,80 @@ async function handleAssetsRoute(
                     installation_time_seconds,
                     os_info,
                     notes,
+                    gps_lat,
+                    gps_lng,
+                    gps_accuracy_m,
+                    gps_captured_at,
+                    gps_capture_source,
+                    gps_capture_status,
+                    gps_capture_note,
                     tenant_id
                   )
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `)
-                  .bind(
-                    createdAt,
-                    autoBrand,
-                    autoVersion,
-                    "asset_context",
-                    autoClientName,
-                    autoDescription,
-                    0,
-                    "asset",
-                    autoNotes,
-                    assetsTenantId,
-                  )
-                  .run();
+              .bind(
+                createdAt,
+                autoBrand,
+                autoVersion,
+                "asset_context",
+                autoClientName,
+                autoDescription,
+                0,
+                "asset",
+                autoNotes,
+                ...gpsBindValues(gps),
+                assetsTenantId,
+              )
+              .run();
 
-                resolvedInstallationId = Number(insertRecordResult?.meta?.last_row_id || 0);
-                if (!Number.isInteger(resolvedInstallationId) || resolvedInstallationId <= 0) {
-                  throw new HttpError(500, "No se pudo crear contexto de instalacion para la incidencia.");
-                }
-                installation = {
-                  id: resolvedInstallationId,
-                  notes: autoNotes,
-                  installation_time_seconds: 0,
-                };
-                contextRecordCreated = true;
+            resolvedInstallationId = Number(insertRecordResult?.meta?.last_row_id || 0);
+            if (!Number.isInteger(resolvedInstallationId) || resolvedInstallationId <= 0) {
+              throw new HttpError(500, "No se pudo crear contexto de instalacion para la incidencia.");
+            }
+            installation = {
+              id: resolvedInstallationId,
+              notes: autoNotes,
+              installation_time_seconds: 0,
+            };
+            contextRecordCreated = true;
 
-                await publishRealtimeEvent(env, {
-                  type: "installation_created",
-                  installation: {
-                    id: resolvedInstallationId,
-                    tenant_id: assetsTenantId,
-                    timestamp: createdAt,
-                    driver_brand: autoBrand,
-                    driver_version: autoVersion,
-                    status: "asset_context",
-                    client_name: autoClientName,
-                    driver_description: autoDescription,
-                    installation_time_seconds: 0,
-                    os_info: "asset",
-                    notes: autoNotes,
-                    ...buildDefaultInstallationOperationalSummary(),
-                  },
-                }, realtimeTenantId);
-              }
+            await publishRealtimeEvent(env, {
+              type: "installation_created",
+              installation: {
+                id: resolvedInstallationId,
+                tenant_id: assetsTenantId,
+                timestamp: createdAt,
+                driver_brand: autoBrand,
+                driver_version: autoVersion,
+                status: "asset_context",
+                client_name: autoClientName,
+                driver_description: autoDescription,
+                installation_time_seconds: 0,
+                os_info: "asset",
+                notes: autoNotes,
+                ...gps,
+                ...buildDefaultInstallationOperationalSummary(),
+              },
+            }, realtimeTenantId);
+          }
 
-              await env.DB.prepare(`
+          const geofence = evaluateGeofence({
+            gps,
+            installation,
+            checkedAt: createdAt,
+          });
+          const requestIp = getClientIpForRateLimit(request);
+          const geofenceOverride = resolveHardGeofenceOverride({
+            env,
+            tenantId: assetsTenantId,
+            flow: GEOFENCE_FLOW_INCIDENTS,
+            geofence,
+            overrideNote: data?.geofence_override_note,
+            actorUsername: payload.reporterUsername,
+            appliedAt: createdAt,
+          });
+
+          await env.DB.prepare(`
                 UPDATE asset_installation_links
                 SET unlinked_at = ?
                 WHERE tenant_id = ?
@@ -3542,10 +3925,10 @@ async function handleAssetsRoute(
                   AND unlinked_at IS NULL
                   AND installation_id <> ?
               `)
-                .bind(createdAt, assetsTenantId, assetId, resolvedInstallationId)
-                .run();
+            .bind(createdAt, assetsTenantId, assetId, resolvedInstallationId)
+            .run();
 
-              const { results: activeRows } = await env.DB.prepare(`
+          const { results: activeRows } = await env.DB.prepare(`
                 SELECT id
                 FROM asset_installation_links
                 WHERE tenant_id = ?
@@ -3554,11 +3937,11 @@ async function handleAssetsRoute(
                   AND unlinked_at IS NULL
                 LIMIT 1
               `)
-                .bind(assetsTenantId, assetId, resolvedInstallationId)
-                .all();
+            .bind(assetsTenantId, assetId, resolvedInstallationId)
+            .all();
 
-              if (!activeRows?.[0]?.id) {
-                await env.DB.prepare(`
+          if (!activeRows?.[0]?.id) {
+            await env.DB.prepare(`
                   INSERT INTO asset_installation_links (
                     tenant_id,
                     asset_id,
@@ -3569,24 +3952,24 @@ async function handleAssetsRoute(
                   )
                   VALUES (?, ?, ?, ?, ?, ?)
                 `)
-                  .bind(
-                    assetsTenantId,
-                    assetId,
-                    resolvedInstallationId,
-                    createdAt,
-                    actorUsername,
-                    normalizeOptionalString(
-                      data?.asset_link_note,
-                      "Vinculo automatico desde incidencia de equipo",
-                    ).slice(0, 500),
-                  )
-                  .run();
-              }
+              .bind(
+                assetsTenantId,
+                assetId,
+                resolvedInstallationId,
+                createdAt,
+                actorUsername,
+                normalizeOptionalString(
+                  data?.asset_link_note,
+                  "Vinculo automatico desde incidencia de equipo",
+                ).slice(0, 500),
+              )
+              .run();
+          }
 
-              let persistedAssetId = assetId;
-              let insertResult;
-              try {
-                insertResult = await env.DB.prepare(`
+          let persistedAssetId = assetId;
+          let insertResult;
+          try {
+            insertResult = await env.DB.prepare(`
                   INSERT INTO incidents (
                     installation_id,
                     asset_id,
@@ -3603,35 +3986,61 @@ async function handleAssetsRoute(
                     status_updated_by,
                     work_started_at,
                     work_ended_at,
-                    actual_duration_seconds
+                    actual_duration_seconds,
+                    geofence_distance_m,
+                    geofence_radius_m,
+                    geofence_result,
+                    geofence_checked_at,
+                    geofence_override_note,
+                    geofence_override_by,
+                    geofence_override_at,
+                    gps_lat,
+                    gps_lng,
+                    gps_accuracy_m,
+                    gps_captured_at,
+                    gps_capture_source,
+                    gps_capture_status,
+                    gps_capture_note
                   )
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `)
-                  .bind(
-                    resolvedInstallationId,
-                    assetId,
-                    assetsTenantId,
-                    payload.reporterUsername,
-                    payload.note,
-                    payload.timeAdjustment,
-                    payload.estimatedDurationSeconds,
-                    payload.severity,
-                    payload.source,
+              .bind(
+                resolvedInstallationId,
+                assetId,
+                assetsTenantId,
+                payload.reporterUsername,
+                payload.note,
+                payload.timeAdjustment,
+                payload.estimatedDurationSeconds,
+                payload.severity,
+                payload.source,
+                createdAt,
+                payload.incidentStatus,
                     createdAt,
-                    payload.incidentStatus,
-                    createdAt,
                     payload.reporterUsername,
                     null,
                     null,
                     null,
+                    geofence.geofence_distance_m,
+                    geofence.geofence_radius_m,
+                    geofence.geofence_result,
+                    geofence.geofence_checked_at,
+                    geofenceOverride.override_note,
+                    geofenceOverride.override_by,
+                    geofenceOverride.override_at,
+                    ...gpsBindValues(gps),
                   )
-                  .run();
-              } catch (error) {
-                if (!isMissingIncidentAssetColumnError(error) && !isMissingIncidentTimingColumnsError(error)) {
-                  throw error;
-                }
-                try {
-                  insertResult = await env.DB.prepare(`
+              .run();
+          } catch (error) {
+            if (
+              !isMissingIncidentAssetColumnError(error) &&
+              !isMissingIncidentTimingColumnsError(error) &&
+              !isMissingIncidentGeofenceOverrideColumnsError(error)
+            ) {
+              throw error;
+            }
+            try {
+              insertResult = await env.DB.prepare(`
                     INSERT INTO incidents (
                       installation_id,
                       asset_id,
@@ -3644,30 +4053,55 @@ async function handleAssetsRoute(
                       created_at,
                       incident_status,
                       status_updated_at,
-                      status_updated_by
+                      status_updated_by,
+                      geofence_distance_m,
+                      geofence_radius_m,
+                      geofence_result,
+                      geofence_checked_at,
+                      geofence_override_note,
+                      geofence_override_by,
+                      geofence_override_at,
+                      gps_lat,
+                      gps_lng,
+                      gps_accuracy_m,
+                      gps_captured_at,
+                      gps_capture_source,
+                      gps_capture_status,
+                      gps_capture_note
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                   `)
-                    .bind(
-                      resolvedInstallationId,
-                      assetId,
-                      assetsTenantId,
-                      payload.reporterUsername,
-                      payload.note,
-                      payload.timeAdjustment,
-                      payload.severity,
-                      payload.source,
+                .bind(
+                  resolvedInstallationId,
+                  assetId,
+                  assetsTenantId,
+                  payload.reporterUsername,
+                  payload.note,
+                  payload.timeAdjustment,
+                  payload.severity,
+                  payload.source,
                       createdAt,
                       payload.incidentStatus,
                       createdAt,
                       payload.reporterUsername,
+                      geofence.geofence_distance_m,
+                      geofence.geofence_radius_m,
+                      geofence.geofence_result,
+                      geofence.geofence_checked_at,
+                      geofenceOverride.override_note,
+                      geofenceOverride.override_by,
+                      geofenceOverride.override_at,
+                      ...gpsBindValues(gps),
                     )
-                    .run();
-                } catch (legacyError) {
-                  if (!isMissingIncidentAssetColumnError(legacyError)) {
-                    throw legacyError;
-                  }
-                  insertResult = await env.DB.prepare(`
+                .run();
+            } catch (legacyError) {
+              if (
+                !isMissingIncidentAssetColumnError(legacyError) &&
+                !isMissingIncidentGeofenceOverrideColumnsError(legacyError)
+              ) {
+                throw legacyError;
+              }
+              insertResult = await env.DB.prepare(`
                     INSERT INTO incidents (
                       installation_id,
                       tenant_id,
@@ -3679,145 +4113,230 @@ async function handleAssetsRoute(
                       created_at,
                       incident_status,
                       status_updated_at,
-                      status_updated_by
+                      status_updated_by,
+                      geofence_distance_m,
+                      geofence_radius_m,
+                      geofence_result,
+                      geofence_checked_at,
+                      geofence_override_note,
+                      geofence_override_by,
+                      geofence_override_at,
+                      gps_lat,
+                      gps_lng,
+                      gps_accuracy_m,
+                      gps_captured_at,
+                      gps_capture_source,
+                      gps_capture_status,
+                      gps_capture_note
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                   `)
-                    .bind(
-                      resolvedInstallationId,
-                      assetsTenantId,
-                      payload.reporterUsername,
-                      payload.note,
-                      payload.timeAdjustment,
-                      payload.severity,
-                      payload.source,
+                .bind(
+                  resolvedInstallationId,
+                  assetsTenantId,
+                  payload.reporterUsername,
+                  payload.note,
+                  payload.timeAdjustment,
+                  payload.severity,
+                  payload.source,
                       createdAt,
                       payload.incidentStatus,
                       createdAt,
                       payload.reporterUsername,
+                      geofence.geofence_distance_m,
+                      geofence.geofence_radius_m,
+                      geofence.geofence_result,
+                      geofence.geofence_checked_at,
+                      geofenceOverride.override_note,
+                      geofenceOverride.override_by,
+                      geofenceOverride.override_at,
+                      ...gpsBindValues(gps),
                     )
-                    .run();
-                  persistedAssetId = null;
-                }
-              }
+                .run();
+              persistedAssetId = null;
+            }
+          }
 
-              const incidentId = insertResult?.meta?.last_row_id || null;
+          const incidentId = insertResult?.meta?.last_row_id || null;
 
-              if (payload.applyToInstallation) {
-                const currentNotes = normalizeOptionalString(installation.notes, "");
-                const composedNotes = currentNotes
-                  ? `${currentNotes}\n[INCIDENT] ${payload.note}`
-                  : payload.note;
-                const currentTime = Number(installation.installation_time_seconds || 0);
-                const nextTime = Math.max(0, currentTime + payload.timeAdjustment);
+          if (payload.applyToInstallation) {
+            const currentNotes = normalizeOptionalString(installation.notes, "");
+            const composedNotes = currentNotes
+              ? `${currentNotes}\n[INCIDENT] ${payload.note}`
+              : payload.note;
+            const currentTime = Number(installation.installation_time_seconds || 0);
+            const nextTime = Math.max(0, currentTime + payload.timeAdjustment);
 
-                await env.DB.prepare(`
+            await env.DB.prepare(`
                   UPDATE installations
                   SET notes = ?, installation_time_seconds = ?
                   WHERE id = ?
                     AND tenant_id = ?
                 `)
-                  .bind(composedNotes, nextTime, resolvedInstallationId, assetsTenantId)
-                  .run();
-              }
+              .bind(composedNotes, nextTime, resolvedInstallationId, assetsTenantId)
+              .run();
+          }
 
-              if (payload.severity === "critical") {
-                try {
-                  const fcmTokens = await listDeviceTokensForWebRoles(
-                    env,
-                    CRITICAL_INCIDENT_PUSH_ROLES,
-                    assetsTenantId,
-                  );
-                  if (fcmTokens.length > 0) {
-                    await sendPushNotification(env, fcmTokens, {
-                      title: "Incidencia critica",
-                      body: `Nueva incidencia critica en instalacion #${resolvedInstallationId}`,
-                      data: {
-                        installation_id: String(resolvedInstallationId),
-                        incident_id: String(incidentId || ""),
-                        asset_id: persistedAssetId !== null ? String(persistedAssetId) : "",
-                        severity: payload.severity,
-                        source: payload.source,
-                      },
-                    });
-                  }
-                } catch {
-                  // Best effort: una falla de push no debe impedir registrar la incidencia.
-                }
-              }
-
-              await logAuditEvent(env, {
-                action: "create_incident",
-                username: payload.reporterUsername,
-                success: true,
-                tenantId: assetsTenantId,
-                  details: {
-                    incident_id: incidentId,
-                    installation_id: resolvedInstallationId,
-                    asset_id: persistedAssetId,
-                    estimated_duration_seconds: payload.estimatedDurationSeconds,
+          if (payload.severity === "critical") {
+            try {
+              const fcmTokens = await listDeviceTokensForWebRoles(
+                env,
+                CRITICAL_INCIDENT_PUSH_ROLES,
+                assetsTenantId,
+              );
+              if (fcmTokens.length > 0) {
+                await sendPushNotification(env, fcmTokens, {
+                  title: "Incidencia critica",
+                  body: `Nueva incidencia critica en instalacion #${resolvedInstallationId}`,
+                  data: {
+                    installation_id: String(resolvedInstallationId),
+                    incident_id: String(incidentId || ""),
+                    asset_id: persistedAssetId !== null ? String(persistedAssetId) : "",
                     severity: payload.severity,
                     source: payload.source,
-                  note_preview: payload.note.substring(0, 100),
-                  tenant_id: assetsTenantId,
-                },
-                computerName: "",
-                ipAddress: getClientIpForRateLimit(request),
-                platform: payload.source,
-              });
+                  },
+                });
+              }
+            } catch {
+              // Best effort: una falla de push no debe impedir registrar la incidencia.
+            }
+          }
 
-              const incidentEventPayload = mapIncidentRow({
-                id: incidentId,
+          await logAuditEvent(env, {
+            action: "create_incident",
+            username: payload.reporterUsername,
+            success: true,
+            tenantId: assetsTenantId,
+            details: {
+              incident_id: incidentId,
+              installation_id: resolvedInstallationId,
+              asset_id: persistedAssetId,
+              estimated_duration_seconds: payload.estimatedDurationSeconds,
+              severity: payload.severity,
+              source: payload.source,
+              note_preview: payload.note.substring(0, 100),
+              geofence_result: geofence.geofence_result,
+              geofence_distance_m: geofence.geofence_distance_m,
+              geofence_radius_m: geofence.geofence_radius_m,
+              geofence_override_note: geofenceOverride.override_note,
+              geofence_override_by: geofenceOverride.override_by,
+              geofence_override_at: geofenceOverride.override_at,
+              gps_accuracy_m: gps.gps_accuracy_m,
+              tenant_id: assetsTenantId,
+            },
+            computerName: "",
+            ipAddress: requestIp,
+            platform: payload.source,
+          });
+
+          if (geofence.geofence_result === "outside") {
+            await logAuditEvent(env, {
+              action: "incident_geofence_warning",
+              username: payload.reporterUsername,
+              success: true,
+              tenantId: assetsTenantId,
+              details: {
+                incident_id: incidentId,
                 installation_id: resolvedInstallationId,
                 asset_id: persistedAssetId,
-                reporter_username: payload.reporterUsername,
-                note: payload.note,
-                time_adjustment_seconds: payload.timeAdjustment,
-                estimated_duration_seconds: payload.estimatedDurationSeconds,
-                severity: payload.severity,
-                source: payload.source,
-                created_at: createdAt,
-                incident_status: payload.incidentStatus,
-                status_updated_at: createdAt,
-                status_updated_by: payload.reporterUsername,
-                resolved_at: null,
-                resolved_by: null,
-                resolution_note: null,
-                checklist_json: null,
-                evidence_note: null,
-              });
+                geofence_result: geofence.geofence_result,
+                geofence_distance_m: geofence.geofence_distance_m,
+                geofence_radius_m: geofence.geofence_radius_m,
+                gps_accuracy_m: gps.gps_accuracy_m,
+                tenant_id: assetsTenantId,
+              },
+              computerName: "",
+              ipAddress: requestIp,
+              platform: payload.source,
+            });
+          }
 
-              await publishRealtimeEvent(env, {
-                type: "incident_created",
-                incident: incidentEventPayload,
-              }, realtimeTenantId);
-              if (payload.applyToInstallation) {
-                await publishRealtimeEvent(env, {
-                  type: "installation_updated",
-                  installation: {
-                    id: resolvedInstallationId,
-                    notes: normalizeOptionalString(installation.notes, "")
-                      ? `${normalizeOptionalString(installation.notes, "")}\n[INCIDENT] ${payload.note}`
-                      : payload.note,
-                    installation_time_seconds: Math.max(
-                      0,
-                      Number(installation.installation_time_seconds || 0) + payload.timeAdjustment,
-                    ),
-                  },
-                }, realtimeTenantId);
-              }
-              await publishRealtimeStatsUpdate(env, realtimeTenantId);
-
-              return jsonResponse(request, env, corsPolicy, {
-                success: true,
-                incident: incidentEventPayload,
+          if (geofenceOverride.override_applied) {
+            await logAuditEvent(env, {
+              action: "override_incident_geofence",
+              username: payload.reporterUsername,
+              success: true,
+              tenantId: assetsTenantId,
+              details: {
+                incident_id: incidentId,
                 installation_id: resolvedInstallationId,
-                context_record_created: contextRecordCreated,
-                asset,
-              }, 201);
-            }
+                asset_id: persistedAssetId,
+                geofence_distance_m: geofence.geofence_distance_m,
+                geofence_radius_m: geofence.geofence_radius_m,
+                gps_accuracy_m: gps.gps_accuracy_m,
+                reason: geofenceOverride.override_note,
+                override_by: geofenceOverride.override_by,
+                override_at: geofenceOverride.override_at,
+                tenant_id: assetsTenantId,
+              },
+              computerName: "",
+              ipAddress: requestIp,
+              platform: payload.source,
+            });
+          }
 
-            const { results: linkRows } = await env.DB.prepare(`
+          const incidentEventPayload = mapIncidentRow({
+            id: incidentId,
+            installation_id: resolvedInstallationId,
+            asset_id: persistedAssetId,
+            reporter_username: payload.reporterUsername,
+            note: payload.note,
+            time_adjustment_seconds: payload.timeAdjustment,
+            estimated_duration_seconds: payload.estimatedDurationSeconds,
+            severity: payload.severity,
+            source: payload.source,
+            created_at: createdAt,
+            incident_status: payload.incidentStatus,
+            status_updated_at: createdAt,
+            status_updated_by: payload.reporterUsername,
+            resolved_at: null,
+            resolved_by: null,
+            resolution_note: null,
+            checklist_json: null,
+            evidence_note: null,
+            ...buildDefaultGeofenceSnapshot(),
+            ...geofence,
+            geofence_override_note: geofenceOverride.override_note,
+            geofence_override_by: geofenceOverride.override_by,
+            geofence_override_at: geofenceOverride.override_at,
+            ...gps,
+          });
+
+          await publishRealtimeEvent(env, {
+            type: "incident_created",
+            incident: incidentEventPayload,
+          }, realtimeTenantId);
+          if (payload.applyToInstallation) {
+            await publishRealtimeEvent(env, {
+              type: "installation_updated",
+              installation: {
+                id: resolvedInstallationId,
+                notes: normalizeOptionalString(installation.notes, "")
+                  ? `${normalizeOptionalString(installation.notes, "")}\n[INCIDENT] ${payload.note}`
+                  : payload.note,
+                installation_time_seconds: Math.max(
+                  0,
+                  Number(installation.installation_time_seconds || 0) + payload.timeAdjustment,
+                ),
+              },
+            }, realtimeTenantId);
+          }
+          await syncPublicTrackingSnapshotForInstallation(env, {
+            tenantId: assetsTenantId,
+            installationId: resolvedInstallationId,
+          });
+          await publishRealtimeStatsUpdate(env, realtimeTenantId);
+
+          return jsonResponse(request, env, corsPolicy, {
+            success: true,
+            incident: incidentEventPayload,
+            installation_id: resolvedInstallationId,
+            context_record_created: contextRecordCreated,
+            asset,
+          }, 201);
+        }
+
+        const { results: linkRows } = await env.DB.prepare(`
               SELECT
                 l.id,
                 l.tenant_id,
@@ -3839,15 +4358,15 @@ async function handleAssetsRoute(
                 AND l.tenant_id = ?
               ORDER BY l.linked_at DESC, l.id DESC
             `)
-              .bind(assetId, assetsTenantId)
-              .all();
+          .bind(assetId, assetsTenantId)
+          .all();
 
-            const links = linkRows || [];
-            const activeLink = links.find((link) => !link.unlinked_at) || null;
+        const links = linkRows || [];
+        const activeLink = links.find((link) => !link.unlinked_at) || null;
 
-            let incidents = [];
-            try {
-              const { results: incidentRows } = await env.DB.prepare(`
+        let incidents = [];
+        try {
+          const { results: incidentRows } = await env.DB.prepare(`
                 SELECT
                   i.id,
                   i.installation_id,
@@ -3870,6 +4389,20 @@ async function handleAssetsRoute(
                   i.work_started_at,
                   i.work_ended_at,
                   i.actual_duration_seconds,
+                  i.geofence_distance_m,
+                  i.geofence_radius_m,
+                  i.geofence_result,
+                  i.geofence_checked_at,
+                  i.geofence_override_note,
+                  i.geofence_override_by,
+                  i.geofence_override_at,
+                  i.gps_lat,
+                  i.gps_lng,
+                  i.gps_accuracy_m,
+                  i.gps_captured_at,
+                  i.gps_capture_source,
+                  i.gps_capture_status,
+                  i.gps_capture_note,
                   inst.client_name AS installation_client_name,
                   inst.driver_brand AS installation_brand,
                   inst.driver_version AS installation_version
@@ -3894,14 +4427,14 @@ async function handleAssetsRoute(
                 ORDER BY i.created_at DESC, i.id DESC
                 LIMIT ?
               `)
-                .bind(assetsTenantId, assetId, assetsTenantId, assetId, incidentLimit)
-                .all();
-              incidents = incidentRows || [];
-            } catch (error) {
-              if (!isMissingIncidentAssetColumnError(error)) {
-                throw error;
-              }
-              const { results: legacyIncidentRows } = await env.DB.prepare(`
+            .bind(assetsTenantId, assetId, assetsTenantId, assetId, incidentLimit)
+            .all();
+          incidents = incidentRows || [];
+        } catch (error) {
+          if (!isMissingIncidentAssetColumnError(error)) {
+            throw error;
+          }
+          const { results: legacyIncidentRows } = await env.DB.prepare(`
                 SELECT
                   i.id,
                   i.installation_id,
@@ -3920,6 +4453,20 @@ async function handleAssetsRoute(
                   i.resolution_note,
                   i.checklist_json,
                   i.evidence_note,
+                  i.geofence_distance_m,
+                  i.geofence_radius_m,
+                  i.geofence_result,
+                  i.geofence_checked_at,
+                  i.geofence_override_note,
+                  i.geofence_override_by,
+                  i.geofence_override_at,
+                  i.gps_lat,
+                  i.gps_lng,
+                  i.gps_accuracy_m,
+                  i.gps_captured_at,
+                  i.gps_capture_source,
+                  i.gps_capture_status,
+                  i.gps_capture_note,
                   inst.client_name AS installation_client_name,
                   inst.driver_brand AS installation_brand,
                   inst.driver_version AS installation_version
@@ -3941,18 +4488,18 @@ async function handleAssetsRoute(
                 ORDER BY i.created_at DESC, i.id DESC
                 LIMIT ?
               `)
-                .bind(assetsTenantId, assetsTenantId, assetId, incidentLimit)
-                .all();
-              incidents = (legacyIncidentRows || []).map((row) => ({ ...row, asset_id: null }));
-            }
-            const incidentIds = incidents
-              .map((incident) => Number(incident.id))
-              .filter((incidentId) => Number.isInteger(incidentId) && incidentId > 0);
+            .bind(assetsTenantId, assetsTenantId, assetId, incidentLimit)
+            .all();
+          incidents = (legacyIncidentRows || []).map((row) => ({ ...row, asset_id: null }));
+        }
+        const incidentIds = incidents
+          .map((incident) => Number(incident.id))
+          .filter((incidentId) => Number.isInteger(incidentId) && incidentId > 0);
 
-            const photosByIncident = {};
-            if (incidentIds.length > 0) {
-              const placeholders = incidentIds.map(() => "?").join(", ");
-              const { results: photoRows } = await env.DB.prepare(`
+        const photosByIncident = {};
+        if (incidentIds.length > 0) {
+          const placeholders = incidentIds.map(() => "?").join(", ");
+          const { results: photoRows } = await env.DB.prepare(`
                 SELECT
                   id,
                   incident_id,
@@ -3966,90 +4513,90 @@ async function handleAssetsRoute(
                 WHERE incident_id IN (${placeholders})
                 ORDER BY created_at ASC, id ASC
               `)
-                .bind(...incidentIds)
-                .all();
+            .bind(...incidentIds)
+            .all();
 
-              for (const photo of photoRows || []) {
-                if (!photosByIncident[photo.incident_id]) {
-                  photosByIncident[photo.incident_id] = [];
-                }
-                photosByIncident[photo.incident_id].push(photo);
-              }
+          for (const photo of photoRows || []) {
+            if (!photosByIncident[photo.incident_id]) {
+              photosByIncident[photo.incident_id] = [];
             }
-
-            const enrichedIncidents = incidents.map((incident) =>
-              mapIncidentRow(incident, photosByIncident[incident.id] || [])
-            );
-
-            return jsonResponse(request, env, corsPolicy, {
-              success: true,
-              asset,
-              active_link: activeLink,
-              links,
-              incidents: enrichedIncidents,
-            });
-          } catch (error) {
-            if (error instanceof HttpError) {
-              throw error;
-            }
-            if (isMissingAssetsTableError(error)) {
-              throw new HttpError(
-                503,
-                "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
-              );
-            }
-            if (isMissingIncidentAssetColumnError(error)) {
-              throw new HttpError(
-                503,
-                "La columna incidents.asset_id no existe. Ejecuta migraciones para habilitar incidencias por equipo.",
-              );
-            }
-            throw error;
+            photosByIncident[photo.incident_id].push(photo);
           }
         }
 
-        if (
-          routeParts.length === 3 &&
-          routeParts[2] === "link-installation" &&
-          request.method === "POST"
-        ) {
-          if (isWebRoute) {
-            requireWebWriteRole(webSession?.role);
-          }
-          const assetId = parsePositiveInt(routeParts[1], "asset_id");
-          const data = await readJsonOrThrowBadRequest(request);
-          const installationId = parsePositiveInt(data?.installation_id, "installation_id");
-          const linkedAt = nowIso();
-          const linkedBy = normalizeWebUsername(webSession?.sub || "unknown");
+        const enrichedIncidents = incidents.map((incident) =>
+          mapIncidentRow(incident, photosByIncident[incident.id] || [])
+        );
 
-          try {
-            const { results: assetRows } = await env.DB.prepare(`
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          asset,
+          active_link: activeLink,
+          links,
+          incidents: enrichedIncidents,
+        });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          throw error;
+        }
+        if (isMissingAssetsTableError(error)) {
+          throw new HttpError(
+            503,
+            "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
+          );
+        }
+        if (isMissingIncidentAssetColumnError(error)) {
+          throw new HttpError(
+            503,
+            "La columna incidents.asset_id no existe. Ejecuta migraciones para habilitar incidencias por equipo.",
+          );
+        }
+        throw error;
+      }
+    }
+
+    if (
+      routeParts.length === 3 &&
+      routeParts[2] === "link-installation" &&
+      request.method === "POST"
+    ) {
+      if (isWebRoute) {
+        requireWebWriteRole(webSession?.role);
+      }
+      const assetId = parsePositiveInt(routeParts[1], "asset_id");
+      const data = await readJsonOrThrowBadRequest(request);
+      const installationId = parsePositiveInt(data?.installation_id, "installation_id");
+      const linkedAt = nowIso();
+      const linkedBy = normalizeWebUsername(webSession?.sub || "unknown");
+
+      try {
+        const { results: assetRows } = await env.DB.prepare(`
               SELECT id, external_code
               FROM assets
               WHERE id = ?
                 AND tenant_id = ?
               LIMIT 1
             `)
-              .bind(assetId, assetsTenantId)
-              .all();
-            if (!assetRows?.[0]) {
-              throw new HttpError(404, "Equipo no encontrado.");
-            }
+          .bind(assetId, assetsTenantId)
+          .all();
+        if (!assetRows?.[0]) {
+          throw new HttpError(404, "Equipo no encontrado.");
+        }
 
-            const { results: installationRows } = await env.DB.prepare(`
+        const { results: installationRows } = await env.DB.prepare(`
               SELECT id
               FROM installations
               WHERE id = ?
                 AND tenant_id = ?
               LIMIT 1
             `)
-              .bind(installationId, assetsTenantId)
-              .all();
-            if (!installationRows?.[0]) {
-              throw new HttpError(404, "Instalacion no encontrada.");
-            }
+          .bind(installationId, assetsTenantId)
+          .all();
+        if (!installationRows?.[0]) {
+          throw new HttpError(404, "Instalacion no encontrada.");
+        }
 
-            await env.DB.prepare(`
+        await env.DB.prepare(`
               UPDATE asset_installation_links
               SET unlinked_at = ?
               WHERE tenant_id = ?
@@ -4057,10 +4604,10 @@ async function handleAssetsRoute(
                 AND unlinked_at IS NULL
                 AND installation_id <> ?
             `)
-              .bind(linkedAt, assetsTenantId, assetId, installationId)
-              .run();
+          .bind(linkedAt, assetsTenantId, assetId, installationId)
+          .run();
 
-            const { results: activeRows } = await env.DB.prepare(`
+        const { results: activeRows } = await env.DB.prepare(`
               SELECT id
               FROM asset_installation_links
               WHERE tenant_id = ?
@@ -4069,12 +4616,12 @@ async function handleAssetsRoute(
                 AND unlinked_at IS NULL
               LIMIT 1
             `)
-              .bind(assetsTenantId, assetId, installationId)
-              .all();
+          .bind(assetsTenantId, assetId, installationId)
+          .all();
 
-            let linkId = activeRows?.[0]?.id || null;
-            if (!linkId) {
-              const insertResult = await env.DB.prepare(`
+        let linkId = activeRows?.[0]?.id || null;
+        if (!linkId) {
+          const insertResult = await env.DB.prepare(`
                 INSERT INTO asset_installation_links (
                   tenant_id,
                   asset_id,
@@ -4085,43 +4632,43 @@ async function handleAssetsRoute(
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
               `)
-                .bind(
-                  assetsTenantId,
-                  assetId,
-                  installationId,
-                  linkedAt,
-                  linkedBy,
-                  normalizeOptionalString(data?.notes, "").slice(0, 500),
-                )
-                .run();
-              linkId = insertResult?.meta?.last_row_id || null;
-            }
-
-            return jsonResponse(request, env, corsPolicy, {
-              success: true,
-              link: {
-                id: linkId,
-                tenant_id: assetsTenantId,
-                asset_id: assetId,
-                installation_id: installationId,
-                linked_at: linkedAt,
-                linked_by_username: linkedBy,
-              },
-            });
-          } catch (error) {
-            if (error instanceof HttpError) {
-              throw error;
-            }
-            if (isMissingAssetsTableError(error)) {
-              throw new HttpError(
-                503,
-                "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
-              );
-            }
-            throw error;
-          }
+            .bind(
+              assetsTenantId,
+              assetId,
+              installationId,
+              linkedAt,
+              linkedBy,
+              normalizeOptionalString(data?.notes, "").slice(0, 500),
+            )
+            .run();
+          linkId = insertResult?.meta?.last_row_id || null;
         }
+
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          link: {
+            id: linkId,
+            tenant_id: assetsTenantId,
+            asset_id: assetId,
+            installation_id: installationId,
+            linked_at: linkedAt,
+            linked_by_username: linkedBy,
+          },
+        });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          throw error;
+        }
+        if (isMissingAssetsTableError(error)) {
+          throw new HttpError(
+            503,
+            "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
+          );
+        }
+        throw error;
       }
+    }
+  }
 
   return null;
 }
@@ -4134,280 +4681,844 @@ async function handleDriversRoute(
   isWebRoute,
   webSession,
 ) {
-      if (routeParts.length >= 1 && routeParts[0] === "drivers") {
-        if (!isWebRoute) {
-          throw new HttpError(401, "Gestion de drivers requiere sesion web.");
-        }
+  if (routeParts.length >= 1 && routeParts[0] === "drivers") {
+    if (!isWebRoute) {
+      throw new HttpError(401, "Gestion de drivers requiere sesion web.");
+    }
 
-        const driversTenantId = normalizeRealtimeTenantId(webSession?.tenant_id);
-        const driversBucket = getDriversBucketBinding(env);
+    const driversTenantId = normalizeRealtimeTenantId(webSession?.tenant_id);
+    const driversBucket = getDriversBucketBinding(env);
 
-        if (routeParts.length === 1 && request.method === "GET") {
-          const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
-          const brandFilter = normalizeOptionalString(url.searchParams.get("brand"), "").toLowerCase();
-          const versionFilter = normalizeOptionalString(url.searchParams.get("version"), "").toLowerCase();
-          const searchFilter = normalizeOptionalString(url.searchParams.get("search"), "").toLowerCase();
+    if (routeParts.length === 1 && request.method === "GET") {
+      const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
+      const brandFilter = normalizeOptionalString(url.searchParams.get("brand"), "").toLowerCase();
+      const versionFilter = normalizeOptionalString(url.searchParams.get("version"), "").toLowerCase();
+      const searchFilter = normalizeOptionalString(url.searchParams.get("search"), "").toLowerCase();
 
-          const manifest = await readDriverManifest(driversBucket);
-          let items = (manifest.drivers || []).filter(
-            (entry) => normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId,
-          );
+      const manifest = await readDriverManifest(driversBucket);
+      let items = (manifest.drivers || []).filter(
+        (entry) => normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId,
+      );
 
-          if (brandFilter) {
-            items = items.filter(
-              (entry) => normalizeOptionalString(entry.brand, "").toLowerCase() === brandFilter,
-            );
-          }
-          if (versionFilter) {
-            items = items.filter(
-              (entry) => normalizeOptionalString(entry.version, "").toLowerCase() === versionFilter,
-            );
-          }
-          if (searchFilter) {
-            items = items.filter((entry) => {
-              const haystack = [
-                normalizeOptionalString(entry.brand, ""),
-                normalizeOptionalString(entry.version, ""),
-                normalizeOptionalString(entry.filename, ""),
-                normalizeOptionalString(entry.description, ""),
-              ]
-                .join(" ")
-                .toLowerCase();
-              return haystack.includes(searchFilter);
-            });
-          }
+      if (brandFilter) {
+        items = items.filter(
+          (entry) => normalizeOptionalString(entry.brand, "").toLowerCase() === brandFilter,
+        );
+      }
+      if (versionFilter) {
+        items = items.filter(
+          (entry) => normalizeOptionalString(entry.version, "").toLowerCase() === versionFilter,
+        );
+      }
+      if (searchFilter) {
+        items = items.filter((entry) => {
+          const haystack = [
+            normalizeOptionalString(entry.brand, ""),
+            normalizeOptionalString(entry.version, ""),
+            normalizeOptionalString(entry.filename, ""),
+            normalizeOptionalString(entry.description, ""),
+          ]
+            .join(" ")
+            .toLowerCase();
+          return haystack.includes(searchFilter);
+        });
+      }
 
-          items.sort((a, b) => {
-            const aTime = Date.parse(normalizeOptionalString(a.uploaded, "")) || 0;
-            const bTime = Date.parse(normalizeOptionalString(b.uploaded, "")) || 0;
-            return bTime - aTime;
-          });
+      items.sort((a, b) => {
+        const aTime = Date.parse(normalizeOptionalString(a.uploaded, "")) || 0;
+        const bTime = Date.parse(normalizeOptionalString(b.uploaded, "")) || 0;
+        return bTime - aTime;
+      });
 
-          const total = items.length;
-          items = items.slice(0, limit);
+      const total = items.length;
+      items = items.slice(0, limit);
 
-          return jsonResponse(request, env, corsPolicy, {
-            success: true,
-            total,
-            items: items.map((entry) => ({
-              ...entry,
-              download_url: `/web/drivers/download?key=${encodeURIComponent(entry.key)}`,
-            })),
-          });
-        }
+      return jsonResponse(request, env, corsPolicy, {
+        success: true,
+        total,
+        items: items.map((entry) => ({
+          ...entry,
+          download_url: `/web/drivers/download?key=${encodeURIComponent(entry.key)}`,
+        })),
+      });
+    }
 
-        if (routeParts.length === 1 && request.method === "POST") {
-          requireAdminRole(webSession?.role);
+    if (routeParts.length === 1 && request.method === "POST") {
+      requireAdminRole(webSession?.role);
 
-          let formData;
-          try {
-            formData = await request.formData();
-          } catch {
-            throw new HttpError(400, "Payload multipart/form-data invalido.");
-          }
+      let formData;
+      try {
+        formData = await request.formData();
+      } catch {
+        throw new HttpError(400, "Payload multipart/form-data invalido.");
+      }
 
-          const brand = normalizeDriverBrand(formData.get("brand"));
-          const version = normalizeDriverVersion(formData.get("version"));
-          const description = normalizeDriverDescription(formData.get("description"));
-          const fileField = formData.get("file");
+      const brand = normalizeDriverBrand(formData.get("brand"));
+      const version = normalizeDriverVersion(formData.get("version"));
+      const description = normalizeDriverDescription(formData.get("description"));
+      const fileField = formData.get("file");
 
-          if (
-            !fileField ||
-            typeof fileField !== "object" ||
-            typeof fileField.stream !== "function" ||
-            typeof fileField.name !== "string"
-          ) {
-            throw new HttpError(400, "Campo 'file' es obligatorio.");
-          }
+      if (
+        !fileField ||
+        typeof fileField !== "object" ||
+        typeof fileField.stream !== "function" ||
+        typeof fileField.name !== "string"
+      ) {
+        throw new HttpError(400, "Campo 'file' es obligatorio.");
+      }
 
-          const fileSize = Math.max(0, Number(fileField.size) || 0);
-          if (!fileSize) {
-            throw new HttpError(400, "El archivo esta vacio.");
-          }
-          if (fileSize > MAX_DRIVER_UPLOAD_BYTES) {
-            throw new HttpError(
-              413,
-              `Archivo demasiado grande (${(fileSize / (1024 * 1024)).toFixed(1)}MB). Maximo: ${(
-                MAX_DRIVER_UPLOAD_BYTES /
-                (1024 * 1024)
-              ).toFixed(0)}MB.`,
-            );
-          }
+      const fileSize = Math.max(0, Number(fileField.size) || 0);
+      if (!fileSize) {
+        throw new HttpError(400, "El archivo esta vacio.");
+      }
+      if (fileSize > MAX_DRIVER_UPLOAD_BYTES) {
+        throw new HttpError(
+          413,
+          `Archivo demasiado grande (${(fileSize / (1024 * 1024)).toFixed(1)}MB). Maximo: ${(
+            MAX_DRIVER_UPLOAD_BYTES /
+            (1024 * 1024)
+          ).toFixed(0)}MB.`,
+        );
+      }
 
-          const safeFileName = sanitizeFileName(
-            normalizeOptionalString(fileField.name, ""),
-            `driver_${Date.now()}`,
-          );
-          const contentType = normalizeContentType(fileField.type) || "application/octet-stream";
-          const driverKey = buildDriverStorageKey({
-            tenantId: driversTenantId,
-            brand,
-            version,
-            fileName: safeFileName,
-          });
-          const uploadedAt = nowIso();
-          const uploadedBy = normalizeWebUsername(webSession?.sub || "unknown");
+      const safeFileName = sanitizeFileName(
+        normalizeOptionalString(fileField.name, ""),
+        `driver_${Date.now()}`,
+      );
+      const contentType = normalizeContentType(fileField.type) || "application/octet-stream";
+      const driverKey = buildDriverStorageKey({
+        tenantId: driversTenantId,
+        brand,
+        version,
+        fileName: safeFileName,
+      });
+      const uploadedAt = nowIso();
+      const uploadedBy = normalizeWebUsername(webSession?.sub || "unknown");
 
-          await driversBucket.put(driverKey, fileField.stream(), {
-            httpMetadata: { contentType },
-          });
+      await driversBucket.put(driverKey, fileField.stream(), {
+        httpMetadata: { contentType },
+      });
 
-          const manifest = await readDriverManifest(driversBucket);
-          const replacedEntries = (manifest.drivers || []).filter(
-            (entry) =>
-              normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId &&
-              normalizeOptionalString(entry.brand, "").toLowerCase() === brand.toLowerCase() &&
-              normalizeOptionalString(entry.version, "").toLowerCase() === version.toLowerCase() &&
-              normalizeOptionalString(entry.key, "") !== driverKey,
-          );
+      const manifest = await readDriverManifest(driversBucket);
+      const replacedEntries = (manifest.drivers || []).filter(
+        (entry) =>
+          normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId &&
+          normalizeOptionalString(entry.brand, "").toLowerCase() === brand.toLowerCase() &&
+          normalizeOptionalString(entry.version, "").toLowerCase() === version.toLowerCase() &&
+          normalizeOptionalString(entry.key, "") !== driverKey,
+      );
 
-          manifest.drivers = (manifest.drivers || []).filter((entry) => {
-            return !(
-              normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId &&
-              normalizeOptionalString(entry.brand, "").toLowerCase() === brand.toLowerCase() &&
-              normalizeOptionalString(entry.version, "").toLowerCase() === version.toLowerCase()
-            );
-          });
+      manifest.drivers = (manifest.drivers || []).filter((entry) => {
+        return !(
+          normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId &&
+          normalizeOptionalString(entry.brand, "").toLowerCase() === brand.toLowerCase() &&
+          normalizeOptionalString(entry.version, "").toLowerCase() === version.toLowerCase()
+        );
+      });
 
-          for (const staleEntry of replacedEntries) {
-            const staleKey = normalizeOptionalString(staleEntry?.key, "");
-            if (!staleKey) continue;
-            try {
-              await driversBucket.delete(staleKey);
-            } catch {
-              // Best effort cleanup.
-            }
-          }
-
-          const driverEntry = {
-            tenant_id: driversTenantId,
-            brand,
-            version,
-            description,
-            key: driverKey,
-            filename: safeFileName,
-            uploaded: uploadedAt,
-            last_modified: formatLegacyDateTime(uploadedAt),
-            size_bytes: fileSize,
-            size_mb: Number((fileSize / (1024 * 1024)).toFixed(2)),
-            uploaded_by_username: uploadedBy,
-          };
-          manifest.drivers.push(driverEntry);
-          await writeDriverManifest(driversBucket, manifest);
-
-          await logAuditEvent(env, {
-            action: "upload_driver",
-            username: uploadedBy,
-            success: true,
-            tenantId: driversTenantId,
-            details: {
-              tenant_id: driversTenantId,
-              brand,
-              version,
-              key: driverKey,
-              size_bytes: fileSize,
-            },
-            ipAddress: getClientIpForRateLimit(request),
-            platform: "web",
-          });
-
-          return jsonResponse(request, env, corsPolicy, {
-            success: true,
-            driver: {
-              ...driverEntry,
-              download_url: `/web/drivers/download?key=${encodeURIComponent(driverKey)}`,
-            },
-          }, 201);
-        }
-
-        if (routeParts.length === 1 && request.method === "DELETE") {
-          requireAdminRole(webSession?.role);
-
-          const key = normalizeOptionalString(url.searchParams.get("key"), "");
-          if (!key) {
-            throw new HttpError(400, "Parametro 'key' es obligatorio.");
-          }
-
-          const manifest = await readDriverManifest(driversBucket);
-          const found = (manifest.drivers || []).find(
-            (entry) =>
-              normalizeOptionalString(entry.key, "") === key &&
-              normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId,
-          );
-          if (!found) {
-            throw new HttpError(404, "Driver no encontrado.");
-          }
-
-          await driversBucket.delete(key);
-          manifest.drivers = (manifest.drivers || []).filter(
-            (entry) =>
-              !(
-                normalizeOptionalString(entry.key, "") === key &&
-                normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId
-              ),
-          );
-          await writeDriverManifest(driversBucket, manifest);
-
-          await logAuditEvent(env, {
-            action: "delete_driver",
-            username: normalizeWebUsername(webSession?.sub || "unknown"),
-            success: true,
-            tenantId: driversTenantId,
-            details: {
-              tenant_id: driversTenantId,
-              key,
-              brand: found.brand || "",
-              version: found.version || "",
-            },
-            ipAddress: getClientIpForRateLimit(request),
-            platform: "web",
-          });
-
-          return jsonResponse(request, env, corsPolicy, {
-            success: true,
-            deleted_key: key,
-          });
-        }
-
-        if (routeParts.length === 2 && routeParts[1] === "download" && request.method === "GET") {
-          const key = normalizeOptionalString(url.searchParams.get("key"), "");
-          if (!key) {
-            throw new HttpError(400, "Parametro 'key' es obligatorio.");
-          }
-
-          const manifest = await readDriverManifest(driversBucket);
-          const found = (manifest.drivers || []).find(
-            (entry) =>
-              normalizeOptionalString(entry.key, "") === key &&
-              normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId,
-          );
-          if (!found) {
-            throw new HttpError(404, "Driver no encontrado.");
-          }
-
-          const object = await driversBucket.get(key);
-          if (!object || !object.body) {
-            throw new HttpError(404, "Archivo de driver no encontrado en R2.");
-          }
-
-          const safeName = sanitizeFileName(
-            normalizeOptionalString(found.filename, ""),
-            "driver",
-          );
-
-          return new Response(object.body, {
-            status: 200,
-            headers: {
-              ...corsHeaders(request, env, corsPolicy),
-              "Content-Type": object.httpMetadata?.contentType || "application/octet-stream",
-              "Content-Disposition": `attachment; filename=\"${safeName}\"`,
-              "Cache-Control": "private, max-age=300",
-            },
-          });
+      for (const staleEntry of replacedEntries) {
+        const staleKey = normalizeOptionalString(staleEntry?.key, "");
+        if (!staleKey) continue;
+        try {
+          await driversBucket.delete(staleKey);
+        } catch {
+          // Best effort cleanup.
         }
       }
 
+      const driverEntry = {
+        tenant_id: driversTenantId,
+        brand,
+        version,
+        description,
+        key: driverKey,
+        filename: safeFileName,
+        uploaded: uploadedAt,
+        last_modified: formatLegacyDateTime(uploadedAt),
+        size_bytes: fileSize,
+        size_mb: Number((fileSize / (1024 * 1024)).toFixed(2)),
+        uploaded_by_username: uploadedBy,
+      };
+      manifest.drivers.push(driverEntry);
+      await writeDriverManifest(driversBucket, manifest);
+
+      await logAuditEvent(env, {
+        action: "upload_driver",
+        username: uploadedBy,
+        success: true,
+        tenantId: driversTenantId,
+        details: {
+          tenant_id: driversTenantId,
+          brand,
+          version,
+          key: driverKey,
+          size_bytes: fileSize,
+        },
+        ipAddress: getClientIpForRateLimit(request),
+        platform: "web",
+      });
+
+      return jsonResponse(request, env, corsPolicy, {
+        success: true,
+        driver: {
+          ...driverEntry,
+          download_url: `/web/drivers/download?key=${encodeURIComponent(driverKey)}`,
+        },
+      }, 201);
+    }
+
+    if (routeParts.length === 1 && request.method === "DELETE") {
+      requireAdminRole(webSession?.role);
+
+      const key = normalizeOptionalString(url.searchParams.get("key"), "");
+      if (!key) {
+        throw new HttpError(400, "Parametro 'key' es obligatorio.");
+      }
+
+      const manifest = await readDriverManifest(driversBucket);
+      const found = (manifest.drivers || []).find(
+        (entry) =>
+          normalizeOptionalString(entry.key, "") === key &&
+          normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId,
+      );
+      if (!found) {
+        throw new HttpError(404, "Driver no encontrado.");
+      }
+
+      await driversBucket.delete(key);
+      manifest.drivers = (manifest.drivers || []).filter(
+        (entry) =>
+          !(
+            normalizeOptionalString(entry.key, "") === key &&
+            normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId
+          ),
+      );
+      await writeDriverManifest(driversBucket, manifest);
+
+      await logAuditEvent(env, {
+        action: "delete_driver",
+        username: normalizeWebUsername(webSession?.sub || "unknown"),
+        success: true,
+        tenantId: driversTenantId,
+        details: {
+          tenant_id: driversTenantId,
+          key,
+          brand: found.brand || "",
+          version: found.version || "",
+        },
+        ipAddress: getClientIpForRateLimit(request),
+        platform: "web",
+      });
+
+      return jsonResponse(request, env, corsPolicy, {
+        success: true,
+        deleted_key: key,
+      });
+    }
+
+    if (routeParts.length === 2 && routeParts[1] === "download" && request.method === "GET") {
+      const key = normalizeOptionalString(url.searchParams.get("key"), "");
+      if (!key) {
+        throw new HttpError(400, "Parametro 'key' es obligatorio.");
+      }
+
+      const manifest = await readDriverManifest(driversBucket);
+      const found = (manifest.drivers || []).find(
+        (entry) =>
+          normalizeOptionalString(entry.key, "") === key &&
+          normalizeRealtimeTenantId(entry.tenant_id) === driversTenantId,
+      );
+      if (!found) {
+        throw new HttpError(404, "Driver no encontrado.");
+      }
+
+      const object = await driversBucket.get(key);
+      if (!object || !object.body) {
+        throw new HttpError(404, "Archivo de driver no encontrado en R2.");
+      }
+
+      const safeName = sanitizeFileName(
+        normalizeOptionalString(found.filename, ""),
+        "driver",
+      );
+
+      return new Response(object.body, {
+        status: 200,
+        headers: {
+          ...corsHeaders(request, env, corsPolicy),
+          "Content-Type": object.httpMetadata?.contentType || "application/octet-stream",
+          "Content-Disposition": `attachment; filename=\"${safeName}\"`,
+          "Cache-Control": "private, max-age=300",
+        },
+      });
+    }
+  }
+
   return null;
+}
+
+async function handleLoansRoute(
+  request,
+  env,
+  url,
+  corsPolicy,
+  routeParts,
+  isWebRoute,
+  webSession,
+  realtimeTenantId,
+) {
+  if (!isWebRoute) return null;
+
+  const loansTenantId = normalizeRealtimeTenantId(
+    isWebRoute ? webSession?.tenant_id : realtimeTenantId,
+  );
+  const actorUsername = normalizeWebUsername(webSession?.sub || "unknown");
+
+  if (routeParts.length === 1 && routeParts[0] === "loans" && request.method === "GET") {
+    const requestedStatus = normalizeOptionalString(url.searchParams.get("status"), "").trim().toLowerCase();
+    const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
+    const currentIso = nowIso();
+    const dueSoonCutoffIso = new Date(
+      new Date(currentIso).getTime() + LOAN_DUE_SOON_HOURS * 60 * 60 * 1000,
+    ).toISOString();
+    let query = `
+      SELECT
+        l.*,
+        a.external_code AS asset_external_code,
+        a.brand AS asset_brand,
+        a.model AS asset_model
+      FROM asset_loans l
+      LEFT JOIN assets a ON a.id = l.asset_id AND a.tenant_id = l.tenant_id
+      WHERE l.tenant_id = ?
+    `;
+    const bindings = [loansTenantId];
+
+    if (requestedStatus === "active") {
+      query += " AND l.returned_at IS NULL AND (l.expected_return_at IS NULL OR l.expected_return_at >= ?)";
+      bindings.push(currentIso);
+    } else if (requestedStatus === "due_soon") {
+      query += " AND l.returned_at IS NULL AND l.expected_return_at IS NOT NULL AND l.expected_return_at >= ? AND l.expected_return_at <= ?";
+      bindings.push(currentIso, dueSoonCutoffIso);
+    } else if (requestedStatus === "overdue") {
+      query += " AND l.returned_at IS NULL AND l.expected_return_at IS NOT NULL AND l.expected_return_at < ?";
+      bindings.push(currentIso);
+    } else if (requestedStatus === "returned") {
+      query += " AND l.returned_at IS NOT NULL";
+    }
+
+    query += " ORDER BY l.loaned_at DESC LIMIT ?";
+    bindings.push(limit);
+
+    try {
+      const { results } = await env.DB.prepare(query).bind(...bindings).all();
+      return jsonResponse(request, env, corsPolicy, {
+        success: true,
+        items: (results || []).map((row) => mapLoanRow(row, currentIso)),
+      });
+    } catch (error) {
+      if (String(error?.message || "").toLowerCase().includes("no such table")) {
+        throw new HttpError(
+          503,
+          "La tabla de prestamos no existe. Ejecuta la migracion 0020_asset_loans.sql.",
+        );
+      }
+      throw error;
+    }
+  }
+
+  if (
+    routeParts.length === 3 &&
+    routeParts[0] === "assets" &&
+    routeParts[2] === "loans" &&
+    request.method === "GET"
+  ) {
+    const assetId = parsePositiveInt(routeParts[1], "asset_id");
+    const currentIso = nowIso();
+
+    try {
+      const { results } = await env.DB.prepare(`
+        SELECT
+          l.*,
+          a.external_code AS asset_external_code,
+          a.brand AS asset_brand,
+          a.model AS asset_model
+        FROM asset_loans l
+        LEFT JOIN assets a ON a.id = l.asset_id AND a.tenant_id = l.tenant_id
+        WHERE l.tenant_id = ? AND l.asset_id = ?
+        ORDER BY l.loaned_at DESC
+        LIMIT 200
+      `).bind(loansTenantId, assetId).all();
+
+      const items = (results || []).map((row) => mapLoanRow(row, currentIso));
+      return jsonResponse(request, env, corsPolicy, {
+        success: true,
+        items,
+        active_count: items.filter((item) => item.status !== "returned").length,
+        overdue_count: items.filter((item) => item.status === "overdue").length,
+      });
+    } catch (error) {
+      if (String(error?.message || "").toLowerCase().includes("no such table")) {
+        throw new HttpError(
+          503,
+          "La tabla de prestamos no existe. Ejecuta la migracion 0020_asset_loans.sql.",
+        );
+      }
+      throw error;
+    }
+  }
+
+  if (
+    routeParts.length === 3 &&
+    routeParts[0] === "assets" &&
+    routeParts[2] === "loans" &&
+    request.method === "POST"
+  ) {
+    requireWebWriteRole(webSession?.role);
+    const assetId = parsePositiveInt(routeParts[1], "asset_id");
+    const data = await readJsonOrThrowBadRequest(request);
+    const borrowingClient = normalizeOptionalString(data?.borrowing_client, "").trim().slice(0, 180);
+    if (!borrowingClient) {
+      throw new HttpError(400, "Campo 'borrowing_client' es obligatorio.");
+    }
+
+    const expectedReturnAtRaw = normalizeOptionalString(data?.expected_return_at, "").trim();
+    const expectedReturnAt = expectedReturnAtRaw || null;
+    if (expectedReturnAt) {
+      const parsedExpected = Date.parse(expectedReturnAt);
+      if (!Number.isFinite(parsedExpected)) {
+        throw new HttpError(400, "Campo 'expected_return_at' con formato invalido.");
+      }
+      if (expectedReturnAt <= nowIso()) {
+        throw new HttpError(400, "La fecha de retorno debe ser futura.");
+      }
+    }
+
+    const notes = normalizeOptionalString(data?.notes, "").trim().slice(0, 2000);
+    const loanedAt = nowIso();
+    let assetRow = null;
+
+    try {
+      const { results } = await env.DB.prepare(`
+        SELECT id, external_code, client_name, brand, model
+        FROM assets
+        WHERE id = ? AND tenant_id = ?
+        LIMIT 1
+      `).bind(assetId, loansTenantId).all();
+      assetRow = results?.[0] || null;
+    } catch {
+      assetRow = null;
+    }
+
+    if (!assetRow) {
+      throw new HttpError(404, "Equipo no encontrado.");
+    }
+
+    const originalClient = normalizeOptionalString(assetRow.client_name, "").trim();
+
+    try {
+      const { results: activeLoans } = await env.DB.prepare(`
+        SELECT id
+        FROM asset_loans
+        WHERE tenant_id = ? AND asset_id = ? AND returned_at IS NULL
+        LIMIT 1
+      `).bind(loansTenantId, assetId).all();
+
+      if (activeLoans?.length) {
+        throw new HttpError(
+          409,
+          "El equipo ya tiene un prestamo activo. Registra la devolucion primero.",
+        );
+      }
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      if (String(error?.message || "").toLowerCase().includes("no such table")) {
+        throw new HttpError(
+          503,
+          "La tabla de prestamos no existe. Ejecuta la migracion 0020_asset_loans.sql.",
+        );
+      }
+      throw error;
+    }
+
+    const insertResult = await env.DB.prepare(`
+      INSERT INTO asset_loans (
+        tenant_id,
+        asset_id,
+        original_client,
+        borrowing_client,
+        loaned_at,
+        expected_return_at,
+        loaned_by_username,
+        notes,
+        status
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
+    `)
+      .bind(
+        loansTenantId,
+        assetId,
+        originalClient,
+        borrowingClient,
+        loanedAt,
+        expectedReturnAt,
+        actorUsername,
+        notes,
+      )
+      .run();
+
+    const loanId = insertResult?.meta?.last_row_id || null;
+
+    await logAuditEvent(env, {
+      action: "create_asset_loan",
+      username: actorUsername,
+      success: true,
+      tenantId: loansTenantId,
+      details: {
+        loan_id: loanId,
+        asset_id: assetId,
+        external_code: assetRow.external_code,
+        original_client: originalClient,
+        borrowing_client: borrowingClient,
+        expected_return_at: expectedReturnAt,
+        tenant_id: loansTenantId,
+      },
+      ipAddress: getClientIpForRateLimit(request),
+      platform: "web",
+    });
+
+    await publishRealtimeEvent(env, {
+      type: "asset_loan_created",
+      loan: {
+        id: loanId,
+        asset_id: assetId,
+        asset_external_code: assetRow.external_code,
+        original_client: originalClient,
+        borrowing_client: borrowingClient,
+        loaned_at: loanedAt,
+        expected_return_at: expectedReturnAt,
+        loaned_by_username: actorUsername,
+        notes,
+        status: "active",
+      },
+    }, realtimeTenantId);
+
+    return jsonResponse(request, env, corsPolicy, {
+      success: true,
+      loan: {
+        id: loanId,
+        tenant_id: loansTenantId,
+        asset_id: assetId,
+        asset_external_code: assetRow.external_code,
+        original_client: originalClient,
+        borrowing_client: borrowingClient,
+        loaned_at: loanedAt,
+        expected_return_at: expectedReturnAt,
+        loaned_by_username: actorUsername,
+        notes,
+        status: "active",
+      },
+    }, 201);
+  }
+
+  if (
+    routeParts.length === 3 &&
+    routeParts[0] === "loans" &&
+    routeParts[2] === "return" &&
+    request.method === "PATCH"
+  ) {
+    requireWebWriteRole(webSession?.role);
+    const loanId = parsePositiveInt(routeParts[1], "loan_id");
+    const data = await readJsonOrThrowBadRequest(request);
+    const returnNotes = normalizeOptionalString(data?.return_notes, "").trim().slice(0, 2000);
+    const returnedAt = nowIso();
+
+    const { results: loanRows } = await env.DB.prepare(`
+      SELECT l.*, a.external_code AS asset_external_code
+      FROM asset_loans l
+      LEFT JOIN assets a ON a.id = l.asset_id AND a.tenant_id = l.tenant_id
+      WHERE l.id = ? AND l.tenant_id = ?
+      LIMIT 1
+    `).bind(loanId, loansTenantId).all();
+
+    const loan = loanRows?.[0];
+    if (!loan) {
+      throw new HttpError(404, "Prestamo no encontrado.");
+    }
+    if (normalizeOptionalString(loan.returned_at, "").trim()) {
+      throw new HttpError(409, "Este prestamo ya fue devuelto.");
+    }
+
+    await env.DB.prepare(`
+      UPDATE asset_loans
+      SET returned_at = ?, returned_by_username = ?, return_notes = ?, status = 'returned'
+      WHERE id = ? AND tenant_id = ?
+    `).bind(returnedAt, actorUsername, returnNotes, loanId, loansTenantId).run();
+
+    await logAuditEvent(env, {
+      action: "return_asset_loan",
+      username: actorUsername,
+      success: true,
+      tenantId: loansTenantId,
+      details: {
+        loan_id: loanId,
+        asset_id: loan.asset_id,
+        external_code: loan.asset_external_code,
+        borrowing_client: loan.borrowing_client,
+        returned_at: returnedAt,
+        tenant_id: loansTenantId,
+      },
+      ipAddress: getClientIpForRateLimit(request),
+      platform: "web",
+    });
+
+    await publishRealtimeEvent(env, {
+      type: "asset_loan_returned",
+      loan: {
+        id: loanId,
+        asset_id: loan.asset_id,
+        asset_external_code: loan.asset_external_code,
+        borrowing_client: loan.borrowing_client,
+        returned_at: returnedAt,
+        returned_by_username: actorUsername,
+        return_notes: returnNotes,
+        status: "returned",
+      },
+    }, realtimeTenantId);
+
+    return jsonResponse(request, env, corsPolicy, {
+      success: true,
+      loan: {
+        id: loanId,
+        asset_id: loan.asset_id,
+        original_client: loan.original_client,
+        borrowing_client: loan.borrowing_client,
+        loaned_at: loan.loaned_at,
+        expected_return_at: loan.expected_return_at,
+        returned_at: returnedAt,
+        returned_by_username: actorUsername,
+        return_notes: returnNotes,
+        status: "returned",
+      },
+    });
+  }
+
+  return null;
+}
+
+async function listPendingAssetLoanReminders(env, currentIso = nowIso()) {
+  const currentDate = new Date(currentIso);
+  const currentTime = Number.isFinite(currentDate.getTime()) ? currentDate.getTime() : Date.now();
+  const dueSoonCutoffIso = new Date(currentTime + LOAN_DUE_SOON_HOURS * 60 * 60 * 1000).toISOString();
+  const overdueRepeatCutoffIso = new Date(currentTime - LOAN_OVERDUE_REPEAT_HOURS * 60 * 60 * 1000).toISOString();
+
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT
+        l.*,
+        a.external_code AS asset_external_code,
+        a.brand AS asset_brand,
+        a.model AS asset_model
+      FROM asset_loans l
+      LEFT JOIN assets a ON a.id = l.asset_id AND a.tenant_id = l.tenant_id
+      WHERE l.returned_at IS NULL
+        AND l.expected_return_at IS NOT NULL
+      ORDER BY l.expected_return_at ASC, l.id ASC
+    `).all();
+
+    return (results || [])
+      .map((row) => {
+        const reminderType = resolveLoanReminderType(row, currentIso, {
+          dueSoonCutoffIso,
+          overdueRepeatCutoffIso,
+        });
+        return reminderType
+          ? {
+            ...mapLoanRow(row, currentIso),
+            tenant_id: row.tenant_id,
+            reminder_type: reminderType,
+          }
+          : null;
+      })
+      .filter(Boolean);
+  } catch (error) {
+    if (String(error?.message || "").toLowerCase().includes("no such table")) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function markAssetLoanReminderSent(env, loan, reminderType, sentAt = nowIso()) {
+  const loanId = Number.parseInt(String(loan?.id ?? ""), 10);
+  const tenantId = normalizeRealtimeTenantId(loan?.tenant_id);
+  if (!Number.isInteger(loanId) || loanId <= 0) return false;
+
+  if (reminderType === "overdue") {
+    await env.DB.prepare(`
+      UPDATE asset_loans
+      SET overdue_reminded_at = ?
+      WHERE id = ? AND tenant_id = ?
+    `).bind(sentAt, loanId, tenantId).run();
+    return true;
+  }
+
+  await env.DB.prepare(`
+    UPDATE asset_loans
+    SET due_soon_reminded_at = ?
+    WHERE id = ? AND tenant_id = ?
+  `).bind(sentAt, loanId, tenantId).run();
+  return true;
+}
+
+function buildAssetLoanReminderPushPayload(reminderType, loans) {
+  const count = loans.length;
+  if (reminderType === "overdue") {
+    return {
+      title: "Prestamos vencidos",
+      body: count === 1
+        ? `1 equipo ya supero la fecha de devolucion.`
+        : `${count} equipos ya superaron la fecha de devolucion.`,
+      data: {
+        type: "asset_loan_overdue",
+        count: String(count),
+      },
+    };
+  }
+  return {
+    title: "Prestamos por vencer",
+    body: count === 1
+      ? `1 equipo vence dentro de ${LOAN_DUE_SOON_HOURS}h.`
+      : `${count} equipos vencen dentro de ${LOAN_DUE_SOON_HOURS}h.`,
+    data: {
+      type: "asset_loan_due_soon",
+      count: String(count),
+    },
+  };
+}
+
+async function processAssetLoanReminders(env, currentIso = nowIso()) {
+  if (!env?.DB) {
+    return {
+      processed: false,
+      reason: "missing_db",
+      due_soon_count: 0,
+      overdue_count: 0,
+      tenants_notified: 0,
+    };
+  }
+
+  const reminderRows = await listPendingAssetLoanReminders(env, currentIso);
+  if (!reminderRows.length) {
+    return {
+      processed: true,
+      due_soon_count: 0,
+      overdue_count: 0,
+      tenants_notified: 0,
+    };
+  }
+
+  const tenantGroups = new Map();
+  reminderRows.forEach((loan) => {
+    const tenantId = normalizeRealtimeTenantId(loan?.tenant_id);
+    const existing = tenantGroups.get(tenantId) || { dueSoon: [], overdue: [] };
+    if (loan.reminder_type === "overdue") {
+      existing.overdue.push(loan);
+    } else {
+      existing.dueSoon.push(loan);
+    }
+    tenantGroups.set(tenantId, existing);
+  });
+
+  let tenantsNotified = 0;
+  for (const [tenantId, group] of tenantGroups.entries()) {
+    const dueSoonLoans = group.dueSoon;
+    const overdueLoans = group.overdue;
+    const fcmTokens = await listDeviceTokensForWebRoles(env, ["admin", "super_admin"], tenantId);
+
+    const dueSoonPush = dueSoonLoans.length
+      ? await sendPushNotification(env, fcmTokens, buildAssetLoanReminderPushPayload("due_soon", dueSoonLoans))
+      : { sent: false, reason: "no_due_soon_loans" };
+    const overduePush = overdueLoans.length
+      ? await sendPushNotification(env, fcmTokens, buildAssetLoanReminderPushPayload("overdue", overdueLoans))
+      : { sent: false, reason: "no_overdue_loans" };
+
+    const emailResult = await sendLoanReminderEmail(env, {
+      tenantId,
+      dueSoonLoans,
+      overdueLoans,
+    });
+    const dueSoonDelivered = Boolean(dueSoonPush?.sent) || Boolean(emailResult?.delivered);
+    const overdueDelivered = Boolean(overduePush?.sent) || Boolean(emailResult?.delivered);
+
+    if (dueSoonDelivered) {
+      for (const loan of dueSoonLoans) {
+        await markAssetLoanReminderSent(env, loan, "due_soon", currentIso);
+      }
+    }
+    if (overdueDelivered) {
+      for (const loan of overdueLoans) {
+        await markAssetLoanReminderSent(env, loan, "overdue", currentIso);
+      }
+    }
+
+    if (dueSoonLoans.length && dueSoonDelivered) {
+      await logAuditEvent(env, {
+        action: "asset_loan_due_soon_reminder_sent",
+        username: "system",
+        success: true,
+        tenantId,
+        details: {
+          tenant_id: tenantId,
+          count: dueSoonLoans.length,
+          loan_ids: dueSoonLoans.map((loan) => loan.id),
+          push_sent: Boolean(dueSoonPush?.sent),
+          email_delivered: Boolean(emailResult?.delivered),
+        },
+        platform: "system",
+        timestamp: currentIso,
+      });
+    }
+
+    if (overdueLoans.length && overdueDelivered) {
+      await logAuditEvent(env, {
+        action: "asset_loan_overdue_reminder_sent",
+        username: "system",
+        success: true,
+        tenantId,
+        details: {
+          tenant_id: tenantId,
+          count: overdueLoans.length,
+          loan_ids: overdueLoans.map((loan) => loan.id),
+          push_sent: Boolean(overduePush?.sent),
+          email_delivered: Boolean(emailResult?.delivered),
+        },
+        platform: "system",
+        timestamp: currentIso,
+      });
+    }
+
+    await publishRealtimeEvent(env, {
+      type: "asset_loan_reminder_summary",
+      tenant_id: tenantId,
+      summary: {
+        due_soon_count: dueSoonLoans.length,
+        overdue_count: overdueLoans.length,
+        due_soon_delivered: dueSoonDelivered,
+        overdue_delivered: overdueDelivered,
+      },
+    }, tenantId);
+
+    if (dueSoonDelivered || overdueDelivered) {
+      tenantsNotified += 1;
+    }
+  }
+
+  return {
+    processed: true,
+    due_soon_count: reminderRows.filter((loan) => loan.reminder_type === "due_soon").length,
+    overdue_count: reminderRows.filter((loan) => loan.reminder_type === "overdue").length,
+    tenants_notified: tenantsNotified,
+  };
 }
 
 const authSecurityHelpers = createAuthSecurityHelpers({
@@ -4651,6 +5762,22 @@ const auditLogsRouteHandlers = createAuditLogsRouteHandlers({
   appendPaginationHeader,
 });
 
+const publicTrackingRouteHandlers = createPublicTrackingRouteHandlers({
+  jsonResponse,
+  textResponse,
+  requireAdminRole,
+  parsePositiveInt,
+  getClientIpForRateLimit,
+  issuePublicTrackingLink,
+  revokePublicTrackingLink,
+  getActivePublicTrackingLink,
+  resolvePublicTrackingRequest,
+  renderPublicTrackingHtml,
+  publicTrackingHeaders,
+  logAuditEvent,
+  resolvePublicTrackingOrigin,
+});
+
 const recordsRouteHandlers = createRecordsRouteHandlers({
   jsonResponse,
   readJsonOrThrowBadRequest,
@@ -4660,6 +5787,7 @@ const recordsRouteHandlers = createRecordsRouteHandlers({
   buildDefaultInstallationOperationalSummary,
   publishRealtimeEvent,
   publishRealtimeStatsUpdate,
+  syncPublicTrackingSnapshotForInstallation,
 });
 
 const installationsRouteHandlers = createInstallationsRouteHandlers({
@@ -4690,6 +5818,32 @@ const installationsRouteHandlers = createInstallationsRouteHandlers({
   deleteInstallationCascade,
 });
 
+const conformitiesRouteHandlers = createConformitiesRouteHandlers({
+  buildGpsMapsUrl,
+  buildGpsMetadataSnapshot,
+  evaluateGeofence,
+  jsonResponse,
+  corsHeaders,
+  parsePositiveInt,
+  normalizeOptionalString,
+  normalizeGpsPayload,
+  normalizeRealtimeTenantId,
+  requireWebWriteRole,
+  readJsonOrThrowBadRequest,
+  logAuditEvent,
+  getClientIpForRateLimit,
+  nowIso,
+  loadInstallationConformityContext,
+  loadLatestInstallationConformity,
+  loadInstallationConformityPdfById,
+  persistInstallationConformity,
+  storeSignatureAsset,
+  generateConformityPdf,
+  storeConformityPdf,
+  sendConformityEmail,
+  syncPublicTrackingSnapshotForInstallation,
+});
+
 const incidentsRouteHandlers = createIncidentsRouteHandlers({
   jsonResponse,
   parsePositiveInt,
@@ -4704,6 +5858,7 @@ const incidentsRouteHandlers = createIncidentsRouteHandlers({
   isMissingIncidentTimingColumnsError,
   normalizeIncidentEvidencePayload,
   normalizeIncidentStatusPayload,
+  evaluateGeofence,
   loadIncidentForTenant,
   loadIncidentTimingFieldsForTenant,
   parseIncidentChecklistItems,
@@ -4731,6 +5886,7 @@ const incidentsRouteHandlers = createIncidentsRouteHandlers({
   recoverIncidentPhotosFromStorageForTenant,
   sanitizeFileName,
   corsHeaders,
+  syncPublicTrackingSnapshotForInstallation,
 });
 
 export default {
@@ -4789,6 +5945,16 @@ export default {
       if (sseEventsResponse) {
         return sseEventsResponse;
       }
+
+      const publicTrackingPublicResponse = await publicTrackingRouteHandlers.handlePublicTrackingPublicRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+      );
+      if (publicTrackingPublicResponse) {
+        return publicTrackingPublicResponse;
+      }
       if (isWebRoute) {
         const webAuthResponse = await webAuthRouteHandlers.handleWebAuthRoute(
           request,
@@ -4846,6 +6012,19 @@ export default {
       if (assetsResponse) {
         return assetsResponse;
       }
+      const loansResponse = await handleLoansRoute(
+        request,
+        env,
+        url,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        realtimeTenantId,
+      );
+      if (loansResponse) {
+        return loansResponse;
+      }
       const driversResponse = await handleDriversRoute(
         request,
         env,
@@ -4895,6 +6074,18 @@ export default {
       );
       if (auditLogsResponse) {
         return auditLogsResponse;
+      }
+      const publicTrackingWebResponse = await publicTrackingRouteHandlers.handlePublicTrackingWebRoute(
+        request,
+        env,
+        url,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+      );
+      if (publicTrackingWebResponse) {
+        return publicTrackingWebResponse;
       }
       const devicesResponse = await devicesRouteHandlers.handleDevicesRoute(
         request,
@@ -4983,6 +6174,18 @@ export default {
       if (incidentPhotosResponse) {
         return incidentPhotosResponse;
       }
+      const installationConformityResponse =
+        await conformitiesRouteHandlers.handleInstallationConformityRoute(
+          request,
+          env,
+          corsPolicy,
+          routeParts,
+          isWebRoute,
+          webSession,
+        );
+      if (installationConformityResponse) {
+        return installationConformityResponse;
+      }
 
       const installationByIdResponse = await installationsRouteHandlers.handleInstallationByIdRoute(
         request,
@@ -5058,5 +6261,25 @@ export default {
       );
     }
   },
-};
+  async scheduled(controller, env, ctx) {
+    const run = processAssetLoanReminders(env, nowIso());
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(run);
+    }
 
+    try {
+      const summary = await run;
+      console.info("[asset-loans] reminder run completed", {
+        cron: controller?.cron || null,
+        ...summary,
+      });
+      return summary;
+    } catch (error) {
+      console.error("[asset-loans] reminder run failed", {
+        cron: controller?.cron || null,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  },
+};

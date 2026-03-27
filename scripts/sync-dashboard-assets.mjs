@@ -10,8 +10,10 @@ const sources = {
   css: path.join(rootDir, "dashboard.css"),
   chart: path.join(rootDir, "node_modules", "chart.js", "dist", "chart.umd.js"),
   jsqr: path.join(rootDir, "node_modules", "jsqr", "dist", "jsQR.js"),
+  xlsx: path.join(rootDir, "node_modules", "xlsx-js-style", "dist", "xlsx.bundle.js"),
   qr: path.join(rootDir, "dashboard-qr.js"),
   api: path.join(rootDir, "dashboard-api.js"),
+  geolocation: path.join(rootDir, "dashboard-geolocation.js"),
   scan: path.join(rootDir, "dashboard-scan.js"),
   modals: path.join(rootDir, "dashboard-modals.js"),
   incidents: path.join(rootDir, "dashboard-incidents.js"),
@@ -24,6 +26,8 @@ const sources = {
   navigation: path.join(rootDir, "dashboard-navigation.js"),
   bootstrap: path.join(rootDir, "dashboard-bootstrap.js"),
   js: path.join(rootDir, "dashboard.js"),
+  publicTrackingJs: path.join(rootDir, "public-tracking.js"),
+  publicTrackingCss: path.join(rootDir, "public-tracking.css"),
   pwa: path.join(rootDir, "dashboard-pwa.js"),
   manifest: path.join(rootDir, "manifest.json"),
   sw: path.join(rootDir, "sw.js"),
@@ -47,8 +51,10 @@ function rewriteDashboardHtml(content, versions) {
     .replace(/href="\/manifest\.json(?:\?v=[^"]+)?"/g, `href="/manifest.json?v=${versions.manifest}"`)
     .replace(/src="\/chart\.umd\.js(?:\?v=[^"]+)?"/g, `src="/chart.umd.js?v=${versions.chart}"`)
     .replace(/src="\/jsqr\.js(?:\?v=[^"]+)?"/g, `src="/jsqr.js?v=${versions.jsqr}"`)
+    .replace(/src="\/xlsx\.bundle\.js(?:\?v=[^"]+)?"/g, `src="/xlsx.bundle.js?v=${versions.xlsx}"`)
     .replace(/src="\/dashboard-qr\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-qr.js?v=${versions.qr}"`)
     .replace(/src="\/dashboard-api\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-api.js?v=${versions.api}"`)
+    .replace(/src="\/dashboard-geolocation\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-geolocation.js?v=${versions.geolocation}"`)
     .replace(/src="\/dashboard-scan\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-scan.js?v=${versions.scan}"`)
     .replace(/src="\/dashboard-modals\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-modals.js?v=${versions.modals}"`)
     .replace(/src="\/dashboard-incidents\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-incidents.js?v=${versions.incidents}"`)
@@ -81,8 +87,10 @@ function rewriteServiceWorker(content, versions) {
     `/dashboard.css?v=${versions.css}`,
     `/chart.umd.js?v=${versions.chart}`,
     `/jsqr.js?v=${versions.jsqr}`,
+    `/xlsx.bundle.js?v=${versions.xlsx}`,
     `/dashboard-qr.js?v=${versions.qr}`,
     `/dashboard-api.js?v=${versions.api}`,
+    `/dashboard-geolocation.js?v=${versions.geolocation}`,
     `/dashboard-scan.js?v=${versions.scan}`,
     `/dashboard-modals.js?v=${versions.modals}`,
     `/dashboard-incidents.js?v=${versions.incidents}`,
@@ -134,8 +142,10 @@ function main() {
   const css = readFile(sources.css);
   const chart = readFile(sources.chart);
   const jsqr = readFile(sources.jsqr);
+  const xlsx = readFile(sources.xlsx);
   const qr = readFile(sources.qr);
   const api = readFile(sources.api);
+  const geolocation = readFile(sources.geolocation);
   const scan = readFile(sources.scan);
   const modals = readFile(sources.modals);
   const incidents = readFile(sources.incidents);
@@ -148,6 +158,8 @@ function main() {
   const navigation = readFile(sources.navigation);
   const bootstrap = readFile(sources.bootstrap);
   const js = readFile(sources.js);
+  const publicTrackingJs = readFile(sources.publicTrackingJs);
+  const publicTrackingCss = readFile(sources.publicTrackingCss);
   const pwa = readFile(sources.pwa);
   const manifest = readFile(sources.manifest);
   const sw = readFile(sources.sw);
@@ -157,8 +169,10 @@ function main() {
     css: hashOf(css),
     chart: hashOf(chart),
     jsqr: hashOf(jsqr),
+    xlsx: hashOf(xlsx),
     qr: hashOf(qr),
     api: hashOf(api),
+    geolocation: hashOf(geolocation),
     scan: hashOf(scan),
     modals: hashOf(modals),
     incidents: hashOf(incidents),
@@ -181,8 +195,10 @@ function main() {
       versions.css,
       versions.chart,
       versions.jsqr,
+      versions.xlsx,
       versions.qr,
       versions.api,
+      versions.geolocation,
       versions.scan,
       versions.modals,
       versions.incidents,
@@ -205,8 +221,10 @@ function main() {
   writeFile("dashboard.css", css);
   writeFile("chart.umd.js", chart);
   writeFile("jsqr.js", jsqr);
+  writeFile("xlsx.bundle.js", xlsx);
   writeFile("dashboard-qr.js", qr);
   writeFile("dashboard-api.js", api);
+  writeFile("dashboard-geolocation.js", geolocation);
   writeFile("dashboard-scan.js", scan);
   writeFile("dashboard-modals.js", modals);
   writeFile("dashboard-incidents.js", incidents);
@@ -219,6 +237,8 @@ function main() {
   writeFile("dashboard-navigation.js", navigation);
   writeFile("dashboard-bootstrap.js", bootstrap);
   writeFile("dashboard.js", js);
+  writeFile("public-tracking.js", publicTrackingJs);
+  writeFile("public-tracking.css", publicTrackingCss);
   writeFile("manifest.json", manifest);
   writeFile("dashboard.html", rewriteDashboardHtml(html, versions));
   writeFile("dashboard-pwa.js", rewriteDashboardPwa(pwa, versions));

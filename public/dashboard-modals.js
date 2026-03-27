@@ -148,7 +148,19 @@
             actionModalSubmitHandler = null;
         }
 
+        function normalizeActionModalFields(fields) {
+            if (fields == null) return [];
+            if (fields instanceof Node) return [fields];
+            if (Array.isArray(fields) && fields.every((field) => field instanceof Node)) {
+                return fields;
+            }
+            throw new Error('openActionModal fields debe ser Node, DocumentFragment o Node[].');
+        }
+
         function openActionModal(config = {}) {
+            if (Object.prototype.hasOwnProperty.call(config, 'fieldsHtml')) {
+                throw new Error('openActionModal no admite fieldsHtml; usa fields');
+            }
             const modal = document.getElementById('actionModal');
             const titleEl = document.getElementById('actionModalTitle');
             const subtitleEl = document.getElementById('actionModalSubtitle');
@@ -162,7 +174,7 @@
             subtitleEl.textContent = subtitle;
             subtitleEl.classList.toggle('is-hidden', subtitle.length === 0);
 
-            fieldsEl.innerHTML = String(config.fieldsHtml || '');
+            fieldsEl.replaceChildren(...normalizeActionModalFields(config.fields));
 
             const submitLabel = String(config.submitLabel || 'Guardar');
             submitBtn.dataset.defaultLabel = submitLabel;
@@ -191,18 +203,24 @@
             ).trim() || 'Debes confirmar la accion para continuar.';
             const focusId = String(config.focusId || confirmCheckboxId).trim() || confirmCheckboxId;
             const onSubmit = typeof config.onSubmit === 'function' ? config.onSubmit : async () => {};
+            const fields = document.createDocumentFragment();
+            const label = document.createElement('label');
+            label.className = 'action-checkbox';
+            label.setAttribute('for', confirmCheckboxId);
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.id = confirmCheckboxId;
+            const copy = document.createElement('span');
+            copy.textContent = acknowledgementText;
+            label.append(checkbox, copy);
+            fields.appendChild(label);
 
             return openActionModal({
                 title,
                 subtitle,
                 submitLabel,
                 focusId,
-                fieldsHtml: `
-                    <label class="action-checkbox" for="${confirmCheckboxId}">
-                        <input type="checkbox" id="${confirmCheckboxId}">
-                        <span>${options.escapeHtml(acknowledgementText)}</span>
-                    </label>
-                `,
+                fields,
                 onSubmit: async () => {
                     const confirmed = document.getElementById(confirmCheckboxId)?.checked === true;
                     if (!confirmed) {

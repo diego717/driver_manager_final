@@ -1,6 +1,27 @@
 export type IncidentSeverity = "low" | "medium" | "high" | "critical";
 export type IncidentSource = "desktop" | "mobile" | "web";
 export type IncidentStatus = "open" | "in_progress" | "paused" | "resolved";
+export type InstallationConformityStatus = "generated" | "emailed" | "email_failed";
+export type GpsCaptureStatus =
+  | "pending"
+  | "captured"
+  | "denied"
+  | "timeout"
+  | "unavailable"
+  | "unsupported"
+  | "override";
+export type GpsCaptureSource = "browser" | "none" | "override";
+export type GeofenceResult = "not_applicable" | "inside" | "outside";
+
+export interface GpsCapturePayload {
+  status: GpsCaptureStatus;
+  source?: GpsCaptureSource;
+  lat?: number;
+  lng?: number;
+  accuracy_m?: number;
+  captured_at?: string;
+  note?: string;
+}
 
 export interface CreateIncidentInput {
   note: string;
@@ -9,6 +30,8 @@ export interface CreateIncidentInput {
   source?: IncidentSource;
   apply_to_installation?: boolean;
   reporter_username?: string;
+  gps?: GpsCapturePayload;
+  geofence_override_note?: string;
 }
 
 export interface IncidentPhoto {
@@ -64,6 +87,9 @@ export interface InstallationRecord {
   incident_resolved_count?: number;
   incident_active_count?: number;
   incident_critical_active_count?: number;
+  site_lat?: number | null;
+  site_lng?: number | null;
+  site_radius_m?: number | null;
   attention_state?:
     | "clear"
     | "open"
@@ -74,7 +100,45 @@ export interface InstallationRecord {
     | string;
 }
 
+export interface InstallationConformity {
+  id: number;
+  installation_id: number;
+  tenant_id: string;
+  signed_by_name: string;
+  signed_by_document: string;
+  email_to: string;
+  summary_note: string;
+  technician_note: string;
+  signature_r2_key: string;
+  pdf_r2_key: string;
+  signed_at: string;
+  generated_at: string;
+  generated_by_user_id?: number | null;
+  generated_by_username: string;
+  session_version?: number | null;
+  request_ip?: string;
+  platform: string;
+  status: InstallationConformityStatus;
+  photo_count: number;
+  metadata_json?: string;
+  pdf_download_path?: string;
+}
+
 export type CreateRecordInput = Omit<InstallationRecord, "id">;
+
+export interface CreateInstallationConformityInput {
+  signed_by_name: string;
+  signed_by_document?: string;
+  email_to: string;
+  signature_data_url: string;
+  summary_note?: string;
+  technician_note?: string;
+  include_all_incident_photos?: boolean;
+  photo_ids?: number[];
+  send_email?: boolean;
+  gps?: GpsCapturePayload;
+  geofence_override_note?: string;
+}
 
 export interface ApiErrorResponse {
   success?: false;
@@ -116,6 +180,66 @@ export interface ListIncidentsResponse {
 export interface CreateRecordResponse {
   success: boolean;
   record: InstallationRecord;
+}
+
+export interface UpdateInstallationInput {
+  notes?: string;
+  installation_time_seconds?: number;
+  site_lat?: number | null;
+  site_lng?: number | null;
+  site_radius_m?: number | null;
+}
+
+export interface UpdateInstallationResponse {
+  success: boolean;
+  updated: string;
+  installation: InstallationRecord;
+}
+
+export interface PublicTrackingLinkSnapshot {
+  public_status?: string;
+  status_label?: string;
+  summary_text?: string;
+  client_name?: string | null;
+  latest_incident_id?: number | null;
+  latest_conformity_id?: number | null;
+}
+
+export interface PublicTrackingLink {
+  active: boolean;
+  status: string;
+  token_id?: string | null;
+  installation_id?: number | null;
+  issued_at?: string | null;
+  expires_at?: string | null;
+  revoked_at?: string | null;
+  tracking_url?: string | null;
+  snapshot?: PublicTrackingLinkSnapshot | null;
+}
+
+export interface GetPublicTrackingLinkResponse {
+  success: boolean;
+  link: PublicTrackingLink;
+}
+
+export interface CreatePublicTrackingLinkResponse {
+  success: boolean;
+  link: PublicTrackingLink;
+}
+
+export interface DeletePublicTrackingLinkResponse {
+  success: boolean;
+  revoked: boolean;
+}
+
+export interface CreateInstallationConformityResponse {
+  success: boolean;
+  conformity: InstallationConformity;
+}
+
+export interface GetInstallationConformityResponse {
+  success: boolean;
+  conformity: InstallationConformity | null;
 }
 
 export interface UploadPhotoResponse {
