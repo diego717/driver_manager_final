@@ -8,7 +8,9 @@ const routerMocks = vi.hoisted(() => ({
 }));
 
 const incidentsApiMocks = vi.hoisted(() => ({
-  listIncidentsByInstallation: vi.fn(),
+  getIncidentById: vi.fn(),
+  updateIncidentStatus: vi.fn(),
+  deleteIncident: vi.fn(),
 }));
 
 const photosApiMocks = vi.hoisted(() => ({
@@ -164,6 +166,13 @@ import IncidentDetailScreen from "@/app/incident/detail";
 describe("IncidentDetailScreen accessibility", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    incidentsApiMocks.updateIncidentStatus.mockResolvedValue({
+      success: true,
+      incident: null,
+    });
+    incidentsApiMocks.deleteIncident.mockResolvedValue({
+      success: true,
+    });
     photosApiMocks.resolveIncidentPhotoPreviewTarget.mockResolvedValue({
       uri: "https://example.com/photo.jpg",
       headers: {},
@@ -176,7 +185,7 @@ describe("IncidentDetailScreen accessibility", () => {
   it("exposes loading state for refresh button and interactive labels for actions", async () => {
     const { fireEvent, render, waitFor } = await import("@testing-library/react-native/pure");
     const deferredList = createDeferred<any>();
-    incidentsApiMocks.listIncidentsByInstallation.mockImplementationOnce(
+    incidentsApiMocks.getIncidentById.mockImplementationOnce(
       () => deferredList.promise,
     );
 
@@ -190,30 +199,24 @@ describe("IncidentDetailScreen accessibility", () => {
     expect(flattenStyle(refreshButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
 
     deferredList.resolve({
-      success: true,
+      id: 50,
       installation_id: 7,
-      incidents: [
+      reporter_username: "tester",
+      note: "Fallo de prueba",
+      time_adjustment_seconds: 20,
+      severity: "high",
+      source: "mobile",
+      created_at: "2026-02-20T10:00:00.000Z",
+      photos: [
         {
-          id: 50,
-          installation_id: 7,
-          reporter_username: "tester",
-          note: "Fallo de prueba",
-          time_adjustment_seconds: 20,
-          severity: "high",
-          source: "mobile",
-          created_at: "2026-02-20T10:00:00.000Z",
-          photos: [
-            {
-              id: 5,
-              incident_id: 50,
-              r2_key: "a/b.jpg",
-              file_name: "captura.jpg",
-              content_type: "image/jpeg",
-              size_bytes: 340000,
-              sha256: null,
-              created_at: "2026-02-20T10:01:00.000Z",
-            },
-          ],
+          id: 5,
+          incident_id: 50,
+          r2_key: "a/b.jpg",
+          file_name: "captura.jpg",
+          content_type: "image/jpeg",
+          size_bytes: 340000,
+          sha256: null,
+          created_at: "2026-02-20T10:01:00.000Z",
         },
       ],
     });
@@ -251,22 +254,16 @@ describe("IncidentDetailScreen accessibility", () => {
 
   it("keeps main action focus order from top controls to primary CTA", async () => {
     const { render, waitFor } = await import("@testing-library/react-native/pure");
-    incidentsApiMocks.listIncidentsByInstallation.mockResolvedValueOnce({
-      success: true,
+    incidentsApiMocks.getIncidentById.mockResolvedValueOnce({
+      id: 50,
       installation_id: 7,
-      incidents: [
-        {
-          id: 50,
-          installation_id: 7,
-          reporter_username: "tester",
-          note: "Fallo de prueba",
-          time_adjustment_seconds: 20,
-          severity: "high",
-          source: "mobile",
-          created_at: "2026-02-20T10:00:00.000Z",
-          photos: [],
-        },
-      ],
+      reporter_username: "tester",
+      note: "Fallo de prueba",
+      time_adjustment_seconds: 20,
+      severity: "high",
+      source: "mobile",
+      created_at: "2026-02-20T10:00:00.000Z",
+      photos: [],
     });
 
     const view = render(<IncidentDetailScreen />);
@@ -290,31 +287,25 @@ describe("IncidentDetailScreen accessibility", () => {
 
   it("supports horizontal photo rendering and reveals the rest after swipe", async () => {
     const { fireEvent, render, waitFor } = await import("@testing-library/react-native/pure");
-    incidentsApiMocks.listIncidentsByInstallation.mockResolvedValueOnce({
-      success: true,
+    incidentsApiMocks.getIncidentById.mockResolvedValueOnce({
+      id: 50,
       installation_id: 7,
-      incidents: [
-        {
-          id: 50,
-          installation_id: 7,
-          reporter_username: "tester",
-          note: "Fallo de prueba",
-          time_adjustment_seconds: 20,
-          severity: "high",
-          source: "mobile",
-          created_at: "2026-02-20T10:00:00.000Z",
-          photos: Array.from({ length: 5 }, (_, index) => ({
-            id: index + 1,
-            incident_id: 50,
-            r2_key: `a/${index + 1}.jpg`,
-            file_name: `captura-${index + 1}.jpg`,
-            content_type: "image/jpeg",
-            size_bytes: 340000,
-            sha256: null,
-            created_at: "2026-02-20T10:01:00.000Z",
-          })),
-        },
-      ],
+      reporter_username: "tester",
+      note: "Fallo de prueba",
+      time_adjustment_seconds: 20,
+      severity: "high",
+      source: "mobile",
+      created_at: "2026-02-20T10:00:00.000Z",
+      photos: Array.from({ length: 5 }, (_, index) => ({
+        id: index + 1,
+        incident_id: 50,
+        r2_key: `a/${index + 1}.jpg`,
+        file_name: `captura-${index + 1}.jpg`,
+        content_type: "image/jpeg",
+        size_bytes: 340000,
+        sha256: null,
+        created_at: "2026-02-20T10:01:00.000Z",
+      })),
     });
 
     const view = render(<IncidentDetailScreen />);

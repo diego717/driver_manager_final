@@ -204,7 +204,21 @@ function installBrowserShims(window, fetchImpl) {
   });
 
   class MockChart {
-    static defaults = { color: "", borderColor: "", font: {} };
+    static defaults = {
+      color: "",
+      borderColor: "",
+      font: {},
+      plugins: {
+        title: {
+          font: {},
+        },
+        legend: {
+          labels: {
+            font: {},
+          },
+        },
+      },
+    };
 
     constructor(ctx, config) {
       this.ctx = ctx;

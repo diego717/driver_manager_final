@@ -242,6 +242,23 @@ vi.mock("@/src/services/sync/incident-outbox-service", () => ({
 vi.mock("@/src/services/sync/sync-runner", () => ({
   runSync: vi.fn(),
 }));
+vi.mock("@/src/services/location", () => ({
+  captureCurrentGpsSnapshot: vi.fn(async () => ({
+    status: "unavailable",
+    source: "none",
+    note: "mocked location",
+  })),
+}));
+vi.mock("expo-modules-core", () => ({
+  EventEmitter: class EventEmitter {
+    addListener() { return { remove: () => {} }; }
+    removeAllListeners() {}
+    emit() {}
+  },
+  requireOptionalNativeModule: () => null,
+  requireNativeModule: () => ({}),
+  Platform: { OS: "ios", select: (obj: any) => obj.ios ?? obj.default },
+}));
 vi.mock("expo-document-picker", () => ({
   getDocumentAsync: vi.fn(async () => ({ canceled: true, assets: [] })),
 }));

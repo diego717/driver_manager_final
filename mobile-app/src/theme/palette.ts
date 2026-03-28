@@ -191,7 +191,7 @@ const TOKENS: Record<AppThemeScheme, ThemeTokens> = {
     accentSecondary: "#65a2d1",
     success: "#66b08c",
     warning: "#d29a3d",
-    error: "#dd746b",
+    error: "#f1b8b1",
     info: "#65a2d1",
     border: "#32434b",
     sidebarActiveBg: "rgba(51, 163, 154, 0.18)",
