@@ -1,6 +1,6 @@
 {
   "versions": {
-    "css": "90ce55f4e2",
+    "css": "0dfcc7e1eb",
     "chart": "74401d738d",
     "jsqr": "bc40c8a151",
     "xlsx": "1c7abf2993",
@@ -23,6 +23,6 @@
     "manifest": "9130a5f920",
     "sw": "4c87568cf6",
     "materialSymbolsFont": "ee7248184b",
-    "build": "b5d18bdc43"
+    "build": "11abc56f4b"
   }
 }

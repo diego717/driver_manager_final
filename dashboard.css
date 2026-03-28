@@ -928,10 +928,12 @@ h4,
     background:
         linear-gradient(
             180deg,
-            color-mix(in oklab, var(--bg-secondary) 97%, var(--accent-primary) 3%),
-            var(--bg-secondary)
-        );
+        color-mix(in oklab, var(--bg-secondary) 97%, var(--accent-primary) 3%),
+        var(--bg-secondary)
+    );
     box-shadow: var(--shadow-card);
+    position: relative;
+    z-index: 1;
 }
 
 @keyframes fadeIn {
@@ -950,12 +952,15 @@ h4,
     border-radius: var(--radius);
     border: 1px solid color-mix(in oklab, var(--border) 78%, var(--accent-primary) 22%);
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.35) inset;
+    position: relative;
+    z-index: 1;
 }
 
 /* Search wrapper */
 .search-wrapper {
     position: relative;
     width: 100%;
+    z-index: 1;
 }
 
 .search-input {
