@@ -2402,7 +2402,6 @@ test("public tracking modal loads, regenerates, copies and revokes the shared li
           status: "active",
           short_code: "AB7K9Q2M",
           tracking_url: "https://worker.example/track/AB7K9Q2M",
-          long_tracking_url: "https://worker.example/track/token-inicial",
           expires_at: "2026-03-29T10:00:00.000Z",
           snapshot: {
             public_status: "pendiente",
@@ -2421,7 +2420,6 @@ test("public tracking modal loads, regenerates, copies and revokes the shared li
           status: "active",
           short_code: "XZ4N8R6T",
           tracking_url: "https://worker.example/track/XZ4N8R6T",
-          long_tracking_url: "https://worker.example/track/token-regenerado",
           expires_at: "2026-03-30T12:00:00.000Z",
           snapshot: {
             public_status: "en_progreso",

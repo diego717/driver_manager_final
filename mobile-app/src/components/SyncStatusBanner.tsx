@@ -154,9 +154,9 @@ export default function SyncStatusBanner() {
 const styles = StyleSheet.create({
   container: {
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 14,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 11,
     gap: 6,
   },
   header: {
@@ -167,9 +167,11 @@ const styles = StyleSheet.create({
   },
   title: {
     flex: 1,
-    fontFamily: fontFamilies.bold,
-    fontSize: 13.5,
+    fontFamily: fontFamilies.mono,
+    fontSize: 12,
     lineHeight: 18,
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
   },
   body: {
     fontFamily: fontFamilies.regular,
@@ -185,8 +187,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
   },
   countChipText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 11.5,
+    fontFamily: fontFamilies.mono,
+    fontSize: 11,
     lineHeight: 13,
   },
   actionButton: {
@@ -198,7 +200,7 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   actionButtonText: {
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.semibold,
     fontSize: 12.5,
     lineHeight: 16,
   },

@@ -15,10 +15,12 @@ vi.mock("expo-secure-store", () => secureStoreMocks);
 
 import {
   clearStoredWebSession,
+  getStoredWebSession,
   getStoredWebAccessRole,
   getStoredWebAccessToken,
   getStoredWebAccessUsername,
   setStoredWebAccessRole,
+  setStoredWebSession,
   setStoredWebAccessToken,
   setStoredWebAccessUsername,
 } from "./secure";
@@ -54,7 +56,7 @@ describe("secure storage hardening", () => {
     expect(secureStoreMocks.deleteItemAsync).toHaveBeenCalled();
   });
 
-  it("stores web session keys in sessionStorage on web", async () => {
+  it("keeps browser access tokens out of web storage while preserving session metadata", async () => {
     const localStorageState = new Map<string, string>();
     const sessionStorageState = new Map<string, string>();
     const localStorageMock = {
@@ -81,19 +83,30 @@ describe("secure storage hardening", () => {
       sessionStorage: sessionStorageMock,
     };
 
-    await setStoredWebAccessToken(" token-123 ");
+    await setStoredWebSession({
+      accessToken: " token-123 ",
+      expiresAt: "2030-01-01T00:00:00.000Z",
+      username: " admin ",
+      role: " viewer ",
+    });
 
-    await expect(getStoredWebAccessToken()).resolves.toBe("token-123");
-    expect(sessionStorageMock.setItem).toHaveBeenCalledWith("dm_web_access_token", "token-123");
+    await expect(getStoredWebAccessToken()).resolves.toBeNull();
+    await expect(getStoredWebSession()).resolves.toEqual({
+      accessToken: null,
+      expiresAt: "2030-01-01T00:00:00.000Z",
+      username: "admin",
+      role: "viewer",
+    });
+    expect(sessionStorageMock.setItem).not.toHaveBeenCalledWith("dm_web_access_token", "token-123");
     expect(localStorageMock.setItem).not.toHaveBeenCalled();
 
     await clearStoredWebSession();
 
     expect(sessionStorageMock.removeItem).toHaveBeenCalledWith("dm_web_access_token");
-    expect(localStorageMock.removeItem).not.toHaveBeenCalledWith("dm_web_access_token");
+    expect(localStorageMock.removeItem).toHaveBeenCalledWith("dm_web_access_token");
   });
 
-  it("migrates legacy web session keys from localStorage into sessionStorage", async () => {
+  it("clears legacy browser tokens instead of migrating them into sessionStorage", async () => {
     const localStorageState = new Map<string, string>();
     const sessionStorageState = new Map<string, string>();
     const localStorageMock = {
@@ -122,8 +135,8 @@ describe("secure storage hardening", () => {
 
     localStorageState.set("dm_web_access_token", "legacy-token");
 
-    await expect(getStoredWebAccessToken()).resolves.toBe("legacy-token");
-    expect(sessionStorageMock.setItem).toHaveBeenCalledWith("dm_web_access_token", "legacy-token");
+    await expect(getStoredWebAccessToken()).resolves.toBeNull();
+    expect(sessionStorageMock.setItem).not.toHaveBeenCalledWith("dm_web_access_token", "legacy-token");
     expect(localStorageMock.removeItem).toHaveBeenCalledWith("dm_web_access_token");
   });
 });

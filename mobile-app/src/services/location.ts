@@ -1,4 +1,5 @@
 import type { GpsCapturePayload } from "@/src/types/api";
+import { requireOptionalNativeModule } from "expo-modules-core";
 
 const GPS_CAPTURE_TIMEOUT_MS = 12_000;
 
@@ -16,11 +17,16 @@ function buildNonCapturedSnapshot(
 type ExpoLocationModule = typeof import("expo-location");
 
 async function loadExpoLocation(): Promise<ExpoLocationModule | null> {
+  const nativeModule = requireOptionalNativeModule("ExpoLocation");
+  if (!nativeModule) {
+    return null;
+  }
+
   try {
     return await import("expo-location");
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    if (message.includes("ExpoLocation")) {
+    if (message.includes("ExpoLocation") || message.includes("native module")) {
       return null;
     }
     throw error;

@@ -12,14 +12,25 @@
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 
 <body>
     <div id="app">
         <nav class="sidebar">
             <div class="logo">
-                <h1><span class="material-symbols-outlined">speed</span> SiteOps</h1>
+                <div class="logo-lockup" aria-label="SiteOps">
+                    <div class="logo-mark" aria-hidden="true">
+                        <span class="logo-mark-ring"></span>
+                        <span class="logo-mark-axis logo-mark-axis-horizontal"></span>
+                        <span class="logo-mark-axis logo-mark-axis-vertical"></span>
+                        <span class="logo-mark-node"></span>
+                    </div>
+                    <div class="logo-copy">
+                        <h1>SiteOps</h1>
+                        <p class="logo-tag">Field Control Console</p>
+                    </div>
+                </div>
             </div>
             <div class="nav-links">
                 <div class="nav-group">
@@ -105,8 +116,8 @@
         <main class="main-content">
             <header class="header">
                 <div class="page-heading">
-                    <h2 id="pageTitle">Dashboard</h2>
-                    <p id="pageSubtitle" class="page-subtitle">Estado general de la operación</p>
+                    <h2 id="pageTitle">Centro del turno</h2>
+                    <p id="pageSubtitle" class="page-subtitle">Prioriza incidencias, registros activos y desvio de SLA</p>
                     <p id="dashboardDate" class="page-subtitle dashboard-date">
                         Hoy
                     </p>
@@ -234,6 +245,27 @@
                             <div class="chart-toggle" role="group" aria-label="Rango del gráfico">
                                 <button type="button" data-trend-range="1" aria-pressed="false">24h</button>
                                 <button type="button" data-trend-range="7" class="active" aria-pressed="true">7d</button>
+                            </div>
+                        </div>
+                        <div class="chart-skeleton" aria-hidden="true">
+                            <div class="chart-skeleton-grid">
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                            </div>
+                            <div class="chart-skeleton-line">
+                                <span class="chart-skeleton-point point-a"></span>
+                                <span class="chart-skeleton-point point-b"></span>
+                                <span class="chart-skeleton-point point-c"></span>
+                                <span class="chart-skeleton-point point-d"></span>
+                            </div>
+                            <div class="chart-skeleton-axis">
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                                <span></span>
                             </div>
                         </div>
                         <canvas id="trendChart" role="img" aria-labelledby="trendChartTitle" aria-describedby="trendChartSummary"></canvas>

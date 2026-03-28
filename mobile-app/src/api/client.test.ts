@@ -71,6 +71,32 @@ describe("api client", () => {
     ).rejects.toThrow(/Sesion web requerida/i);
   });
 
+  it("uses cookie-backed auth in browser runtime without Authorization header", async () => {
+    (globalThis as { window?: unknown }).window = {
+      sessionStorage: {
+        getItem: vi.fn(() => null),
+        setItem: vi.fn(),
+        removeItem: vi.fn(),
+      },
+    };
+    const requestSpy = vi
+      .spyOn(apiClient, "request")
+      .mockResolvedValue({ data: { ok: true } });
+
+    await signedJsonRequest<{ ok: boolean }>({
+      method: "GET",
+      path: "/installations",
+    });
+
+    const call = requestSpy.mock.calls[0][0];
+    expect(call.headers).toMatchObject({
+      "Content-Type": "application/json",
+      "X-Client-Platform": "mobile",
+    });
+    expect((call.headers as Record<string, string>).Authorization).toBeUndefined();
+    expect(call.withCredentials).toBe(true);
+  });
+
   it("uses stored API base URL when present", async () => {
     secureStoreMocks.getStoredApiBaseUrl.mockResolvedValueOnce("https://stored-worker.example/");
     secureStoreMocks.getStoredWebAccessToken.mockResolvedValueOnce("web-access-token");

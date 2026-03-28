@@ -896,7 +896,7 @@ const styles = StyleSheet.create({
   },
   container: {
     padding: 20,
-    gap: 12,
+    gap: 14,
   },
   authHintText: {
     fontSize: 13,
@@ -909,9 +909,10 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   heroBadgeText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 11.5,
-    letterSpacing: 0.3,
+    fontFamily: fontFamilies.mono,
+    fontSize: 11,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
   },
   heroMetaRow: {
     flexDirection: "row",
@@ -925,8 +926,10 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   heroMetaText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 12,
+    fontFamily: fontFamilies.mono,
+    fontSize: 11.5,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
   },
   topActionsRow: {
     flexDirection: "row",
@@ -936,7 +939,7 @@ const styles = StyleSheet.create({
   topActionPrimary: {
     flex: 1.35,
     minHeight: MIN_TOUCH_TARGET_SIZE * 2.05,
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     justifyContent: "center",
     gap: 6,
@@ -944,10 +947,10 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   topActionKicker: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 11.5,
+    fontFamily: fontFamilies.mono,
+    fontSize: 11,
     textTransform: "uppercase",
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
   },
   utilityColumn: {
     flex: 1,
@@ -956,7 +959,7 @@ const styles = StyleSheet.create({
   topActionUtility: {
     flex: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     justifyContent: "center",
     paddingHorizontal: 12,
@@ -965,10 +968,11 @@ const styles = StyleSheet.create({
   topActionText: {
     fontFamily: fontFamilies.bold,
     fontSize: 14,
+    letterSpacing: -0.1,
   },
   focusCard: {
     borderWidth: 1,
-    borderRadius: 20,
+    borderRadius: 18,
     padding: 16,
     gap: 12,
   },
@@ -976,6 +980,7 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bold,
     fontSize: 19,
     lineHeight: 24,
+    letterSpacing: -0.3,
   },
   focusBody: {
     fontFamily: fontFamilies.regular,
@@ -984,7 +989,7 @@ const styles = StyleSheet.create({
   },
   primaryAction: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 16,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 13,
@@ -1001,36 +1006,42 @@ const styles = StyleSheet.create({
   secondaryButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
     paddingHorizontal: 14,
   },
   secondaryButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 13.5,
+    fontFamily: fontFamilies.mono,
+    fontSize: 12,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   ghostButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
     paddingHorizontal: 14,
   },
   ghostButtonText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 13.5,
+    fontFamily: fontFamilies.mono,
+    fontSize: 12,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   buttonDisabled: {
     opacity: 0.72,
   },
   utilityLabel: {
-    fontFamily: fontFamilies.regular,
+    fontFamily: fontFamilies.mono,
     fontSize: 11,
     marginBottom: 2,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
   },
   missionBadge: {
     borderWidth: 1,
@@ -1042,19 +1053,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   missionBadgeText: {
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.mono,
     fontSize: 11,
     lineHeight: 13,
     textTransform: "uppercase",
-    letterSpacing: 0.4,
+    letterSpacing: 0.8,
   },
   missionPanel: {
     borderWidth: 1,
-    borderRadius: 24,
+    borderRadius: 18,
     padding: 16,
     gap: 12,
-    shadowOpacity: 0.12,
-    shadowRadius: 18,
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
     shadowOffset: { width: 0, height: 12 },
     elevation: 6,
   },
@@ -1069,15 +1080,16 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   missionEyebrow: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 11.5,
+    fontFamily: fontFamilies.mono,
+    fontSize: 11,
     textTransform: "uppercase",
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
   },
   missionTitle: {
     fontFamily: fontFamilies.bold,
     fontSize: 17,
     lineHeight: 23,
+    letterSpacing: -0.2,
   },
   missionSupport: {
     fontFamily: fontFamilies.regular,
@@ -1091,7 +1103,7 @@ const styles = StyleSheet.create({
   missionPrimaryAction: {
     flex: 1.2,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
@@ -1104,7 +1116,7 @@ const styles = StyleSheet.create({
   missionSecondaryAction: {
     flex: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
@@ -1121,8 +1133,10 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   label: {
-    fontSize: 13,
-    fontFamily: fontFamilies.semibold,
+    fontSize: 12,
+    fontFamily: fontFamilies.mono,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
   },
   chipsWrap: {
     flexDirection: "row",
@@ -1136,8 +1150,10 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   chipText: {
-    fontSize: 12,
-    fontFamily: fontFamilies.semibold,
+    fontSize: 11.5,
+    fontFamily: fontFamilies.mono,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   refreshButton: {
     borderWidth: 1,
@@ -1148,12 +1164,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   refreshButtonText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 12,
+    fontFamily: fontFamilies.mono,
+    fontSize: 11.5,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   input: {
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
@@ -1166,6 +1184,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: fontFamilies.bold,
     marginTop: 2,
+    letterSpacing: -0.2,
   },
   card: {
     borderWidth: 1,
@@ -1187,7 +1206,7 @@ const styles = StyleSheet.create({
   },
   metaText: {
     fontSize: 12,
-    fontFamily: fontFamilies.regular,
+    fontFamily: fontFamilies.mono,
     textAlign: "right",
     flexShrink: 1,
   },
@@ -1219,7 +1238,9 @@ const styles = StyleSheet.create({
   },
   statusButtonText: {
     fontSize: 12,
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.mono,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   actionsRow: {
     flexDirection: "row",
@@ -1236,8 +1257,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   detailButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 12.5,
+    fontFamily: fontFamilies.mono,
+    fontSize: 12,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   uploadButton: {
     alignSelf: "flex-start",
@@ -1249,8 +1272,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   uploadButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 12.5,
+    fontFamily: fontFamilies.mono,
+    fontSize: 12,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   emptyText: {
     fontSize: 12.5,

@@ -719,8 +719,9 @@
         }
 
         async function loadDashboard() {
-            if (!options.requireActiveSession()) return;
+            if (!options.requireActiveSession()) return false;
             options.validateSectionBindings('dashboard', { notify: true });
+            options.setDashboardLoadingState?.(true);
             try {
                 const stats = await options.api.getStatistics();
                 updateStats(stats);
@@ -738,8 +739,12 @@
                 const installations = await options.api.getInstallations({ limit: 5 });
                 options.cacheInstallations?.(installations);
                 renderRecentInstallations(installations);
+                return true;
             } catch (err) {
                 console.error('Error cargando dashboard:', err);
+                return false;
+            } finally {
+                options.setDashboardLoadingState?.(false);
             }
         }
 

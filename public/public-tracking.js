@@ -49,7 +49,32 @@
         return String(tracking?.public_status_label || tracking?.public_status || 'Sin datos');
     }
 
+    function ensureBrandLockup() {
+        const headEl = documentRef.querySelector('.public-tracking-head');
+        if (!(headEl instanceof HTMLElement)) return;
+        if (headEl.querySelector('.public-tracking-brand')) return;
+
+        const brand = documentRef.createElement('div');
+        brand.className = 'public-tracking-brand';
+        brand.setAttribute('aria-label', 'SiteOps');
+        brand.innerHTML = `
+            <div class="public-tracking-brand-mark" aria-hidden="true">
+                <span class="public-tracking-brand-ring"></span>
+                <span class="public-tracking-brand-axis public-tracking-brand-axis-horizontal"></span>
+                <span class="public-tracking-brand-axis public-tracking-brand-axis-vertical"></span>
+                <span class="public-tracking-brand-node"></span>
+            </div>
+            <div class="public-tracking-brand-copy">
+                <strong>SiteOps</strong>
+                <span>Public Tracking</span>
+            </div>
+        `;
+
+        headEl.prepend(brand);
+    }
+
     function setStatus(title, message, tone = 'neutral') {
+        ensureBrandLockup();
         const titleEl = documentRef.getElementById('publicTrackingTitle');
         const messageEl = documentRef.getElementById('publicTrackingMessage');
         if (titleEl) titleEl.textContent = title;
@@ -160,6 +185,7 @@
     }
 
     function renderTracking(tracking) {
+        ensureBrandLockup();
         setStatus(
             tracking.public_reference || `Servicio #${tracking.installation_id}`,
             tracking.public_message || 'Seguimiento disponible.',
@@ -237,6 +263,7 @@
 
     async function loadTrackingState(options = {}) {
         const { silent = false } = options;
+        ensureBrandLockup();
         const token = resolveTrackingToken();
         if (!token) {
             setStatus('Enlace no disponible', 'No se pudo resolver el token del seguimiento.', 'error');
@@ -306,6 +333,7 @@
     }
 
     globalScope.addEventListener('DOMContentLoaded', () => {
+        ensureBrandLockup();
         documentRef.getElementById('publicTrackingRefreshBtn')?.addEventListener('click', () => {
             void loadTrackingState();
         });

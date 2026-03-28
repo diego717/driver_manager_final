@@ -124,6 +124,7 @@ export default function CreateIncidentScreen() {
   const [feedbackMessage, setFeedbackMessage] = useState<FeedbackState>(null);
   const [lastCreatedIncidentId, setLastCreatedIncidentId] = useState<number | null>(null);
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const capturingGpsRef = useRef(false);
 
   const installationId = useMemo(
     () => parsePositiveInt(queryParams.installationId),
@@ -188,8 +189,9 @@ export default function CreateIncidentScreen() {
   }, [hasActiveSession, installationId, notify]);
 
   const captureGps = useCallback(async (options?: { silent?: boolean }) => {
-    if (capturingGps) return;
+    if (capturingGpsRef.current) return;
     try {
+      capturingGpsRef.current = true;
       setCapturingGps(true);
       const snapshot = await captureCurrentGpsSnapshot();
       setGpsSnapshot(snapshot);
@@ -203,9 +205,10 @@ export default function CreateIncidentScreen() {
         note: extractApiError(error),
       });
     } finally {
+      capturingGpsRef.current = false;
       setCapturingGps(false);
     }
-  }, [capturingGps, notify]);
+  }, [notify]);
 
   useFocusEffect(
     useCallback(() => {

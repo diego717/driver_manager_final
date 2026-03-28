@@ -181,7 +181,7 @@ export default function ExploreTabScreen() {
       <ScreenHero
         eyebrow={resolveIntent ? "Resolver equipo" : "Inventario"}
         title={resolveIntent ? "Elegir equipo para iniciar trabajo" : "Inventario y equipos"}
-        description={resolveIntent ? "Elige un activo y sigue." : "Busca un activo y actua sobre el."}
+        description={resolveIntent ? "Elige un activo y continua por el caso correcto." : "Busca un activo, revisa contexto y actua sin salir del flujo."}
       />
 
       <View style={styles.searchRow}>
@@ -210,7 +210,7 @@ export default function ExploreTabScreen() {
 
       <View style={styles.topActionsRow}>
         <TouchableOpacity
-          style={[styles.ghostButton, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
+          style={[styles.ghostButton, { backgroundColor: palette.surface, borderColor: palette.inputBorder }]}
           onPress={() => {
             void loadAssets();
           }}
@@ -219,7 +219,7 @@ export default function ExploreTabScreen() {
           <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>Actualizar</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.ghostButton, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
+          style={[styles.ghostButton, { backgroundColor: palette.surface, borderColor: palette.inputBorder }]}
           onPress={() => router.push("/qr?mode=scan")}
           accessibilityRole="button"
         >
@@ -368,7 +368,7 @@ const styles = StyleSheet.create({
   },
   container: {
     padding: 20,
-    gap: 10,
+    gap: 12,
   },
   searchRow: {
     flexDirection: "row",
@@ -380,7 +380,7 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
@@ -388,14 +388,16 @@ const styles = StyleSheet.create({
   smallButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
     minWidth: 84,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 12,
   },
   smallButtonText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 13,
+    fontFamily: fontFamilies.mono,
+    fontSize: 12,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   topActionsRow: {
     flexDirection: "row",
@@ -404,7 +406,7 @@ const styles = StyleSheet.create({
   },
   ghostButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
@@ -412,8 +414,10 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   ghostButtonText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 13,
+    fontFamily: fontFamilies.mono,
+    fontSize: 12,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   assetList: {
     gap: 8,
@@ -432,23 +436,26 @@ const styles = StyleSheet.create({
   },
   assetCode: {
     fontFamily: fontFamilies.bold,
-    fontSize: 13,
+    fontSize: 13.5,
+    letterSpacing: -0.1,
   },
   assetMeta: {
-    fontFamily: fontFamilies.regular,
+    fontFamily: fontFamilies.mono,
     fontSize: 12,
   },
   inlineAction: {
     borderWidth: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 9,
+    borderRadius: 12,
     paddingHorizontal: 12,
     alignItems: "center",
     justifyContent: "center",
   },
   inlineActionText: {
-    fontFamily: fontFamilies.semibold,
+    fontFamily: fontFamilies.mono,
     fontSize: 12,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   loadingRow: {
     flexDirection: "row",
@@ -456,18 +463,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   loadingText: {
-    fontFamily: fontFamilies.regular,
+    fontFamily: fontFamilies.mono,
     fontSize: 12,
   },
   detailCard: {
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 14,
     gap: 8,
   },
   detailTitle: {
     fontFamily: fontFamilies.bold,
     fontSize: 18,
+    letterSpacing: -0.2,
   },
   detailLine: {
     fontFamily: fontFamilies.regular,
@@ -482,7 +490,7 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 14,
@@ -495,15 +503,17 @@ const styles = StyleSheet.create({
   secondaryButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
   secondaryButtonText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 13,
+    fontFamily: fontFamilies.mono,
+    fontSize: 12,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   linkForm: {
     gap: 8,

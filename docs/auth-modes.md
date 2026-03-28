@@ -38,7 +38,7 @@ DRIVER_MANAGER_DESKTOP_AUTH_MODE=legacy|web|auto
 
 - Produccion usa solo `/web/*` + Bearer de sesion corta.
 - No debe distribuir `API_SECRET` ni `API_TOKEN`.
-- Expo web guarda sesion en `sessionStorage`; no usa `localStorage` como storage primario.
+- Expo web usa cookie de sesion `HttpOnly` para autenticacion y solo persiste metadata no sensible en `sessionStorage`.
 
 ## Worker
 

@@ -13,6 +13,7 @@ import {
   getStoredWebAccessUsername,
   setStoredWebSession,
 } from "../storage/secure";
+import { isWebBrowserRuntime } from "../storage/runtime";
 import { ensureNonEmpty } from "../utils/validation";
 import { resolveWebSession } from "./webSession";
 
@@ -136,8 +137,8 @@ async function authorizedWebFetch(path: string, init: RequestInit = {}): Promise
   const apiBaseUrl = await getResolvedApiBaseUrl();
   ensureNonEmpty(apiBaseUrl, "EXPO_PUBLIC_API_BASE_URL");
 
-  const token = await resolveActiveWebToken();
   const headers = new Headers(init.headers ?? {});
+  const token = isWebBrowserRuntime() ? undefined : await resolveActiveWebToken();
   for (const [key, value] of Object.entries(buildMobileWebHeaders(token))) {
     headers.set(key, value);
   }
@@ -154,10 +155,20 @@ async function authorizedWebFetch(path: string, init: RequestInit = {}): Promise
 
 async function persistWebSession(login: WebLoginResponse | WebBootstrapResponse): Promise<void> {
   await setStoredWebSession({
-    accessToken: login.access_token,
+    accessToken: isWebBrowserRuntime() ? null : login.access_token,
     expiresAt: login.expires_at,
     username: login.user.username,
     role: login.user.role,
+  });
+}
+
+async function syncStoredWebSessionMetadata(session: WebCurrentSessionResponse): Promise<void> {
+  const currentToken = isWebBrowserRuntime() ? null : await getStoredWebAccessToken();
+  await setStoredWebSession({
+    accessToken: currentToken,
+    expiresAt: session.expires_at,
+    username: session.user.username,
+    role: session.user.role,
   });
 }
 
@@ -256,7 +267,9 @@ export async function getCurrentWebSession(): Promise<WebCurrentSessionResponse>
       throw new Error(extractErrorMessage(body, "No se pudo validar la sesion web."));
     }
 
-    return normalizeWebSessionResponse(body as WebCurrentSessionResponse);
+    const session = normalizeWebSessionResponse(body as WebCurrentSessionResponse);
+    await syncStoredWebSessionMetadata(session);
+    return session;
   } catch (error) {
     throw new Error(extractApiError(error));
   }

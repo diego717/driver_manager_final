@@ -92,6 +92,10 @@ test("http helpers add no-store headers for web responses", async () => {
 
   assert.equal(json.headers.get("Cache-Control"), "no-store");
   assert.equal(json.headers.get("Pragma"), "no-cache");
+  assert.equal(json.headers.get("X-Content-Type-Options"), "nosniff");
+  assert.equal(json.headers.get("Referrer-Policy"), "no-referrer");
   assert.equal(text.headers.get("Cache-Control"), "no-store");
+  assert.equal(text.headers.get("X-Content-Type-Options"), "nosniff");
+  assert.equal(text.headers.get("Referrer-Policy"), "no-referrer");
   assert.equal(await text.text(), "ok");
 });

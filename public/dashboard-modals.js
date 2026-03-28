@@ -162,17 +162,23 @@
                 throw new Error('openActionModal no admite fieldsHtml; usa fields');
             }
             const modal = document.getElementById('actionModal');
+            const modalContent = modal?.querySelector('.modal-content.action-modal');
             const titleEl = document.getElementById('actionModalTitle');
             const subtitleEl = document.getElementById('actionModalSubtitle');
             const fieldsEl = document.getElementById('actionModalFields');
             const submitBtn = document.getElementById('actionModalSubmitBtn');
-            if (!modal || !titleEl || !subtitleEl || !fieldsEl || !submitBtn) return false;
+            if (!modal || !modalContent || !titleEl || !subtitleEl || !fieldsEl || !submitBtn) return false;
 
             titleEl.textContent = String(config.title || 'Accion');
 
             const subtitle = String(config.subtitle || '').trim();
             subtitleEl.textContent = subtitle;
             subtitleEl.classList.toggle('is-hidden', subtitle.length === 0);
+
+            modalContent.classList.remove('action-modal-wide');
+            if (config.modalWidth === 'wide') {
+                modalContent.classList.add('action-modal-wide');
+            }
 
             fieldsEl.replaceChildren(...normalizeActionModalFields(config.fields));
 

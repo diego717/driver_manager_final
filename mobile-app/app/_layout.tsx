@@ -70,10 +70,10 @@ async function bootstrapSyncInfrastructure(): Promise<null | (() => void)> {
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
-    Inter_400Regular: require("../assets/fonts/Inter_400Regular.ttf"),
-    Inter_500Medium: require("../assets/fonts/Inter_500Medium.ttf"),
-    Inter_600SemiBold: require("../assets/fonts/Inter_600SemiBold.ttf"),
-    Inter_700Bold: require("../assets/fonts/Inter_700Bold.ttf"),
+    SourceSans3_400Regular: require("../assets/fonts/SourceSans3-Regular.ttf"),
+    SourceSans3_500Medium: require("../assets/fonts/SourceSans3-Medium.ttf"),
+    SourceSans3_600SemiBold: require("../assets/fonts/SourceSans3-Semibold.ttf"),
+    SourceSans3_700Bold: require("../assets/fonts/SourceSans3-Bold.ttf"),
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
     ...FontAwesome.font,
   });

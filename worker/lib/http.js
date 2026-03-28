@@ -264,9 +264,17 @@ function shouldDisableCachingForRequest(request) {
   }
 }
 
+function apiResponseSecurityHeaders() {
+  return {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+  };
+}
+
 export function jsonResponse(request, env, corsPolicy, body, status = 200) {
   const headers = {
     ...corsHeaders(request, env, corsPolicy),
+    ...apiResponseSecurityHeaders(),
     "Content-Type": "application/json",
   };
 
@@ -282,7 +290,10 @@ export function jsonResponse(request, env, corsPolicy, body, status = 200) {
 }
 
 export function textResponse(request, env, corsPolicy, text, status = 200) {
-  const headers = corsHeaders(request, env, corsPolicy);
+  const headers = {
+    ...corsHeaders(request, env, corsPolicy),
+    ...apiResponseSecurityHeaders(),
+  };
   if (shouldDisableCachingForRequest(request)) {
     headers["Cache-Control"] = "no-store";
     headers.Pragma = "no-cache";

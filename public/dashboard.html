@@ -6,20 +6,31 @@
     <meta name="theme-color" content="#0f756d">
     <meta name="description" content="Dashboard de gestión de registros de drivers">
     <title>SiteOps Dashboard</title>
-    <link rel="stylesheet" href="/dashboard.css?v=4f67281f84">
+    <link rel="stylesheet" href="/dashboard.css?v=90ce55f4e2">
     <link rel="manifest" href="/manifest.json?v=9130a5f920">
     <link rel="icon" href="/icons/icon-192x192.png">
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 
 <body>
     <div id="app">
         <nav class="sidebar">
             <div class="logo">
-                <h1><span class="material-symbols-outlined">speed</span> SiteOps</h1>
+                <div class="logo-lockup" aria-label="SiteOps">
+                    <div class="logo-mark" aria-hidden="true">
+                        <span class="logo-mark-ring"></span>
+                        <span class="logo-mark-axis logo-mark-axis-horizontal"></span>
+                        <span class="logo-mark-axis logo-mark-axis-vertical"></span>
+                        <span class="logo-mark-node"></span>
+                    </div>
+                    <div class="logo-copy">
+                        <h1>SiteOps</h1>
+                        <p class="logo-tag">Field Control Console</p>
+                    </div>
+                </div>
             </div>
             <div class="nav-links">
                 <div class="nav-group">
@@ -105,8 +116,8 @@
         <main class="main-content">
             <header class="header">
                 <div class="page-heading">
-                    <h2 id="pageTitle">Dashboard</h2>
-                    <p id="pageSubtitle" class="page-subtitle">Estado general de la operación</p>
+                    <h2 id="pageTitle">Centro del turno</h2>
+                    <p id="pageSubtitle" class="page-subtitle">Prioriza incidencias, registros activos y desvio de SLA</p>
                     <p id="dashboardDate" class="page-subtitle dashboard-date">
                         Hoy
                     </p>
@@ -236,6 +247,27 @@
                                 <button type="button" data-trend-range="7" class="active" aria-pressed="true">7d</button>
                             </div>
                         </div>
+                        <div class="chart-skeleton" aria-hidden="true">
+                            <div class="chart-skeleton-grid">
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                            </div>
+                            <div class="chart-skeleton-line">
+                                <span class="chart-skeleton-point point-a"></span>
+                                <span class="chart-skeleton-point point-b"></span>
+                                <span class="chart-skeleton-point point-c"></span>
+                                <span class="chart-skeleton-point point-d"></span>
+                            </div>
+                            <div class="chart-skeleton-axis">
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                            </div>
+                        </div>
                         <canvas id="trendChart" role="img" aria-labelledby="trendChartTitle" aria-describedby="trendChartSummary"></canvas>
                         <p id="trendChartTitle" class="sr-only">Tendencia de registros</p>
                         <p id="trendChartSummary" class="sr-only">Cargando resumen de tendencia.</p>
@@ -271,7 +303,7 @@
                     </div>
                     
                     <!-- Filter row -->
-                    <div class="filter-row driver-fields-grid">
+                    <div class="filter-row">
                         <label for="brandFilter" class="sr-only">Filtrar por marca</label>
                         <select id="brandFilter">
                             <option value="">Todas las marcas</option>
@@ -675,18 +707,18 @@
     <script src="/dashboard-api.js?v=887186d711" defer></script>
     <script src="/dashboard-geolocation.js?v=a99f19d896" defer></script>
     <script src="/dashboard-scan.js?v=6884e82f3e" defer></script>
-    <script src="/dashboard-modals.js?v=406a6572ea" defer></script>
-    <script src="/dashboard-incidents.js?v=2b044104f0" defer></script>
-    <script src="/dashboard-assets.js?v=2654cce20a" defer></script>
+    <script src="/dashboard-modals.js?v=9a626a982c" defer></script>
+    <script src="/dashboard-incidents.js?v=4dca3191ea" defer></script>
+    <script src="/dashboard-assets.js?v=333422afbc" defer></script>
     <script src="/dashboard-drivers.js?v=107284fd17" defer></script>
-    <script src="/dashboard-audit.js?v=6eb26df000" defer></script>
-    <script src="/dashboard-overview.js?v=870105b020" defer></script>
-    <script src="/dashboard-realtime.js?v=23f8c5e4a5" defer></script>
-    <script src="/dashboard-auth.js?v=3e1ec8b9ae" defer></script>
-    <script src="/dashboard-navigation.js?v=ab611df44d" defer></script>
-    <script src="/dashboard-bootstrap.js?v=d41f5f1a45" defer></script>
+    <script src="/dashboard-audit.js?v=3d16d3d132" defer></script>
+    <script src="/dashboard-overview.js?v=c01c1e316c" defer></script>
+    <script src="/dashboard-realtime.js?v=d763a18c75" defer></script>
+    <script src="/dashboard-auth.js?v=ccfa156e3b" defer></script>
+    <script src="/dashboard-navigation.js?v=e032f08738" defer></script>
+    <script src="/dashboard-bootstrap.js?v=65dba6e7cf" defer></script>
     <script src="/xlsx.bundle.js?v=1c7abf2993" defer></script>
-    <script src="/dashboard.js?v=2d480db4b0" defer></script>
+    <script src="/dashboard.js?v=292d445831" defer></script>
     <script src="/dashboard-pwa.js?v=55b84aa40e" defer></script>
 </body>
 </html>

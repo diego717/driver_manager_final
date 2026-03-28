@@ -145,7 +145,9 @@ export function createConformitiesRouteHandlers({
           "Content-Type":
             pdfAsset.object.httpMetadata?.contentType || "application/pdf",
           "Content-Disposition": `inline; filename="conformidad_instalacion_${installationId}_${conformityId}.pdf"`,
-          "Cache-Control": "private, max-age=300",
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+          Pragma: "no-cache",
+          Expires: "0",
         },
       });
     }

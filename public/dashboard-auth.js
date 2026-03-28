@@ -152,7 +152,7 @@
                 options.clearWebAccessToken();
                 applyAuthenticatedUser(result.user);
                 hideLogin();
-                options.loadDashboard();
+                options.loadDashboard({ followupDelayMs: 1200 });
                 options.syncSSEForCurrentContext(true);
                 options.showNotification(`Bienvenido, ${result.user.username}!`, 'success');
             } catch (_error) {
@@ -189,7 +189,7 @@
                 }, 520);
             }
 
-            options.loadDashboard();
+            options.loadDashboard({ followupDelayMs: 1200 });
             options.showNotification('Dashboard actualizado', 'info');
         }
 

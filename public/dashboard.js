@@ -92,11 +92,15 @@ let currentSelectedAssetId = null;
 let currentDriversData = [];
 let selectedDriverFile = null;
 let currentTrendRangeDays = 7;
+let dashboardLoadPromise = null;
+let dashboardRefreshRetryTimer = null;
+let dashboardLoadingRequests = 0;
 const LAZY_ASSET_PATHS = {
     chart: '/chart.umd.js',
     jsqr: '/jsqr.js',
 };
 const lazyAssetPromises = new Map();
+const lazyAssetWarnings = new Set();
 const TREND_RANGE_ALLOWED_DAYS = new Set([1, 7]);
 let lastCriticalIncidentsCount = null;
 let incidentRuntimeTickerId = null;
@@ -146,6 +150,72 @@ function getInstallationFromCache(installationId) {
 
 function clearInstallationCache() {
     installationCacheById.clear();
+}
+
+function setDashboardLoadingState(isLoading) {
+    dashboardLoadingRequests = isLoading
+        ? dashboardLoadingRequests + 1
+        : Math.max(0, dashboardLoadingRequests - 1);
+
+    const isBusy = dashboardLoadingRequests > 0;
+    const section = document.getElementById('dashboardSection');
+    if (section) {
+        section.dataset.loading = isBusy ? 'true' : 'false';
+        section.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+    }
+
+    const opsPulse = document.getElementById('opsPulse');
+    if (opsPulse && isBusy) {
+        opsPulse.dataset.state = 'reconnecting';
+    }
+
+    const opsPulseText = document.getElementById('opsPulseText');
+    if (opsPulseText && isBusy) {
+        opsPulseText.textContent = 'Sincronizando dashboard';
+    }
+
+    const recentInstallations = document.getElementById('recentInstallations');
+    if (
+        isBusy
+        && recentInstallations
+        && !recentInstallations.querySelector('table')
+        && !recentInstallations.querySelector('.loading')
+        && !recentInstallations.querySelector('.table-skeleton')
+    ) {
+        recentInstallations.innerHTML = `
+            <div class="table-skeleton" aria-hidden="true">
+                <div class="table-skeleton-head">
+                    <span class="table-skeleton-cell table-skeleton-cell-id"></span>
+                    <span class="table-skeleton-cell"></span>
+                    <span class="table-skeleton-cell"></span>
+                    <span class="table-skeleton-cell table-skeleton-cell-badge"></span>
+                    <span class="table-skeleton-cell table-skeleton-cell-date"></span>
+                </div>
+                <div class="table-skeleton-row">
+                    <span class="table-skeleton-cell table-skeleton-cell-id"></span>
+                    <span class="table-skeleton-cell"></span>
+                    <span class="table-skeleton-cell"></span>
+                    <span class="table-skeleton-cell table-skeleton-cell-badge"></span>
+                    <span class="table-skeleton-cell table-skeleton-cell-date"></span>
+                </div>
+                <div class="table-skeleton-row">
+                    <span class="table-skeleton-cell table-skeleton-cell-id"></span>
+                    <span class="table-skeleton-cell"></span>
+                    <span class="table-skeleton-cell"></span>
+                    <span class="table-skeleton-cell table-skeleton-cell-badge"></span>
+                    <span class="table-skeleton-cell table-skeleton-cell-date"></span>
+                </div>
+                <div class="table-skeleton-row">
+                    <span class="table-skeleton-cell table-skeleton-cell-id"></span>
+                    <span class="table-skeleton-cell"></span>
+                    <span class="table-skeleton-cell"></span>
+                    <span class="table-skeleton-cell table-skeleton-cell-badge"></span>
+                    <span class="table-skeleton-cell table-skeleton-cell-date"></span>
+                </div>
+                <p class="table-skeleton-caption">Sincronizando panel operativo...</p>
+            </div>
+        `;
+    }
 }
 const QR_PREVIEW_SIZE_PX = 320;
 const INCIDENT_CHECKLIST_PRESETS = [
@@ -213,7 +283,7 @@ const MODAL_FOCUSABLE_SELECTOR = [
     '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 const SECTION_TITLES = {
-    dashboard: 'Dashboard',
+    dashboard: 'Centro del turno',
     installations: 'Registros',
     assets: 'Equipos',
     drivers: 'Drivers',
@@ -222,7 +292,7 @@ const SECTION_TITLES = {
     settings: 'Configuración',
 };
 const SECTION_SUBTITLES = {
-    dashboard: 'Panorama general en tiempo real',
+    dashboard: 'Prioriza incidencias, registros activos y desvio de SLA',
     installations: 'Historial técnico para consultar contexto y registros',
     assets: 'Equipos con acceso directo a incidencias y contexto',
     drivers: 'Versionado centralizado de controladores',
@@ -368,6 +438,59 @@ function renderContextualEmptyState(container, options = {}) {
 }
 
 
+function normalizeAssetPath(src) {
+    try {
+        return new URL(String(src || ''), window.location.origin).pathname;
+    } catch {
+        return String(src || '').trim();
+    }
+}
+
+function findExistingLazyScript(src) {
+    const normalizedSrc = String(src || '').trim();
+    if (!normalizedSrc) return null;
+
+    const exactMatch = document.querySelector(`script[src="${normalizedSrc}"]`);
+    if (exactMatch) return exactMatch;
+
+    const expectedPath = normalizeAssetPath(normalizedSrc);
+    return Array.from(document.scripts).find((script) => normalizeAssetPath(script.src) === expectedPath) || null;
+}
+
+function waitForExistingScript(script, normalizedSrc) {
+    if (!script) {
+        return Promise.reject(new Error(`No se encontró el script ${normalizedSrc}.`));
+    }
+
+    if (script.dataset.loadState === 'loaded') {
+        return Promise.resolve(script);
+    }
+
+    if (script.dataset.loadState === 'failed') {
+        return Promise.reject(new Error(`El script ${normalizedSrc} quedó en estado fallido.`));
+    }
+
+    return new Promise((resolve, reject) => {
+        const handleLoad = () => {
+            script.dataset.loadState = 'loaded';
+            cleanup();
+            resolve(script);
+        };
+        const handleError = () => {
+            script.dataset.loadState = 'failed';
+            cleanup();
+            reject(new Error(`No se pudo cargar ${normalizedSrc}.`));
+        };
+        const cleanup = () => {
+            script.removeEventListener('load', handleLoad);
+            script.removeEventListener('error', handleError);
+        };
+
+        script.addEventListener('load', handleLoad, { once: true });
+        script.addEventListener('error', handleError, { once: true });
+    });
+}
+
 function loadLazyScript(src) {
     const normalizedSrc = String(src || '').trim();
     if (!normalizedSrc) {
@@ -378,17 +501,25 @@ function loadLazyScript(src) {
     }
 
     const loadPromise = new Promise((resolve, reject) => {
-        const existingScript = document.querySelector(`script[src="${normalizedSrc}"]`);
+        const existingScript = findExistingLazyScript(normalizedSrc);
         if (existingScript) {
-            resolve(existingScript);
+            waitForExistingScript(existingScript, normalizedSrc).then(resolve).catch(reject);
             return;
         }
 
         const script = document.createElement('script');
         script.src = normalizedSrc;
         script.defer = true;
-        script.onload = () => resolve(script);
-        script.onerror = () => reject(new Error(`No se pudo cargar ${normalizedSrc}.`));
+        script.dataset.loadState = 'pending';
+        script.onload = () => {
+            script.dataset.loadState = 'loaded';
+            resolve(script);
+        };
+        script.onerror = () => {
+            script.dataset.loadState = 'failed';
+            lazyAssetPromises.delete(normalizedSrc);
+            reject(new Error(`No se pudo cargar ${normalizedSrc}.`));
+        };
         document.head.appendChild(script);
     });
 
@@ -407,15 +538,31 @@ function readThemeToken(name, fallbackValue) {
 
 async function ensureChartLibrary() {
     if (isChartAvailable()) {
+        lazyAssetWarnings.delete(LAZY_ASSET_PATHS.chart);
         return true;
     }
     try {
         await loadLazyScript(LAZY_ASSET_PATHS.chart);
+        if (!isChartAvailable()) {
+            await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+        }
+        if (!isChartAvailable()) {
+            throw new Error('Chart.js terminó de cargar, pero no expuso la API global esperada.');
+        }
         applyChartDefaults(document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
-        return isChartAvailable();
+        lazyAssetWarnings.delete(LAZY_ASSET_PATHS.chart);
+        return true;
     } catch (error) {
+        if (isChartAvailable()) {
+            applyChartDefaults(document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
+            lazyAssetWarnings.delete(LAZY_ASSET_PATHS.chart);
+            return true;
+        }
         console.error('No se pudo cargar Chart.js:', error);
-        showNotification('No pudimos cargar los gráficos del dashboard.', 'warning');
+        if (!lazyAssetWarnings.has(LAZY_ASSET_PATHS.chart)) {
+            lazyAssetWarnings.add(LAZY_ASSET_PATHS.chart);
+            showNotification('No pudimos cargar los gráficos del dashboard.', 'warning');
+        }
         return false;
     }
 }
@@ -444,6 +591,8 @@ function applyChartDefaults(theme = 'light') {
     Chart.defaults.color = readThemeToken('--text-secondary', theme === 'dark' ? '#8b93a5' : '#5f6b7a');
     Chart.defaults.borderColor = readThemeToken('--border', theme === 'dark' ? '#2e3240' : '#dce1e8');
     Chart.defaults.font.family = "'Source Sans 3', 'Segoe UI', sans-serif";
+    Chart.defaults.plugins.title.font.family = "'IBM Plex Sans Condensed', 'Source Sans 3', sans-serif";
+    Chart.defaults.plugins.legend.labels.font.family = "'IBM Plex Mono', 'Source Sans 3', monospace";
 }
 
 if (isChartAvailable()) {
@@ -666,6 +815,7 @@ dashboardOverview = window.createDashboardOverview({
     setCurrentTrendRangeDays: (value) => {
         currentTrendRangeDays = Number.isInteger(value) ? value : currentTrendRangeDays;
     },
+    setDashboardLoadingState,
     setElementTextWithMaterialIcon,
     setLastCriticalIncidentsCount: (value) => {
         lastCriticalIncidentsCount = Number.isInteger(value) ? value : null;
@@ -1435,8 +1585,41 @@ async function renderTrendChart(days = currentTrendRangeDays) {
     return dashboardOverview.renderTrendChart(days);
 }
 
-async function loadDashboard() {
-    return dashboardOverview.loadDashboard();
+function scheduleDashboardRetry(delayMs = 900) {
+    const normalizedDelay = Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : 900;
+    if (dashboardRefreshRetryTimer) {
+        clearTimeout(dashboardRefreshRetryTimer);
+    }
+    dashboardRefreshRetryTimer = setTimeout(() => {
+        dashboardRefreshRetryTimer = null;
+        void loadDashboard({ skipRetry: true });
+    }, normalizedDelay);
+}
+
+async function loadDashboard(config = {}) {
+    const followupDelayMs = Number.isFinite(config?.followupDelayMs) ? Number(config.followupDelayMs) : 0;
+    const skipRetry = config?.skipRetry === true;
+
+    if (followupDelayMs > 0) {
+        scheduleDashboardRetry(followupDelayMs);
+    }
+
+    if (dashboardLoadPromise) {
+        return dashboardLoadPromise;
+    }
+
+    dashboardLoadPromise = Promise.resolve(dashboardOverview.loadDashboard())
+        .then((success) => {
+            if (success === false && !skipRetry) {
+                scheduleDashboardRetry(Math.max(900, followupDelayMs || 0));
+            }
+            return success;
+        })
+        .finally(() => {
+            dashboardLoadPromise = null;
+        });
+
+    return dashboardLoadPromise;
 }
 
 function renderRecentInstallations(installations) {
@@ -3374,12 +3557,12 @@ function buildPrintableLabelDataUrl(imageDataUrl, details, presetKey = 'medium')
                 const textStartY = Math.floor((canvasHeight - textBlockHeight) / 2);
                 let y = textStartY + Math.max(16, preset.titleSize);
                 ctx.fillStyle = '#0f172a';
-                ctx.font = `700 ${Math.max(16, preset.titleSize)}px Inter, Arial, sans-serif`;
+                ctx.font = `700 ${Math.max(16, preset.titleSize)}px "Source Sans 3", "Segoe UI", sans-serif`;
                 ctx.fillText('SiteOps', infoX, y, infoWidth);
 
                 y += titleLineHeight;
                 ctx.fillStyle = '#1f2937';
-                ctx.font = `500 ${Math.max(12, preset.bodySize)}px Inter, Arial, sans-serif`;
+                ctx.font = `500 ${Math.max(12, preset.bodySize)}px "Source Sans 3", "Segoe UI", sans-serif`;
                 for (const line of detailsLines) {
                     ctx.fillText(line, infoX, y, infoWidth);
                     y += lineHeight;

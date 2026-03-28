@@ -185,8 +185,10 @@ export default function TabLayout() {
           paddingVertical: 2,
         },
         tabBarLabelStyle: {
-          fontFamily: fontFamilies.semibold,
-          fontSize: 12.5,
+          fontFamily: fontFamilies.mono,
+          fontSize: 11.5,
+          letterSpacing: 0.5,
+          textTransform: "uppercase",
         },
         headerStyle: {
           backgroundColor: palette.headerSurface,
@@ -253,14 +255,14 @@ const styles = StyleSheet.create({
   headerButton: {
     width: Platform.select({ ios: 44, default: 44 }),
     height: Platform.select({ ios: 44, default: 44 }),
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
   tabButton: {
     minHeight: 44,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
   },
 });

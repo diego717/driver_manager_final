@@ -252,7 +252,7 @@ export default function DriversScreen() {
       <ScreenHero
         eyebrow="Repositorio movil"
         title="Drivers R2"
-        description="Mantiene paquetes de instalacion listos para soporte en campo, con una jerarquia mas clara entre carga y consulta."
+        description="Prepara paquetes listos para campo, con separacion clara entre carga operativa y consulta de versiones."
         aside={
           <View
             style={[
@@ -310,7 +310,7 @@ export default function DriversScreen() {
         />
 
         <TouchableOpacity
-          style={[styles.secondaryButton, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
+          style={[styles.secondaryButton, { backgroundColor: palette.surface, borderColor: palette.inputBorder }]}
           onPress={() => {
             void onPickFile();
           }}
@@ -349,7 +349,7 @@ export default function DriversScreen() {
         <View style={styles.listHeader}>
           <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Drivers disponibles</Text>
           <TouchableOpacity
-            style={[styles.secondaryButtonCompact, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
+            style={[styles.secondaryButtonCompact, { backgroundColor: palette.surface, borderColor: palette.inputBorder }]}
             onPress={() => {
               void loadDrivers();
             }}
@@ -383,7 +383,7 @@ export default function DriversScreen() {
               Sube el primer paquete para habilitar instalaciones por marca y version.
             </Text>
             <TouchableOpacity
-              style={[styles.secondaryButtonCompact, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
+              style={[styles.secondaryButtonCompact, { backgroundColor: palette.surface, borderColor: palette.inputBorder }]}
               onPress={() => {
                 void loadDrivers();
               }}
@@ -417,7 +417,7 @@ export default function DriversScreen() {
                   <TouchableOpacity
                     style={[
                       styles.actionButton,
-                      { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+                      { backgroundColor: palette.surface, borderColor: palette.inputBorder },
                     ]}
                     onPress={() => {
                       void onDownload(driver);
@@ -478,39 +478,44 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   heroBadgeText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 11.5,
-    letterSpacing: 0.3,
+    fontFamily: fontFamilies.mono,
+    fontSize: 11,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
   },
   card: {
     borderWidth: 1,
-    borderRadius: 20,
+    borderRadius: 18,
     padding: 16,
     gap: 10,
   },
   sectionTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontFamily: fontFamilies.bold,
+    letterSpacing: -0.2,
   },
   label: {
-    fontSize: 13,
-    fontFamily: fontFamilies.semibold,
+    fontSize: 12,
+    fontFamily: fontFamilies.mono,
     marginTop: 2,
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
   },
   input: {
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 11,
     minHeight: 44,
   },
   fileLabel: {
-    fontSize: 12.5,
-    fontFamily: fontFamilies.regular,
+    fontSize: 12,
+    fontFamily: fontFamilies.mono,
     marginTop: 2,
+    letterSpacing: 0.3,
   },
   button: {
-    borderRadius: 14,
+    borderRadius: 12,
     minHeight: 46,
     alignItems: "center",
     justifyContent: "center",
@@ -526,7 +531,7 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: 12,
     minHeight: 44,
     alignItems: "center",
     justifyContent: "center",
@@ -542,8 +547,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   secondaryButtonText: {
-    fontFamily: fontFamilies.semibold,
+    fontFamily: fontFamilies.mono,
     fontSize: 13.5,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   hintText: {
     fontSize: 13,
@@ -552,8 +559,8 @@ const styles = StyleSheet.create({
   },
   emptyStateWrap: {
     borderWidth: 1,
-    borderStyle: "dashed",
-    borderRadius: 14,
+    borderStyle: "solid",
+    borderRadius: 12,
     padding: 12,
     gap: 9,
     alignItems: "flex-start",
@@ -573,7 +580,7 @@ const styles = StyleSheet.create({
   },
   driverRow: {
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: 12,
     padding: 12,
     flexDirection: "row",
     alignItems: "center",
@@ -588,12 +595,13 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   driverTitle: {
-    fontSize: 14,
-    fontFamily: fontFamilies.semibold,
+    fontSize: 14.5,
+    fontFamily: fontFamilies.bold,
+    letterSpacing: -0.1,
   },
   driverMeta: {
     fontSize: 12,
-    fontFamily: fontFamilies.regular,
+    fontFamily: fontFamilies.mono,
   },
   actionButton: {
     borderRadius: 12,
@@ -607,6 +615,8 @@ const styles = StyleSheet.create({
   },
   actionButtonText: {
     fontSize: 13,
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.mono,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
 });

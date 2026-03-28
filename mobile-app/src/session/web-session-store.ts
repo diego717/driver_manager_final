@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from "react";
 
-import { clearWebSession, readStoredWebSession } from "@/src/api/webAuth";
+import { clearWebSession, getCurrentWebSession, readStoredWebSession } from "@/src/api/webAuth";
 import { evaluateWebSession } from "@/src/api/webSession";
 import { consumeForceLoginOnOpenFlag } from "@/src/security/startup-session-policy";
+import { isWebBrowserRuntime } from "@/src/storage/runtime";
 import { isStoredWebSessionKey } from "@/src/storage/secure";
 
 type WebSessionSnapshot = {
@@ -82,13 +83,24 @@ export async function refreshSharedWebSessionState(options?: { showLoader?: bool
     }
 
     const storedSession = await readStoredWebSession();
-    const resolved = evaluateWebSession(storedSession.accessToken, storedSession.expiresAt);
+    const resolved = evaluateWebSession(
+      isWebBrowserRuntime() && storedSession.expiresAt ? "__cookie_session__" : storedSession.accessToken,
+      storedSession.expiresAt,
+    );
 
     if (resolved.state === "expired") {
       await clearWebSession();
     }
 
-    const isActive = resolved.state === "active";
+    let isActive = resolved.state === "active";
+    if (isActive && isWebBrowserRuntime()) {
+      try {
+        await getCurrentWebSession();
+      } catch {
+        await clearWebSession();
+        isActive = false;
+      }
+    }
     if (requestId !== latestRefreshRequestId) {
       return snapshot.hasActiveSession;
     }

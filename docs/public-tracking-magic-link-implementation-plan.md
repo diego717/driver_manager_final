@@ -252,7 +252,8 @@ Ya existe:
 Tambien existe:
 
 - emision de Magic Link firmado
-- soporte de link corto (`short_code`) y link largo (`token`)
+- soporte de link corto (`short_code`) como URL compartible
+- token firmado mantenido como detalle interno del backend/KV, no como contrato expuesto al cliente
 - snapshot publico cacheado en KV
 - UI de dashboard para crear, regenerar, copiar y revocar el link
 - cliente publico con SSE como camino principal y polling como fallback
@@ -794,6 +795,7 @@ Mitigacion:
 Mitigacion:
 
 - usar path, no query string
+- exponer al usuario solo `short_code`; no devolver ni loguear la URL larga con token firmado
 - `Referrer-Policy: no-referrer`
 - assets same-origin
 - `no-store`

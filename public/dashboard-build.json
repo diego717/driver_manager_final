@@ -1,6 +1,6 @@
 {
   "versions": {
-    "css": "4f67281f84",
+    "css": "90ce55f4e2",
     "chart": "74401d738d",
     "jsqr": "bc40c8a151",
     "xlsx": "1c7abf2993",
@@ -8,21 +8,21 @@
     "api": "887186d711",
     "geolocation": "a99f19d896",
     "scan": "6884e82f3e",
-    "modals": "406a6572ea",
-    "incidents": "2b044104f0",
-    "assets": "2654cce20a",
+    "modals": "9a626a982c",
+    "incidents": "4dca3191ea",
+    "assets": "333422afbc",
     "drivers": "107284fd17",
-    "audit": "6eb26df000",
-    "overview": "870105b020",
-    "realtime": "23f8c5e4a5",
-    "auth": "3e1ec8b9ae",
-    "navigation": "ab611df44d",
-    "bootstrap": "d41f5f1a45",
-    "js": "2d480db4b0",
+    "audit": "3d16d3d132",
+    "overview": "c01c1e316c",
+    "realtime": "d763a18c75",
+    "auth": "ccfa156e3b",
+    "navigation": "e032f08738",
+    "bootstrap": "65dba6e7cf",
+    "js": "292d445831",
     "pwa": "55b84aa40e",
     "manifest": "9130a5f920",
     "sw": "4c87568cf6",
     "materialSymbolsFont": "ee7248184b",
-    "build": "0ddd8ddbbd"
+    "build": "b5d18bdc43"
   }
 }

@@ -194,8 +194,8 @@ export default function TodayScreen() {
     <ScreenScaffold contentContainerStyle={styles.container}>
       <ScreenHero
         eyebrow="Hoy"
-        title="Que sigue ahora"
-        description="Escanear es la ruta principal. Si no aplica, usa caso manual o inventario."
+        title="Centro del turno"
+        description="Empieza por la accion prioritaria. Si no aplica QR, abre un caso manual o entra por inventario."
       >
         <Text style={[styles.heroMetaText, { color: palette.textSecondary }]}>
           {statistics?.incident_in_progress_count ?? 0} en curso · {installations.length} casos
@@ -213,7 +213,13 @@ export default function TodayScreen() {
         description="Empieza por el QR cuando estas en campo."
       >
         <TouchableOpacity
-          style={[styles.scanButton, { backgroundColor: palette.primaryButtonBg }]}
+          style={[
+            styles.scanButton,
+            {
+              backgroundColor: palette.primaryButtonBg,
+              borderColor: palette.heroBorder,
+            },
+          ]}
           onPress={() => router.push("/scan" as never)}
           accessibilityRole="button"
           accessibilityLabel="Escanear equipo para iniciar trabajo"
@@ -230,7 +236,7 @@ export default function TodayScreen() {
           <TouchableOpacity
             style={[
               styles.utilityButton,
-              { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+              { backgroundColor: palette.surface, borderColor: palette.inputBorder },
             ]}
             onPress={() => router.push("/case/manual" as never)}
             accessibilityRole="button"
@@ -243,7 +249,7 @@ export default function TodayScreen() {
           <TouchableOpacity
             style={[
               styles.utilityButton,
-              { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+              { backgroundColor: palette.surface, borderColor: palette.inputBorder },
             ]}
             onPress={() => router.push("/explore" as never)}
             accessibilityRole="button"
@@ -263,7 +269,7 @@ export default function TodayScreen() {
           <TouchableOpacity
             style={[
               styles.refreshButton,
-              { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+              { backgroundColor: palette.surface, borderColor: palette.inputBorder },
             ]}
             onPress={() => {
               void loadOverview({ forceRefresh: true });
@@ -325,7 +331,7 @@ export default function TodayScreen() {
               <TouchableOpacity
                 style={[
                   styles.secondaryAction,
-                  { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+                  { backgroundColor: palette.surface, borderColor: palette.inputBorder },
                 ]}
                 onPress={() => openBacklog(focusRecord)}
                 accessibilityRole="button"
@@ -352,7 +358,7 @@ const styles = StyleSheet.create({
   },
   container: {
     padding: 22,
-    gap: 12,
+    gap: 14,
   },
   authHintText: {
     fontSize: 14,
@@ -360,13 +366,16 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.regular,
   },
   heroMetaText: {
-    fontFamily: fontFamilies.regular,
-    fontSize: 13,
+    fontFamily: fontFamilies.mono,
+    fontSize: 11.5,
     lineHeight: 18,
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
   },
   scanButton: {
     minHeight: 88,
-    borderRadius: 20,
+    borderRadius: 18,
+    borderWidth: 1,
     alignItems: "flex-start",
     justifyContent: "center",
     paddingHorizontal: 18,
@@ -375,8 +384,9 @@ const styles = StyleSheet.create({
   },
   scanButtonTitle: {
     fontFamily: fontFamilies.bold,
-    fontSize: 17,
+    fontSize: 18,
     lineHeight: 22,
+    letterSpacing: -0.2,
   },
   scanButtonBody: {
     fontFamily: fontFamilies.regular,
@@ -385,19 +395,21 @@ const styles = StyleSheet.create({
   },
   refreshButton: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     justifyContent: "center",
   },
   refreshButtonText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 13,
+    fontFamily: fontFamilies.mono,
+    fontSize: 11.5,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
   },
   focusCard: {
     borderWidth: 1,
-    borderRadius: 20,
+    borderRadius: 18,
     padding: 16,
     gap: 12,
   },
@@ -412,8 +424,9 @@ const styles = StyleSheet.create({
   },
   focusTitle: {
     fontFamily: fontFamilies.bold,
-    fontSize: 19,
+    fontSize: 20,
     lineHeight: 24,
+    letterSpacing: -0.3,
   },
   focusBody: {
     fontFamily: fontFamilies.regular,
@@ -421,16 +434,17 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   focusMeta: {
-    fontFamily: fontFamilies.regular,
-    fontSize: 12.5,
+    fontFamily: fontFamilies.mono,
+    fontSize: 11.5,
     lineHeight: 18,
+    letterSpacing: 0.4,
   },
   focusActions: {
     gap: 10,
   },
   primaryAction: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 16,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 13,
@@ -442,7 +456,7 @@ const styles = StyleSheet.create({
   secondaryAction: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
@@ -460,13 +474,13 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 10,
   },
   utilityButtonText: {
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.semibold,
     fontSize: 13,
   },
 });

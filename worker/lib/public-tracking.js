@@ -680,7 +680,6 @@ export async function issuePublicTrackingLink(env, {
     token,
     shortCode,
     url: buildTrackingUrl(origin, shortCode),
-    longUrl: buildTrackingUrl(origin, token),
     entry,
     regenerated: existingEntry?.status === "active",
   };
@@ -809,39 +808,96 @@ export async function syncPublicTrackingSnapshotForInstallation(env, options) {
   }
 }
 
-export function renderPublicTrackingHtml({ token }) {
-  const escapedToken = String(token || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+export function renderPublicTrackingHtml({
+  token,
+  documentTitle = "Seguimiento del servicio",
+  eyebrow = "Seguimiento del servicio",
+  connectionLabel = "Actualizando",
+  connectionState = "",
+  title = "Cargando estado...",
+  intro = "Vista publica de estado para compartir con cliente o contacto operativo.",
+  message = "Estamos preparando la informacion del servicio.",
+  messageTone = "",
+  summaryHidden = true,
+  summaryTone = "",
+  summaryBadge = "Registrado",
+  summaryText = "Estamos preparando la informacion del servicio.",
+  transitionText = "",
+  metaItems = [],
+  timelineEmptyText = "",
+  refreshHidden = false,
+  includeClientScript = true,
+} = {}) {
+  const escapedToken = escapeHtml(token);
+  const connectionStateAttr = connectionState ? ` data-state="${escapeHtml(connectionState)}"` : "";
+  const messageToneAttr = messageTone ? ` data-tone="${escapeHtml(messageTone)}"` : "";
+  const summaryToneAttr = summaryTone ? ` data-tone="${escapeHtml(summaryTone)}"` : "";
+  const summaryHiddenAttr = summaryHidden ? " hidden" : "";
+  const transitionHiddenAttr = transitionText ? "" : " hidden";
+  const refreshHiddenAttr = refreshHidden ? " hidden" : "";
+  const renderedMeta = Array.isArray(metaItems) && metaItems.length
+    ? metaItems.map((item) => `<span class="public-tracking-chip">${escapeHtml(item)}</span>`).join("")
+    : "";
+  const renderedTimeline = timelineEmptyText
+    ? `<p class="public-tracking-empty">${escapeHtml(timelineEmptyText)}</p>`
+    : "";
+  const renderedClientScript = includeClientScript
+    ? '  <script src="/public-tracking.js" defer></script>\n'
+    : "";
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex,nofollow">
-  <title>Seguimiento del servicio</title>
+  <title>${escapeHtml(documentTitle)}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/public-tracking.css">
 </head>
 <body data-tracking-token="${escapedToken}">
   <main class="public-tracking-shell">
     <section class="public-tracking-card">
       <div class="public-tracking-head">
-        <p class="public-tracking-eyebrow">Seguimiento del servicio</p>
-        <span id="publicTrackingConnectionBadge" class="public-tracking-connection-badge" aria-live="polite">Actualizando</span>
+        <div class="public-tracking-brand" aria-label="SiteOps">
+          <div class="public-tracking-brand-mark" aria-hidden="true">
+            <span class="public-tracking-brand-ring"></span>
+            <span class="public-tracking-brand-axis public-tracking-brand-axis-horizontal"></span>
+            <span class="public-tracking-brand-axis public-tracking-brand-axis-vertical"></span>
+            <span class="public-tracking-brand-node"></span>
+          </div>
+          <div class="public-tracking-brand-copy">
+            <strong>SiteOps</strong>
+            <span>Public Tracking</span>
+          </div>
+        </div>
+        <p class="public-tracking-eyebrow">${escapeHtml(eyebrow)}</p>
+        <span id="publicTrackingConnectionBadge" class="public-tracking-connection-badge" aria-live="polite"${connectionStateAttr}>${escapeHtml(connectionLabel)}</span>
       </div>
-      <h1 id="publicTrackingTitle">Cargando estado...</h1>
-      <p class="public-tracking-intro">Vista publica de estado para compartir con cliente o contacto operativo.</p>
-      <div id="publicTrackingSummary" class="public-tracking-summary" hidden>
-        <span id="publicTrackingStatusBadge" class="public-tracking-status-badge">Registrado</span>
-        <span id="publicTrackingTransition" class="public-tracking-transition" hidden></span>
-        <p id="publicTrackingSummaryText" class="public-tracking-summary-text">Estamos preparando la informacion del servicio.</p>
+      <h1 id="publicTrackingTitle">${escapeHtml(title)}</h1>
+      <p class="public-tracking-intro">${escapeHtml(intro)}</p>
+      <div id="publicTrackingSummary" class="public-tracking-summary"${summaryToneAttr}${summaryHiddenAttr}>
+        <span id="publicTrackingStatusBadge" class="public-tracking-status-badge"${summaryToneAttr}>${escapeHtml(summaryBadge)}</span>
+        <span id="publicTrackingTransition" class="public-tracking-transition"${transitionHiddenAttr}>${escapeHtml(transitionText)}</span>
+        <p id="publicTrackingSummaryText" class="public-tracking-summary-text">${escapeHtml(summaryText)}</p>
       </div>
-      <p id="publicTrackingMessage">Estamos preparando la informacion del servicio.</p>
-      <div id="publicTrackingMeta" class="public-tracking-meta"></div>
-      <div id="publicTrackingTimeline" class="public-tracking-timeline" aria-live="polite"></div>
-      <button id="publicTrackingRefreshBtn" type="button" class="public-tracking-refresh">Actualizar</button>
+      <p id="publicTrackingMessage"${messageToneAttr}>${escapeHtml(message)}</p>
+      <div id="publicTrackingMeta" class="public-tracking-meta">${renderedMeta}</div>
+      <div id="publicTrackingTimeline" class="public-tracking-timeline" aria-live="polite">${renderedTimeline}</div>
+      <button id="publicTrackingRefreshBtn" type="button" class="public-tracking-refresh"${refreshHiddenAttr}>Actualizar</button>
     </section>
   </main>
-  <script src="/public-tracking.js" defer></script>
-</body>
+${renderedClientScript}</body>
 </html>`;
 }
 

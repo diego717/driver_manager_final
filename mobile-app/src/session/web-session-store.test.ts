@@ -18,6 +18,7 @@ function createDeferred<T>(): Deferred<T> {
 
 const webAuthMocks = vi.hoisted(() => ({
   clearWebSession: vi.fn(async (): Promise<void> => undefined),
+  getCurrentWebSession: vi.fn(),
   readStoredWebSession: vi.fn(),
 }));
 
@@ -48,6 +49,7 @@ describe("web session store", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     webAuthMocks.clearWebSession.mockClear();
+    webAuthMocks.getCurrentWebSession.mockReset();
     webAuthMocks.readStoredWebSession.mockReset();
     startupSessionPolicyMocks.consumeForceLoginOnOpenFlag.mockReset();
     startupSessionPolicyMocks.consumeForceLoginOnOpenFlag.mockReturnValue(false);
@@ -114,6 +116,39 @@ describe("web session store", () => {
     expect(__getSharedWebSessionSnapshotForTests()).toMatchObject({
       checkingSession: false,
       hasActiveSession: false,
+    });
+  });
+
+  it("revalidates browser sessions against /web/auth/me before marking them active", async () => {
+    (globalThis as { window?: unknown }).window = {
+      sessionStorage: {
+        getItem: vi.fn(() => null),
+        setItem: vi.fn(),
+        removeItem: vi.fn(),
+      },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    };
+    webAuthMocks.readStoredWebSession.mockResolvedValueOnce({
+      accessToken: null,
+      expiresAt: "2030-01-01T00:00:00.000Z",
+      username: "admin",
+      role: "admin",
+    });
+    webAuthMocks.getCurrentWebSession.mockResolvedValueOnce({
+      success: true,
+      authenticated: true,
+      token_type: "Bearer",
+      expires_in: 3600,
+      expires_at: "2030-01-01T00:00:00.000Z",
+      user: { username: "admin", role: "admin" },
+    });
+
+    await expect(refreshSharedWebSessionState()).resolves.toBe(true);
+    expect(webAuthMocks.getCurrentWebSession).toHaveBeenCalledOnce();
+    expect(__getSharedWebSessionSnapshotForTests()).toMatchObject({
+      checkingSession: false,
+      hasActiveSession: true,
     });
   });
 });

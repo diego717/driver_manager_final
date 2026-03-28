@@ -59,6 +59,18 @@
 
         let lastSyncAt = 0;
         const SYNC_COOLDOWN_MS = 1000;
+        let lastDashboardRefreshAt = 0;
+        const DASHBOARD_REFRESH_THROTTLE_MS = 1200;
+
+        function refreshDashboardIfActive() {
+            if (!options.isSectionActive('dashboard')) return;
+            const now = Date.now();
+            if (now - lastDashboardRefreshAt < DASHBOARD_REFRESH_THROTTLE_MS) {
+                return;
+            }
+            lastDashboardRefreshAt = now;
+            void options.loadDashboard({ followupDelayMs: 1200 });
+        }
 
         function renderVisibleResultsCount(container, visibleCount, totalCount) {
             if (!(container instanceof HTMLElement)) return;
@@ -205,7 +217,7 @@
                         }
                     }
                     if (options.isSectionActive('dashboard')) {
-                        void options.loadDashboard();
+                        refreshDashboardIfActive();
                     }
                     break;
                 case 'stats_update':
@@ -269,7 +281,7 @@
 
             if (!alreadyTracked && options.isSectionActive('dashboard')) {
                 setTimeout(() => {
-                    void options.loadDashboard();
+                    refreshDashboardIfActive();
                 }, 1000);
             }
         }
@@ -287,6 +299,7 @@
             if (options.isSectionActive('installations')) {
                 options.renderInstallationsTable(nextInstallations);
             }
+            refreshDashboardIfActive();
         }
 
         function handleRealtimeInstallationDeleted(installation) {
@@ -302,6 +315,7 @@
             }
 
             options.showNotification(`Registro #${installation.id} eliminado`, 'info');
+            refreshDashboardIfActive();
         }
 
         function handleRealtimeStatsUpdate(stats) {

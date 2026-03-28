@@ -1366,16 +1366,18 @@
             selectedPresetItems,
         }) {
             const fragment = document.createDocumentFragment();
+            const grid = document.createElement('div');
+            grid.className = 'action-modal-grid incident-evidence-form-grid';
 
             const checklistGroup = document.createElement('div');
-            checklistGroup.className = 'input-group';
+            checklistGroup.className = 'input-group full-width incident-evidence-checklist-group';
             const checklistLabel = document.createElement('label');
             checklistLabel.textContent = 'Checklist sugerido';
             const checklistGrid = document.createElement('div');
             checklistGrid.className = 'incident-checklist-grid';
             options.incidentChecklistPresets.forEach((label, index) => {
                 const itemLabel = document.createElement('label');
-                itemLabel.className = 'action-checkbox';
+                itemLabel.className = 'action-checkbox incident-checklist-option';
                 itemLabel.setAttribute('for', `actionIncidentChecklistPreset-${index}`);
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
@@ -1389,17 +1391,17 @@
                 checklistGrid.appendChild(itemLabel);
             });
             checklistGroup.append(checklistLabel, checklistGrid);
-            fragment.appendChild(checklistGroup);
+            grid.appendChild(checklistGroup);
 
             const customChecklistTextarea = document.createElement('textarea');
             customChecklistTextarea.id = 'actionIncidentChecklistCustom';
             customChecklistTextarea.rows = 3;
             customChecklistTextarea.placeholder = 'Ej: Foto del serial\nValidacion con supervisor';
             customChecklistTextarea.value = customChecklistItems.join('\n');
-            fragment.appendChild(createInputGroup(
+            grid.appendChild(createInputGroup(
                 'Checklist adicional (una linea por item)',
                 customChecklistTextarea,
-                { htmlFor: 'actionIncidentChecklistCustom' },
+                { htmlFor: 'actionIncidentChecklistCustom', className: 'full-width' },
             ));
 
             const evidenceNoteTextarea = document.createElement('textarea');
@@ -1407,12 +1409,13 @@
             evidenceNoteTextarea.rows = 4;
             evidenceNoteTextarea.placeholder = 'Resumen operativo de evidencia';
             evidenceNoteTextarea.value = currentEvidenceNote;
-            fragment.appendChild(createInputGroup(
+            grid.appendChild(createInputGroup(
                 'Nota operativa',
                 evidenceNoteTextarea,
-                { htmlFor: 'actionIncidentEvidenceNote' },
+                { htmlFor: 'actionIncidentEvidenceNote', className: 'full-width' },
             ));
 
+            fragment.appendChild(grid);
             return fragment;
         }
 
@@ -2554,6 +2557,7 @@
                             'La incidencia se creo, pero no pudimos refrescar el registro.',
                         );
                     }
+                    void options.loadDashboard();
                 },
             });
 
@@ -2763,6 +2767,7 @@
                 title: `Evidencia incidencia #${incidentId}`,
                 subtitle: 'Actualiza checklist y nota operativa en el registro de evidencia.',
                 submitLabel: 'Guardar evidencia',
+                modalWidth: 'wide',
                 focusId: 'actionIncidentEvidenceNote',
                 fields: buildIncidentEvidenceFields({
                     currentEvidenceNote,
@@ -2792,6 +2797,7 @@
                         config,
                         'La evidencia se guardo, pero no pudimos refrescar la vista.',
                     );
+                    void options.loadDashboard();
                 },
             });
         }
@@ -2828,6 +2834,7 @@
                         config,
                         'El estado se actualizo, pero no pudimos refrescar la vista.',
                     );
+                    void options.loadDashboard();
                 } catch (error) {
                     setIncidentCardsUpdating(incidentId, false);
                     options.showNotification(`No se pudo actualizar estado: ${error.message || error}`, 'error');
@@ -2888,7 +2895,11 @@
                         setIncidentCardsUpdating(incidentId, true);
                         await options.api.deleteIncident(incidentId);
                         options.showNotification(`Incidencia #${incidentId} eliminada.`, 'success');
-                        void runIncidentRefreshInBackground(updateOptions.installationId, updateOptions.assetId);
+                        runIncidentRefreshInBackground(
+                            updateOptions,
+                            'La incidencia se elimino, pero no pudimos refrescar la vista.',
+                        );
+                        void options.loadDashboard();
                     } catch (error) {
                         setIncidentCardsUpdating(incidentId, false);
                         options.showNotification(`No se pudo eliminar la incidencia: ${error.message || error}`, 'error');

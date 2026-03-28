@@ -126,14 +126,12 @@ export function createPublicTrackingRouteHandlers({
             expires_at: activeLink.expires_at,
             revoked_at: activeLink.revoked_at,
             tracking_url: `${publicTrackingOrigin}/track/${encodeURIComponent(activeLink.short_code || activeLink.token || "")}`,
-            long_tracking_url: `${publicTrackingOrigin}/track/${encodeURIComponent(activeLink.token || "")}`,
             snapshot: activeLink.snapshot || null,
           }
         : {
             active: false,
             status: activeLink?.status || "missing",
             tracking_url: null,
-            long_tracking_url: null,
             short_code: null,
             snapshot: activeLink?.snapshot || null,
           };
@@ -163,7 +161,6 @@ export function createPublicTrackingRouteHandlers({
           short_code: issuedLink.entry.short_code || null,
           expires_at: issuedLink.entry.expires_at,
           tracking_url: issuedLink.url,
-          long_tracking_url: issuedLink.longUrl,
           tenant_id: tenantId,
         },
         ipAddress: requestIp,
@@ -182,7 +179,6 @@ export function createPublicTrackingRouteHandlers({
           expires_at: issuedLink.entry.expires_at,
           revoked_at: null,
           tracking_url: issuedLink.url,
-          long_tracking_url: issuedLink.longUrl,
           snapshot: issuedLink.entry.snapshot || null,
         },
       }, 201);
@@ -248,7 +244,25 @@ export function createPublicTrackingRouteHandlers({
         });
       } catch {
         return new Response(
-          `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="robots" content="noindex,nofollow"><title>Enlace no disponible</title></head><body><main><h1>Este enlace ya no esta disponible</h1><p>Solicita un nuevo enlace al equipo de soporte.</p></main></body></html>`,
+          renderPublicTrackingHtml({
+            token,
+            documentTitle: "Enlace no disponible",
+            eyebrow: "Acceso de seguimiento",
+            connectionLabel: "Sin enlace",
+            connectionState: "offline",
+            title: "Este enlace ya no esta disponible",
+            intro: "Este acceso ya no puede usarse para consultar el estado del servicio.",
+            message: "Si necesitas volver a entrar, solicita un nuevo enlace al equipo de soporte.",
+            messageTone: "error",
+            summaryHidden: false,
+            summaryTone: "error",
+            summaryBadge: "No disponible",
+            summaryText: "Por seguridad, este enlace dejo de estar activo y ya no muestra actualizaciones.",
+            metaItems: ["Estado actual: acceso cerrado"],
+            timelineEmptyText: "Este enlace ya no tiene eventos disponibles.",
+            refreshHidden: true,
+            includeClientScript: false,
+          }),
           {
             status: 410,
             headers: {

@@ -33,6 +33,7 @@ vi.mock("../storage/secure", () => secureMocks);
 import {
   clearWebSession,
   listWebUsers,
+  getCurrentWebSession,
   loginWebSession,
 } from "./webAuth";
 
@@ -48,6 +49,7 @@ describe("webAuth", () => {
     secureMocks.getStoredWebAccessToken.mockClear();
     secureMocks.getStoredWebAccessUsername.mockClear();
     secureMocks.setStoredWebSession.mockClear();
+    delete (globalThis as { window?: unknown }).window;
     vi.stubGlobal("fetch", vi.fn());
   });
 
@@ -113,6 +115,31 @@ describe("webAuth", () => {
     expect(headers.get("X-Client-Platform")).toBe("mobile");
   });
 
+  it("uses cookie-backed web session requests without Authorization in browser runtime", async () => {
+    (globalThis as { window?: unknown }).window = {
+      sessionStorage: {
+        getItem: vi.fn(() => null),
+        setItem: vi.fn(),
+        removeItem: vi.fn(),
+      },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    };
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, users: [] }),
+    });
+
+    await listWebUsers();
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(headers.get("Authorization")).toBeNull();
+    expect(headers.get("X-Client-Platform")).toBe("mobile");
+    expect(init.credentials).toBe("include");
+  });
+
   it("clears session when token is expired before making authorized request", async () => {
     secureMocks.getStoredWebAccessToken.mockResolvedValueOnce("expired-token");
     secureMocks.getStoredWebAccessExpiresAt.mockResolvedValueOnce(
@@ -125,6 +152,36 @@ describe("webAuth", () => {
     );
     expect(secureMocks.clearStoredWebSession).toHaveBeenCalledOnce();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refreshes stored metadata from /web/auth/me without clearing native bearer state", async () => {
+    secureMocks.getStoredWebAccessToken.mockResolvedValue("native-token-123");
+    secureMocks.getStoredWebAccessExpiresAt.mockResolvedValue(
+      "2030-01-01T00:30:00.000Z",
+    );
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        authenticated: true,
+        token_type: "Bearer",
+        expires_in: 3600,
+        expires_at: "2030-01-01T01:00:00.000Z",
+        user: { username: "admin", role: "admin" },
+      }),
+    });
+
+    await expect(getCurrentWebSession()).resolves.toMatchObject({
+      authenticated: true,
+      user: { username: "admin", role: "admin" },
+    });
+    expect(secureMocks.setStoredWebSession).toHaveBeenCalledWith({
+      accessToken: "native-token-123",
+      expiresAt: "2030-01-01T01:00:00.000Z",
+      username: "admin",
+      role: "admin",
+    });
   });
 
   it("clears stored session via clearWebSession", async () => {

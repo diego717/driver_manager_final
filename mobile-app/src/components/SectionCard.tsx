@@ -43,12 +43,12 @@ export default function SectionCard(props: SectionCardProps) {
 const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
-    borderRadius: 22,
+    borderRadius: 18,
     padding: 16,
     gap: 12,
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
     elevation: 4,
   },
   header: {
@@ -65,6 +65,7 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bold,
     fontSize: 18,
     lineHeight: 22,
+    letterSpacing: -0.2,
   },
   description: {
     fontFamily: fontFamilies.regular,

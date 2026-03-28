@@ -1,113 +1,148 @@
 # Security Best Practices Report
 
 ## Executive Summary
-Scope reviewed: Cloudflare Worker backend in `worker.js`, plus the desktop client usage pattern in `managers/history_manager.py` and the deployment notes in `README.md`.
+Scope reviewed: Cloudflare Worker backend and static dashboard assets in [worker.js](/g:/dev/driver_manager/worker.js), public tracking flows in [worker/lib/public-tracking.js](/g:/dev/driver_manager/worker/lib/public-tracking.js) and [worker/routes/public-tracking.js](/g:/dev/driver_manager/worker/routes/public-tracking.js), dashboard web client files, and mobile/web session storage in [mobile-app/src/storage/secure.ts](/g:/dev/driver_manager/mobile-app/src/storage/secure.ts).
 
-I did **not** find an unauthenticated `GET` path that directly exposes `web_users`, password hashes, audit logs, or the full database. Sensitive backend routes are generally gated before hitting D1.
+I did not find an obvious unauthenticated backend route exposing D1 data, and the project already has several solid controls in place: `HttpOnly` + `Secure` + `SameSite=Strict` session cookies, rate limiting for login/password verification, and hardened headers for dashboard/public tracking HTML responses.
 
-This review found **2 serious findings** and **1 conditional configuration risk**. As of the current repository state, the two serious findings are **remediated in code** and the conditional risk is guarded by deploy-time checks but still depends on runtime configuration.
+This review found:
+- `0` critical findings
+- `0` active high findings
+- `0` active medium findings
+- `0` active low findings
 
-References used:
-- `javascript-express-web-server-security.md` as the closest backend JavaScript guidance.
+Primary references used:
+- `javascript-general-web-frontend-security.md`
+- `javascript-typescript-react-web-frontend-security.md`
 
-## Critical Severity
+## Resolved High Severity
 
-### SBP-001: Global HMAC credential plus client-supplied tenant header enables cross-tenant compromise
-- Rule ID: `AUTHZ-TENANT-001`
-- Severity: Critical
-- Location:
-  - `worker.js:4492-4588`
-  - `worker.js:737-750`
-  - `worker.js:8066-8135`
-  - `managers/history_manager.py:468-479`
-  - `README.md:118-129`
-  - `README.md:226-233`
-- Evidence:
-  - Legacy non-web routes authenticate only with a shared `API_TOKEN` / `API_SECRET` pair and HMAC request signing; there is no user identity or tenant binding in `verifyAuth(...)`.
-  - After auth, the backend resolves tenant context from `X-Tenant-Id` when the request is not a `/web/*` session request.
-  - The desktop client sends those global headers for API calls.
-  - The README documents storing `api_secret` client-side for legacy compatibility.
-- Impact:
-  - If a single legacy client secret is extracted from a desktop install, config file, logs, or memory, the attacker can sign requests for any non-web endpoint and pivot across tenants by changing `X-Tenant-Id`. That is a full cross-tenant confidentiality and integrity break.
-- Fix:
-  - Retire legacy HMAC auth for internet-facing clients and move external clients to `/web/*` short-lived sessions only.
-  - If legacy support must remain, bind credentials to a specific tenant and derive tenant exclusively from the credential, not from a caller-controlled header.
-  - Prefer per-user or per-device credentials with revocation rather than one shared secret for the whole backend surface.
-- Mitigation:
-  - Rotate `API_TOKEN` / `API_SECRET` immediately if they were ever distributed broadly.
-  - Restrict legacy routes at the edge to trusted internal networks or specific device identities.
-- False positive notes:
-  - If legacy HMAC auth is used only by a tightly controlled internal service and never by distributed clients, practical exposure is lower. The current README and client code suggest broader client-side use.
-- Current repo status:
-  - Fixed. Legacy HMAC routes now derive tenant from Worker configuration (`DRIVER_MANAGER_API_TENANT_ID` / `API_TENANT_ID`) and reject mismatched `X-Tenant-Id` values.
-
-## High Severity
-
-### SBP-002: Account changes do not revoke active web sessions
-- Rule ID: `AUTH-SESSION-002`
+### SBP-001: Public tracking capability URLs were exposed and persisted in logs/API responses
+- Rule ID: `TOKEN-URL-001`
 - Severity: High
 - Location:
-  - `worker.js:3598-3649`
-  - `worker.js:2645-2662`
-  - `worker.js:3527-3558`
-  - `worker.js:4231-4297`
-  - `worker.js:4300-4338`
+  - [worker/lib/public-tracking.js](/g:/dev/driver_manager/worker/lib/public-tracking.js#L679)
+  - [worker/lib/public-tracking.js](/g:/dev/driver_manager/worker/lib/public-tracking.js#L683)
+  - [worker/routes/public-tracking.js](/g:/dev/driver_manager/worker/routes/public-tracking.js#L165)
+  - [worker/routes/public-tracking.js](/g:/dev/driver_manager/worker/routes/public-tracking.js#L166)
+  - [worker/routes/public-tracking.js](/g:/dev/driver_manager/worker/routes/public-tracking.js#L184)
+  - [worker/routes/public-tracking.js](/g:/dev/driver_manager/worker/routes/public-tracking.js#L185)
 - Evidence:
-  - `verifyWebAccessToken(...)` trusts role and tenant data embedded in the signed token and only checks the stored session version if it exists.
-  - `updateWebUserRoleAndStatus(...)` updates DB state but does not rotate or invalidate the user session version.
-  - `forceResetWebUserPassword(...)` changes the password hash but also does not invalidate existing sessions.
-  - The patch/password-reset handlers call those functions and return success without revoking tokens.
+  - The issuance flow returns both a short URL and a long URL containing the signed tracking token in the path:
+  ```js
+  return {
+    token,
+    shortCode,
+    url: buildTrackingUrl(origin, shortCode),
+    longUrl: buildTrackingUrl(origin, token),
+  };
+  ```
+  - The web route also stores both URLs in audit details and returns them in the admin API response:
+  ```js
+  tracking_url: issuedLink.url,
+  long_tracking_url: issuedLink.longUrl,
+  ```
 - Impact:
-  - A user who is disabled, downgraded from admin, or forcibly reset can continue using an already-issued token with the old privileges until the token expires. Current token lifetime is 8 hours.
+  - The long URL is effectively a bearer credential. If it lands in audit logs, browser history, screenshots, copy/paste trails, reverse-proxy logs, or support tooling, anyone with that URL can read the public tracking status until expiry.
 - Fix:
-  - Invalidate or rotate the session version whenever role, active state, tenant assignment, or password changes.
-  - Optionally re-load the current user record during token verification for sensitive routes and reject inactive users even when the token is otherwise valid.
+  - Stop returning and logging `long_tracking_url` by default.
+  - Prefer the short code URL only, and keep the signed token internal to the backend/KV mapping.
+  - If a long URL is still needed for break-glass support, gate it behind an explicit admin action, avoid persisting it in logs, and shorten its TTL further.
 - Mitigation:
-  - Shorten web token TTL until revocation is enforced on account changes.
-  - Monitor audit logs for activity from users immediately after disable/reset events.
+  - Continue using `Referrer-Policy: no-referrer` on the public page.
+  - Consider one-time or rotating public tracking links for higher sensitivity deployments.
 - False positive notes:
-  - If administrators always also force logout manually, risk is reduced, but the code does not enforce that.
+  - The short-code flow is safer and already implemented. The risk came from also exposing the long bearer-style URL.
 - Current repo status:
-  - Fixed. Role/status updates, password resets, and imported updates for existing users now invalidate active web session versions.
+  - Fixed on 2026-03-28. `long_tracking_url` is no longer returned in the admin API contract and is no longer written to audit log details. The shareable URL now stays on the short-code path only.
 
-## Medium Severity
+## Resolved Medium Severity
 
-### SBP-003: Insecure fallback can disable persistent revocation and login throttling
-- Rule ID: `AUTH-CONFIG-003`
+### SBP-002: Mobile web fallback stores access tokens in browser sessionStorage
+- Rule ID: `JS-STORAGE-001`
 - Severity: Medium
 - Location:
-  - `worker.js:799-829`
-  - `README.md:188-191`
-  - `scripts/verify-security-deploy-config.mjs:4-6`
+  - [mobile-app/src/storage/secure.ts](/g:/dev/driver_manager/mobile-app/src/storage/secure.ts#L38)
+  - [mobile-app/src/storage/secure.ts](/g:/dev/driver_manager/mobile-app/src/storage/secure.ts#L47)
+  - [mobile-app/src/storage/secure.ts](/g:/dev/driver_manager/mobile-app/src/storage/secure.ts#L85)
+  - [mobile-app/src/storage/secure.ts](/g:/dev/driver_manager/mobile-app/src/storage/secure.ts#L174)
+  - [mobile-app/src/storage/secure.ts](/g:/dev/driver_manager/mobile-app/src/storage/secure.ts#L242)
 - Evidence:
-  - `ALLOW_INSECURE_WEB_AUTH_FALLBACK=true` makes missing security stores return `null` instead of failing closed.
-  - That weakens rate limiting and server-side session invalidation guarantees.
-  - There is a deployment check to block this secret remotely, which is good, but runtime state was not independently verified in this review.
+  - On web, the storage helper falls back to browser storage:
+  ```ts
+  if (webStorage) {
+    webStorage.setItem(key, value);
+    return;
+  }
+  await SecureStore.setItemAsync(key, value);
+  ```
+  - Session keys include the access token:
+  ```ts
+  const WEB_ACCESS_TOKEN_KEY = "dm_web_access_token";
+  ```
+  - Web session keys are routed to `sessionStorage`:
+  ```ts
+  if (isStoredWebSessionKey(key)) {
+    return getWebSessionStorage();
+  }
+  ```
 - Impact:
-  - If enabled in a real environment, brute-force protection and reliable session revocation degrade silently.
+  - Any XSS in the web build can exfiltrate the stored access token. `sessionStorage` is better than `localStorage`, but it is still JS-readable and should not be treated as secure secret storage.
 - Fix:
-  - Keep this flag limited to local development only.
-  - Treat any non-local use as a deployment failure.
+  - Prefer cookie-based session auth for web builds, or keep access tokens in memory only and re-bootstrap the session from a hardened backend endpoint.
+  - If token persistence is unavoidable on web, minimize token lifetime and scope, and pair it with stronger CSP/Trusted Types hardening.
 - Mitigation:
-  - Continue enforcing the deploy-time check and audit remote Worker secrets regularly.
+  - Keep the dashboard CSP strict and avoid introducing any new DOM XSS sinks.
+  - Clear stored web sessions aggressively on tab close/logout/expiry.
 - False positive notes:
-  - This is a conditional risk. I did not verify the live Cloudflare environment, only the repository code and deploy guard.
+  - Native mobile builds use `expo-secure-store`; this finding applies to the web fallback path.
+- Current repo status:
+  - Fixed on 2026-03-28. The browser build no longer persists `dm_web_access_token`, `/web/*` requests in browser runtime rely on `credentials: include`, and shared session state revalidates against `/web/auth/me` instead of trusting JS-readable token storage.
 
-## Remediation Status
-- SBP-001: fixed in `worker.js`, `README.md`, and deploy validation flow.
-- SBP-002: fixed in `worker.js` with regression coverage in `tests_js/worker.contract.test.mjs`.
-- SBP-003: partially mitigated. The repository blocks insecure deploys more aggressively, but the final state still depends on remote Worker secrets/config.
+## Resolved Low Severity
+
+### SBP-003: Most API JSON responses do not receive the same security header baseline as HTML entrypoints
+- Rule ID: `HEADERS-BASELINE-001`
+- Severity: Low
+- Location:
+  - [worker/lib/http.js](/g:/dev/driver_manager/worker/lib/http.js#L267)
+  - [worker.js](/g:/dev/driver_manager/worker.js#L174)
+  - [worker.js](/g:/dev/driver_manager/worker.js#L340)
+- Evidence:
+  - Dashboard/public tracking assets get an explicit header baseline:
+  ```js
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "no-referrer",
+  "Permissions-Policy": "geolocation=(self), microphone=(), camera=(self)",
+  "X-Content-Type-Options": "nosniff",
+  ```
+  - Generic JSON responses only set content type and optional cache control:
+  ```js
+  const headers = {
+    ...corsHeaders(request, env, corsPolicy),
+    "Content-Type": "application/json",
+  };
+  ```
+- Impact:
+  - This is mostly defense-in-depth. JSON endpoints do not need CSP, but `X-Content-Type-Options: nosniff` and a consistent `Referrer-Policy` are still good baseline hardening and reduce accidental weakening as the API surface evolves.
+- Fix:
+  - Add a minimal shared response header helper for API responses, at least `X-Content-Type-Options: nosniff` and optionally `Referrer-Policy: no-referrer`.
+- Mitigation:
+  - Keep the stronger HTML response headers already present on dashboard/public tracking routes.
+- False positive notes:
+  - Some of these headers may also be injected at Cloudflare edge/runtime, which is not verifiable from repo code alone.
+- Current repo status:
+  - Fixed on 2026-03-28. Shared API helpers now add `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` to generic JSON/text API responses, while keeping the stronger HTML-specific header set on dashboard and public tracking assets.
 
 ## What Looked Good
-- Web routes generally require a valid session before querying D1.
-- `web_users` listings serialize user metadata and do not return password hashes.
-- SQL access is consistently parameterized via `env.DB.prepare(...).bind(...)`; I did not see a clear SQL injection path in the reviewed backend.
-- Web session cookies are `HttpOnly`, `Secure`, and `SameSite=Strict`.
-- SSE explicitly rejects query-string tokens.
+- Web session cookies are built as `HttpOnly`, `Secure`, `SameSite=Strict` in [worker/auth/web-session.js](/g:/dev/driver_manager/worker/auth/web-session.js#L56).
+- Login and password verification endpoints have rate limiting in [worker/auth/security.js](/g:/dev/driver_manager/worker/auth/security.js#L200) and [worker/auth/security.js](/g:/dev/driver_manager/worker/auth/security.js#L230).
+- Dashboard assets are served with CSP, `X-Frame-Options`, `nosniff`, and `Permissions-Policy` in [worker.js](/g:/dev/driver_manager/worker.js#L174).
+- Public tracking responses also ship with a restrictive CSP and `no-referrer` in [worker/lib/public-tracking.js](/g:/dev/driver_manager/worker/lib/public-tracking.js#L905).
+- The dashboard client clears the password field after failed login attempts in [dashboard-auth.js](/g:/dev/driver_manager/dashboard-auth.js#L163).
 
-## Recommended Remaining Action
-1. Verify the remote Cloudflare Worker does not expose `ALLOW_INSECURE_WEB_AUTH_FALLBACK`.
-2. If legacy HMAC remains enabled, rotate `API_TOKEN` / `API_SECRET` and set `DRIVER_MANAGER_API_TENANT_ID` remotely before next deploy.
+## Recommended Next Step
+1. Keep validating new dashboard/mobile changes against the current CSP and avoid re-introducing JS-readable credential storage.
 
 ## Report Date
-2026-03-13
+2026-03-28

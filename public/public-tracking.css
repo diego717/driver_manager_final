@@ -1,21 +1,27 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700;800&display=swap");
+
 :root {
     color-scheme: light;
-    --pt-bg: #edf2f4;
+    --pt-bg: #eaf0f2;
     --pt-surface: #f8fbfc;
     --pt-panel: #ffffff;
-    --pt-border: #c6d2d8;
-    --pt-border-strong: #8ea5af;
-    --pt-text: #16242d;
-    --pt-text-muted: #536674;
-    --pt-accent: #0f7f79;
-    --pt-accent-soft: rgba(15, 127, 121, 0.12);
-    --pt-warning: #8f570a;
-    --pt-warning-soft: rgba(143, 87, 10, 0.12);
-    --pt-danger: #9f2d2d;
-    --pt-danger-soft: rgba(159, 45, 45, 0.12);
-    --pt-info: #235a84;
-    --pt-info-soft: rgba(35, 90, 132, 0.12);
-    --pt-shadow: 0 14px 28px rgba(17, 32, 42, 0.08);
+    --pt-border: #c8d4d9;
+    --pt-border-strong: #90a4ac;
+    --pt-text: #142129;
+    --pt-text-muted: #50626d;
+    --pt-accent: #0d766e;
+    --pt-accent-soft: rgba(13, 118, 110, 0.1);
+    --pt-warning: #8c5a12;
+    --pt-warning-soft: rgba(140, 90, 18, 0.12);
+    --pt-danger: #9a3530;
+    --pt-danger-soft: rgba(154, 53, 48, 0.12);
+    --pt-info: #275d86;
+    --pt-info-soft: rgba(39, 93, 134, 0.12);
+    --pt-shadow: 0 16px 28px rgba(15, 27, 34, 0.08);
+    --pt-grid-line: rgba(13, 118, 110, 0.08);
+    --pt-noise: rgba(255, 255, 255, 0.22);
+    --pt-band-primary: rgba(13, 118, 110, 0.14);
+    --pt-band-secondary: rgba(39, 93, 134, 0.1);
 }
 
 * {
@@ -25,11 +31,39 @@
 body {
     margin: 0;
     min-height: 100vh;
-    font-family: "Segoe UI", "Source Sans 3", system-ui, sans-serif;
+    font-family: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
     color: var(--pt-text);
     background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0)),
+        linear-gradient(90deg, var(--pt-grid-line) 1px, transparent 1px),
+        linear-gradient(0deg, var(--pt-grid-line) 1px, transparent 1px),
+        linear-gradient(120deg, transparent 0%, var(--pt-band-primary) 46%, transparent 72%),
+        linear-gradient(300deg, transparent 0%, var(--pt-band-secondary) 40%, transparent 66%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0)),
+        radial-gradient(circle at 0% 0%, rgba(13, 118, 110, 0.08), transparent 28%),
         var(--pt-bg);
+    background-size: 96px 96px, 96px 96px, auto, auto, auto, auto, auto;
+    position: relative;
+}
+
+body::before,
+body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+}
+
+body::before {
+    background:
+        linear-gradient(90deg, transparent 0%, rgba(13, 118, 110, 0.09) 49.5%, transparent 50.5%, transparent 100%);
+    opacity: 0.8;
+}
+
+body::after {
+    background-image: radial-gradient(circle at 1px 1px, var(--pt-noise) 1px, transparent 0);
+    background-size: 9px 9px;
+    opacity: 0.26;
+    mix-blend-mode: multiply;
 }
 
 .public-tracking-shell {
@@ -37,17 +71,51 @@ body {
     display: grid;
     place-items: center;
     padding: 1.5rem;
+    position: relative;
+}
+
+.public-tracking-shell::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+        radial-gradient(circle at 15% 18%, rgba(13, 118, 110, 0.12), transparent 26%),
+        radial-gradient(circle at 85% 82%, rgba(39, 93, 134, 0.1), transparent 24%);
+    pointer-events: none;
 }
 
 .public-tracking-card {
     width: min(100%, 44rem);
     background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0.96)),
+        linear-gradient(145deg, rgba(13, 118, 110, 0.07) 0%, transparent 48%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.98)),
         var(--pt-surface);
     border: 1px solid var(--pt-border-strong);
-    border-radius: 18px;
+    border-radius: 16px;
     box-shadow: var(--pt-shadow);
     padding: 1.35rem;
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+}
+
+.public-tracking-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 5px;
+    background: linear-gradient(180deg, var(--pt-accent), color-mix(in oklab, var(--pt-info) 45%, var(--pt-accent) 55%));
+}
+
+.public-tracking-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+        linear-gradient(90deg, transparent 0 78%, rgba(13, 118, 110, 0.08) 78% 78.6%, transparent 78.6%),
+        linear-gradient(180deg, transparent 0 20px, rgba(13, 118, 110, 0.05) 20px 21px, transparent 21px 100%);
+    pointer-events: none;
+    z-index: -1;
 }
 
 .public-tracking-head {
@@ -56,14 +124,130 @@ body {
     justify-content: space-between;
     gap: 0.75rem;
     margin-bottom: 0.35rem;
+    position: relative;
+    flex-wrap: wrap;
+}
+
+.public-tracking-brand {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.72rem;
+    align-items: center;
+    min-width: 0;
+}
+
+.public-tracking-brand-mark {
+    position: relative;
+    width: 2.8rem;
+    height: 2.8rem;
+    border-radius: 0.92rem;
+    background:
+        linear-gradient(160deg, rgba(255, 255, 255, 0.26) 0%, transparent 34%),
+        linear-gradient(145deg, rgba(13, 118, 110, 0.18), color-mix(in oklab, var(--pt-surface) 87%, var(--pt-accent-soft) 13%));
+    border: 1px solid color-mix(in oklab, var(--pt-border-strong) 58%, var(--pt-accent) 42%);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.34),
+        0 10px 22px rgba(13, 118, 110, 0.08);
+    clip-path: polygon(0 0, 78% 0, 100% 22%, 100% 100%, 22% 100%, 0 78%);
+}
+
+.public-tracking-brand-mark::before,
+.public-tracking-brand-mark::after,
+.public-tracking-brand-ring,
+.public-tracking-brand-axis,
+.public-tracking-brand-node {
+    position: absolute;
+    display: block;
+    content: "";
+    pointer-events: none;
+}
+
+.public-tracking-brand-mark::before {
+    inset: 0.26rem;
+    border-radius: 0.72rem;
+    border: 1px solid rgba(13, 118, 110, 0.18);
+    clip-path: polygon(0 0, 80% 0, 100% 20%, 100% 100%, 20% 100%, 0 80%);
+}
+
+.public-tracking-brand-mark::after {
+    top: 0.28rem;
+    right: 0.28rem;
+    width: 0.82rem;
+    height: 0.82rem;
+    background: linear-gradient(135deg, color-mix(in oklab, var(--pt-accent) 62%, white 38%), transparent 78%);
+    clip-path: polygon(0 0, 100% 0, 100% 100%);
+    opacity: 0.95;
+}
+
+.public-tracking-brand-ring {
+    inset: 0.55rem 0.62rem 0.55rem 0.48rem;
+    border: 2px solid color-mix(in oklab, var(--pt-accent) 78%, white 22%);
+    border-right-color: transparent;
+    border-radius: 999px;
+}
+
+.public-tracking-brand-axis-horizontal {
+    left: 0.74rem;
+    right: 0.72rem;
+    top: 50%;
+    height: 1px;
+    background: color-mix(in oklab, var(--pt-accent) 68%, white 32%);
+    transform: translateY(-50%);
+}
+
+.public-tracking-brand-axis-vertical {
+    top: 0.72rem;
+    bottom: 0.78rem;
+    left: 47%;
+    width: 1px;
+    background: color-mix(in oklab, var(--pt-accent) 42%, transparent);
+    transform: translateX(-50%);
+}
+
+.public-tracking-brand-node {
+    width: 0.56rem;
+    height: 0.56rem;
+    border-radius: 999px;
+    right: 0.62rem;
+    top: 0.68rem;
+    background: color-mix(in oklab, var(--pt-accent) 82%, white 18%);
+    box-shadow:
+        0 0 0 0.16rem rgba(13, 118, 110, 0.14),
+        0 0 14px rgba(13, 118, 110, 0.16);
+}
+
+.public-tracking-brand-copy {
+    display: grid;
+    gap: 0.12rem;
+    min-width: 0;
+}
+
+.public-tracking-brand-copy strong {
+    display: block;
+    color: var(--pt-accent);
+    font-family: "IBM Plex Sans Condensed", "Source Sans 3", sans-serif;
+    font-size: 1.1rem;
+    line-height: 0.92;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.public-tracking-brand-copy span {
+    display: block;
+    color: var(--pt-text-muted);
+    font-family: "IBM Plex Mono", "Consolas", monospace;
+    font-size: 0.62rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
 }
 
 .public-tracking-eyebrow {
     margin: 0;
-    font-size: 0.72rem;
+    font-size: 0.7rem;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.14em;
     color: var(--pt-text-muted);
+    font-family: "IBM Plex Mono", "Consolas", monospace;
 }
 
 .public-tracking-connection-badge {
@@ -122,8 +306,11 @@ body {
 
 #publicTrackingTitle {
     margin: 0;
-    font-size: clamp(1.65rem, 4vw, 2.25rem);
-    line-height: 1.06;
+    font-family: "IBM Plex Sans Condensed", "Source Sans 3", sans-serif;
+    font-size: clamp(1.9rem, 4vw, 2.7rem);
+    line-height: 0.96;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
 }
 
 .public-tracking-intro {
@@ -161,9 +348,19 @@ body {
     gap: 0.5rem;
     margin-top: 0.95rem;
     padding: 0.95rem 1rem 1rem;
-    border-radius: 14px;
+    border-radius: 12px;
     border: 1px solid var(--pt-border);
     background: var(--pt-panel);
+    position: relative;
+    overflow: hidden;
+}
+
+.public-tracking-summary::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(13, 118, 110, 0.08) 0%, transparent 52%);
+    pointer-events: none;
 }
 
 .public-tracking-summary[data-tone="success"] {
@@ -172,6 +369,10 @@ body {
 
 .public-tracking-summary[data-tone="warning"] {
     background: var(--pt-warning-soft);
+}
+
+.public-tracking-summary[data-tone="error"] {
+    background: var(--pt-danger-soft);
 }
 
 .public-tracking-summary[data-tone="reopened"] {
@@ -188,11 +389,12 @@ body {
     border: 1px solid var(--pt-border);
     background: rgba(255, 255, 255, 0.9);
     padding: 0.42rem 0.78rem;
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     font-weight: 700;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.11em;
     color: var(--pt-text);
     text-transform: uppercase;
+    font-family: "IBM Plex Mono", "Consolas", monospace;
 }
 
 .public-tracking-status-badge[data-tone="success"] {
@@ -201,6 +403,10 @@ body {
 
 .public-tracking-status-badge[data-tone="warning"] {
     color: var(--pt-warning);
+}
+
+.public-tracking-status-badge[data-tone="error"] {
+    color: var(--pt-danger);
 }
 
 .public-tracking-status-badge[data-tone="reopened"] {
@@ -214,43 +420,48 @@ body {
 }
 
 .public-tracking-transition {
-    font-size: 0.76rem;
+    font-size: 0.72rem;
     font-weight: 700;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.11em;
     color: var(--pt-text-muted);
     text-transform: uppercase;
+    font-family: "IBM Plex Mono", "Consolas", monospace;
 }
 
 .public-tracking-meta {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.5rem;
+    gap: 0.55rem;
     margin-top: 1rem;
 }
 
 .public-tracking-chip {
     border-radius: 999px;
     border: 1px solid var(--pt-border);
-    background: var(--pt-panel);
+    background: color-mix(in oklab, var(--pt-panel) 90%, var(--pt-accent-soft) 10%);
     padding: 0.42rem 0.72rem;
-    font-size: 0.82rem;
+    font-size: 0.8rem;
     color: var(--pt-text);
 }
 
 .public-tracking-timeline {
     margin-top: 1rem;
     display: grid;
-    gap: 0.6rem;
+    gap: 0.7rem;
 }
 
 .public-tracking-timeline-item {
-    border-radius: 14px;
+    border-radius: 12px;
     border: 1px solid var(--pt-border);
-    background: var(--pt-panel);
-    padding: 0.82rem 0.95rem;
+    background:
+        linear-gradient(145deg, rgba(13, 118, 110, 0.05) 0%, transparent 44%),
+        var(--pt-panel);
+    padding: 0.86rem 0.95rem;
     display: grid;
-    gap: 0.24rem;
+    gap: 0.28rem;
     border-left: 4px solid var(--pt-border-strong);
+    position: relative;
+    overflow: hidden;
 }
 
 .public-tracking-timeline-item[data-type="case_reopened"] {
@@ -271,20 +482,26 @@ body {
 .public-tracking-timeline-time,
 .public-tracking-empty {
     color: var(--pt-text-muted);
-    font-size: 0.88rem;
+    font-size: 0.8rem;
+    font-family: "IBM Plex Mono", "Consolas", monospace;
 }
 
 .public-tracking-refresh {
     margin-top: 1rem;
     border: 1px solid color-mix(in oklab, var(--pt-accent) 45%, var(--pt-border) 55%);
-    border-radius: 999px;
-    background: var(--pt-accent-soft);
+    border-radius: 12px;
+    background:
+        linear-gradient(135deg, rgba(13, 118, 110, 0.12), rgba(13, 118, 110, 0.06)),
+        var(--pt-accent-soft);
     color: var(--pt-accent);
     font: inherit;
     font-weight: 700;
     min-height: 2.9rem;
     padding: 0.7rem 1rem;
     cursor: pointer;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    font-family: "IBM Plex Mono", "Consolas", monospace;
 }
 
 .public-tracking-refresh:hover {

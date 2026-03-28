@@ -87,6 +87,7 @@ export default function CaseConformityScreen() {
 
   const signatureSvgRef = useRef<Svg | null>(null);
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const capturingGpsRef = useRef(false);
   const [record, setRecord] = useState<InstallationRecord | null>(null);
   const [assetDetail, setAssetDetail] = useState<AssetIncidentsResponse | null>(null);
   const [latestConformity, setLatestConformity] = useState<InstallationConformity | null>(null);
@@ -184,8 +185,9 @@ export default function CaseConformityScreen() {
   }, [assetRecordId, hasActiveSession, installationId, notify]);
 
   const captureGps = useCallback(async (options?: { silent?: boolean }) => {
-    if (capturingGps) return;
+    if (capturingGpsRef.current) return;
     try {
+      capturingGpsRef.current = true;
       setCapturingGps(true);
       const snapshot = await captureCurrentGpsSnapshot();
       setGpsSnapshot(snapshot);
@@ -199,9 +201,10 @@ export default function CaseConformityScreen() {
         note: extractApiError(error),
       });
     } finally {
+      capturingGpsRef.current = false;
       setCapturingGps(false);
     }
-  }, [capturingGps, notify]);
+  }, [notify]);
 
   useFocusEffect(
     useCallback(() => {

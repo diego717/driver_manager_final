@@ -1397,6 +1397,10 @@ function getRealtimeBrokerStub(env) {
   }
 }
 
+function isSseClientWriteTimeoutError(error) {
+  return String(error?.message || "").includes("SSE client write timeout");
+}
+
 async function connectRealtimeBrokerStream(
   request,
   env,
@@ -1413,9 +1417,18 @@ async function connectRealtimeBrokerStream(
   if (normalizedClientKey) {
     brokerUrl.searchParams.set("client_key", normalizedClientKey);
   }
-  const brokerResponse = await broker.fetch(brokerUrl.toString(), {
-    method: "GET",
-  });
+  let brokerResponse = null;
+  try {
+    brokerResponse = await broker.fetch(brokerUrl.toString(), {
+      method: "GET",
+    });
+  } catch (err) {
+    if (isSseClientWriteTimeoutError(err)) {
+      console.warn("[SSE-BROKER] connect stream closed after client write timeout");
+      return null;
+    }
+    throw err;
+  }
   if (!brokerResponse?.body) return null;
 
   const headers = new Headers(brokerResponse.headers);
@@ -1426,7 +1439,31 @@ async function connectRealtimeBrokerStream(
   headers.set("Cache-Control", "no-cache");
   headers.set("Connection", "keep-alive");
 
-  return new Response(brokerResponse.body, {
+  const brokerReader = brokerResponse.body.getReader();
+  const safeBody = new ReadableStream({
+    async pull(controller) {
+      try {
+        const { done, value } = await brokerReader.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(value);
+      } catch (err) {
+        if (isSseClientWriteTimeoutError(err)) {
+          console.warn("[SSE-BROKER] upstream stream closed after client write timeout");
+          controller.close();
+          return;
+        }
+        controller.error(err);
+      }
+    },
+    cancel(reason) {
+      return brokerReader.cancel(reason).catch(() => { });
+    },
+  });
+
+  return new Response(safeBody, {
     status: brokerResponse.status,
     headers,
   });

@@ -6470,7 +6470,7 @@ test("public tracking link can be issued from web and consumed without DB reads"
   assert.match(createBody.link.tracking_url, /^https:\/\/estado\.example\.com\/track\//);
   assert.equal(typeof createBody.link.short_code, "string");
   assert.ok(createBody.link.short_code.length >= 6);
-  assert.match(createBody.link.long_tracking_url, /^https:\/\/estado\.example\.com\/track\//);
+  assert.equal("long_tracking_url" in createBody.link, false);
 
   const shortCode = decodeURIComponent(new URL(createBody.link.tracking_url).pathname.split("/").pop() || "");
   assert.equal(shortCode, createBody.link.short_code);
@@ -6564,7 +6564,7 @@ test("public tracking link can be listed and revoked from web", async () => {
   assert.equal(getBody.link.snapshot.public_status, "en_progreso");
   assert.match(getBody.link.tracking_url, /^https:\/\/estado\.example\.com\/track\//);
   assert.equal(getBody.link.short_code, shortCode);
-  assert.match(getBody.link.long_tracking_url, /^https:\/\/estado\.example\.com\/track\//);
+  assert.equal("long_tracking_url" in getBody.link, false);
 
   const revokeResponse = await workerFetch(
     new Request("https://worker.example/web/installations/45/public-tracking-link", {
@@ -7734,6 +7734,66 @@ test("GET /web/events rejects token in query string", async () => {
   assert.equal(response.status, 400);
   assert.equal(body.success, false);
   assert.match(body.error.message, /query string/i);
+});
+
+test("GET /web/events closes gracefully when broker stream hits SSE client write timeout", async () => {
+  const db = createMockDB();
+  const bootstrapRequest = new Request("https://worker.example/web/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bootstrap_password: "web-pass",
+      username: "admin_root",
+      password: "StrongPass#2026",
+    }),
+  });
+
+  const encoder = new TextEncoder();
+  const brokerResponse = new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode("data: {\"type\":\"connected\"}\n\n"));
+      controller.error(new Error("SSE client write timeout"));
+    },
+  }), {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+
+  const env = {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+    REALTIME_EVENTS: {
+      idFromName(name) {
+        return name;
+      },
+      get() {
+        return {
+          fetch: async () => brokerResponse.clone(),
+        };
+      },
+    },
+  };
+
+  const bootstrapResponse = await workerFetch(bootstrapRequest, env);
+  assert.equal(bootstrapResponse.status, 201);
+
+  const request = new Request("https://worker.example/web/events", {
+    method: "GET",
+    headers: webSessionHeadersFromResponse(bootstrapResponse),
+  });
+
+  const response = await workerFetch(request, env);
+  await assert.doesNotReject(async () => {
+    await response.text();
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Content-Type"), "text/event-stream");
 });
 
 test("POST /web/auth/login rejects wrong password", async () => {

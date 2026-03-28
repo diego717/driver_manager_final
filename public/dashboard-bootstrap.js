@@ -18,7 +18,7 @@
                 const me = await options.api.getMe();
                 options.applyAuthenticatedUser(me);
                 options.hideLogin();
-                options.loadDashboard();
+                options.loadDashboard({ followupDelayMs: 1200 });
                 options.syncSSEForCurrentContext(true);
             } catch (error) {
                 console.error('Error validating session:', error);

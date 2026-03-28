@@ -25,6 +25,8 @@ const PDF_COLORS = {
   accentSoft: rgb(0.88, 0.95, 0.94),
   accentDark: rgb(0.12, 0.22, 0.27),
 };
+const BRAND_NAME = "SiteOps";
+const BRAND_TAG = "Field Control Console";
 
 function requireConformitiesBucketOperation(env, operation) {
   const bucket = env?.INCIDENTS_BUCKET;
@@ -270,13 +272,129 @@ function createPageState(pdfDoc) {
   };
 }
 
+function drawPdfBrandLockup(page, titleFont, bodyFont, {
+  x,
+  y,
+  scale = 1,
+  light = false,
+} = {}) {
+  const frameWidth = 126 * scale;
+  const frameHeight = 38 * scale;
+  const markSize = 22 * scale;
+  const strokeColor = light ? rgb(0.78, 0.9, 0.92) : PDF_COLORS.accent;
+  const tagColor = light ? rgb(0.72, 0.84, 0.87) : PDF_COLORS.muted;
+
+  page.drawRectangle({
+    x,
+    y: y - frameHeight,
+    width: frameWidth,
+    height: frameHeight,
+    color: light ? rgb(0.1, 0.2, 0.24) : rgb(0.978, 0.989, 0.992),
+    borderColor: light ? rgb(0.22, 0.41, 0.44) : PDF_COLORS.border,
+    borderWidth: 1,
+    borderRadius: 10 * scale,
+  });
+  page.drawRectangle({
+    x: x + 8 * scale,
+    y: y - 8 * scale,
+    width: 52 * scale,
+    height: 1.5,
+    color: strokeColor,
+    opacity: 0.72,
+  });
+
+  const markX = x + 10 * scale;
+  const markY = y - 8 * scale;
+  page.drawRectangle({
+    x: markX,
+    y: markY - markSize,
+    width: markSize,
+    height: markSize,
+    color: light ? rgb(0.14, 0.29, 0.31) : PDF_COLORS.accentSoft,
+    borderColor: strokeColor,
+    borderWidth: 1,
+    borderRadius: 8 * scale,
+  });
+  page.drawCircle({
+    x: markX + markSize * 0.42,
+    y: markY - markSize * 0.52,
+    size: markSize * 0.26,
+    borderColor: strokeColor,
+    borderWidth: 1.5,
+  });
+  page.drawLine({
+    start: { x: markX + markSize * 0.22, y: markY - markSize * 0.52 },
+    end: { x: markX + markSize * 0.72, y: markY - markSize * 0.52 },
+    thickness: 1,
+    color: strokeColor,
+  });
+  page.drawLine({
+    start: { x: markX + markSize * 0.42, y: markY - markSize * 0.22 },
+    end: { x: markX + markSize * 0.42, y: markY - markSize * 0.76 },
+    thickness: 1,
+    color: rgb(strokeColor.red, strokeColor.green, strokeColor.blue),
+    opacity: 0.55,
+  });
+  page.drawCircle({
+    x: markX + markSize * 0.7,
+    y: markY - markSize * 0.3,
+    size: markSize * 0.09,
+    color: strokeColor,
+  });
+
+  page.drawText(BRAND_NAME.toUpperCase(), {
+    x: x + 40 * scale,
+    y: y - 16 * scale,
+    size: 11.5 * scale,
+    font: titleFont,
+    color: strokeColor,
+  });
+  page.drawText(BRAND_TAG.toUpperCase(), {
+    x: x + 40 * scale,
+    y: y - 26 * scale,
+    size: 5.2 * scale,
+    font: bodyFont,
+    color: tagColor,
+  });
+}
+
+function buildEmailBrandLockupHtml() {
+  return [
+    "<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">",
+    "<tr>",
+    "<td style=\"padding:0;\">",
+    "<div style=\"display:inline-block;padding:0;background:transparent;\">",
+    "<div style=\"height:2px;width:86px;background:linear-gradient(90deg,#0f7f79,rgba(15,127,121,0));margin:0 0 12px 0;\"></div>",
+    "<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">",
+    "<tr>",
+    "<td style=\"vertical-align:middle;padding:0 14px 0 0;\">",
+    "<div style=\"width:36px;height:36px;border-radius:12px;background:linear-gradient(180deg,#fbfdfd,#edf4f4);border:1px solid #a7c7c4;box-shadow:0 8px 18px rgba(19,39,48,.07);position:relative;\">",
+    "<div style=\"position:absolute;left:8px;top:7px;width:14px;height:14px;border:2px solid #0f7f79;border-right-color:transparent;border-bottom-color:#6bb8b1;border-radius:999px;transform:rotate(-18deg);\"></div>",
+    "<div style=\"position:absolute;left:7px;right:7px;top:18px;height:1px;background:linear-gradient(90deg,rgba(15,127,121,.9),rgba(15,127,121,.35));\"></div>",
+    "<div style=\"position:absolute;top:8px;bottom:8px;left:17px;width:1px;background:rgba(15,127,121,.4);\"></div>",
+    "<div style=\"position:absolute;right:7px;top:8px;width:7px;height:7px;border-radius:999px;background:#0f7f79;box-shadow:0 0 0 3px rgba(15,127,121,.1);\"></div>",
+    "</div>",
+    "</td>",
+    "<td style=\"vertical-align:middle;\">",
+    `<div style=\"font-family:'IBM Plex Sans Condensed','Segoe UI',sans-serif;font-size:20px;line-height:1;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#0f7f79;\">${escapeHtml(BRAND_NAME)}</div>`,
+    `<div style=\"font-family:'IBM Plex Mono','Courier New',monospace;font-size:9px;line-height:1.4;letter-spacing:.24em;text-transform:uppercase;color:#677985;margin-top:5px;\">${escapeHtml(BRAND_TAG)}</div>`,
+    "</td>",
+    "</tr>",
+    "</table>",
+    "</div>",
+    "</td>",
+    "</tr>",
+    "</table>",
+  ].join("");
+}
+
 function drawSectionTitle(state, font, text) {
   state.page.drawText(normalizePdfText(text), {
     x: PDF_PAGE.margin,
     y: state.y,
     size: 15,
     font,
-    color: rgb(0.12, 0.16, 0.22),
+    color: rgb(0.1, 0.15, 0.19),
   });
   state.y -= 22;
 }
@@ -341,14 +459,21 @@ function drawPdfCard(page, titleFont, bodyFont, {
     y: y - height,
     width,
     height,
-    color: PDF_COLORS.soft,
-    borderColor: PDF_COLORS.border,
+    color: rgb(0.985, 0.989, 0.991),
+    borderColor: rgb(0.84, 0.88, 0.9),
     borderWidth: 1,
+  });
+  page.drawRectangle({
+    x,
+    y: y - 2,
+    width,
+    height: 2,
+    color: PDF_COLORS.accent,
   });
 
   page.drawText(normalizePdfText(label), {
     x: x + 14,
-    y: y - 18,
+    y: y - 22,
     size: 9,
     font: titleFont,
     color: PDF_COLORS.muted,
@@ -357,7 +482,7 @@ function drawPdfCard(page, titleFont, bodyFont, {
   const valueLines = wrapText(value, Math.max(18, Math.floor((width - 28) / 7))).slice(0, 3);
   drawLinesInBox(page, bodyFont, valueLines, {
     x: x + 14,
-    y: y - 40,
+    y: y - 42,
     size: 13,
     lineHeight: 16,
     color: PDF_COLORS.ink,
@@ -825,50 +950,117 @@ export async function generateConformityPdf({
   });
 
   let state = createPageState(pdfDoc);
-  const heroHeight = 118;
+  const heroHeight = 146;
+  const heroBottomY = state.y - heroHeight;
+  const metaColumnWidth = 154;
   state.page.drawRectangle({
     x: PDF_PAGE.margin,
-    y: state.y - heroHeight,
+    y: heroBottomY,
     width: PDF_TEXT_MAX_WIDTH,
     height: heroHeight,
-    color: PDF_COLORS.accentDark,
+    color: rgb(0.982, 0.987, 0.989),
+    borderColor: rgb(0.83, 0.88, 0.9),
+    borderWidth: 1,
   });
   state.page.drawRectangle({
     x: PDF_PAGE.margin,
-    y: state.y - 28,
-    width: 128,
-    height: 24,
+    y: state.y - 3,
+    width: PDF_TEXT_MAX_WIDTH,
+    height: 3,
     color: PDF_COLORS.accent,
   });
-  state.page.drawText("CIERRE OPERATIVO", {
-    x: PDF_PAGE.margin + 12,
-    y: state.y - 20,
-    size: 10,
-    font: titleFont,
-    color: rgb(1, 1, 1),
+  state.page.drawRectangle({
+    x: PDF_PAGE.margin + PDF_TEXT_MAX_WIDTH - metaColumnWidth,
+    y: heroBottomY,
+    width: metaColumnWidth,
+    height: heroHeight,
+    color: rgb(0.95, 0.975, 0.973),
   });
-  state.page.drawText("Constancia de conformidad", {
-    x: PDF_PAGE.margin + 18,
-    y: state.y - 54,
-    size: 24,
+  state.page.drawRectangle({
+    x: PDF_PAGE.margin + PDF_TEXT_MAX_WIDTH - metaColumnWidth,
+    y: heroBottomY,
+    width: 1,
+    height: heroHeight,
+    color: rgb(0.84, 0.88, 0.9),
+  });
+
+  drawPdfBrandLockup(state.page, titleFont, bodyFont, {
+    x: PDF_PAGE.margin + 20,
+    y: state.y - 18,
+    scale: 0.84,
+    light: false,
+  });
+
+  state.page.drawRectangle({
+    x: PDF_PAGE.margin + 20,
+    y: state.y - 72,
+    width: 112,
+    height: 17,
+    color: rgb(0.89, 0.952, 0.945),
+  });
+  state.page.drawText("CIERRE OPERATIVO", {
+    x: PDF_PAGE.margin + 28,
+    y: state.y - 66,
+    size: 7.9,
     font: titleFont,
-    color: rgb(1, 1, 1),
+    color: PDF_COLORS.accent,
+  });
+
+  state.page.drawText("Constancia de conformidad", {
+    x: PDF_PAGE.margin + 20,
+    y: state.y - 112,
+    size: 22,
+    font: titleFont,
+    color: PDF_COLORS.ink,
   });
   state.page.drawText(`Registro #${normalizePdfText(String(context.installation.id))}`, {
-    x: PDF_PAGE.margin + 18,
-    y: state.y - 80,
-    size: 16,
+    x: PDF_PAGE.margin + 20,
+    y: state.y - 132,
+    size: 12.5,
     font: bodyFont,
-    color: rgb(0.86, 0.93, 0.95),
+    color: rgb(0.28, 0.35, 0.4),
   });
-  state.page.drawText(`Generado ${normalizePdfText(formatEmailDate(generatedAt))}`, {
-    x: PDF_PAGE.margin + 18,
-    y: state.y - 98,
-    size: 10,
+  state.page.drawText("Documento de cierre emitido por SiteOps", {
+    x: PDF_PAGE.margin + 20,
+    y: state.y - 144,
+    size: 8.5,
     font: bodyFont,
-    color: rgb(0.72, 0.84, 0.87),
+    color: rgb(0.43, 0.51, 0.56),
   });
-  state.y -= heroHeight + 18;
+
+  const metaX = PDF_PAGE.margin + PDF_TEXT_MAX_WIDTH - metaColumnWidth + 16;
+  state.page.drawText("Generado", {
+    x: metaX,
+    y: state.y - 42,
+    size: 8.5,
+    font: titleFont,
+    color: rgb(0.4, 0.48, 0.53),
+  });
+  state.page.drawText(normalizePdfText(formatEmailDate(generatedAt)), {
+    x: metaX,
+    y: state.y - 58,
+    size: 10.5,
+    font: bodyFont,
+    color: rgb(0.32, 0.4, 0.45),
+    maxWidth: metaColumnWidth - 28,
+  });
+  state.page.drawText("Tecnico", {
+    x: metaX,
+    y: state.y - 92,
+    size: 8.5,
+    font: titleFont,
+    color: rgb(0.4, 0.48, 0.53),
+  });
+  state.page.drawText(normalizePdfText(generatedByUsername || "SiteOps"), {
+    x: metaX,
+    y: state.y - 108,
+    size: 10.5,
+    font: bodyFont,
+    color: rgb(0.32, 0.4, 0.45),
+    maxWidth: metaColumnWidth - 28,
+  });
+
+  state.y = heroBottomY - 18;
 
   const cardGap = 12;
   const cardWidth = (PDF_TEXT_MAX_WIDTH - cardGap) / 2;
@@ -903,21 +1095,42 @@ export async function generateConformityPdf({
     y: state.y,
     width: cardWidth,
     height: cardHeight,
-    label: "Tecnico responsable",
+    label: "Responsable operativo",
     value: generatedByUsername || "SiteOps",
   });
   state.y -= cardHeight + 18;
 
+  const summaryLines = [
+    `Fecha de conformidad: ${formatEmailDate(signedAt)}`,
+    `Firmado por: ${[signedByName, signedByDocument].filter(Boolean).join(" | ") || "Sin firmante"}`,
+  ];
+  if (assetReference && assetReference !== "Sin activo vinculado") {
+    summaryLines.push(`Activo vinculado: ${assetReference}`);
+  }
+  if (context.asset?.serial_number) {
+    summaryLines.push(`Serie: ${context.asset.serial_number}`);
+  }
+  if (context.asset?.model) {
+    summaryLines.push(`Modelo: ${context.asset.model}`);
+  }
+  if (context.photos.length > 0) {
+    summaryLines.push(`Evidencia fotografica incluida: ${context.photos.length} archivo(s)`);
+  }
+  if (context.incidents.length > 0) {
+    summaryLines.push(`Incidencia(s) asociada(s): ${context.incidents.length}`);
+  }
+
   drawSectionTitle(state, titleFont, "Resumen del cierre");
-  state = drawWrappedLines(pdfDoc, state, bodyFont, [
-    `Estado instalacion: ${context.installation.status || "unknown"}`,
-    `Driver: ${context.installation.driver_brand || "N/A"} ${context.installation.driver_version || ""}`.trim(),
-    `Serie: ${context.asset?.serial_number || "-"}`,
-    `Modelo: ${context.asset?.model || "-"}`,
-    `Firmado el: ${signedAt}`,
-    `Incidencias vinculadas: ${context.incidents.length}`,
-    `Fotos incluidas: ${context.photos.length}`,
-  ]);
+  state = drawPdfTextPanel(pdfDoc, state, bodyFont, summaryLines, {
+    fillColor: rgb(0.982, 0.987, 0.989),
+    borderColor: rgb(0.84, 0.88, 0.9),
+    textColor: rgb(0.22, 0.3, 0.35),
+    maxChars: 88,
+    fontSize: 11,
+    paddingX: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+  });
 
   const gpsSnapshot = buildGpsMetadataSnapshot(gps);
   const gpsMapsUrl = buildGpsMapsUrl(gps);
@@ -1039,12 +1252,16 @@ export async function generateConformityPdf({
 
   if (summaryNote) {
     state.y -= 8;
-    drawSectionTitle(state, titleFont, "Resumen");
+    drawSectionTitle(state, titleFont, "Nota de cierre");
     state = drawPdfTextPanel(pdfDoc, state, bodyFont, summaryNote, {
-      fillColor: PDF_COLORS.accentSoft,
-      borderColor: PDF_COLORS.border,
-      textColor: PDF_COLORS.ink,
+      fillColor: rgb(0.97, 0.984, 0.983),
+      borderColor: rgb(0.82, 0.87, 0.89),
+      textColor: rgb(0.16, 0.24, 0.28),
       maxChars: 88,
+      fontSize: 12,
+      paddingX: 18,
+      paddingTop: 18,
+      paddingBottom: 16,
     });
   }
 
@@ -1090,13 +1307,6 @@ export async function generateConformityPdf({
       height,
     });
     state.y -= height + 28;
-    state = drawWrappedLines(
-      pdfDoc,
-      state,
-      bodyFont,
-      `Firma almacenada en R2: ${signatureR2Key}`,
-      { maxChars: 82, size: 9, color: rgb(0.38, 0.41, 0.46) },
-    );
   }
 
   if (context.incidents.length) {
@@ -1134,29 +1344,32 @@ export async function generateConformityPdf({
     }
 
     const page = addNewPage(pdfDoc);
+    const photoHeaderHeight = 48;
     page.drawRectangle({
       x: PDF_PAGE.margin,
-      y: PDF_PAGE.height - PDF_PAGE.margin - 56,
+      y: PDF_PAGE.height - PDF_PAGE.margin - photoHeaderHeight,
       width: PDF_TEXT_MAX_WIDTH,
-      height: 56,
+      height: photoHeaderHeight,
       color: PDF_COLORS.accentDark,
     });
     page.drawText("Evidencia fotografica", {
       x: PDF_PAGE.margin,
-      y: PDF_PAGE.height - PDF_PAGE.margin - 20,
+      y: PDF_PAGE.height - PDF_PAGE.margin - 18,
       size: 18,
       font: titleFont,
       color: rgb(1, 1, 1),
     });
     page.drawText(`Registro #${normalizePdfText(String(context.installation.id))}`, {
       x: PDF_PAGE.margin,
-      y: PDF_PAGE.height - PDF_PAGE.margin - 38,
-      size: 10,
+      y: PDF_PAGE.height - PDF_PAGE.margin - 34,
+      size: 9,
       font: bodyFont,
       color: rgb(0.82, 0.91, 0.93),
     });
     const maxWidth = PDF_PAGE.width - PDF_PAGE.margin * 2;
-    const maxHeight = PDF_PAGE.height - PDF_PAGE.margin * 2 - 60;
+    const imageTopY = PDF_PAGE.height - PDF_PAGE.margin - photoHeaderHeight - 20;
+    const imageBottomY = PDF_PAGE.margin + 18;
+    const maxHeight = imageTopY - imageBottomY;
     const ratio = Math.min(
       1,
       maxWidth / embedded.width,
@@ -1165,21 +1378,8 @@ export async function generateConformityPdf({
     const width = embedded.width * ratio;
     const height = embedded.height * ratio;
     const x = (PDF_PAGE.width - width) / 2;
-    const y = PDF_PAGE.margin + 40;
+    const y = imageTopY - height;
     page.drawImage(embedded, { x, y, width, height });
-    page.drawText(
-      normalizePdfText(
-        `Foto #${asset.photo.id} | Incidencia #${asset.photo.incident_id} | ${asset.photo.file_name || "evidencia"}`,
-      ),
-      {
-        x: PDF_PAGE.margin,
-        y: PDF_PAGE.margin + 18,
-        size: 10,
-        font: bodyFont,
-        color: rgb(0.38, 0.41, 0.46),
-        maxWidth,
-      },
-    );
   }
 
   if (skippedAssets.length) {
@@ -1438,56 +1638,76 @@ export async function sendConformityEmail(
     `Adjunto: ${filename} (${attachmentSize})`,
   ].join("\n");
   const html = [
-    "<div style=\"margin:0;padding:28px 18px;background:#ecf3f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#17232d;\">",
+    "<div style=\"margin:0;padding:44px 18px;background:linear-gradient(180deg,#f1f5f5 0%,#e8efef 100%);font-family:Georgia,'Times New Roman',serif;color:#17232d;\">",
     "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width:680px;margin:0 auto;border-collapse:collapse;\">",
-    "<tr><td style=\"padding:0 0 14px 0;\">",
-    "<div style=\"display:inline-block;padding:8px 12px;border-radius:999px;background:#dff1ef;color:#0f7f79;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;\">Cierre operativo</div>",
+    "<tr><td style=\"padding:0 0 18px 0;\">",
+    buildEmailBrandLockupHtml(),
     "</td></tr>",
-    "<tr><td style=\"background:linear-gradient(135deg,#17313a 0%,#245967 100%);border-radius:28px 28px 0 0;padding:28px 28px 24px 28px;\">",
-    "<div style=\"font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#91ddd5;margin:0 0 10px 0;\">Conformidad de instalacion</div>",
-    `<div style=\"font-size:34px;line-height:1.05;font-weight:900;color:#ffffff;margin:0 0 8px 0;\">Registro #${escapeHtml(String(installationId))}</div>`,
-    "<div style=\"font-size:16px;line-height:1.55;color:#d7eaee;max-width:520px;\">La constancia final ya fue generada desde <strong>SiteOps</strong>. El PDF adjunto resume el cierre, la firma del responsable y la evidencia asociada.</div>",
-    "</td></tr>",
-    "<tr><td style=\"background:#ffffff;border:1px solid #c7d6dd;border-top:none;border-radius:0 0 28px 28px;padding:0 28px 28px 28px;box-shadow:0 14px 38px rgba(16,32,45,.08);\">",
-    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"margin-top:-18px;border-collapse:separate;border-spacing:0 10px;\">",
+    "<tr><td style=\"padding:0 0 18px 0;\">",
+    "<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">",
     "<tr>",
-    "<td style=\"width:50%;background:#f4f8f9;border:1px solid #d7e3e7;border-radius:18px;padding:14px 16px;vertical-align:top;\">",
-    `<div style=\"font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#708292;margin:0 0 6px 0;\">${escapeHtml(clientPresentation.label)}</div>`,
-    `<div style=\"font-size:18px;font-weight:800;color:#17232d;line-height:1.3;\">${escapeHtml(clientPresentation.value)}</div>`,
+    "<td style=\"padding:0 12px 0 0;vertical-align:middle;\">",
+    "<div style=\"display:inline-block;padding:8px 12px;border:1px solid #c8dbda;border-radius:999px;background:rgba(255,255,255,.58);color:#0f7f79;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;font-family:'IBM Plex Mono','Courier New',monospace;\">Cierre operativo</div>",
     "</td>",
-    "<td style=\"width:50%;background:#f4f8f9;border:1px solid #d7e3e7;border-radius:18px;padding:14px 16px;vertical-align:top;\">",
-    "<div style=\"font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#708292;margin:0 0 6px 0;\">Activo</div>",
-    `<div style=\"font-size:18px;font-weight:800;color:#17232d;line-height:1.3;\">${escapeHtml(asset)}</div>`,
-    "</td>",
-    "</tr>",
-    "<tr>",
-    "<td style=\"width:50%;background:#f4f8f9;border:1px solid #d7e3e7;border-radius:18px;padding:14px 16px;vertical-align:top;\">",
-    "<div style=\"font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#708292;margin:0 0 6px 0;\">Firmado por</div>",
-    `<div style=\"font-size:18px;font-weight:800;color:#17232d;line-height:1.3;\">${escapeHtml(signer)}</div>`,
-    "</td>",
-    "<td style=\"width:50%;background:#f4f8f9;border:1px solid #d7e3e7;border-radius:18px;padding:14px 16px;vertical-align:top;\">",
-    "<div style=\"font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#708292;margin:0 0 6px 0;\">Tecnico responsable</div>",
-    `<div style=\"font-size:18px;font-weight:800;color:#17232d;line-height:1.3;\">${escapeHtml(technician)}</div>`,
+    "<td style=\"vertical-align:middle;\">",
+    "<div style=\"height:1px;width:190px;background:linear-gradient(90deg,rgba(15,127,121,.55),rgba(15,127,121,0));\"></div>",
     "</td>",
     "</tr>",
     "</table>",
-    "<div style=\"display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 18px 0;\">",
-    "<span style=\"display:inline-block;padding:8px 12px;border-radius:999px;background:#dff1ef;color:#0f7f79;font-size:12px;font-weight:800;\">PDF adjunto</span>",
-    `<span style=\"display:inline-block;padding:8px 12px;border-radius:999px;background:#eef4f6;color:#45606d;font-size:12px;font-weight:700;\">${escapeHtml(generatedLabel)}</span>`,
-    `<span style=\"display:inline-block;padding:8px 12px;border-radius:999px;background:#eef4f6;color:#45606d;font-size:12px;font-weight:700;\">${escapeHtml(String(normalizedIncidentCount))} incidencia(s)</span>`,
-    `<span style=\"display:inline-block;padding:8px 12px;border-radius:999px;background:#eef4f6;color:#45606d;font-size:12px;font-weight:700;\">${escapeHtml(String(normalizedPhotoCount))} foto(s)</span>`,
-    "</div>",
+    "</td></tr>",
+    "<tr><td style=\"background:linear-gradient(180deg,#fdfefe 0%,#f5f8f8 100%);border:1px solid #cad9dc;border-radius:34px;padding:34px 34px 36px 34px;box-shadow:0 24px 54px rgba(16,32,45,.08);\">",
+    "<div style=\"font-size:11px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#6f808a;margin:0 0 18px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">Conformidad de instalacion</div>",
+    `<div style=\"font-size:42px;line-height:1;font-weight:700;color:#14252d;margin:0 0 12px 0;font-family:'IBM Plex Sans Condensed','Segoe UI',sans-serif;letter-spacing:.035em;text-transform:uppercase;\">Registro #${escapeHtml(String(installationId))}</div>`,
+    "<div style=\"width:92px;height:2px;background:linear-gradient(90deg,#0f7f79,rgba(15,127,121,0));margin:0 0 18px 0;\"></div>",
+    "<div style=\"font-size:18px;line-height:1.8;color:#304754;max-width:560px;font-family:Georgia,'Times New Roman',serif;\">La constancia final ya fue emitida desde <strong>SiteOps</strong>. El documento adjunto consolida el cierre operativo, la firma del responsable y la evidencia asociada en una sola pieza.</div>",
+    "<div style=\"height:1px;background:linear-gradient(90deg,rgba(24,49,58,.12),rgba(24,49,58,0));margin:28px 0 22px 0;\"></div>",
+    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">",
+    "<tr>",
+    "<td style=\"padding:0 24px 0 0;vertical-align:top;\">",
+    `<div style=\"font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#6f808a;margin:0 0 8px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">${escapeHtml(clientPresentation.label)}</div>`,
+    `<div style=\"font-size:23px;line-height:1.35;font-weight:700;color:#17232d;font-family:Georgia,'Times New Roman',serif;\">${escapeHtml(clientPresentation.value)}</div>`,
+    "</td>",
+    "<td style=\"width:1px;background:#d8e3e6;\"></td>",
+    "<td style=\"padding:0 0 0 24px;vertical-align:top;\">",
+    "<div style=\"font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#6f808a;margin:0 0 8px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">Activo</div>",
+    `<div style=\"font-size:23px;line-height:1.35;font-weight:700;color:#17232d;font-family:Georgia,'Times New Roman',serif;\">${escapeHtml(asset)}</div>`,
+    "</td>",
+    "</tr>",
+    "</table>",
+    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;margin-top:22px;\">",
+    "<tr>",
+    "<td style=\"width:50%;padding:0 16px 0 0;vertical-align:top;\">",
+    "<div style=\"font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#6f808a;margin:0 0 8px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">Firmado por</div>",
+    `<div style=\"font-size:17px;line-height:1.55;color:#1d313a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;\">${escapeHtml(signer)}</div>`,
+    "</td>",
+    "<td style=\"width:50%;padding:0 0 0 16px;vertical-align:top;\">",
+    "<div style=\"font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#6f808a;margin:0 0 8px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">Tecnico responsable</div>",
+    `<div style=\"font-size:17px;line-height:1.55;color:#1d313a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;\">${escapeHtml(technician)}</div>`,
+    "</td>",
+    "</tr>",
+    "</table>",
+    "<div style=\"height:1px;background:linear-gradient(90deg,rgba(24,49,58,.12),rgba(24,49,58,0));margin:26px 0 18px 0;\"></div>",
+    "<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">",
+    "<tr>",
+    `<td style=\"padding:0 18px 0 0;font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#0f7f79;font-family:'IBM Plex Mono','Courier New',monospace;\">PDF adjunto</td>`,
+    `<td style=\"padding:0 18px 0 0;font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#6f808a;font-family:'IBM Plex Mono','Courier New',monospace;\">${escapeHtml(generatedLabel)}</td>`,
+    `<td style=\"padding:0 18px 0 0;font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#6f808a;font-family:'IBM Plex Mono','Courier New',monospace;\">${escapeHtml(String(normalizedIncidentCount))} incidencia(s)</td>`,
+    `<td style=\"font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#6f808a;font-family:'IBM Plex Mono','Courier New',monospace;\">${escapeHtml(String(normalizedPhotoCount))} foto(s)</td>`,
+    "</tr>",
+    "</table>",
     summary
-      ? `<div style=\"padding:16px 18px;border-radius:20px;background:#f7fafb;border:1px solid #dce7ea;margin:0 0 18px 0;\"><div style=\"font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#708292;margin:0 0 8px 0;\">Resumen del cierre</div><div style=\"font-size:15px;line-height:1.65;color:#304754;\">${escapeHtml(summary)}</div></div>`
+      ? `<div style=\"margin:28px 0 24px 0;padding:24px 26px;border-top:1px solid #d3dfdf;border-bottom:1px solid #d3dfdf;background:linear-gradient(180deg,rgba(240,246,246,.85),rgba(248,251,251,.92));\"><div style=\"font-size:10px;font-weight:800;letter-spacing:.2em;text-transform:uppercase;color:#6f808a;margin:0 0 12px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">Nota de cierre</div><div style=\"font-size:19px;line-height:1.85;color:#243841;font-family:Georgia,'Times New Roman',serif;\">${escapeHtml(summary)}</div></div>`
       : "",
-    "<div style=\"padding:18px;border-radius:22px;background:#17232d;margin:0 0 18px 0;\">",
-    "<div style=\"font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#93ddd6;margin:0 0 10px 0;\">Documento adjunto</div>",
-    `<div style=\"font-size:18px;font-weight:800;color:#ffffff;margin:0 0 6px 0;\">${escapeHtml(filename)}</div>`,
-    `<div style=\"font-size:14px;line-height:1.6;color:#d2e1e5;\">Descarga inmediata incluida en este correo. Tamano aproximado: <strong>${escapeHtml(attachmentSize)}</strong>.</div>`,
-    "</div>",
-    "<div style=\"font-size:14px;line-height:1.7;color:#4a5f70;\">",
-    "Si necesitas reenviar la constancia o validar el cierre, el equipo tecnico puede regenerarla desde la instalacion correspondiente.",
-    "</div>",
+    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;border:1px solid #d7e2e4;border-radius:20px;\">",
+    "<tr>",
+    "<td style=\"padding:20px 22px;background:linear-gradient(180deg,#172830 0%,#1f3944 100%);border-radius:20px;\">",
+    "<div style=\"font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#9bded8;margin:0 0 10px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">Documento adjunto</div>",
+    `<div style=\"font-size:26px;line-height:1.2;font-weight:700;color:#ffffff;margin:0 0 10px 0;font-family:'IBM Plex Sans Condensed','Segoe UI',sans-serif;letter-spacing:.03em;text-transform:uppercase;\">${escapeHtml(filename)}</div>`,
+    `<div style=\"font-size:14px;line-height:1.8;color:#d5e2e6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;\">La descarga inmediata viaja incluida en este correo. Tamano aproximado del archivo: <strong>${escapeHtml(attachmentSize)}</strong>.</div>`,
+    "</td>",
+    "</tr>",
+    "</table>",
+    "<div style=\"font-size:14px;line-height:1.9;color:#506471;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:22px 0 0 0;\">Si necesitas reenviar la constancia o validar el cierre, el equipo tecnico puede regenerarla desde la instalacion correspondiente.</div>",
     "</td></tr>",
     "</table>",
     "</div>",

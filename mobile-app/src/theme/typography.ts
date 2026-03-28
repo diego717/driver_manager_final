@@ -1,10 +1,10 @@
 import { Platform, Text, TextInput } from "react-native";
 
 export const fontFamilies = {
-  regular: "Inter_400Regular",
-  medium: "Inter_500Medium",
-  semibold: "Inter_600SemiBold",
-  bold: "Inter_700Bold",
+  regular: "SourceSans3_400Regular",
+  medium: "SourceSans3_500Medium",
+  semibold: "SourceSans3_600SemiBold",
+  bold: "SourceSans3_700Bold",
   mono: "SpaceMono",
 } as const;
 

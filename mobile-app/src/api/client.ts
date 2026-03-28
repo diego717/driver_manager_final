@@ -7,6 +7,7 @@ import {
   getStoredWebAccessExpiresAt,
   getStoredWebAccessToken,
 } from "../storage/secure";
+import { isWebBrowserRuntime } from "../storage/runtime";
 import { resolveWebSession } from "./webSession";
 
 const envBaseURL = normalizeApiBaseUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? "");
@@ -131,6 +132,14 @@ export async function resolveRequestAuth({
   void method;
   void bodyHash;
   const normalizedPath = normalizePath(path);
+  if (isWebBrowserRuntime()) {
+    return {
+      path: ensureWebPath(normalizedPath),
+      headers: buildMobileWebHeaders(),
+      mode: "web",
+    };
+  }
+
   const webAccessToken = await resolveValidWebAccessToken();
   if (!webAccessToken) {
     throw new Error(
@@ -174,6 +183,7 @@ export async function signedJsonRequest<T>({
     method,
     url: requestAuth.path,
     data,
+    withCredentials: config?.withCredentials ?? true,
     ...config,
     headers: {
       "Content-Type": "application/json",

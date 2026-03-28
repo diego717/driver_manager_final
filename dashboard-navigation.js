@@ -13,6 +13,7 @@
 
         function runSectionLoaders(section) {
             options.validateSectionBindings(section, { notify: true });
+            if (section === 'dashboard') options.loadDashboard({ followupDelayMs: 1200 });
             if (section === 'installations') options.loadInstallations();
             if (section === 'incidents') options.loadIncidentsWorkspace?.();
             if (section === 'assets') options.loadAssets();

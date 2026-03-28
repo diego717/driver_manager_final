@@ -1,5 +1,5 @@
 import * as SecureStore from "expo-secure-store";
-import { getWebLocalStorage, getWebSessionStorage } from "./runtime";
+import { getWebLocalStorage, getWebSessionStorage, isWebBrowserRuntime } from "./runtime";
 
 const API_BASE_URL_KEY = "dm_api_base_url";
 const WEB_ACCESS_TOKEN_KEY = "dm_web_access_token";
@@ -25,6 +25,10 @@ export type StoredWebSession = {
   role: string | null;
 };
 
+function isWebSessionTokenKey(key: string): boolean {
+  return key === WEB_ACCESS_TOKEN_KEY;
+}
+
 function cleanValue(value: unknown): string {
   if (typeof value === "string") {
     return value.trim();
@@ -36,6 +40,10 @@ function cleanValue(value: unknown): string {
 }
 
 async function setItem(key: string, value: string): Promise<void> {
+  if (isWebBrowserRuntime() && isWebSessionTokenKey(key)) {
+    clearLegacyWebTokenStorage();
+    return;
+  }
   const webStorage = getWebStorageForKey(key);
   if (webStorage) {
     webStorage.setItem(key, value);
@@ -45,6 +53,10 @@ async function setItem(key: string, value: string): Promise<void> {
 }
 
 async function getItem(key: string): Promise<string | null> {
+  if (isWebBrowserRuntime() && isWebSessionTokenKey(key)) {
+    clearLegacyWebTokenStorage();
+    return null;
+  }
   const webStorage = getWebStorageForKey(key);
   if (webStorage) {
     const currentValue = webStorage.getItem(key);
@@ -67,6 +79,10 @@ async function getItem(key: string): Promise<string | null> {
 }
 
 async function deleteItem(key: string): Promise<void> {
+  if (isWebBrowserRuntime() && isWebSessionTokenKey(key)) {
+    clearLegacyWebTokenStorage();
+    return;
+  }
   const webStorage = getWebStorageForKey(key);
   if (webStorage) {
     webStorage.removeItem(key);
@@ -96,6 +112,13 @@ function getLegacyWebStorageForKey(key: string): Storage | null {
   return null;
 }
 
+function clearLegacyWebTokenStorage(): void {
+  const storages = [getWebSessionStorage(), getWebLocalStorage()];
+  for (const storage of storages) {
+    storage?.removeItem(WEB_ACCESS_TOKEN_KEY);
+  }
+}
+
 function normalizeStoredWebSession(
   value: Partial<StoredWebSession> | null | undefined,
 ): StoredWebSession {
@@ -111,13 +134,27 @@ function hasStoredWebSessionValue(session: StoredWebSession): boolean {
   return Boolean(session.accessToken || session.expiresAt || session.username || session.role);
 }
 
+function normalizePersistedWebSession(session: StoredWebSession): StoredWebSession {
+  if (!isWebBrowserRuntime()) {
+    return session;
+  }
+
+  return {
+    ...session,
+    accessToken: null,
+  };
+}
+
 async function readStoredWebSessionBlob(): Promise<StoredWebSession | null> {
   const raw = await getItem(WEB_SESSION_BLOB_KEY);
   if (!raw) return null;
 
   try {
     const parsed = JSON.parse(raw) as Partial<StoredWebSession>;
-    const normalized = normalizeStoredWebSession(parsed);
+    const normalized = normalizePersistedWebSession(normalizeStoredWebSession(parsed));
+    if (isWebBrowserRuntime() && parsed.accessToken) {
+      await writeStoredWebSessionBlob(normalized);
+    }
     return hasStoredWebSessionValue(normalized) ? normalized : null;
   } catch {
     return null;
@@ -125,12 +162,13 @@ async function readStoredWebSessionBlob(): Promise<StoredWebSession | null> {
 }
 
 async function writeStoredWebSessionBlob(session: StoredWebSession): Promise<void> {
-  if (!hasStoredWebSessionValue(session)) {
+  const persisted = normalizePersistedWebSession(session);
+  if (!hasStoredWebSessionValue(persisted)) {
     await deleteItem(WEB_SESSION_BLOB_KEY);
     return;
   }
 
-  await setItem(WEB_SESSION_BLOB_KEY, JSON.stringify(session));
+  await setItem(WEB_SESSION_BLOB_KEY, JSON.stringify(persisted));
 }
 
 async function readLegacyStoredWebSession(): Promise<StoredWebSession | null> {
