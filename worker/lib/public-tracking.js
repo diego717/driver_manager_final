@@ -823,14 +823,18 @@ export function renderPublicTrackingHtml({ token }) {
 <body data-tracking-token="${escapedToken}">
   <main class="public-tracking-shell">
     <section class="public-tracking-card">
-      <p class="public-tracking-eyebrow">Seguimiento del servicio</p>
+      <div class="public-tracking-head">
+        <p class="public-tracking-eyebrow">Seguimiento del servicio</p>
+        <span id="publicTrackingConnectionBadge" class="public-tracking-connection-badge" aria-live="polite">Actualizando</span>
+      </div>
       <h1 id="publicTrackingTitle">Cargando estado...</h1>
+      <p class="public-tracking-intro">Vista publica de estado para compartir con cliente o contacto operativo.</p>
       <div id="publicTrackingSummary" class="public-tracking-summary" hidden>
         <span id="publicTrackingStatusBadge" class="public-tracking-status-badge">Registrado</span>
         <span id="publicTrackingTransition" class="public-tracking-transition" hidden></span>
         <p id="publicTrackingSummaryText" class="public-tracking-summary-text">Estamos preparando la informacion del servicio.</p>
       </div>
-      <p id="publicTrackingMessage">Estamos preparando la informaci?n del servicio.</p>
+      <p id="publicTrackingMessage">Estamos preparando la informacion del servicio.</p>
       <div id="publicTrackingMeta" class="public-tracking-meta"></div>
       <div id="publicTrackingTimeline" class="public-tracking-timeline" aria-live="polite"></div>
       <button id="publicTrackingRefreshBtn" type="button" class="public-tracking-refresh">Actualizar</button>
@@ -847,5 +851,18 @@ export function publicTrackingHeaders() {
     "Cache-Control": "no-store",
     "X-Robots-Tag": "noindex, nofollow",
     "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+    "Content-Security-Policy": [
+      "default-src 'self'",
+      "base-uri 'none'",
+      "frame-ancestors 'none'",
+      "object-src 'none'",
+      "img-src 'self' data:",
+      "script-src 'self'",
+      "style-src 'self'",
+      "connect-src 'self'",
+      "form-action 'none'",
+    ].join("; "),
   };
 }

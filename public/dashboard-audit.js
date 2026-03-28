@@ -59,6 +59,7 @@
             if (!container) return;
             const actionFilter = document.getElementById('auditActionFilter')?.value;
             container.replaceChildren();
+            container.dataset.mobileCards = 'true';
 
             if (!logs || !logs.length) {
                 options.renderContextualEmptyState(container, {
@@ -122,26 +123,31 @@
                 const row = document.createElement('tr');
 
                 const dateCell = document.createElement('td');
+                dateCell.dataset.label = 'Fecha';
                 dateCell.textContent = new Date(log.timestamp).toLocaleString('es-ES');
 
                 const actionCell = document.createElement('td');
+                actionCell.dataset.label = 'Acción';
                 const actionCode = document.createElement('code');
                 actionCode.className = 'audit-action-code';
                 actionCode.textContent = log.action || '-';
                 actionCell.appendChild(actionCode);
 
                 const userCell = document.createElement('td');
+                userCell.dataset.label = 'Usuario';
                 const userStrong = document.createElement('strong');
                 userStrong.textContent = log.username || '-';
                 userCell.appendChild(userStrong);
 
                 const statusCell = document.createElement('td');
+                statusCell.dataset.label = 'Estado';
                 const badge = document.createElement('span');
                 badge.className = `badge ${successClass}`;
                 badge.textContent = successIcon;
                 statusCell.appendChild(badge);
 
                 const detailsCell = document.createElement('td');
+                detailsCell.dataset.label = 'Detalles';
                 detailsCell.className = 'audit-details-cell';
                 detailsCell.textContent = details;
 

@@ -77,6 +77,130 @@ export function createIncidentsRouteHandlers({
     }
   }
 
+  async function loadIncidentPhotosForTenant(env, incidentId, incidentsTenantId) {
+    let { results: photos } = await env.DB.prepare(`
+      SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
+      FROM incident_photos p
+      INNER JOIN incidents i ON i.id = p.incident_id
+      WHERE p.incident_id = ?
+        AND i.tenant_id = ?
+        AND i.deleted_at IS NULL
+      ORDER BY p.created_at ASC, p.id ASC
+    `)
+      .bind(incidentId, incidentsTenantId)
+      .all();
+
+    if ((!photos || photos.length === 0) && incidentId > 0) {
+      const incident = await loadIncidentByIdForTenant(env, incidentId, incidentsTenantId);
+      if (incident) {
+        const recoveredCount = await recoverIncidentPhotosFromStorageForTenant?.(
+          env,
+          [incident],
+          incidentsTenantId,
+        );
+        if (Number(recoveredCount) > 0) {
+          const recoveredPhotosResult = await env.DB.prepare(`
+            SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
+            FROM incident_photos p
+            INNER JOIN incidents i ON i.id = p.incident_id
+            WHERE p.incident_id = ?
+              AND i.tenant_id = ?
+              AND i.deleted_at IS NULL
+            ORDER BY p.created_at ASC, p.id ASC
+          `)
+            .bind(incidentId, incidentsTenantId)
+            .all();
+          photos = recoveredPhotosResult?.results || [];
+        }
+      }
+    }
+
+    return photos || [];
+  }
+
+  async function handleIncidentDetailRoute(
+    request,
+    env,
+    corsPolicy,
+    routeParts,
+    incidentsTenantId,
+  ) {
+    if (!(routeParts.length === 2 && routeParts[0] === "incidents" && request.method === "GET")) {
+      return null;
+    }
+
+    const incidentId = parsePositiveInt(routeParts[1], "incident_id");
+    try {
+      const { results } = await env.DB.prepare(`
+        SELECT
+          id,
+          installation_id,
+          asset_id,
+          geofence_distance_m,
+          geofence_radius_m,
+          geofence_result,
+          geofence_checked_at,
+          geofence_override_note,
+          geofence_override_by,
+          geofence_override_at,
+          reporter_username,
+          note,
+          time_adjustment_seconds,
+          estimated_duration_seconds,
+          severity,
+          source,
+          created_at,
+          incident_status,
+          status_updated_at,
+          status_updated_by,
+          resolved_at,
+          resolved_by,
+          resolution_note,
+          checklist_json,
+          evidence_note,
+          work_started_at,
+          work_ended_at,
+          actual_duration_seconds,
+          gps_lat,
+          gps_lng,
+          gps_accuracy_m,
+          gps_captured_at,
+          gps_capture_source,
+          gps_capture_status,
+          gps_capture_note,
+          deleted_at,
+          deleted_by,
+          deletion_reason
+        FROM incidents
+        WHERE id = ?
+          AND tenant_id = ?
+          AND deleted_at IS NULL
+        LIMIT 1
+      `)
+        .bind(incidentId, incidentsTenantId)
+        .all();
+
+      const incident = results?.[0] || null;
+      if (!incident) {
+        throw new HttpError(404, "Incidencia no encontrada.");
+      }
+
+      const photos = await loadIncidentPhotosForTenant(env, incidentId, incidentsTenantId);
+      return jsonResponse(request, env, corsPolicy, {
+        success: true,
+        incident: mapIncidentRow(incident, photos),
+      });
+    } catch (error) {
+      if (isMissingIncidentReadModelColumnsError(error)) {
+        throw new HttpError(
+          500,
+          "La tabla incidents no tiene las migraciones GPS/geofence aplicadas. Ejecuta 0017_geolocation_capture.sql, 0018_geofencing_soft.sql y 0019_geofence_hard_overrides.sql.",
+        );
+      }
+      throw error;
+    }
+  }
+
   async function handleInstallationIncidentsRoute(
     request,
     env,
@@ -1266,6 +1390,7 @@ export function createIncidentsRouteHandlers({
   }
 
   return {
+    handleIncidentDetailRoute,
     handleIncidentDeleteRoute,
     handleInstallationIncidentsRoute,
     handleIncidentEvidenceRoute,

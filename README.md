@@ -6,7 +6,7 @@ Monorepo operativo para gestionar instalaciones, incidencias, conformidades y se
 - Backend/API en Cloudflare Workers con D1, R2, KV y Durable Objects.
 - App movil en Expo/React Native para trabajo en terreno.
 
-Actualizado segun el estado del repositorio al 2026-03-26.
+Actualizado segun el estado del repositorio al 2026-03-27.
 
 ## Estado actual
 
@@ -168,6 +168,28 @@ npm run d1:migrate
 npm run d1:migrate:remote
 ```
 
+## Secretos y manejo local
+
+El repo no debe conservar credenciales reales en archivos versionados ni en copias locales persistentes fuera de un flujo controlado.
+
+Reglas operativas actuales:
+
+- El Worker espera el service account de FCM en el secret remoto `FCM_SERVICE_ACCOUNT_JSON`.
+- Si necesitas preparar el payload localmente, usa `firebase-service-account.example.json` solo como plantilla.
+- No recrees `firebase-service-account.json` con credenciales reales dentro del repo.
+- `.dev.vars`, `mobile-app/.env` y archivos equivalentes deben mantenerse locales.
+- Si una credencial toca el workspace por error, rotala antes del siguiente deploy.
+
+Checklist minimo de secretos antes de publicar:
+
+1. Confirmar que existan en Cloudflare los secrets requeridos para el entorno:
+   - `WEB_SESSION_SECRET`
+   - `WEB_LOGIN_PASSWORD`
+   - `PUBLIC_TRACKING_SECRET`
+   - `FCM_SERVICE_ACCOUNT_JSON`
+2. Confirmar que no existan credenciales reales en archivos locales del repo.
+3. Ejecutar `npm run security:verify-deploy` antes de `npm run deploy`.
+
 ## Rollout GPS y geofence
 
 Estado del repo al 2026-03-26:
@@ -323,6 +345,8 @@ npm exec tsc -- --noEmit
 ## Documentacion util
 
 - `docs/auth-modes.md`
+- `docs/change-documentation-rule.md`
+- `docs/changes/INDEX.md`
 - `docs/secure-deploy.md`
 - `docs/release-checklist.md`
 - `docs/operational-recovery.md`
@@ -339,3 +363,22 @@ npm exec tsc -- --noEmit
 - `npm run deploy` valida configuracion de seguridad antes de publicar.
 - No distribuyas mobile con secretos HMAC legacy en cliente.
 - Hay trabajo activo en geolocalizacion, geofencing, public tracking y conformidades; revisar migraciones recientes y tests asociados antes de tocar contrato.
+
+## Regla de cambios
+
+Para dejar mas claro el recorrido del proyecto, toda modificacion relevante debe dejar rastro en la carpeta de cambios.
+
+- Todo cambio relevante debe registrarse en `docs/changes/`.
+- El indice resumido vive en `docs/changes/INDEX.md`.
+- La convencion de documentacion vive en `docs/change-documentation-rule.md`.
+
+Esquema sugerido por nota:
+
+- fecha
+- resumen
+- contexto
+- areas tocadas
+- cambios clave
+- impacto
+- referencias
+- validacion o riesgos pendientes

@@ -6124,6 +6124,16 @@ export default {
       if (installationIncidentsResponse) {
         return installationIncidentsResponse;
       }
+      const incidentDetailResponse = await incidentsRouteHandlers.handleIncidentDetailRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+        incidentsTenantId,
+      );
+      if (incidentDetailResponse) {
+        return incidentDetailResponse;
+      }
       const incidentEvidenceResponse = await incidentsRouteHandlers.handleIncidentEvidenceRoute(
         request,
         env,

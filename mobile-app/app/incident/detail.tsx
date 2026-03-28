@@ -15,7 +15,7 @@ import {
 } from "react-native";
 
 import { extractApiError } from "@/src/api/client";
-import { deleteIncident, listIncidentsByInstallation, updateIncidentStatus } from "@/src/api/incidents";
+import { deleteIncident, getIncidentById, updateIncidentStatus } from "@/src/api/incidents";
 import {
   type IncidentPhotoPreviewTarget,
   resolveIncidentPhotoPreviewTarget,
@@ -114,9 +114,8 @@ export default function IncidentDetailScreen() {
     try {
       setLoading(true);
       setErrorMessage("");
-      const response = await listIncidentsByInstallation(installationId);
-      const found = response.incidents.find((item) => item.id === incidentId) || null;
-      if (!found) {
+      const found = await getIncidentById(incidentId);
+      if (Number(found.installation_id) !== installationId) {
         setIncident(null);
         setErrorMessage("La incidencia no existe para esta instalacion.");
         return;

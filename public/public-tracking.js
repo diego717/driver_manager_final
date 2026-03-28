@@ -7,6 +7,26 @@
     let eventSource = null;
     let eventSourceEnabled = false;
 
+    function setConnectionState(state) {
+        const badgeEl = documentRef.getElementById('publicTrackingConnectionBadge');
+        if (!badgeEl) return;
+        const normalized = String(state || 'idle').trim().toLowerCase();
+        badgeEl.dataset.state = normalized;
+        if (normalized === 'live') {
+            badgeEl.textContent = 'En vivo';
+            return;
+        }
+        if (normalized === 'polling') {
+            badgeEl.textContent = 'Sincronizando';
+            return;
+        }
+        if (normalized === 'offline') {
+            badgeEl.textContent = 'Sin enlace';
+            return;
+        }
+        badgeEl.textContent = 'Actualizando';
+    }
+
     function resolveTrackingToken() {
         const bodyToken = String(documentRef.body?.dataset?.trackingToken || '').trim();
         if (bodyToken) return bodyToken;
@@ -125,6 +145,7 @@
         if (!pollingEnabled || eventSourceEnabled || documentRef.hidden) {
             return;
         }
+        setConnectionState('polling');
         pollingTimerId = globalScope.setTimeout(() => {
             void loadTrackingState({ silent: true });
         }, POLLING_INTERVAL_MS);
@@ -159,6 +180,7 @@
             const nextEventSource = new globalScope.EventSource(`/track/${encodeURIComponent(token)}/events`);
             eventSource = nextEventSource;
             eventSourceEnabled = true;
+            setConnectionState('live');
             clearPollingTimer();
 
             nextEventSource.onmessage = (event) => {
@@ -175,6 +197,7 @@
 
                 if (payload?.type === 'tracking_revoked' || payload?.type === 'tracking_expired') {
                     setStatus('Enlace no disponible', payload?.message || 'Este enlace ya no esta disponible.', 'error');
+                    setConnectionState('offline');
                     closeEventSource();
                     pollingEnabled = false;
                     clearPollingTimer();
@@ -182,6 +205,7 @@
 
                 if (payload?.type === 'snapshot_unavailable') {
                     setStatus('Seguimiento no disponible', payload?.message || 'No se pudo cargar el estado actual.', 'error');
+                    setConnectionState('offline');
                 }
             };
 
@@ -194,6 +218,7 @@
             return true;
         } catch {
             closeEventSource();
+            setConnectionState('polling');
             return false;
         }
     }
@@ -215,6 +240,7 @@
         const token = resolveTrackingToken();
         if (!token) {
             setStatus('Enlace no disponible', 'No se pudo resolver el token del seguimiento.', 'error');
+            setConnectionState('offline');
             return;
         }
 
@@ -228,6 +254,7 @@
         }
 
         try {
+            setConnectionState(silent ? 'polling' : 'loading');
             if (!silent) {
                 setStatus('Cargando estado...', 'Estamos consultando el estado mas reciente del servicio.');
             }
@@ -245,11 +272,13 @@
             }
 
             renderTracking(payload.tracking);
+            setConnectionState('live');
         } catch (error) {
             if (requestId !== activeLoadRequestId) {
                 return;
             }
             setStatus('Enlace no disponible', error?.message || 'Este enlace ya no esta disponible.', 'error');
+            setConnectionState('offline');
             renderSummary({
                 public_status_label: 'No disponible',
                 public_transition_label: '',
@@ -285,6 +314,7 @@
             clearPollingTimer();
             closeEventSource();
         });
+        setConnectionState('loading');
         pollingEnabled = true;
         void loadTrackingState();
     });

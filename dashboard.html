@@ -368,13 +368,23 @@
 
             <div id="driversSection" class="section">
                 <div class="filters">
-                    <div class="filter-row">
-                        <input type="text" id="driverBrandInput" placeholder="Marca (ej: Zebra)">
-                        <input type="text" id="driverVersionInput" placeholder="Versión (ej: v1.2.3)">
-                        <input type="text" id="driverDescriptionInput" placeholder="Descripción (opcional)">
+                    <div class="filter-row driver-fields-grid">
+                        <div class="driver-input-group">
+                            <label for="driverBrandInput">Marca</label>
+                            <input type="text" id="driverBrandInput" placeholder="Marca (ej: Zebra)">
+                        </div>
+                        <div class="driver-input-group">
+                            <label for="driverVersionInput">Versión</label>
+                            <input type="text" id="driverVersionInput" placeholder="Versión (ej: v1.2.3)">
+                        </div>
+                        <div class="driver-input-group">
+                            <label for="driverDescriptionInput">Descripción</label>
+                            <input type="text" id="driverDescriptionInput" placeholder="Descripción (opcional)">
+                        </div>
                     </div>
                     <div class="filter-actions">
-                        <input type="file" id="driverFileInput">
+                        <label for="driverFileInput" class="sr-only">Archivo de driver</label>
+                        <input type="file" id="driverFileInput" aria-describedby="driversSelectedFileLabel">
                         <button id="driverPickFileBtn" class="btn-secondary">
                             <span class="material-symbols-outlined icon-inline-sm">attach_file</span> Seleccionar archivo
                         </button>

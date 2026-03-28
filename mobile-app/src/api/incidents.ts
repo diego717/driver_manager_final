@@ -151,6 +151,18 @@ export async function listIncidentsByInstallation(
   };
 }
 
+export async function getIncidentById(incidentId: number): Promise<Incident> {
+  ensurePositiveInt(incidentId, "incidentId");
+  const response = await signedJsonRequest<{ success: boolean; incident: RawIncidentRecord }>({
+    method: "GET",
+    path: `/incidents/${incidentId}`,
+  });
+  if (!response?.incident) {
+    throw new Error("La incidencia solicitada no existe.");
+  }
+  return normalizeIncidentRecord(response.incident);
+}
+
 export async function updateIncidentStatus(
   incidentId: number,
   payload: UpdateIncidentStatusInput,

@@ -78,6 +78,10 @@ test("dashboard filters and chart summaries expose accessible labels", () => {
     ["endDate", "Fecha de fin"],
     ["assetsSearchInput", "Buscar equipos"],
     ["auditActionFilter", "Filtrar auditoría por acción"],
+    ["driverBrandInput", "Marca"],
+    ["driverVersionInput", "Versión"],
+    ["driverDescriptionInput", "Descripción"],
+    ["driverFileInput", "Archivo de driver"],
   ].forEach(([id, labelText]) => {
     const control = document.getElementById(id);
     assert.ok(control, `${id} should exist`);

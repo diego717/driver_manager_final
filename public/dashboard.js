@@ -2690,6 +2690,7 @@ function buildInstallationTimeSummary(installation) {
 function renderInstallationsTable(installations) {
     const container = document.getElementById('installationsTable');
     container.replaceChildren();
+    container.dataset.mobileCards = 'true';
 
     if (!installations || !installations.length) {
         renderContextualEmptyState(container, {
@@ -2722,11 +2723,13 @@ function renderInstallationsTable(installations) {
         row.dataset.id = String(inst.id ?? '');
 
         const idCell = document.createElement('td');
+        idCell.dataset.label = 'ID';
         const strong = document.createElement('strong');
         strong.textContent = `#${inst.id ?? 'N/A'}`;
         idCell.appendChild(strong);
 
         const clientCell = document.createElement('td');
+        clientCell.dataset.label = 'Cliente';
         const clientPrimary = document.createElement('div');
         clientPrimary.textContent = inst.client_name || 'N/A';
         const badgesWrap = document.createElement('div');
@@ -2737,9 +2740,11 @@ function renderInstallationsTable(installations) {
         clientCell.append(clientPrimary, badgesWrap);
 
         const brandCell = document.createElement('td');
+        brandCell.dataset.label = 'Marca';
         brandCell.textContent = inst.driver_brand || 'N/A';
 
         const attentionCell = document.createElement('td');
+        attentionCell.dataset.label = 'Atención';
         const attentionBadge = document.createElement('span');
         const attentionMeta = buildRecordAttentionBadge(inst);
         attentionBadge.className = `badge ${attentionMeta.stateClass}`;
@@ -2747,15 +2752,19 @@ function renderInstallationsTable(installations) {
         attentionCell.appendChild(attentionBadge);
 
         const timeCell = document.createElement('td');
+        timeCell.dataset.label = 'Tiempo';
         timeCell.appendChild(buildInstallationTimeSummary(inst));
 
         const notesCell = document.createElement('td');
+        notesCell.dataset.label = 'Notas';
         notesCell.textContent = formatInstallationRecordNotePreview(inst.notes);
 
         const dateCell = document.createElement('td');
+        dateCell.dataset.label = 'Fecha';
         dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
 
         const qrCell = document.createElement('td');
+        qrCell.dataset.label = 'Acciones';
         qrCell.className = 'table-actions-cell';
         const actionsGroup = document.createElement('div');
         actionsGroup.className = 'table-actions-group';

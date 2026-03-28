@@ -668,6 +668,7 @@
             const container = document.getElementById('assetsTable');
             if (!container) return;
             container.replaceChildren();
+            container.dataset.mobileCards = 'true';
 
             if (!assets || !assets.length) {
                 options.renderContextualEmptyState(container, {
@@ -696,6 +697,7 @@
                 row.dataset.assetId = String(asset.id || '');
 
                 const equipmentCell = document.createElement('td');
+                equipmentCell.dataset.label = 'Equipo';
                 const equipmentWrap = document.createElement('div');
                 equipmentWrap.className = 'asset-table-equipment';
                 const equipmentTitle = document.createElement('strong');
@@ -708,6 +710,7 @@
                 equipmentCell.appendChild(equipmentWrap);
 
                 const clientCell = document.createElement('td');
+                clientCell.dataset.label = 'Cliente';
                 const clientWrap = document.createElement('div');
                 clientWrap.className = 'asset-table-client';
                 const clientTitle = document.createElement('strong');
@@ -720,6 +723,7 @@
                 clientCell.appendChild(clientWrap);
 
                 const statusCell = document.createElement('td');
+                statusCell.dataset.label = 'Estado';
                 const statusBadge = document.createElement('span');
                 const stateMeta = resolveAssetOperationalStateMeta(asset.status);
                 statusBadge.className = `badge ${stateMeta.toneClass}`;
@@ -727,6 +731,7 @@
                 statusCell.appendChild(statusBadge);
 
                 const updatedCell = document.createElement('td');
+                updatedCell.dataset.label = 'Actualizado';
                 const updatedWrap = document.createElement('div');
                 updatedWrap.className = 'asset-table-updated';
                 const updatedMeta = formatAssetUpdatedMeta(asset.updated_at);
@@ -740,6 +745,7 @@
                 updatedCell.appendChild(updatedWrap);
 
                 const actionsCell = document.createElement('td');
+                actionsCell.dataset.label = 'Acciones';
                 actionsCell.className = 'asset-table-actions';
 
                 const detailBtn = document.createElement('button');
