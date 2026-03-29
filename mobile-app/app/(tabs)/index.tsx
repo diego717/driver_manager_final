@@ -6,6 +6,7 @@ import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "rea
 import { extractApiError } from "@/src/api/client";
 import { listInstallations } from "@/src/api/incidents";
 import { getDashboardStatistics } from "@/src/api/statistics";
+import { readStoredWebSession } from "@/src/api/webAuth";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -68,6 +69,7 @@ export default function TodayScreen() {
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
   const [statistics, setStatistics] = useState<DashboardStatistics | null>(null);
   const [loadingOverview, setLoadingOverview] = useState(false);
+  const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<FeedbackState>(null);
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -113,6 +115,9 @@ export default function TodayScreen() {
     useCallback(() => {
       if (!hasActiveSession) return;
       void loadOverview();
+      void readStoredWebSession()
+        .then((session) => setWebSessionRole(session.role))
+        .catch(() => setWebSessionRole(null));
     }, [hasActiveSession, loadOverview]),
   );
 
@@ -128,6 +133,7 @@ export default function TodayScreen() {
     if (!hasActiveSession) {
       setInstallations([]);
       setStatistics(null);
+      setWebSessionRole(null);
     }
   }, [hasActiveSession]);
 
@@ -145,6 +151,8 @@ export default function TodayScreen() {
     () => sortRecordsForAction(installations),
     [installations],
   );
+  const canManageTechnicians =
+    webSessionRole === "admin" || webSessionRole === "super_admin" || webSessionRole === "platform_owner";
   const focusRecord = prioritizedInstallations[0] || null;
   const focusSummary = useMemo(
     () => deriveRecordIncidentSummary(focusRecord),
@@ -261,6 +269,27 @@ export default function TodayScreen() {
           </TouchableOpacity>
         </View>
       </SectionCard>
+
+      {canManageTechnicians ? (
+        <SectionCard
+          title="Gestion de tecnicos"
+          description="Acceso rapido al directorio operativo del tenant."
+        >
+          <TouchableOpacity
+            style={[
+              styles.utilityButton,
+              { backgroundColor: palette.surface, borderColor: palette.inputBorder },
+            ]}
+            onPress={() => router.push("/technicians" as never)}
+            accessibilityRole="button"
+            accessibilityLabel="Abrir directorio de tecnicos"
+          >
+            <Text style={[styles.utilityButtonText, { color: palette.refreshText }]}>
+              Abrir tecnicos
+            </Text>
+          </TouchableOpacity>
+        </SectionCard>
+      ) : null}
 
       <SectionCard
         title="Caso foco"

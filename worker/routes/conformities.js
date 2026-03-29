@@ -41,6 +41,7 @@ export function createConformitiesRouteHandlers({
     const emailTo = normalizeOptionalString(body?.email_to, "").trim();
     const signatureDataUrl = normalizeOptionalString(body?.signature_data_url, "").trim();
     const summaryNote = normalizeOptionalString(body?.summary_note, "").trim();
+    const technicianName = normalizeOptionalString(body?.technician_name, "").trim();
     const technicianNote = normalizeOptionalString(body?.technician_note, "").trim();
     const geofenceOverrideNote = normalizeOptionalString(body?.geofence_override_note, "").trim();
     const requestedPhotoIds = Array.isArray(body?.photo_ids) ? body.photo_ids : [];
@@ -72,6 +73,7 @@ export function createConformitiesRouteHandlers({
       emailTo,
       signatureDataUrl,
       summaryNote,
+      technicianName,
       technicianNote,
       geofenceOverrideNote,
       includeAllIncidentPhotos,
@@ -161,6 +163,8 @@ export function createConformitiesRouteHandlers({
         }),
       );
       const actorUsername = normalizeOptionalString(webSession?.sub, "web");
+      const resolvedTechnicianName =
+        normalizeOptionalString(payload.technicianName, "") || actorUsername;
       const actorUserId =
         Number.isInteger(webSession?.user_id) && Number(webSession.user_id) > 0
           ? Number(webSession.user_id)
@@ -209,6 +213,7 @@ export function createConformitiesRouteHandlers({
         signedByName: payload.signedByName,
         signedByDocument: payload.signedByDocument,
         summaryNote: payload.summaryNote,
+        technicianName: resolvedTechnicianName,
         technicianNote: payload.technicianNote,
         generatedByUsername: actorUsername,
         signatureR2Key: signatureAsset.r2Key,
@@ -239,7 +244,7 @@ export function createConformitiesRouteHandlers({
               context.asset?.serial_number ||
               context.asset?.model ||
               "",
-            technicianName: actorUsername,
+            technicianName: resolvedTechnicianName,
             generatedAt,
             summaryNote: payload.summaryNote,
             incidentCount: context.incidents.length,
@@ -283,6 +288,7 @@ export function createConformitiesRouteHandlers({
           include_all_incident_photos: payload.includeAllIncidentPhotos,
           email_requested: payload.sendEmail,
           email_result: emailResult,
+          technician_name: resolvedTechnicianName,
           gps: {
             ...gpsMetadata,
             maps_url: mapsUrl || "",
@@ -314,6 +320,7 @@ export function createConformitiesRouteHandlers({
           email_to: payload.emailTo,
           email_requested: payload.sendEmail,
           email_result: emailResult,
+          technician_name: resolvedTechnicianName,
           gps_capture_status: gpsMetadata.status,
           gps_capture_source: gpsMetadata.source,
           gps_maps_url: mapsUrl || "",

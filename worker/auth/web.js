@@ -49,6 +49,7 @@ export function createWebAuthRouteHandlers({
   invalidateWebSessionVersion,
   serializeWebUser,
   forceResetWebUserPassword,
+  deleteWebUser,
   normalizeImportedWebUser,
   upsertWebUserFromImport,
   buildWebSessionCookieClearHeader,
@@ -74,6 +75,88 @@ export function createWebAuthRouteHandlers({
       return new HttpError(401, fallbackMessage);
     }
     return error;
+  }
+
+  function isPlatformOwnerRole(role) {
+    const normalizedRole = normalizeOptionalString(role, "").toLowerCase();
+    return normalizedRole === "platform_owner" || normalizedRole === "super_admin";
+  }
+
+  async function tableExists(env, tableName) {
+    const { results } = await env.DB.prepare(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table' AND name = ?
+      LIMIT 1
+    `)
+      .bind(tableName)
+      .all();
+    return Boolean(results?.[0]?.name);
+  }
+
+  async function tableColumnExists(env, tableName, columnName) {
+    const { results } = await env.DB.prepare(`PRAGMA table_info(${tableName})`).all();
+    return (results || []).some((row) => normalizeOptionalString(row?.name, "") === columnName);
+  }
+
+  async function cleanupDeletedWebUserReferences(env, userId) {
+    if (await tableExists(env, "technicians")) {
+      const hasWebUserId = await tableColumnExists(env, "technicians", "web_user_id");
+      if (hasWebUserId) {
+        await env.DB.prepare(`
+          UPDATE technicians
+          SET web_user_id = NULL
+          WHERE web_user_id = ?
+        `)
+          .bind(userId)
+          .run();
+      }
+    }
+
+    if (await tableExists(env, "device_tokens")) {
+      await env.DB.prepare(`
+        DELETE FROM device_tokens
+        WHERE user_id = ?
+      `)
+        .bind(userId)
+        .run();
+    }
+  }
+
+  async function summarizeDeletedWebUserImpact(env, userId) {
+    let technicianLinksToClear = 0;
+    let deviceTokensToRevoke = 0;
+
+    if (await tableExists(env, "technicians")) {
+      const hasWebUserId = await tableColumnExists(env, "technicians", "web_user_id");
+      if (hasWebUserId) {
+        const { results } = await env.DB.prepare(`
+          SELECT COUNT(*) AS total
+          FROM technicians
+          WHERE web_user_id = ?
+        `)
+          .bind(userId)
+          .all();
+        technicianLinksToClear = Number(results?.[0]?.total || 0);
+      }
+    }
+
+    if (await tableExists(env, "device_tokens")) {
+      const { results } = await env.DB.prepare(`
+        SELECT COUNT(*) AS total
+        FROM device_tokens
+        WHERE user_id = ?
+      `)
+        .bind(userId)
+        .all();
+      deviceTokensToRevoke = Number(results?.[0]?.total || 0);
+    }
+
+    return {
+      technician_links_to_clear: technicianLinksToClear,
+      device_tokens_to_revoke: deviceTokensToRevoke,
+      sessions_invalidated: 1,
+    };
   }
 
   async function handleWebAuthLoginRoute(request, env, corsPolicy) {
@@ -260,7 +343,7 @@ export function createWebAuthRouteHandlers({
     const limit = parsePageLimit(searchParams, { fallback: 100, max: 500 });
     const cursor = parseUsernameIdCursor(searchParams.get("cursor"));
     const usersPage = await listWebUsers(env, {
-      tenantId: canManageAllTenants(session.role)
+      tenantId: canManageAllTenants(session)
         ? requestTenantFilter || null
         : normalizeRealtimeTenantId(session.tenant_id),
       limit,
@@ -294,14 +377,19 @@ export function createWebAuthRouteHandlers({
     const username = validateWebUsername(body?.username);
     const password = validateWebPassword(body?.password);
     const role = normalizeWebRole(body?.role || "viewer");
-    if (role === "super_admin" && normalizeOptionalString(session.role, "") !== "super_admin") {
-      throw new HttpError(403, "Solo super_admin puede crear usuarios super_admin.");
-    }
     const sessionTenantId = normalizeRealtimeTenantId(session.tenant_id);
     const requestedTenantId = normalizeOptionalString(body?.tenant_id, "");
     const targetTenantId = requestedTenantId
       ? normalizeRealtimeTenantId(requestedTenantId)
       : sessionTenantId;
+    if (isPlatformOwnerRole(role)) {
+      if (!canManageAllTenants(session)) {
+        throw new HttpError(403, "Solo el platform_owner de plataforma puede crear usuarios platform_owner.");
+      }
+      if (targetTenantId !== DEFAULT_REALTIME_TENANT_ID) {
+        throw new HttpError(400, "Los usuarios platform_owner solo pueden pertenecer al tenant default.");
+      }
+    }
     assertSameTenantOrSuperAdmin(session, targetTenantId);
 
     const createdUser = await createWebUser(env, {
@@ -365,8 +453,13 @@ export function createWebAuthRouteHandlers({
     const nextRole = requestedRole === null ? existingUser.role : requestedRole;
     const nextIsActive =
       requestedActive === null ? normalizeActiveFlag(existingUser.is_active, 1) : requestedActive ? 1 : 0;
-    if (nextRole === "super_admin" && normalizeOptionalString(session.role, "") !== "super_admin") {
-      throw new HttpError(403, "Solo super_admin puede asignar rol super_admin.");
+    if (isPlatformOwnerRole(nextRole)) {
+      if (!canManageAllTenants(session)) {
+        throw new HttpError(403, "Solo el platform_owner de plataforma puede asignar rol platform_owner.");
+      }
+      if (normalizeRealtimeTenantId(existingUser.tenant_id) !== DEFAULT_REALTIME_TENANT_ID) {
+        throw new HttpError(400, "Los usuarios platform_owner solo pueden pertenecer al tenant default.");
+      }
     }
     const roleChanged = normalizeOptionalString(existingUser.role, WEB_DEFAULT_ROLE) !== nextRole;
     const activeChanged = normalizeActiveFlag(existingUser.is_active, 1) !== nextIsActive;
@@ -377,7 +470,7 @@ export function createWebAuthRouteHandlers({
     if (
       session.user_id &&
       Number(session.user_id) === userId &&
-      !["admin", "super_admin"].includes(nextRole)
+      !["admin", "super_admin", "platform_owner"].includes(nextRole)
     ) {
       throw new HttpError(400, "No puedes quitarte permisos de administrador.");
     }
@@ -464,11 +557,101 @@ export function createWebAuthRouteHandlers({
     );
   }
 
+  async function handleWebAuthUsersDeleteRoute(request, env, pathParts, corsPolicy) {
+    ensureDbBinding(env);
+
+    const session = await verifyWebAccessToken(request, env);
+    requireAdminRole(session.role);
+
+    const userId = parsePositiveInt(pathParts[2], "user_id");
+    const existingUser = await getWebUserById(env, userId);
+    if (!existingUser) {
+      throw new HttpError(404, "Usuario web no encontrado.");
+    }
+    assertSameTenantOrSuperAdmin(session, existingUser.tenant_id);
+
+    if (session.user_id && Number(session.user_id) === userId) {
+      throw new HttpError(400, "No puedes eliminar tu propio usuario.");
+    }
+    if (isPlatformOwnerRole(existingUser.role) && !canManageAllTenants(session)) {
+      throw new HttpError(403, "Solo el platform_owner de plataforma puede eliminar usuarios platform_owner.");
+    }
+    if (isPlatformOwnerRole(existingUser.role)) {
+      const { results } = await env.DB.prepare(`
+        SELECT COUNT(*) AS total
+        FROM web_users
+        WHERE tenant_id = ?
+          AND id <> ?
+          AND LOWER(COALESCE(role, 'viewer')) IN ('platform_owner', 'super_admin')
+      `)
+        .bind(DEFAULT_REALTIME_TENANT_ID, userId)
+        .all();
+      if (Number(results?.[0]?.total || 0) <= 0) {
+        throw new HttpError(400, "No puedes eliminar el ultimo usuario de plataforma.");
+      }
+    }
+
+    await cleanupDeletedWebUserReferences(env, userId);
+    await invalidateWebSessionVersion(env, userId);
+    await deleteWebUser(env, { userId });
+
+    await logWebAuditEvent(env, request, {
+      action: "web_user_deleted",
+      username: session.sub,
+      tenantId: existingUser.tenant_id,
+      details: {
+        deleted_user_id: userId,
+        deleted_user: existingUser.username,
+        deleted_role: existingUser.role,
+        performed_by: session.sub,
+        performed_by_role: session.role,
+      },
+    });
+
+    return jsonResponse(
+      request,
+      env,
+      corsPolicy,
+      {
+        success: true,
+        deleted: true,
+        user_id: userId,
+      },
+      200,
+    );
+  }
+
+  async function handleWebAuthUsersDeleteImpactRoute(request, env, pathParts, corsPolicy) {
+    ensureDbBinding(env);
+
+    const session = await verifyWebAccessToken(request, env);
+    requireAdminRole(session.role);
+
+    const userId = parsePositiveInt(pathParts[2], "user_id");
+    const existingUser = await getWebUserById(env, userId);
+    if (!existingUser) {
+      throw new HttpError(404, "Usuario web no encontrado.");
+    }
+    assertSameTenantOrSuperAdmin(session, existingUser.tenant_id);
+
+    return jsonResponse(
+      request,
+      env,
+      corsPolicy,
+      {
+        success: true,
+        user: serializeWebUser(existingUser),
+        impact: await summarizeDeletedWebUserImpact(env, userId),
+      },
+      200,
+    );
+  }
+
   async function handleWebAuthImportUsersRoute(request, env, corsPolicy) {
     ensureDbBinding(env);
 
     const session = await verifyWebAccessToken(request, env);
-    if (!["admin", "super_admin"].includes(session.role)) {
+    if (!["admin", "super_admin", "platform_owner"].includes(session.role)) {
       throw new HttpError(403, "No tienes permisos para importar usuarios web.");
     }
 
@@ -489,6 +672,14 @@ export function createWebAuthRouteHandlers({
     for (const rawUser of users) {
       const imported = normalizeImportedWebUser(rawUser);
       const targetTenantId = imported.tenantId || sessionTenantId;
+      if (isPlatformOwnerRole(imported.role)) {
+        if (!canManageAllTenants(session)) {
+          throw new HttpError(403, "Solo el platform_owner de plataforma puede importar usuarios platform_owner.");
+        }
+        if (normalizeRealtimeTenantId(targetTenantId) !== DEFAULT_REALTIME_TENANT_ID) {
+          throw new HttpError(400, "Los usuarios platform_owner solo pueden pertenecer al tenant default.");
+        }
+      }
       assertSameTenantOrSuperAdmin(session, targetTenantId);
       imported.tenantId = normalizeRealtimeTenantId(targetTenantId);
       const result = await upsertWebUserFromImport(env, imported);
@@ -589,6 +780,19 @@ export function createWebAuthRouteHandlers({
     if (
       pathParts[1] === "users" &&
       pathParts.length === 4 &&
+      pathParts[3] === "delete-impact" &&
+      request.method === "GET"
+    ) {
+      return handleWebAuthUsersDeleteImpactRoute(request, env, pathParts, corsPolicy);
+    }
+
+    if (pathParts[1] === "users" && pathParts.length === 3 && request.method === "DELETE") {
+      return handleWebAuthUsersDeleteRoute(request, env, pathParts, corsPolicy);
+    }
+
+    if (
+      pathParts[1] === "users" &&
+      pathParts.length === 4 &&
       pathParts[3] === "force-password" &&
       request.method === "POST"
     ) {
@@ -617,6 +821,8 @@ export function createWebAuthRouteHandlers({
     handleWebAuthUsersListRoute,
     handleWebAuthUsersCreateRoute,
     handleWebAuthUsersPatchRoute,
+    handleWebAuthUsersDeleteImpactRoute,
+    handleWebAuthUsersDeleteRoute,
     handleWebAuthUsersForcePasswordRoute,
     handleWebAuthImportUsersRoute,
     handleWebAuthLogoutRoute,

@@ -217,6 +217,109 @@
             getAuditLogs(limit = 100) {
                 return request(`/web/audit-logs?limit=${limit}`);
             },
+            getTenants() {
+                return request('/web/tenants');
+            },
+            getTenant(tenantId) {
+                return request(`/web/tenants/${encodeURIComponent(String(tenantId || '').trim())}`);
+            },
+            createTenant(payload) {
+                return request('/web/tenants', {
+                    method: 'POST',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
+            updateTenant(tenantId, payload) {
+                return request(`/web/tenants/${encodeURIComponent(String(tenantId || '').trim())}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
+            getTenantDeleteImpact(tenantId) {
+                return request(`/web/tenants/${encodeURIComponent(String(tenantId || '').trim())}/delete-impact`);
+            },
+            deleteTenant(tenantId) {
+                return request(`/web/tenants/${encodeURIComponent(String(tenantId || '').trim())}`, {
+                    method: 'DELETE',
+                });
+            },
+            getTechnicians(options = {}) {
+                const query = new URLSearchParams();
+                if (options?.includeInactive === true) {
+                    query.set('include_inactive', '1');
+                }
+                const suffix = query.toString() ? `?${query.toString()}` : '';
+                return request(`/web/technicians${suffix}`);
+            },
+            getWebUsers(params = {}) {
+                const query = new URLSearchParams();
+                Object.entries(params || {}).forEach(([key, value]) => {
+                    if (value === undefined || value === null || value === '') return;
+                    query.set(key, String(value));
+                });
+                const suffix = query.toString() ? `?${query.toString()}` : '';
+                return request(`/web/auth/users${suffix}`);
+            },
+            createWebUser(payload) {
+                return request('/web/auth/users', {
+                    method: 'POST',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
+            updateWebUser(userId, payload) {
+                return request(`/web/auth/users/${encodeURIComponent(String(userId || '').trim())}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
+            getWebUserDeleteImpact(userId) {
+                return request(`/web/auth/users/${encodeURIComponent(String(userId || '').trim())}/delete-impact`);
+            },
+            deleteWebUser(userId) {
+                return request(`/web/auth/users/${encodeURIComponent(String(userId || '').trim())}`, {
+                    method: 'DELETE',
+                });
+            },
+            createTechnician(payload) {
+                return request('/web/technicians', {
+                    method: 'POST',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
+            updateTechnician(technicianId, payload) {
+                return request(`/web/technicians/${technicianId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
+            getTechnicianAssignments(technicianId, options = {}) {
+                const query = new URLSearchParams();
+                if (options?.includeInactive === true) {
+                    query.set('include_inactive', '1');
+                }
+                const suffix = query.toString() ? `?${query.toString()}` : '';
+                return request(`/web/technicians/${technicianId}/assignments${suffix}`);
+            },
+            createTechnicianAssignment(technicianId, payload) {
+                return request(`/web/technicians/${technicianId}/assignments`, {
+                    method: 'POST',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
+            deleteTechnicianAssignment(assignmentId) {
+                return request(`/web/technician-assignments/${assignmentId}`, {
+                    method: 'DELETE',
+                });
+            },
+            getTechnicianAssignmentsByEntity(entityType, entityId, options = {}) {
+                const query = new URLSearchParams();
+                query.set('entity_type', String(entityType || '').trim());
+                query.set('entity_id', String(entityId || '').trim());
+                if (options?.includeInactive === true) {
+                    query.set('include_inactive', '1');
+                }
+                return request(`/web/technician-assignments?${query.toString()}`);
+            },
             getIncidents(installationId, options = {}) {
                 const query = new URLSearchParams();
                 if (options?.includeDeleted === true) {

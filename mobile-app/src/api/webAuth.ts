@@ -57,7 +57,7 @@ export interface WebLogoutResponse {
 export interface WebManagedUser {
   id: number;
   username: string;
-  role: "admin" | "viewer" | "super_admin";
+  role: "admin" | "viewer" | "super_admin" | "platform_owner";
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -216,7 +216,7 @@ export async function bootstrapWebUser(params: {
   bootstrapPassword: string;
   username: string;
   password: string;
-  role?: "admin" | "viewer" | "super_admin";
+  role?: "admin" | "viewer" | "super_admin" | "platform_owner";
 }): Promise<WebBootstrapResponse> {
   const apiBaseUrl = await getResolvedApiBaseUrl();
   ensureNonEmpty(apiBaseUrl, "EXPO_PUBLIC_API_BASE_URL");
@@ -334,7 +334,7 @@ export async function listWebUsers(): Promise<WebManagedUser[]> {
 
 export async function updateWebUser(params: {
   userId: number;
-  role?: "admin" | "viewer" | "super_admin";
+  role?: "admin" | "viewer" | "super_admin" | "platform_owner";
   isActive?: boolean;
 }): Promise<WebManagedUser> {
   ensureNonEmpty(String(params.userId), "userId");

@@ -142,6 +142,11 @@ vi.mock("expo-router", () => {
   return {
     Stack,
     ErrorBoundary: () => null,
+    useRouter: () => ({
+      push: vi.fn(),
+      replace: vi.fn(),
+      back: vi.fn(),
+    }),
   };
 });
 

@@ -317,6 +317,78 @@
             });
         }
 
+        function renderTechnicianLoadAttention() {
+            const attentionList = document.getElementById('attentionList');
+            if (!attentionList) return;
+
+            attentionList
+                .querySelectorAll('[data-attention-kind="technician"]')
+                .forEach((node) => node.remove());
+
+            const summary = typeof options.getTechnicianLoadSummary === 'function'
+                ? options.getTechnicianLoadSummary()
+                : null;
+            if (!summary) return;
+
+            if (Number(summary.active) <= 0) {
+                const item = document.createElement('div');
+                item.className = 'attention-item';
+                item.dataset.attentionKind = 'technician';
+
+                const badge = document.createElement('span');
+                badge.className = 'severity-badge medium';
+                badge.textContent = 'Staff';
+
+                const textWrap = document.createElement('div');
+                const title = document.createElement('strong');
+                title.textContent = 'Sin técnicos activos';
+                const body = document.createElement('p');
+                body.textContent = 'Carga aún no disponible. Activa técnicos desde Configuración.';
+                textWrap.append(title, body);
+
+                item.append(badge, textWrap);
+                attentionList.appendChild(item);
+                return;
+            }
+
+            if (!Array.isArray(summary.items) || !summary.items.length) {
+                return;
+            }
+
+            summary.items.forEach((entry) => {
+                const item = document.createElement('div');
+                item.className = 'attention-item';
+                item.dataset.attentionKind = 'technician';
+
+                const badge = document.createElement('span');
+                badge.className = `severity-badge ${entry.active_assignment_count > 2 ? 'high' : 'medium'}`;
+                badge.textContent = `${entry.active_assignment_count}`;
+
+                const textWrap = document.createElement('div');
+                const title = document.createElement('strong');
+                title.textContent = entry.display_name;
+                const body = document.createElement('p');
+                body.textContent =
+                    `${entry.active_assignment_count} ${entry.active_assignment_count === 1 ? 'asignación activa' : 'asignaciones activas'}` +
+                    (entry.employee_code ? ` · ${entry.employee_code}` : '') +
+                    (entry.linked_web_user ? ' · con acceso web' : ' · sin usuario vinculado');
+                textWrap.append(title, body);
+
+                item.append(badge, textWrap);
+
+                if (typeof options.navigateToSectionByKey === 'function') {
+                    const action = document.createElement('button');
+                    action.type = 'button';
+                    action.className = 'btn btn-sm btn-secondary';
+                    action.textContent = 'Ver staff';
+                    action.addEventListener('click', () => options.navigateToSectionByKey('settings'));
+                    item.append(action);
+                }
+
+                attentionList.appendChild(item);
+            });
+        }
+
         function updateStats(stats) {
             const criticalCount = Number(stats?.incident_critical_active_count) || 0;
             const inProgressCount = Number(stats?.incident_in_progress_count) || 0;
@@ -736,10 +808,11 @@
                 }
                 await renderTrendChart(options.getCurrentTrendRangeDays());
 
-                const installations = await options.api.getInstallations({ limit: 5 });
-                options.cacheInstallations?.(installations);
-                renderRecentInstallations(installations);
-                return true;
+                  const installations = await options.api.getInstallations({ limit: 5 });
+                  options.cacheInstallations?.(installations);
+                  renderRecentInstallations(installations);
+                  renderTechnicianLoadAttention();
+                  return true;
             } catch (err) {
                 console.error('Error cargando dashboard:', err);
                 return false;
@@ -820,10 +893,11 @@
             renderBrandChart,
             renderRecentInstallations,
             renderSuccessChart,
-            renderTrendChart,
-            setupTrendRangeToggle,
-            updateStats,
-        };
+              renderTrendChart,
+              renderTechnicianLoadAttention,
+              setupTrendRangeToggle,
+              updateStats,
+          };
     }
 
     global.createDashboardOverview = createDashboardOverview;

@@ -16,6 +16,7 @@ import {
 } from "@/src/api/assets";
 import { extractApiError } from "@/src/api/client";
 import { listInstallations } from "@/src/api/incidents";
+import { getCurrentLinkedTechnicianContext } from "@/src/api/technicians";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -28,13 +29,13 @@ import { captureCurrentGpsSnapshot } from "@/src/services/location";
 import { enqueueCreateIncident, registerIncidentExecutors } from "@/src/services/sync/incident-outbox-service";
 import { runSync } from "@/src/services/sync/sync-runner";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
-import { getStoredWebAccessUsername } from "@/src/storage/secure";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
 import {
   type GpsCapturePayload,
   type IncidentSeverity,
   type InstallationRecord,
+  type TechnicianRecord,
 } from "@/src/types/api";
 import {
   evaluateGeofencePreview,
@@ -110,6 +111,7 @@ export default function CreateIncidentScreen() {
   const { checkingSession, hasActiveSession } = useSharedWebSessionState();
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
   const [reporterUsername, setReporterUsername] = useState("");
+  const [linkedTechnician, setLinkedTechnician] = useState<TechnicianRecord | null>(null);
   const [note, setNote] = useState("");
   const [severity, setSeverity] = useState<IncidentSeverity>("medium");
   const [submitting, setSubmitting] = useState(false);
@@ -228,10 +230,19 @@ export default function CreateIncidentScreen() {
 
   useEffect(() => {
     let mounted = true;
-    void getStoredWebAccessUsername().then((storedUsername) => {
-      if (!mounted || !storedUsername) return;
-      setReporterUsername(storedUsername);
-    });
+    void getCurrentLinkedTechnicianContext()
+      .then(({ user, technician }) => {
+        if (!mounted) return;
+        setLinkedTechnician(technician);
+        setReporterUsername(
+          String(technician?.display_name || user.username || "mobile_user").trim(),
+        );
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setReporterUsername("mobile_user");
+        setLinkedTechnician(null);
+      });
     return () => {
       mounted = false;
     };
@@ -605,6 +616,12 @@ export default function CreateIncidentScreen() {
         <Text style={[styles.reporterText, { color: palette.textSecondary }]}>
           Reporta: {reporterUsername || "mobile_user"}
         </Text>
+        {linkedTechnician ? (
+          <Text style={[styles.reporterText, { color: palette.textMuted }]}>
+            Tecnico vinculado: {linkedTechnician.display_name}
+            {linkedTechnician.employee_code ? ` · ${linkedTechnician.employee_code}` : ""}
+          </Text>
+        ) : null}
 
         <Text style={[styles.label, { color: palette.label }]}>Problema</Text>
         <TextInput

@@ -1,7 +1,7 @@
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { ThemeProvider } from "@react-navigation/native";
 import { useFonts } from "expo-font";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import * as Network from "expo-network";
 import * as SplashScreen from "expo-splash-screen";
 import React from "react";
@@ -77,20 +77,23 @@ export default function RootLayout() {
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
     ...FontAwesome.font,
   });
+  const fontsReady = loaded || Boolean(error);
 
   // Expo Router uses Error Boundaries to catch errors in the navigation tree.
   useEffect(() => {
-    if (error) throw error;
+    if (!error) return;
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[fonts] fallback enabled: ${message}`);
   }, [error]);
 
   useEffect(() => {
-    if (loaded) {
+    if (fontsReady) {
       applyGlobalTypographyDefaults();
-      SplashScreen.hideAsync();
+      void SplashScreen.hideAsync();
     }
-  }, [loaded]);
+  }, [fontsReady]);
 
-  if (!loaded) {
+  if (!fontsReady) {
     return null;
   }
 
@@ -104,6 +107,7 @@ export default function RootLayout() {
 }
 
 export function RootLayoutNav() {
+  const router = useRouter();
   const { resolvedScheme } = useThemePreference();
   const palette = useAppPalette();
   const navigationTheme = useMemo(() => getNavigationTheme(resolvedScheme), [resolvedScheme]);
@@ -119,6 +123,7 @@ export function RootLayoutNav() {
   const bootScaleAnim = useRef(new Animated.Value(1)).current;
   const bootOpacityAnim = useRef(new Animated.Value(0.88)).current;
   const networkReachableRef = useRef<boolean | null>(null);
+  const lastHandledNotificationResponseIdRef = useRef<string | null>(null);
 
   const triggerSync = useCallback(() => {
     void (async () => {
@@ -293,6 +298,36 @@ export function RootLayoutNav() {
     if (!notifications.error) return;
     console.warn(`[notifications] ${notifications.error}`);
   }, [notifications.error]);
+
+  useEffect(() => {
+    const response = notifications.lastResponse;
+    if (!response) return;
+
+    const responseId = response.notification.request.identifier || null;
+    if (responseId && lastHandledNotificationResponseIdRef.current === responseId) {
+      return;
+    }
+
+    const payload = response.notification.request.content.data as Record<string, unknown> | undefined;
+    const explicitPath = typeof payload?.path === "string" ? payload.path.trim() : "";
+    const incidentId = Number.parseInt(String(payload?.incidentId || payload?.incident_id || "").trim(), 10);
+    const installationId = Number.parseInt(String(payload?.installationId || payload?.installation_id || "").trim(), 10);
+
+    let targetPath = "";
+    if (explicitPath) {
+      targetPath = explicitPath;
+    } else if (Number.isInteger(incidentId) && incidentId > 0 && Number.isInteger(installationId) && installationId > 0) {
+      targetPath = `/incident/detail?incidentId=${incidentId}&installationId=${installationId}`;
+    } else if (Number.isInteger(installationId) && installationId > 0) {
+      targetPath = `/work?installationId=${installationId}`;
+    }
+
+    if (!targetPath) return;
+    if (responseId) {
+      lastHandledNotificationResponseIdRef.current = responseId;
+    }
+    router.push(targetPath as never);
+  }, [notifications.lastResponse, router]);
 
   useEffect(() => {
     let mounted = true;

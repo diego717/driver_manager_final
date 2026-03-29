@@ -17,6 +17,7 @@ import { createInstallationConformity, getInstallationConformity } from "@/src/a
 import { extractApiError } from "@/src/api/client";
 import { getAssetIncidents, type AssetIncidentsResponse } from "@/src/api/assets";
 import { listInstallations } from "@/src/api/incidents";
+import { getCurrentLinkedTechnicianContext } from "@/src/api/technicians";
 import InlineFeedback from "@/src/components/InlineFeedback";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
@@ -24,10 +25,14 @@ import SectionCard from "@/src/components/SectionCard";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { captureCurrentGpsSnapshot } from "@/src/services/location";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
-import { getStoredWebAccessUsername } from "@/src/storage/secure";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
-import { type GpsCapturePayload, type InstallationConformity, type InstallationRecord } from "@/src/types/api";
+import {
+  type GpsCapturePayload,
+  type InstallationConformity,
+  type InstallationRecord,
+  type TechnicianRecord,
+} from "@/src/types/api";
 import {
   evaluateGeofencePreview,
   formatGeofenceSummary,
@@ -99,6 +104,7 @@ export default function CaseConformityScreen() {
   const [summaryNote, setSummaryNote] = useState("");
   const [technicianNote, setTechnicianNote] = useState("");
   const [technicianUsername, setTechnicianUsername] = useState("");
+  const [linkedTechnician, setLinkedTechnician] = useState<TechnicianRecord | null>(null);
   const [sendEmail, setSendEmail] = useState(true);
   const [feedback, setFeedback] = useState<FeedbackState>(null);
   const [gpsSnapshot, setGpsSnapshot] = useState<GpsCapturePayload>({
@@ -130,10 +136,19 @@ export default function CaseConformityScreen() {
 
   useEffect(() => {
     let mounted = true;
-    void getStoredWebAccessUsername().then((stored) => {
-      if (!mounted || !stored) return;
-      setTechnicianUsername(stored);
-    });
+    void getCurrentLinkedTechnicianContext()
+      .then(({ user, technician }) => {
+        if (!mounted) return;
+        setLinkedTechnician(technician);
+        setTechnicianUsername(
+          String(technician?.display_name || user.username || "web").trim(),
+        );
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setLinkedTechnician(null);
+        setTechnicianUsername("web");
+      });
     return () => {
       mounted = false;
     };
@@ -339,6 +354,7 @@ export default function CaseConformityScreen() {
         email_to: normalizedEmail,
         signature_data_url: signatureDataUrl,
         summary_note: summaryNote.trim(),
+        technician_name: technicianUsername.trim(),
         technician_note: technicianNote.trim(),
         include_all_incident_photos: true,
         send_email: sendEmail,
@@ -470,6 +486,17 @@ export default function CaseConformityScreen() {
               <Text style={[styles.metricValue, { color: palette.textPrimary }]}>
                 {assetDetail?.asset?.external_code || "Sin vinculo"}
               </Text>
+            </View>
+            <View style={[styles.metricCard, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+              <Text style={[styles.metricLabel, { color: palette.textMuted }]}>Tecnico</Text>
+              <Text style={[styles.metricValue, { color: palette.textPrimary }]}>
+                {technicianUsername || "web"}
+              </Text>
+              {linkedTechnician?.employee_code ? (
+                <Text style={[styles.lastConformityMeta, { color: palette.textMuted }]}>
+                  {linkedTechnician.employee_code}
+                </Text>
+              ) : null}
             </View>
           </View>
         )}

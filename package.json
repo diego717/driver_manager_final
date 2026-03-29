@@ -14,6 +14,8 @@
     "deploy:check": "npm run test:web && npm run security:verify-deploy",
     "deploy:full": "npm run test:web && npm run d1:migrate:remote && npm run deploy",
     "tail": "wrangler tail",
+    "d1:normalize:tenants": "node scripts/normalize-legacy-tenants-schema.mjs --local",
+    "d1:normalize:tenants:remote": "node scripts/normalize-legacy-tenants-schema.mjs --remote --yes",
     "test:dashboard-embed": "node --test tests_js/dashboard.embed.test.mjs",
     "test:dashboard:raw": "node --test tests_js/dashboard.embed.test.mjs tests_js/dashboard.accessibility.test.mjs tests_js/dashboard.xss.unit.test.mjs tests_js/dashboard.unit.test.mjs",
     "test:dashboard": "npm run dashboard:sync-assets && npm run test:dashboard:raw",

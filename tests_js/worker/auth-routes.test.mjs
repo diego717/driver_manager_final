@@ -134,8 +134,10 @@ function createWebAuthDeps(overrides = {}) {
         tenant_id: payload.tenantId,
       };
     },
-    canManageAllTenants(role) {
-      return role === "super_admin";
+    canManageAllTenants(actorOrRole) {
+      const role = typeof actorOrRole === "object" ? actorOrRole?.role : actorOrRole;
+      const tenantId = typeof actorOrRole === "object" ? actorOrRole?.tenant_id : "default";
+      return (role === "super_admin" || role === "platform_owner") && tenantId === "default";
     },
     async listWebUsers() {
       return {
@@ -165,6 +167,7 @@ function createWebAuthDeps(overrides = {}) {
       return user;
     },
     async forceResetWebUserPassword() {},
+    async deleteWebUser() {},
     normalizeImportedWebUser(user) {
       return user;
     },
@@ -276,6 +279,154 @@ test("web auth routes paginate users under the authenticated tenant", async () =
     next_cursor: "next-1",
   });
   assert.equal(body.users[0].username, "viewer_1");
+});
+
+test("web auth routes keep non-default super_admin scoped to its own tenant", async () => {
+  const { handleWebAuthUsersListRoute } = createWebAuthRouteHandlers(createWebAuthDeps({
+    async verifyWebAccessToken() {
+      return {
+        role: "super_admin",
+        sub: "tenant-root",
+        tenant_id: "tenant-a",
+        user_id: 17,
+      };
+    },
+    async listWebUsers(_env, options) {
+      assert.equal(options.tenantId, "tenant-a");
+      return {
+        users: [],
+        hasMore: false,
+        nextCursor: null,
+      };
+    },
+  }));
+
+  const response = await handleWebAuthUsersListRoute(
+    new Request("https://worker.example/web/auth/users?tenant_id=tenant-b", {
+      method: "GET",
+    }),
+    {},
+    {},
+  );
+  assert.equal(response.status, 200);
+});
+
+test("web auth routes preview tenant user delete impact", async () => {
+  const { handleWebAuthRoute } = createWebAuthRouteHandlers(createWebAuthDeps({
+    async getWebUserById(_env, userId) {
+      if (Number(userId) !== 9) return null;
+      return {
+        id: 9,
+        username: "ops-user",
+        role: "viewer",
+        is_active: 1,
+        tenant_id: "tenant-a",
+      };
+    },
+  }));
+
+  const response = await handleWebAuthRoute(
+    new Request("https://worker.example/web/auth/users/9/delete-impact", { method: "GET" }),
+    {
+      DB: {
+        prepare(sql) {
+          const normalized = String(sql || "").replace(/\s+/g, " ").trim();
+          return {
+            bind() { return this; },
+            async all() {
+              if (normalized.startsWith("SELECT name FROM sqlite_master")) {
+                if (normalized.includes("name = ?")) {
+                  return { results: [{ name: "matched" }] };
+                }
+                return { results: [] };
+              }
+              if (normalized.startsWith("PRAGMA table_info(technicians)")) {
+                return { results: [{ name: "id" }, { name: "web_user_id" }] };
+              }
+              if (normalized.startsWith("SELECT COUNT(*) AS total FROM technicians")) {
+                return { results: [{ total: 1 }] };
+              }
+              if (normalized.startsWith("SELECT COUNT(*) AS total FROM device_tokens")) {
+                return { results: [{ total: 2 }] };
+              }
+              return { results: [] };
+            },
+          };
+        },
+      },
+    },
+    ["auth", "users", "9", "delete-impact"],
+    {},
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.user.username, "ops-user");
+  assert.equal(body.impact.technician_links_to_clear, 1);
+  assert.equal(body.impact.device_tokens_to_revoke, 2);
+  assert.equal(body.impact.sessions_invalidated, 1);
+});
+
+test("web auth routes delete a tenant user and invalidate its sessions", async () => {
+  const events = [];
+  const deleted = [];
+  const invalidated = [];
+  const { handleWebAuthRoute } = createWebAuthRouteHandlers(createWebAuthDeps({
+    async getWebUserById(_env, userId) {
+      if (Number(userId) !== 9) return null;
+      return {
+        id: 9,
+        username: "ops-user",
+        role: "viewer",
+        is_active: 1,
+        tenant_id: "tenant-a",
+      };
+    },
+    async deleteWebUser(_env, { userId }) {
+      deleted.push(userId);
+    },
+    async invalidateWebSessionVersion(_env, userId) {
+      invalidated.push(userId);
+    },
+    async logWebAuditEvent(_env, _request, payload) {
+      events.push(payload);
+    },
+    async readJsonOrThrowBadRequest() {
+      return {};
+    },
+  }));
+
+  const response = await handleWebAuthRoute(
+    new Request("https://worker.example/web/auth/users/9", { method: "DELETE" }),
+    {
+      DB: {
+        prepare(sql) {
+          const normalized = String(sql || "").replace(/\s+/g, " ").trim();
+          return {
+            bind() { return this; },
+            async all() {
+              if (normalized.startsWith("SELECT name FROM sqlite_master")) {
+                return { results: [] };
+              }
+              return { results: [{ total: 1 }] };
+            },
+            async run() {
+              return { meta: { changes: 0 } };
+            },
+          };
+        },
+      },
+    },
+    ["auth", "users", "9"],
+    {},
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.deleted, true);
+  assert.deepEqual(deleted, [9]);
+  assert.deepEqual(invalidated, [9]);
+  assert.equal(events[0].action, "web_user_deleted");
 });
 
 test("web auth route dispatcher ignores non-auth paths", async () => {

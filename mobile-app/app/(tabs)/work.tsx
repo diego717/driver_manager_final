@@ -15,15 +15,18 @@ import {
 
 import { extractApiError } from "@/src/api/client";
 import {
+  getIncidentById,
   listIncidentsByInstallation,
   listInstallations,
   updateIncidentStatus,
 } from "@/src/api/incidents";
+import { getAssetIncidents } from "@/src/api/assets";
 import {
   createInstallationPublicTrackingLink,
   deleteInstallationPublicTrackingLink,
   getInstallationPublicTrackingLink,
 } from "@/src/api/public-tracking";
+import { getCurrentLinkedTechnicianContext, getTechnicianAssignments } from "@/src/api/technicians";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import RuntimeChip from "@/src/components/RuntimeChip";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -35,7 +38,14 @@ import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
-import { type Incident, type IncidentStatus, type InstallationRecord, type PublicTrackingLink } from "@/src/types/api";
+import {
+  type Incident,
+  type IncidentStatus,
+  type InstallationRecord,
+  type PublicTrackingLink,
+  type TechnicianAssignment,
+  type TechnicianRecord,
+} from "@/src/types/api";
 import {
   formatDateTime,
   formatDuration,
@@ -49,6 +59,26 @@ import {
 } from "@/src/utils/incidents";
 
 const MIN_TOUCH_TARGET_SIZE = 44;
+
+type QueueIncident = Incident & {
+  queue_source: "incident" | "installation" | "asset";
+  queue_source_label: string;
+  assignment_role: string;
+};
+
+function getIncidentSortWeight(incident: Pick<Incident, "incident_status" | "severity" | "created_at">): number {
+  const status = normalizeIncidentStatus(incident.incident_status);
+  const statusWeight =
+    status === "in_progress" ? 0 : status === "paused" ? 1 : status === "open" ? 2 : 3;
+  const severityWeight =
+    incident.severity === "critical" ? 0 : incident.severity === "high" ? 1 : 2;
+  const createdAtWeight = new Date(incident.created_at || 0).getTime();
+  return statusWeight * 1_000_000_000 + severityWeight * 1_000_000 + createdAtWeight;
+}
+
+function sortQueueIncidents(incidents: QueueIncident[]): QueueIncident[] {
+  return [...incidents].sort((left, right) => getIncidentSortWeight(left) - getIncidentSortWeight(right));
+}
 
 export default function WorkTabScreen() {
   const palette = useAppPalette();
@@ -68,6 +98,10 @@ export default function WorkTabScreen() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
   const [trackingLink, setTrackingLink] = useState<PublicTrackingLink | null>(null);
+  const [linkedTechnician, setLinkedTechnician] = useState<TechnicianRecord | null>(null);
+  const [technicianAssignments, setTechnicianAssignments] = useState<TechnicianAssignment[]>([]);
+  const [queueIncidents, setQueueIncidents] = useState<QueueIncident[]>([]);
+  const [loadingQueue, setLoadingQueue] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const { checkingSession, hasActiveSession } = useSharedWebSessionState();
 
@@ -113,6 +147,122 @@ export default function WorkTabScreen() {
     },
     [hasActiveSession],
   );
+
+  const loadTechnicianQueue = useCallback(async () => {
+    if (!hasActiveSession) return;
+
+    try {
+      setLoadingQueue(true);
+      const { technician } = await getCurrentLinkedTechnicianContext();
+      setLinkedTechnician(technician);
+
+      if (!technician?.id) {
+        setTechnicianAssignments([]);
+        setQueueIncidents([]);
+        return;
+      }
+
+      const assignments = (await getTechnicianAssignments(technician.id)).filter(
+        (assignment) => !assignment.unassigned_at,
+      );
+      setTechnicianAssignments(assignments);
+
+      const directIncidentIds = new Set<number>();
+      const installationIds = new Set<number>();
+      const assetIds = new Set<number>();
+      const assignmentByKey = new Map<string, TechnicianAssignment>();
+
+      assignments.forEach((assignment) => {
+        const entityType = String(assignment.entity_type || "").trim();
+        const entityId = Number.parseInt(String(assignment.entity_id || "").trim(), 10);
+        assignmentByKey.set(`${entityType}:${assignment.entity_id}`, assignment);
+        if (!Number.isInteger(entityId) || entityId <= 0) return;
+        if (entityType === "incident") directIncidentIds.add(entityId);
+        if (entityType === "installation") installationIds.add(entityId);
+        if (entityType === "asset") assetIds.add(entityId);
+      });
+
+      const queueMap = new Map<number, QueueIncident>();
+      const rememberIncident = (
+        incident: Incident | null | undefined,
+        source: QueueIncident["queue_source"],
+        sourceLabel: string,
+        assignmentRole: string,
+      ) => {
+        if (!incident?.id) return;
+        if (normalizeIncidentStatus(incident.incident_status) === "resolved") return;
+        const existing = queueMap.get(incident.id);
+        if (!existing || getIncidentSortWeight(incident) < getIncidentSortWeight(existing)) {
+          queueMap.set(incident.id, {
+            ...incident,
+            queue_source: existing?.queue_source || source,
+            queue_source_label: existing?.queue_source_label || sourceLabel,
+            assignment_role: existing?.assignment_role || assignmentRole || "owner",
+          });
+        }
+      };
+
+      await Promise.all([
+        ...Array.from(directIncidentIds).map(async (incidentId) => {
+          try {
+            const incident = await getIncidentById(incidentId);
+            const assignment = assignmentByKey.get(`incident:${incidentId}`);
+            rememberIncident(
+              incident,
+              "incident",
+              `Asignada directo · ${assignment?.assignment_role || "owner"}`,
+              String(assignment?.assignment_role || "owner"),
+            );
+          } catch {
+            // Best effort: ignore stale direct assignments.
+          }
+        }),
+        ...Array.from(installationIds).map(async (targetInstallationId) => {
+          try {
+            const response = await listIncidentsByInstallation(targetInstallationId);
+            const assignment = assignmentByKey.get(`installation:${targetInstallationId}`);
+            response.incidents.forEach((incident) =>
+              rememberIncident(
+                incident,
+                "installation",
+                `Caso #${targetInstallationId} · ${assignment?.assignment_role || "owner"}`,
+                String(assignment?.assignment_role || "owner"),
+              ));
+          } catch {
+            // Best effort: ignore stale installation assignments.
+          }
+        }),
+        ...Array.from(assetIds).map(async (assetId) => {
+          try {
+            const response = await getAssetIncidents(assetId, { limit: 80 });
+            const assignment = assignmentByKey.get(`asset:${assetId}`);
+            response.incidents.forEach((incident) =>
+              rememberIncident(
+                incident as Incident,
+                "asset",
+                `${response.asset?.external_code || `Activo #${assetId}`} · ${assignment?.assignment_role || "owner"}`,
+                String(assignment?.assignment_role || "owner"),
+              ));
+          } catch {
+            // Best effort: ignore stale asset assignments.
+          }
+        }),
+      ]);
+
+      const nextQueue = sortQueueIncidents(Array.from(queueMap.values()));
+      setQueueIncidents(nextQueue);
+      if (!routeInstallationId && nextQueue.length > 0) {
+        setInstallationId(String(nextQueue[0].installation_id));
+      }
+    } catch (error) {
+      Alert.alert("Mi cola", extractApiError(error));
+      setLinkedTechnician(null);
+      setTechnicianAssignments([]);
+      setQueueIncidents([]);
+    } finally {
+      setLoadingQueue(false);
+    }
+  }, [hasActiveSession, routeInstallationId]);
 
   const loadTrackingLink = useCallback(
     async (targetInstallationId: number, options?: { silent?: boolean }) => {
@@ -203,10 +353,16 @@ export default function WorkTabScreen() {
     if (!hasActiveSession) {
       setIncidents([]);
       setInstallations([]);
+      setLinkedTechnician(null);
+      setTechnicianAssignments([]);
+      setQueueIncidents([]);
       return;
     }
-    void loadInstallations();
-  }, [hasActiveSession, loadInstallations]);
+    void Promise.all([
+      loadInstallations(),
+      loadTechnicianQueue(),
+    ]);
+  }, [hasActiveSession, loadInstallations, loadTechnicianQueue]);
 
   useEffect(() => {
     if (routeInstallationId) {
@@ -218,13 +374,14 @@ export default function WorkTabScreen() {
     useCallback(() => {
       if (!hasActiveSession) return;
       const parsedInstallationId = Number.parseInt(installationId, 10);
+      void loadTechnicianQueue();
       if (Number.isInteger(parsedInstallationId) && parsedInstallationId > 0) {
         void Promise.all([
           loadIncidents(parsedInstallationId),
           loadTrackingLink(parsedInstallationId, { silent: true }),
         ]);
       }
-    }, [hasActiveSession, installationId, loadIncidents, loadTrackingLink]),
+    }, [hasActiveSession, installationId, loadIncidents, loadTechnicianQueue, loadTrackingLink]),
   );
 
   useEffect(() => {
@@ -246,6 +403,20 @@ export default function WorkTabScreen() {
     () => incidents.filter((incident) => normalizeIncidentStatus(incident.incident_status) !== "resolved"),
     [incidents],
   );
+  const queueBuckets = useMemo(() => summarizeIncidentBuckets(queueIncidents), [queueIncidents]);
+  const queueInstallationIds = useMemo(
+    () => Array.from(new Set(queueIncidents.map((incident) => incident.installation_id))).sort((left, right) => left - right),
+    [queueIncidents],
+  );
+  const queueTodaySummary = useMemo(() => {
+    return {
+      assignments: technicianAssignments.length,
+      direct: technicianAssignments.filter((item) => item.entity_type === "incident").length,
+      installations: technicianAssignments.filter((item) => item.entity_type === "installation").length,
+      assets: technicianAssignments.filter((item) => item.entity_type === "asset").length,
+      critical: queueIncidents.filter((item) => item.severity === "critical").length,
+    };
+  }, [queueIncidents, technicianAssignments]);
   const resolvedIncidents = useMemo(
     () => incidents.filter((incident) => normalizeIncidentStatus(incident.incident_status) === "resolved"),
     [incidents],
@@ -329,6 +500,175 @@ export default function WorkTabScreen() {
     }
   }, [activeTrackingUrl]);
 
+  const renderIncidentCard = useCallback((incident: Incident | QueueIncident, options?: {
+    showInstallationTag?: boolean;
+    showQueueMeta?: boolean;
+    detailButtonLabel?: string;
+  }) => {
+    const status = normalizeIncidentStatus(incident.incident_status);
+    const busy = updatingIncidentId === incident.id;
+    const estimated = resolveIncidentEstimatedDurationSeconds(incident);
+    const runtime = resolveIncidentRealDurationSeconds(incident, nowMs);
+    const queueIncident = incident as QueueIncident;
+
+    const actionButtons: Array<{ key: IncidentStatus; label: string; primary?: boolean }> = [
+      { key: "open", label: "Abrir" },
+      { key: "in_progress", label: status === "paused" ? "Reanudar" : "En curso" },
+      { key: "paused", label: "Pausar" },
+      { key: "resolved", label: "Resolver", primary: true },
+    ];
+
+    return (
+      <View
+        key={incident.id}
+        style={[
+          styles.card,
+          { backgroundColor: palette.cardBg, borderColor: palette.cardBorder },
+        ]}
+      >
+        <View style={styles.cardHeader}>
+          <View style={styles.badgesRow}>
+            <StatusChip value={status} />
+            <StatusChip
+              kind="attention"
+              value={incident.severity === "critical" ? "critical" : "open"}
+            />
+          </View>
+          <Text style={[styles.metaText, { color: palette.textMuted }]}>
+            #{incident.id} · {formatDateTime(incident.created_at)}
+          </Text>
+        </View>
+
+        <Text style={[styles.noteText, { color: palette.textPrimary }]}>
+          {incident.note || "Sin detalle operativo."}
+        </Text>
+        <Text style={[styles.supportingText, { color: palette.textSecondary }]}>
+          Usuario: {incident.reporter_username || "-"} · Fotos: {incident.photos?.length ?? 0} ·
+          Severidad: {getSeverityLabel(incident.severity)}
+        </Text>
+        {options?.showInstallationTag ? (
+          <Text style={[styles.supportingText, { color: palette.textMuted }]}>
+            Caso #{incident.installation_id}
+          </Text>
+        ) : null}
+        {options?.showQueueMeta && queueIncident.queue_source_label ? (
+          <Text style={[styles.supportingText, { color: palette.textMuted }]}>
+            Cola: {queueIncident.queue_source_label}
+          </Text>
+        ) : null}
+        {incident.evidence_note?.trim() ? (
+          <Text style={[styles.supportingText, { color: palette.textSecondary }]}>
+            Nota operativa: {incident.evidence_note}
+          </Text>
+        ) : null}
+        {incident.checklist_items?.length ? (
+          <Text style={[styles.supportingText, { color: palette.textSecondary }]}>
+            Checklist: {incident.checklist_items.slice(0, 3).join(" · ")}
+          </Text>
+        ) : null}
+
+        <View style={styles.runtimeGrid}>
+          <RuntimeChip label="Estado" value={getIncidentStatusLabel(status)} />
+          <RuntimeChip label="Estimado" value={formatDuration(estimated)} />
+          <RuntimeChip label="Real" value={formatDuration(runtime)} />
+        </View>
+
+        <View style={styles.statusRow}>
+          {actionButtons.map((action) => {
+            const selected = status === action.key;
+            return (
+              <TouchableOpacity
+                key={`${incident.id}-${action.key}`}
+                style={[
+                  styles.statusButton,
+                  {
+                    backgroundColor:
+                      selected || action.primary
+                        ? palette.primaryButtonBg
+                        : palette.refreshBg,
+                    borderColor: action.primary
+                      ? palette.primaryButtonBg
+                      : palette.inputBorder,
+                  },
+                ]}
+                onPress={() => {
+                  void onChangeStatus(incident, action.key);
+                }}
+                disabled={busy}
+              >
+                {busy && action.primary ? (
+                  <ActivityIndicator size="small" color={palette.primaryButtonText} />
+                ) : (
+                  <Text
+                    style={[
+                      styles.statusButtonText,
+                      {
+                        color:
+                          selected || action.primary
+                            ? palette.primaryButtonText
+                            : palette.refreshText,
+                      },
+                    ]}
+                  >
+                    {action.label}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <View style={styles.actionsRow}>
+          <TouchableOpacity
+            style={[
+              styles.detailButton,
+              { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+            ]}
+            onPress={() =>
+              router.push(
+                `/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
+              )
+            }
+          >
+            <Text style={[styles.detailButtonText, { color: palette.refreshText }]}>
+              {options?.detailButtonLabel || "Ver detalle"}
+            </Text>
+          </TouchableOpacity>
+          {options?.showInstallationTag ? (
+            <TouchableOpacity
+              style={[
+                styles.detailButton,
+                { backgroundColor: palette.secondaryButtonBg, borderColor: palette.inputBorder },
+              ]}
+              onPress={() => {
+                void onSelectInstallation(incident.installation_id);
+              }}
+            >
+              <Text style={[styles.detailButtonText, { color: palette.secondaryButtonText }]}>
+                Abrir caso
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity
+            style={[
+              styles.uploadButton,
+              { backgroundColor: palette.uploadButtonBg, borderColor: palette.uploadButtonBg },
+            ]}
+            onPress={() =>
+              router.push(
+                `/incident/upload?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
+              )
+            }
+          >
+            <Text style={[styles.uploadButtonText, { color: palette.uploadButtonText }]}>
+              Subir evidencia
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }, [nowMs, onChangeStatus, onSelectInstallation, palette, router, updatingIncidentId]);
+
   if (checkingSession) {
     return (
       <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
@@ -357,9 +697,13 @@ export default function WorkTabScreen() {
   return (
     <ScreenScaffold contentContainerStyle={styles.container}>
       <ScreenHero
-        eyebrow="Casos"
-        title="Backlog operativo"
-        description="Seguimiento por caso: prioridad visible, pausa, reanudacion y cierre sin volver al alta."
+        eyebrow={linkedTechnician ? "Mi cola" : "Casos"}
+        title={linkedTechnician ? "Trabajo asignado" : "Backlog operativo"}
+        description={
+          linkedTechnician
+            ? "Tus incidencias asignadas primero, con salto rapido al caso y acciones de campo desde el celular."
+            : "Seguimiento por caso: prioridad visible, pausa, reanudacion y cierre sin volver al alta."
+        }
         aside={
           <View
             style={[
@@ -368,7 +712,7 @@ export default function WorkTabScreen() {
             ]}
           >
             <Text style={[styles.heroBadgeText, { color: palette.heroEyebrowText }]}>
-              caso #{installationId || "--"}
+              {linkedTechnician ? linkedTechnician.display_name : `caso #${installationId || "--"}`}
             </Text>
           </View>
         }
@@ -381,7 +725,7 @@ export default function WorkTabScreen() {
             ]}
           >
             <Text style={[styles.heroMetaText, { color: palette.heroEyebrowText }]}>
-              {incidentBuckets.active} activas
+              {linkedTechnician ? queueBuckets.active : incidentBuckets.active} activas
             </Text>
           </View>
           <View
@@ -391,7 +735,7 @@ export default function WorkTabScreen() {
             ]}
           >
             <Text style={[styles.heroMetaText, { color: palette.heroEyebrowText }]}>
-              {incidentBuckets.inProgress} en curso
+              {linkedTechnician ? queueBuckets.inProgress : incidentBuckets.inProgress} en curso
             </Text>
           </View>
           <View
@@ -401,13 +745,136 @@ export default function WorkTabScreen() {
             ]}
           >
             <Text style={[styles.heroMetaText, { color: palette.heroEyebrowText }]}>
-              {incidentBuckets.paused} pausadas
+              {linkedTechnician ? queueBuckets.paused : incidentBuckets.paused} pausadas
             </Text>
           </View>
+          {linkedTechnician ? (
+            <View
+              style={[
+                styles.heroMetaChip,
+                { backgroundColor: palette.heroEyebrowBg, borderColor: palette.heroBorder },
+              ]}
+            >
+              <Text style={[styles.heroMetaText, { color: palette.heroEyebrowText }]}>
+                {queueInstallationIds.length} casos
+              </Text>
+            </View>
+          ) : null}
         </View>
       </ScreenHero>
 
       <SyncStatusBanner />
+
+      {linkedTechnician ? (
+        <SectionCard
+          title="Tecnico activo"
+          description="La cola se arma con las asignaciones vigentes de tu usuario web."
+          aside={
+            loadingQueue ? <ActivityIndicator size="small" color={palette.loadingSpinner} /> : undefined
+          }
+        >
+          <View
+            style={[
+              styles.focusCard,
+              { backgroundColor: palette.surfaceAlt, borderColor: palette.border },
+            ]}
+          >
+            <Text style={[styles.focusTitle, { color: palette.textPrimary }]}>
+              {linkedTechnician.display_name}
+            </Text>
+            <Text style={[styles.focusBody, { color: palette.textSecondary }]}>
+              {technicianAssignments.length
+                ? `${technicianAssignments.length} asignaciones activas entre incidencias, casos y activos.`
+                : "Sin asignaciones activas por ahora."}
+            </Text>
+            <Text style={[styles.supportingText, { color: palette.textMuted }]}>
+              {linkedTechnician.employee_code
+                ? `Legajo ${linkedTechnician.employee_code} · `
+                : ""}
+              {queueInstallationIds.length} casos en cola
+            </Text>
+          </View>
+        </SectionCard>
+      ) : null}
+
+      {linkedTechnician ? (
+        <SectionCard
+          title="Asignaciones de hoy"
+          description="Resumen rapido de tu carga para entrar por prioridad y tipo de asignacion."
+        >
+          <View style={styles.todaySummaryGrid}>
+            <View style={[styles.todaySummaryCard, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+              <Text style={[styles.todaySummaryValue, { color: palette.textPrimary }]}>
+                {queueTodaySummary.assignments}
+              </Text>
+              <Text style={[styles.todaySummaryLabel, { color: palette.textSecondary }]}>
+                activas
+              </Text>
+            </View>
+            <View style={[styles.todaySummaryCard, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+              <Text style={[styles.todaySummaryValue, { color: palette.textPrimary }]}>
+                {queueTodaySummary.direct}
+              </Text>
+              <Text style={[styles.todaySummaryLabel, { color: palette.textSecondary }]}>
+                directas
+              </Text>
+            </View>
+            <View style={[styles.todaySummaryCard, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+              <Text style={[styles.todaySummaryValue, { color: palette.textPrimary }]}>
+                {queueTodaySummary.installations}
+              </Text>
+              <Text style={[styles.todaySummaryLabel, { color: palette.textSecondary }]}>
+                por caso
+              </Text>
+            </View>
+            <View style={[styles.todaySummaryCard, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+              <Text style={[styles.todaySummaryValue, { color: palette.textPrimary }]}>
+                {queueTodaySummary.assets}
+              </Text>
+              <Text style={[styles.todaySummaryLabel, { color: palette.textSecondary }]}>
+                por activo
+              </Text>
+            </View>
+            <View style={[styles.todaySummaryCard, { backgroundColor: palette.warningBg, borderColor: palette.warningText }]}>
+              <Text style={[styles.todaySummaryValue, { color: palette.warningText }]}>
+                {queueTodaySummary.critical}
+              </Text>
+              <Text style={[styles.todaySummaryLabel, { color: palette.warningText }]}>
+                criticas
+              </Text>
+            </View>
+          </View>
+        </SectionCard>
+      ) : null}
+
+      {linkedTechnician ? (
+        <>
+          <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>
+            Mi cola ({queueIncidents.length})
+          </Text>
+          {loadingQueue ? (
+            <View style={styles.queueLoadingRow}>
+              <ActivityIndicator size="small" color={palette.loadingSpinner} />
+              <Text style={[styles.supportingText, { color: palette.textSecondary }]}>
+                Cargando incidencias asignadas...
+              </Text>
+            </View>
+          ) : queueIncidents.length === 0 ? (
+            <EmptyStateCard
+              title="Tu cola esta vacia."
+              body="Cuando te asignen un caso, una incidencia o un activo, va a aparecer primero aqui."
+            />
+          ) : (
+            queueIncidents.map((incident) =>
+              renderIncidentCard(incident, {
+                showInstallationTag: true,
+                showQueueMeta: true,
+                detailButtonLabel: "Seguir incidencia",
+              }),
+            )
+          )}
+        </>
+      ) : null}
 
       <View style={styles.topActionsRow}>
         <TouchableOpacity
@@ -641,7 +1108,7 @@ export default function WorkTabScreen() {
             <Text style={[styles.focusBody, { color: palette.textSecondary }]}>
               {trackingLink?.active
                 ? trackingLink.snapshot?.summary_text || "El cliente puede seguir el estado actual del caso con este enlace."
-                : "Solo admin o super_admin puede generar el Magic Link publico desde mobile."}
+                : "Solo admin o platform_owner puede generar el Magic Link publico desde mobile."}
             </Text>
             {trackingLink?.active && activeTrackingUrl ? (
               <Text style={[styles.supportingText, { color: palette.textMuted }]}>
@@ -1179,6 +1646,37 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
+  },
+  queueLoadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    minHeight: 56,
+  },
+  todaySummaryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  todaySummaryCard: {
+    minWidth: 110,
+    flexGrow: 1,
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 4,
+  },
+  todaySummaryValue: {
+    fontFamily: fontFamilies.bold,
+    fontSize: 22,
+    lineHeight: 26,
+  },
+  todaySummaryLabel: {
+    fontFamily: fontFamilies.mono,
+    fontSize: 11.5,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   sectionTitle: {
     fontSize: 16,

@@ -1535,6 +1535,62 @@ tr[data-asset-id]:focus-visible {
     line-height: 1.4;
 }
 
+.incident-assigned-line {
+    color: color-mix(in oklab, var(--text-secondary) 78%, var(--accent-primary) 22%);
+}
+
+.entity-technician-panel {
+    display: grid;
+    gap: 0.65rem;
+    margin: 0.75rem 0 0.85rem;
+    padding: 0.8rem 0.9rem;
+    border: 1px solid color-mix(in oklab, var(--border) 76%, var(--accent-primary) 24%);
+    border-radius: 14px;
+    background: linear-gradient(
+        135deg,
+        color-mix(in oklab, var(--bg-secondary) 92%, var(--accent-primary) 8%),
+        var(--bg-card)
+    );
+}
+
+.entity-technician-panel.is-compact {
+    margin-top: 0.55rem;
+    padding: 0.72rem 0.8rem;
+}
+
+.entity-technician-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.entity-technician-panel-body {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.entity-technician-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.65rem 0.75rem;
+    border-radius: 12px;
+    border: 1px solid color-mix(in oklab, var(--border) 84%, var(--accent-primary) 16%);
+    background: color-mix(in oklab, var(--bg-card) 94%, var(--accent-primary) 6%);
+}
+
+.entity-technician-copy {
+    display: grid;
+    gap: 0.18rem;
+}
+
+.entity-technician-copy small {
+    color: var(--text-secondary);
+}
+
 .photos-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
@@ -2161,6 +2217,54 @@ tr[data-asset-id]:focus-visible {
     flex-shrink: 0;
 }
 
+.action-impact-summary {
+    display: grid;
+    gap: 0.6rem;
+    margin-bottom: 0.35rem;
+    padding: 0.85rem 0.95rem;
+    border-radius: 14px;
+    border: 1px solid color-mix(in oklab, var(--warning) 32%, var(--border) 68%);
+    background: color-mix(in oklab, var(--bg-card) 92%, var(--warning) 8%);
+}
+
+.action-impact-summary-title {
+    margin: 0;
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+
+.action-impact-summary-list {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.action-impact-summary-item {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.action-impact-summary-label {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.action-impact-summary-value {
+    color: var(--text-primary);
+    font-size: 0.95rem;
+}
+
+.action-impact-summary-note {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    line-height: 1.5;
+}
+
 .gps-capture-panel {
     display: grid;
     gap: 0.75rem;
@@ -2740,6 +2844,32 @@ tr[data-asset-id]:focus-visible {
     justify-content: flex-end;
     align-items: center;
     gap: 0.5rem;
+}
+
+.incidents-technician-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.42rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--bg-card) 92%, var(--accent-primary) 8%);
+    color: var(--text-secondary);
+    font-size: 0.84rem;
+    font-weight: 700;
+}
+
+.incidents-technician-filter select {
+    min-width: 180px;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font: inherit;
+    outline: none;
+}
+
+.incidents-filter-empty {
+    margin: 0.35rem 0 0;
 }
 
 .incidents-closure-banner {
@@ -4195,6 +4325,157 @@ tr[data-asset-id]:focus-visible {
 
 .settings-actions {
     margin-top: 0;
+}
+
+.settings-panel-card {
+    display: grid;
+    gap: 0.9rem;
+}
+
+.settings-panel-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.8rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+
+.settings-panel-copy {
+    margin: 0.35rem 0 0;
+    color: var(--text-secondary);
+    font-size: 0.92rem;
+    line-height: 1.45;
+    max-width: 68ch;
+}
+
+.settings-inline-panel {
+    display: grid;
+    gap: 0.8rem;
+    margin-top: 0.95rem;
+    padding-top: 0.95rem;
+    border-top: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+}
+
+.settings-tech-summary {
+    margin-top: 0.15rem;
+}
+
+.settings-technicians-list {
+    display: grid;
+    gap: 0.85rem;
+}
+
+.settings-technician-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background:
+        linear-gradient(180deg, color-mix(in oklab, var(--bg-card) 88%, var(--accent-primary) 12%), var(--bg-card));
+    box-shadow: var(--shadow-card);
+    padding: 0.9rem;
+    display: grid;
+    gap: 0.75rem;
+}
+
+.settings-technician-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.85rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+
+.settings-technician-title {
+    display: flex;
+    flex-direction: column;
+    gap: 0.28rem;
+}
+
+.settings-technician-title h4 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--text-primary);
+}
+
+.settings-technician-subtitle {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.settings-technician-chips {
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+}
+
+.settings-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    border-radius: 999px;
+    padding: 0.28rem 0.58rem;
+    font-size: 0.77rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    background: color-mix(in oklab, var(--bg-primary) 78%, var(--accent-primary) 22%);
+    color: var(--text-primary);
+}
+
+.settings-chip.is-muted {
+    background: color-mix(in oklab, var(--bg-primary) 88%, var(--border) 12%);
+    color: var(--text-secondary);
+}
+
+.settings-technician-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.settings-technician-assignments {
+    display: grid;
+    gap: 0.55rem;
+    padding-top: 0.15rem;
+}
+
+.settings-assignment-list {
+    display: grid;
+    gap: 0.55rem;
+}
+
+.settings-assignment-card {
+    border: 1px solid color-mix(in oklab, var(--border) 74%, var(--accent-primary) 26%);
+    border-radius: var(--radius-sm);
+    padding: 0.62rem 0.7rem;
+    background: color-mix(in oklab, var(--bg-primary) 90%, var(--accent-primary) 10%);
+    display: grid;
+    gap: 0.4rem;
+}
+
+.settings-assignment-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.7rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.settings-assignment-title {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.settings-assignment-meta {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
+.settings-empty-state {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
 }
 
 .dashboard-layout {

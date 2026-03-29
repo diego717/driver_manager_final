@@ -202,6 +202,7 @@
             const title = String(config.title || 'Confirmar accion').trim() || 'Confirmar accion';
             const subtitle = String(config.subtitle || '').trim();
             const submitLabel = String(config.submitLabel || 'Confirmar').trim() || 'Confirmar';
+            const extraFields = config.fields;
             const acknowledgementText = String(config.acknowledgementText || 'Confirmo esta accion.').trim()
                 || 'Confirmo esta accion.';
             const missingConfirmationMessage = String(
@@ -218,6 +219,9 @@
             checkbox.id = confirmCheckboxId;
             const copy = document.createElement('span');
             copy.textContent = acknowledgementText;
+            if (extraFields instanceof Node) {
+                fields.appendChild(extraFields);
+            }
             label.append(checkbox, copy);
             fields.appendChild(label);
 

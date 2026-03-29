@@ -48,6 +48,8 @@ import { createMaintenanceRouteHandlers } from "./worker/routes/maintenance.js";
 import { createRecordsRouteHandlers } from "./worker/routes/records.js";
 import { createStatisticsRouteHandlers } from "./worker/routes/statistics.js";
 import { createSystemRouteHandlers } from "./worker/routes/system.js";
+import { createTechniciansRouteHandlers } from "./worker/routes/technicians.js";
+import { createTenantsRouteHandlers } from "./worker/routes/tenants.js";
 import { createPublicTrackingRouteHandlers } from "./worker/routes/public-tracking.js";
 import {
   ALLOWED_INCIDENT_PHOTO_TYPES,
@@ -132,7 +134,7 @@ const WEB_HASH_TYPE_PBKDF2 = "pbkdf2_sha256";
 const WEB_HASH_TYPE_BCRYPT = "bcrypt";
 const WEB_HASH_TYPE_LEGACY_PBKDF2 = "legacy_pbkdf2_hex";
 const PUSH_NOTIFICATION_MAX_TOKENS_PER_REQUEST = 500;
-const CRITICAL_INCIDENT_PUSH_ROLES = ["admin", "super_admin"];
+const CRITICAL_INCIDENT_PUSH_ROLES = ["admin", "super_admin", "platform_owner"];
 const FCM_OAUTH_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
 const FCM_OAUTH_AUDIENCE = "https://oauth2.googleapis.com/token";
 const FCM_OAUTH_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:jwt-bearer";
@@ -404,12 +406,22 @@ function resolveRealtimeTenantId(request, webSession = null) {
   return DEFAULT_REALTIME_TENANT_ID;
 }
 
-function canManageAllTenants(role) {
-  return normalizeOptionalString(role, "") === "super_admin";
+function canManageAllTenants(actorOrRole, explicitTenantId = undefined) {
+  const role =
+    actorOrRole && typeof actorOrRole === "object"
+      ? normalizeOptionalString(actorOrRole.role, "").toLowerCase()
+      : normalizeOptionalString(actorOrRole, "").toLowerCase();
+  const tenantId =
+    explicitTenantId !== undefined
+      ? normalizeRealtimeTenantId(explicitTenantId)
+      : actorOrRole && typeof actorOrRole === "object"
+        ? normalizeRealtimeTenantId(actorOrRole.tenant_id)
+        : "";
+  return ["super_admin", "platform_owner"].includes(role) && tenantId === DEFAULT_REALTIME_TENANT_ID;
 }
 
 function assertSameTenantOrSuperAdmin(session, targetTenantId) {
-  if (canManageAllTenants(session?.role)) return;
+  if (canManageAllTenants(session)) return;
   const actorTenant = normalizeRealtimeTenantId(session?.tenant_id);
   const targetTenant = normalizeRealtimeTenantId(targetTenantId);
   if (actorTenant !== targetTenant) {
@@ -2488,19 +2500,19 @@ function parseBooleanOrNull(value) {
 }
 
 function requireAdminRole(role) {
-  if (!["admin", "super_admin"].includes(normalizeOptionalString(role, "").toLowerCase())) {
+  if (!["admin", "super_admin", "platform_owner"].includes(normalizeOptionalString(role, "").toLowerCase())) {
     throw new HttpError(403, "No tienes permisos para administrar usuarios web.");
   }
 }
 
 function requireSuperAdminRole(role) {
-  if (normalizeOptionalString(role, "").toLowerCase() !== "super_admin") {
+  if (!["super_admin", "platform_owner"].includes(normalizeOptionalString(role, "").toLowerCase())) {
     throw new HttpError(403, "Solo super_admin puede eliminar incidencias.");
   }
 }
 
 function requireWebWriteRole(role) {
-  if (!["admin", "super_admin"].includes(normalizeOptionalString(role, "").toLowerCase())) {
+  if (!["admin", "super_admin", "platform_owner"].includes(normalizeOptionalString(role, "").toLowerCase())) {
     throw new HttpError(403, "No tienes permisos para modificar datos.");
   }
 }
@@ -5633,6 +5645,7 @@ const {
   upsertWebUserFromImport,
   updateWebUserRoleAndStatus,
   forceResetWebUserPassword,
+  deleteWebUser,
   authenticateWebUserByCredentials,
   verifyCurrentWebUserPassword,
 } = webUserAuthHelpers;
@@ -5745,6 +5758,7 @@ const webAuthRouteHandlers = createWebAuthRouteHandlers({
   invalidateWebSessionVersion,
   serializeWebUser,
   forceResetWebUserPassword,
+  deleteWebUser,
   normalizeImportedWebUser,
   upsertWebUserFromImport: upsertImportedWebUser,
   buildWebSessionCookieClearHeader,
@@ -5785,6 +5799,30 @@ const maintenanceRouteHandlers = createMaintenanceRouteHandlers({
   cleanupOrphanInstallationArtifacts,
   logAuditEvent,
   getClientIpForRateLimit,
+});
+
+const techniciansRouteHandlers = createTechniciansRouteHandlers({
+  jsonResponse,
+  normalizeOptionalString,
+  normalizeRealtimeTenantId,
+  parsePositiveInt,
+  readJsonOrThrowBadRequest,
+  requireAdminRole,
+  assertSameTenantOrSuperAdmin,
+  logAuditEvent,
+  getClientIpForRateLimit,
+  nowIso,
+});
+
+const tenantsRouteHandlers = createTenantsRouteHandlers({
+  jsonResponse,
+  normalizeOptionalString,
+  normalizeRealtimeTenantId,
+  readJsonOrThrowBadRequest,
+  canManageAllTenants,
+  logAuditEvent,
+  getClientIpForRateLimit,
+  nowIso,
 });
 
 const auditLogsRouteHandlers = createAuditLogsRouteHandlers({
@@ -6099,6 +6137,43 @@ export default {
       );
       if (maintenanceResponse) {
         return maintenanceResponse;
+      }
+      const techniciansResponse = await techniciansRouteHandlers.handleTechniciansRoute(
+        request,
+        env,
+        url,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+      );
+      if (techniciansResponse) {
+        return techniciansResponse;
+      }
+      const tenantsResponse = await tenantsRouteHandlers.handleTenantsRoute(
+        request,
+        env,
+        url,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+      );
+      if (tenantsResponse) {
+        return tenantsResponse;
+      }
+      const technicianAssignmentsResponse =
+        await techniciansRouteHandlers.handleTechnicianAssignmentsRoute(
+          request,
+          env,
+          url,
+          corsPolicy,
+          routeParts,
+          isWebRoute,
+          webSession,
+        );
+      if (technicianAssignmentsResponse) {
+        return technicianAssignmentsResponse;
       }
       const auditLogsResponse = await auditLogsRouteHandlers.handleAuditLogsRoute(
         request,

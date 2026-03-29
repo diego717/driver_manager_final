@@ -575,6 +575,129 @@
             return group;
         }
 
+        function getAvailableTechnicians() {
+            return Array.isArray(options.getAvailableTechnicians?.())
+                ? options.getAvailableTechnicians().filter((item) => item && item.is_active)
+                : [];
+        }
+
+        function normalizeTechnicianName(value) {
+            return String(value || '').trim();
+        }
+
+        function normalizeTechnicianToken(value) {
+            return normalizeTechnicianName(value).toLowerCase();
+        }
+
+        function collectAssignmentTechnicianNames(assignments) {
+            const names = [];
+            const seen = new Set();
+            (Array.isArray(assignments) ? assignments : []).forEach((assignment) => {
+                const name = normalizeTechnicianName(
+                    assignment?.technician_display_name || assignment?.display_name || assignment?.technician_name,
+                );
+                const token = normalizeTechnicianToken(name);
+                if (!token || seen.has(token)) return;
+                seen.add(token);
+                names.push(name);
+            });
+            return names;
+        }
+
+        function resolvePreferredTechnicianValue(preferredTechnicianNames = []) {
+            const tokens = preferredTechnicianNames
+                .map((value) => normalizeTechnicianToken(value))
+                .filter(Boolean);
+            if (!tokens.length) return '';
+
+            const matchingTechnician = getAvailableTechnicians().find((technician) =>
+                tokens.includes(normalizeTechnicianToken(technician?.display_name)));
+            return normalizeTechnicianName(matchingTechnician?.display_name);
+        }
+
+        async function loadContextTechnicianAssignments({ incidentId = null, installationId = null, assetId = null } = {}) {
+            const normalizedIncidentId = options.parseStrictInteger(incidentId);
+            const normalizedInstallationId = options.parseStrictInteger(installationId);
+            const normalizedAssetId = options.parseStrictInteger(assetId);
+            const incidentPromise =
+                Number.isInteger(normalizedIncidentId) && normalizedIncidentId > 0
+                    ? options.getTechnicianAssignmentsForEntity?.('incident', normalizedIncidentId, { silent: true })
+                        || Promise.resolve([])
+                    : Promise.resolve([]);
+            const installationPromise =
+                Number.isInteger(normalizedInstallationId) && normalizedInstallationId > 0
+                    ? options.getTechnicianAssignmentsForEntity?.('installation', normalizedInstallationId, { silent: true })
+                        || Promise.resolve([])
+                    : Promise.resolve([]);
+            const assetPromise =
+                Number.isInteger(normalizedAssetId) && normalizedAssetId > 0
+                    ? options.getTechnicianAssignmentsForEntity?.('asset', normalizedAssetId, { silent: true })
+                        || Promise.resolve([])
+                    : Promise.resolve([]);
+
+            const [incidentAssignments, installationAssignments, assetAssignments] = await Promise.all([
+                incidentPromise,
+                installationPromise,
+                assetPromise,
+            ]);
+            const preferredAssignments = incidentAssignments.length
+                ? incidentAssignments
+                : installationAssignments.length
+                    ? installationAssignments
+                    : assetAssignments;
+            return {
+                incidentAssignments,
+                installationAssignments,
+                assetAssignments,
+                preferredTechnicianNames: collectAssignmentTechnicianNames(preferredAssignments),
+                allTechnicianNames: collectAssignmentTechnicianNames([
+                    ...incidentAssignments,
+                    ...installationAssignments,
+                    ...assetAssignments,
+                ]),
+            };
+        }
+
+        function applyTechnicianSelectPreference(select, preferredTechnicianNames = []) {
+            if (!(select instanceof HTMLSelectElement)) return;
+            if (select.dataset.userSelected === '1') return;
+
+            const preferredValue = resolvePreferredTechnicianValue(preferredTechnicianNames);
+            if (preferredValue) {
+                select.value = preferredValue;
+            }
+        }
+
+        async function hydrateTechnicianSelectFromContext(selectId, context = {}) {
+            const select = document.getElementById(selectId);
+            if (!(select instanceof HTMLSelectElement)) return [];
+
+            const assignmentContext = await loadContextTechnicianAssignments(context);
+            applyTechnicianSelectPreference(select, assignmentContext.preferredTechnicianNames);
+            return assignmentContext.allTechnicianNames;
+        }
+
+        function buildTechnicianSelect({ id, includeCurrentUserOption = true, preferredTechnicianNames = [] } = {}) {
+            const select = document.createElement('select');
+            select.id = id;
+
+            if (includeCurrentUserOption) {
+                const currentLabel = String(options.getCurrentUser?.()?.username || 'Usuario actual').trim() || 'Usuario actual';
+                select.appendChild(new Option(`Usuario actual (${currentLabel})`, ''));
+            }
+
+            getAvailableTechnicians().forEach((technician) => {
+                const detail = technician.employee_code ? ` · ${technician.employee_code}` : '';
+                select.appendChild(new Option(`${technician.display_name}${detail}`, technician.display_name || ''));
+            });
+
+            applyTechnicianSelectPreference(select, preferredTechnicianNames);
+            select.addEventListener('change', () => {
+                select.dataset.userSelected = '1';
+            });
+            return select;
+        }
+
         function createGpsCapturePanel({ panelId, statusId, summaryId, buttonId }) {
             const wrapper = document.createElement('div');
             wrapper.id = panelId;
@@ -876,6 +999,14 @@
                 className: 'full-width',
             }));
 
+            const technicianSelect = buildTechnicianSelect({
+                id: 'actionConformityTechnicianName',
+                includeCurrentUserOption: true,
+            });
+            grid.appendChild(createInputGroup('Tecnico responsable', technicianSelect, {
+                htmlFor: technicianSelect.id,
+            }));
+
             const technicianNoteInput = document.createElement('textarea');
             technicianNoteInput.id = 'actionConformityTechnicianNote';
             technicianNoteInput.rows = 3;
@@ -1142,6 +1273,9 @@
                     const signedByDocument = String(document.getElementById('actionConformitySignedByDocument')?.value || '').trim();
                     const emailTo = String(document.getElementById('actionConformityEmailTo')?.value || '').trim();
                     const summaryNote = String(document.getElementById('actionConformitySummary')?.value || '').trim();
+                    const technicianName = String(document.getElementById('actionConformityTechnicianName')?.value || '').trim()
+                        || String(options.getCurrentUser?.()?.username || '').trim()
+                        || 'web';
                     const technicianNote = String(document.getElementById('actionConformityTechnicianNote')?.value || '').trim();
                     const sendEmail = document.getElementById('actionConformitySendEmail')?.checked === true;
                     const signatureDataUrl = currentConformitySignaturePad?.exportDataUrl?.() || '';
@@ -1189,6 +1323,7 @@
                         email_to: emailTo,
                         signature_data_url: signatureDataUrl,
                         summary_note: summaryNote,
+                        technician_name: technicianName,
                         technician_note: technicianNote,
                         include_all_incident_photos: true,
                         send_email: sendEmail,
@@ -1226,6 +1361,9 @@
             if (modalOpened) {
                 requestAnimationFrame(() => {
                     initializeConformitySignaturePad();
+                    void hydrateTechnicianSelectFromContext('actionConformityTechnicianName', {
+                        installationId: targetInstallationId,
+                    });
                     if (options.geolocation) {
                         gpsController = options.geolocation.createController({
                             panelElement: document.getElementById(CONFORMITY_GPS_PANEL_ID),
@@ -1282,6 +1420,12 @@
                 );
             });
             grid.appendChild(createInputGroup('Severidad', severitySelect, { htmlFor: 'actionIncidentSeverity' }));
+
+            const technicianSelect = buildTechnicianSelect({
+                id: 'actionIncidentTechnicianName',
+                includeCurrentUserOption: true,
+            });
+            grid.appendChild(createInputGroup('Tecnico responsable', technicianSelect, { htmlFor: technicianSelect.id }));
 
             const estimatedPresetSelect = document.createElement('select');
             estimatedPresetSelect.id = 'actionIncidentEstimatedPreset';
@@ -1924,6 +2068,79 @@
             });
         }
 
+        function buildIncidentTechnicianTokens(incident, assignedTechnicianNames = []) {
+            const labels = [];
+            const seen = new Set();
+            const pushLabel = (value) => {
+                const label = normalizeTechnicianName(value);
+                const token = normalizeTechnicianToken(label);
+                if (!token || seen.has(token)) return;
+                seen.add(token);
+                labels.push(label);
+            };
+
+            pushLabel(incident?.reporter_username);
+            assignedTechnicianNames.forEach((name) => pushLabel(name));
+            return labels;
+        }
+
+        function applyIncidentTechnicianFilter(container, selectedValue = '') {
+            const cards = Array.from(container.querySelectorAll('.incident-card'));
+            const normalizedFilter = normalizeTechnicianToken(selectedValue);
+            let visibleCount = 0;
+
+            cards.forEach((card) => {
+                if (!(card instanceof HTMLElement)) return;
+                const tokens = String(card.dataset.technicianFilterTokens || '')
+                    .split('|')
+                    .map((token) => normalizeTechnicianToken(token))
+                    .filter(Boolean);
+                const matches = !normalizedFilter || tokens.includes(normalizedFilter);
+                card.hidden = !matches;
+                if (matches) {
+                    visibleCount += 1;
+                }
+            });
+
+            const emptyState = container.querySelector('.incidents-filter-empty');
+            if (emptyState instanceof HTMLElement) {
+                emptyState.hidden = visibleCount > 0;
+            }
+        }
+
+        function hydrateIncidentTechnicianFilter(container, select) {
+            if (!(container instanceof HTMLElement) || !(select instanceof HTMLSelectElement)) return;
+
+            const cards = Array.from(container.querySelectorAll('.incident-card'));
+            const optionMap = new Map();
+            cards.forEach((card) => {
+                if (!(card instanceof HTMLElement)) return;
+                const labels = String(card.dataset.technicianFilterLabels || '')
+                    .split('||')
+                    .map((label) => normalizeTechnicianName(label))
+                    .filter(Boolean);
+                labels.forEach((label) => {
+                    const token = normalizeTechnicianToken(label);
+                    if (!token || optionMap.has(token)) return;
+                    optionMap.set(token, label);
+                });
+            });
+
+            select.replaceChildren(new Option('Todos los tecnicos', ''));
+            Array.from(optionMap.values())
+                .sort((left, right) => left.localeCompare(right, 'es'))
+                .forEach((label) => {
+                    select.appendChild(new Option(label, label));
+                });
+
+            const wrapper = select.closest('.incidents-technician-filter');
+            if (wrapper instanceof HTMLElement) {
+                wrapper.hidden = optionMap.size <= 1;
+            }
+
+            applyIncidentTechnicianFilter(container, select.value);
+        }
+
         async function appendIncidentCard(parent, incident, config = {}) {
             const incidentCard = document.createElement('div');
             const statusValue = options.normalizeIncidentStatus(incident?.incident_status);
@@ -1970,6 +2187,18 @@
             leftMeta.append(severityBadge, statusBadge, incidentRef);
             headingBlock.appendChild(leftMeta);
 
+            const assignmentContext = await loadContextTechnicianAssignments({
+                incidentId: options.parseStrictInteger(incident?.id),
+                installationId: options.parseStrictInteger(config.installationId ?? incident?.installation_id),
+                assetId: options.parseStrictInteger(config.assetId ?? incident?.asset_id),
+            });
+            const assignedTechnicianNames = assignmentContext.allTechnicianNames;
+            const technicianLabels = buildIncidentTechnicianTokens(incident, assignedTechnicianNames);
+            incidentCard.dataset.technicianFilterTokens = technicianLabels
+                .map((label) => normalizeTechnicianToken(label))
+                .join('|');
+            incidentCard.dataset.technicianFilterLabels = technicianLabels.join('||');
+
             if (config.showReporter === true) {
                 const reporter = document.createElement('small');
                 reporter.className = 'incident-reporter-line';
@@ -1978,6 +2207,16 @@
                 reporterStrong.textContent = String(incident?.reporter_username || 'desconocido').trim() || 'desconocido';
                 reporter.appendChild(reporterStrong);
                 headingBlock.appendChild(reporter);
+            }
+
+            if (assignedTechnicianNames.length) {
+                const assignedLine = document.createElement('small');
+                assignedLine.className = 'incident-reporter-line incident-assigned-line';
+                assignedLine.textContent = 'Tecnico asignado: ';
+                const assignedStrong = document.createElement('strong');
+                assignedStrong.textContent = assignedTechnicianNames.join(', ');
+                assignedLine.appendChild(assignedStrong);
+                headingBlock.appendChild(assignedLine);
             }
 
             const createdAt = document.createElement('small');
@@ -2003,6 +2242,26 @@
                     : null,
                 assetTone: config.assetTone || 'neutral',
             });
+
+            if (typeof options.renderEntityTechnicianAssignmentsPanel === 'function') {
+                const incidentTechniciansPanel = await options.renderEntityTechnicianAssignmentsPanel({
+                    entityType: 'incident',
+                    entityId: incidentId,
+                    entityLabel: `incidencia #${incidentId}`,
+                    title: 'Responsables de la incidencia',
+                    emptyText: 'Sin técnicos asignados directamente a esta incidencia.',
+                    compact: true,
+                    defaultRole: 'owner',
+                    showEmptyMessage: false,
+                    onApplied: async () => {
+                        await refreshIncidentContext({
+                            installationId: options.parseStrictInteger(config.installationId ?? incident?.installation_id),
+                            assetId: options.parseStrictInteger(config.assetId ?? incident?.asset_id),
+                        });
+                    },
+                });
+                incidentCard.appendChild(incidentTechniciansPanel);
+            }
 
             appendIncidentEvidenceSummary(incidentCard, incident);
             appendIncidentResolutionSummary(incidentCard, incident);
@@ -2278,6 +2537,20 @@
 
             const actions = document.createElement('div');
             actions.className = 'incidents-header-actions';
+            const technicianFilterWrap = document.createElement('label');
+            technicianFilterWrap.className = 'incidents-technician-filter';
+            technicianFilterWrap.hidden = true;
+
+            const technicianFilterLabel = document.createElement('span');
+            technicianFilterLabel.textContent = 'Tecnico';
+
+            const technicianFilterSelect = document.createElement('select');
+            technicianFilterSelect.id = 'incidentsTechnicianFilter';
+            technicianFilterSelect.appendChild(new Option('Todos los tecnicos', ''));
+            technicianFilterSelect.addEventListener('change', () => {
+                applyIncidentTechnicianFilter(container, technicianFilterSelect.value);
+            });
+            technicianFilterWrap.append(technicianFilterLabel, technicianFilterSelect);
 
             if (canCurrentUserAuditDeletedIncidents()) {
                 const auditToggleWrap = document.createElement('label');
@@ -2302,7 +2575,7 @@
             if (canCurrentUserManagePublicTracking()) {
                 actions.appendChild(shareTrackingBtn);
             }
-            actions.append(conformityBtn, createIncidentBtn, backButton);
+            actions.append(technicianFilterWrap, conformityBtn, createIncidentBtn, backButton);
 
             header.append(headerMain, actions);
             fragment.appendChild(header);
@@ -2339,7 +2612,13 @@
                     return;
                 }
             }
+            const filterEmptyState = document.createElement('p');
+            filterEmptyState.className = 'asset-muted incidents-filter-empty';
+            filterEmptyState.hidden = true;
+            filterEmptyState.textContent = 'No hay incidencias visibles para el tecnico seleccionado.';
+            fragment.appendChild(filterEmptyState);
             container.replaceChildren(fragment);
+            hydrateIncidentTechnicianFilter(container, technicianFilterSelect);
         }
 
         function showIncidentsWorkspaceLanding() {
@@ -2481,9 +2760,12 @@
 
                     const severity = options.normalizeSeverity(document.getElementById('actionIncidentSeverity')?.value || 'medium');
                     const applyToInstallation = document.getElementById('actionIncidentApplyToRecord')?.checked === true;
+                    const technicianName = String(document.getElementById('actionIncidentTechnicianName')?.value || '').trim()
+                        || String(options.getCurrentUser?.()?.username || 'web_user').trim()
+                        || 'web_user';
                     const payload = {
                         note,
-                        reporter_username: options.getCurrentUser()?.username || 'web_user',
+                        reporter_username: technicianName,
                         time_adjustment_seconds: estimatedDurationResult.seconds,
                         estimated_duration_seconds: estimatedDurationResult.seconds,
                         severity,
@@ -2567,6 +2849,14 @@
                     syncIncidentGeofenceOverrideUi(
                         gpsController?.getSnapshotForSubmit?.() || latestIncidentGpsSnapshot,
                     );
+                    void hydrateTechnicianSelectFromContext('actionIncidentTechnicianName', {
+                        installationId: document.getElementById('actionIncidentInstallationId')?.value || '',
+                        assetId: numericAssetId,
+                    });
+                });
+                void hydrateTechnicianSelectFromContext('actionIncidentTechnicianName', {
+                    installationId: defaultInstallationId,
+                    assetId: numericAssetId,
                 });
                 if (options.geolocation) {
                     gpsController = options.geolocation.createController({
@@ -2930,7 +3220,33 @@
 
         function handleRealtimeIncident(incident) {
             const severityIcon = incident.severity === 'critical' ? 'CRIT' : incident.severity === 'high' ? 'ALTA' : 'WARN';
-            options.showNotification(`${severityIcon} Nueva incidencia en registro #${incident.installation_id}`, 'warning');
+            const currentLinkedTechnician = options.getCurrentLinkedTechnician?.();
+            const fallbackMessage = `${severityIcon} Nueva incidencia en registro #${incident.installation_id}`;
+            if (!currentLinkedTechnician?.display_name) {
+                options.showNotification(fallbackMessage, 'warning');
+                return;
+            }
+
+            void loadContextTechnicianAssignments({
+                incidentId: options.parseStrictInteger(incident?.id),
+                installationId: options.parseStrictInteger(incident?.installation_id),
+                assetId: options.parseStrictInteger(incident?.asset_id),
+            }).then((assignmentContext) => {
+                const assignedTokens = assignmentContext.allTechnicianNames
+                    .map((name) => normalizeTechnicianToken(name))
+                    .filter(Boolean);
+                const currentTechnicianToken = normalizeTechnicianToken(currentLinkedTechnician.display_name);
+                if (currentTechnicianToken && assignedTokens.includes(currentTechnicianToken)) {
+                    options.showNotification(
+                        `${severityIcon} Nueva incidencia asignada a tu cola: registro #${incident.installation_id}.`,
+                        'warning',
+                    );
+                    return;
+                }
+                options.showNotification(fallbackMessage, 'warning');
+            }).catch(() => {
+                options.showNotification(fallbackMessage, 'warning');
+            });
         }
 
         let lastRefreshAt = 0;

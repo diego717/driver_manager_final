@@ -10,6 +10,8 @@ import { createMaintenanceRouteHandlers } from "../../worker/routes/maintenance.
 import { createRecordsRouteHandlers } from "../../worker/routes/records.js";
 import { createStatisticsRouteHandlers } from "../../worker/routes/statistics.js";
 import { createSystemRouteHandlers } from "../../worker/routes/system.js";
+import { createTenantsRouteHandlers } from "../../worker/routes/tenants.js";
+import { createTechniciansRouteHandlers } from "../../worker/routes/technicians.js";
 import { buildPublicTrackingSnapshot } from "../../worker/lib/public-tracking.js";
 
 function jsonResponse(_request, _env, _corsPolicy, body, status = 200) {
@@ -23,6 +25,64 @@ function jsonResponse(_request, _env, _corsPolicy, body, status = 200) {
 
 function textResponse(_request, _env, _corsPolicy, text, status = 200) {
   return new Response(text, { status });
+}
+
+function createTechniciansRouteDeps(overrides = {}) {
+  return {
+    jsonResponse,
+    normalizeOptionalString(value, fallback = "") {
+      if (value === null || value === undefined) return fallback;
+      return String(value).trim();
+    },
+    normalizeRealtimeTenantId(value) {
+      return String(value || "").trim().toLowerCase() || "default";
+    },
+    parsePositiveInt(value) {
+      return Number(value);
+    },
+    async readJsonOrThrowBadRequest() {
+      return {};
+    },
+    requireAdminRole() {},
+    assertSameTenantOrSuperAdmin() {},
+    async logAuditEvent() {},
+    getClientIpForRateLimit() {
+      return "127.0.0.1";
+    },
+    nowIso() {
+      return "2026-03-28T18:00:00.000Z";
+    },
+    ...overrides,
+  };
+}
+
+function createTenantsRouteDeps(overrides = {}) {
+  return {
+    jsonResponse,
+    normalizeOptionalString(value, fallback = "") {
+      if (value === null || value === undefined) return fallback;
+      return String(value).trim();
+    },
+    normalizeRealtimeTenantId(value) {
+      return String(value || "").trim().toLowerCase() || "default";
+    },
+    async readJsonOrThrowBadRequest() {
+      return {};
+    },
+    canManageAllTenants(session) {
+      const role = String(session?.role || "").trim().toLowerCase();
+      const tenantId = String(session?.tenant_id || "default").trim().toLowerCase() || "default";
+      return (role === "platform_owner" || role === "super_admin") && tenantId === "default";
+    },
+    async logAuditEvent() {},
+    getClientIpForRateLimit() {
+      return "127.0.0.1";
+    },
+    nowIso() {
+      return "2026-03-28T18:00:00.000Z";
+    },
+    ...overrides,
+  };
 }
 
 test("public tracking snapshot prioritizes reopened incidents over a previous conformity close", async () => {
@@ -145,6 +205,733 @@ test("public tracking snapshot prioritizes reopened incidents over a previous co
   assert.match(snapshot.public_message, /reabierto/i);
   assert.ok(snapshot.milestones.some((item) => item.type === "case_reopened"));
   assert.ok(snapshot.milestones.some((item) => item.type === "work_resumed" && /retomado/i.test(item.label)));
+});
+
+test("tenants route lists tenant summaries for super admin", async () => {
+  const env = {
+    DB: {
+      prepare(sql) {
+        const normalized = String(sql || "").replace(/\s+/g, " ").trim();
+        return {
+          bind(...args) {
+            this.args = args;
+            return this;
+          },
+          async all() {
+            if (normalized.startsWith("SELECT name FROM sqlite_master")) {
+              return {
+                results: [{ name: this.args?.[0] || "" }],
+              };
+            }
+            if (normalized.startsWith("PRAGMA table_info(tenants)")) {
+              return {
+                results: [
+                  { name: "id" },
+                  { name: "name" },
+                  { name: "slug" },
+                  { name: "status" },
+                  { name: "plan_code" },
+                  { name: "created_at" },
+                  { name: "updated_at" },
+                ],
+              };
+            }
+            if (normalized.startsWith("PRAGMA table_info(web_users)")) {
+              return {
+                results: [
+                  { name: "id" },
+                  { name: "username" },
+                  { name: "role" },
+                  { name: "is_active" },
+                  { name: "last_login_at" },
+                  { name: "tenant_id" },
+                ],
+              };
+            }
+            if (normalized.startsWith("PRAGMA table_info(tenant_usage_snapshots)")) {
+              return {
+                results: [
+                  { name: "id" },
+                  { name: "tenant_id" },
+                  { name: "usage_month" },
+                  { name: "users_count" },
+                  { name: "storage_bytes" },
+                  { name: "incidents_count" },
+                  { name: "recorded_at" },
+                ],
+              };
+            }
+            if (normalized.startsWith("PRAGMA table_info(web_users)")) {
+              return {
+                results: [
+                  { name: "id" },
+                  { name: "username" },
+                  { name: "role" },
+                  { name: "is_active" },
+                  { name: "last_login_at" },
+                  { name: "tenant_id" },
+                ],
+              };
+            }
+            if (normalized.startsWith("PRAGMA table_info(tenant_usage_snapshots)")) {
+              return {
+                results: [
+                  { name: "id" },
+                  { name: "tenant_id" },
+                  { name: "usage_month" },
+                  { name: "users_count" },
+                  { name: "storage_bytes" },
+                  { name: "incidents_count" },
+                  { name: "recorded_at" },
+                ],
+              };
+            }
+            if (normalized.startsWith("PRAGMA table_info(incidents)")) {
+              return {
+                results: [{ name: "deleted_at" }, { name: "incident_status" }],
+              };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM web_users")) {
+              return { results: [{ total: 4 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM technicians")) {
+              return { results: [{ total: 2 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM installations")) {
+              return { results: [{ total: 11 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM incidents")) {
+              return { results: [{ total: 3 }] };
+            }
+            if (normalized.startsWith("SELECT username FROM web_users")) {
+              return {
+                results: [{ username: "ana" }, { username: "bruno" }],
+              };
+            }
+            if (normalized.includes("FROM tenants t ORDER BY")) {
+              return {
+                results: [
+                  {
+                    id: "tenant-a",
+                    name: "Acme Uruguay",
+                    slug: "acme-uy",
+                    status: "active",
+                    plan_code: "growth",
+                    created_at: "2026-03-01T10:00:00.000Z",
+                    updated_at: "2026-03-28T10:00:00.000Z",
+                    users_count: 4,
+                    technicians_count: 2,
+                    installations_count: 11,
+                    active_incidents_count: 3,
+                    admin_usernames: "ana|bruno",
+                  },
+                ],
+              };
+            }
+            throw new Error(`Unhandled SQL in tenant list test: ${normalized}`);
+          },
+        };
+      },
+    },
+  };
+
+  const handlers = createTenantsRouteHandlers(createTenantsRouteDeps());
+  const response = await handlers.handleTenantsRoute(
+    new Request("https://example.com/web/tenants"),
+    env,
+    new URL("https://example.com/web/tenants"),
+    {},
+    ["tenants"],
+    true,
+    { sub: "root", role: "super_admin", tenant_id: "default" },
+  );
+
+  assert.ok(response instanceof Response);
+  const body = await response.json();
+  assert.equal(body.success, true);
+  assert.equal(body.tenants.length, 1);
+  assert.equal(body.tenants[0].metrics.active_incidents_count, 3);
+  assert.deepEqual(body.tenants[0].admin_usernames, ["ana", "bruno"]);
+});
+
+test("tenants route returns tenant detail with admins and latest usage", async () => {
+  const env = {
+    DB: {
+      prepare(sql) {
+        const normalized = String(sql || "").replace(/\s+/g, " ").trim();
+        return {
+          bind(...args) {
+            this.args = args;
+            return this;
+          },
+          async all() {
+            if (normalized.startsWith("SELECT name FROM sqlite_master")) {
+              return {
+                results: [{ name: this.args?.[0] || "" }],
+              };
+            }
+            if (normalized.startsWith("PRAGMA table_info(tenants)")) {
+              return {
+                results: [
+                  { name: "id" },
+                  { name: "name" },
+                  { name: "slug" },
+                  { name: "status" },
+                  { name: "plan_code" },
+                  { name: "created_at" },
+                  { name: "updated_at" },
+                ],
+              };
+            }
+            if (normalized.startsWith("PRAGMA table_info(web_users)")) {
+              return {
+                results: [
+                  { name: "id" },
+                  { name: "username" },
+                  { name: "role" },
+                  { name: "is_active" },
+                  { name: "last_login_at" },
+                  { name: "tenant_id" },
+                ],
+              };
+            }
+            if (normalized.startsWith("PRAGMA table_info(tenant_usage_snapshots)")) {
+              return {
+                results: [
+                  { name: "id" },
+                  { name: "tenant_id" },
+                  { name: "usage_month" },
+                  { name: "users_count" },
+                  { name: "storage_bytes" },
+                  { name: "incidents_count" },
+                  { name: "recorded_at" },
+                ],
+              };
+            }
+            if (normalized.startsWith("PRAGMA table_info(incidents)")) {
+              return {
+                results: [{ name: "deleted_at" }, { name: "incident_status" }],
+              };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM web_users")) {
+              return { results: [{ total: 4 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM technicians")) {
+              return { results: [{ total: 2 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM installations")) {
+              return { results: [{ total: 11 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM incidents")) {
+              return { results: [{ total: 3 }] };
+            }
+            if (normalized.includes("FROM tenants t WHERE t.id = ?")) {
+              return {
+                results: [
+                  {
+                    id: "tenant-a",
+                    name: "Acme Uruguay",
+                    slug: "acme-uy",
+                    status: "active",
+                    plan_code: "growth",
+                    created_at: "2026-03-01T10:00:00.000Z",
+                    updated_at: "2026-03-28T10:00:00.000Z",
+                    users_count: 4,
+                    technicians_count: 2,
+                    installations_count: 11,
+                    active_incidents_count: 3,
+                    admin_usernames: "ana|bruno",
+                  },
+                ],
+              };
+            }
+            if (normalized.includes("FROM web_users")) {
+              return {
+                results: [
+                  {
+                    id: 7,
+                    username: "ana",
+                    role: "admin",
+                    is_active: 1,
+                    last_login_at: "2026-03-28T17:00:00.000Z",
+                    tenant_id: "tenant-a",
+                  },
+                ],
+              };
+            }
+            if (normalized.startsWith("SELECT username FROM web_users")) {
+              return {
+                results: [{ username: "ana" }, { username: "bruno" }],
+              };
+            }
+            if (normalized.includes("FROM tenant_usage_snapshots")) {
+              return {
+                results: [
+                  {
+                    usage_month: "2026-03",
+                    users_count: 4,
+                    storage_bytes: 2048,
+                    incidents_count: 27,
+                    recorded_at: "2026-03-28T18:00:00.000Z",
+                  },
+                ],
+              };
+            }
+            throw new Error(`Unhandled SQL in tenant detail test: ${normalized}`);
+          },
+        };
+      },
+    },
+  };
+
+  const handlers = createTenantsRouteHandlers(createTenantsRouteDeps());
+  const response = await handlers.handleTenantsRoute(
+    new Request("https://example.com/web/tenants/tenant-a"),
+    env,
+    new URL("https://example.com/web/tenants/tenant-a"),
+    {},
+    ["tenants", "tenant-a"],
+    true,
+    { sub: "root", role: "super_admin", tenant_id: "default" },
+  );
+
+  assert.ok(response instanceof Response);
+  const body = await response.json();
+  assert.equal(body.success, true);
+  assert.equal(body.tenant.id, "tenant-a");
+  assert.equal(body.admins[0].username, "ana");
+  assert.equal(body.latest_usage.incidents_count, 27);
+});
+
+test("tenants route previews delete impact before removing a tenant", async () => {
+  const handlers = createTenantsRouteHandlers(createTenantsRouteDeps());
+  const env = {
+    DB: {
+      prepare(sql) {
+        const normalized = String(sql || "").replace(/\s+/g, " ").trim();
+        return {
+          bind(...args) {
+            this.args = args;
+            return this;
+          },
+          async all() {
+            if (normalized.startsWith("PRAGMA table_info(tenants)")) {
+              return {
+                results: [
+                  { name: "id" },
+                  { name: "name" },
+                  { name: "slug" },
+                  { name: "status" },
+                  { name: "plan_code" },
+                ],
+              };
+            }
+            if (normalized.startsWith("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")) {
+              return { results: [{ name: this.args?.[0] || "" }] };
+            }
+            if (normalized.startsWith("SELECT name FROM sqlite_master WHERE type = 'table'")) {
+              return {
+                results: [
+                  { name: "tenants" },
+                  { name: "web_users" },
+                  { name: "technicians" },
+                  { name: "installations" },
+                  { name: "incidents" },
+                  { name: "audit_logs" },
+                ],
+              };
+            }
+            if (normalized.startsWith("PRAGMA table_info(web_users)")) {
+              return { results: [{ name: "tenant_id" }] };
+            }
+            if (normalized.startsWith("PRAGMA table_info(technicians)")) {
+              return { results: [{ name: "tenant_id" }] };
+            }
+            if (normalized.startsWith("PRAGMA table_info(installations)")) {
+              return { results: [{ name: "tenant_id" }] };
+            }
+            if (normalized.startsWith("PRAGMA table_info(incidents)")) {
+              return { results: [{ name: "tenant_id" }, { name: "deleted_at" }, { name: "incident_status" }] };
+            }
+            if (normalized.startsWith("PRAGMA table_info(audit_logs)")) {
+              return { results: [{ name: "tenant_id" }] };
+            }
+            if (normalized.startsWith("PRAGMA foreign_key_list(")) {
+              return { results: [] };
+            }
+            if (normalized.includes("FROM tenants t WHERE t.id = ?")) {
+              return {
+                results: [{
+                  id: "tenant-z",
+                  name: "Tenant Z",
+                  slug: "tenant-z",
+                  status: "active",
+                  plan_code: "starter",
+                }],
+              };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM web_users")) {
+              return { results: [{ total: 2 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM technicians")) {
+              return { results: [{ total: 1 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM installations")) {
+              return { results: [{ total: 3 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM incidents")) {
+              return { results: [{ total: 4 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM audit_logs")) {
+              return { results: [{ total: 5 }] };
+            }
+            if (normalized.startsWith("SELECT username FROM web_users")) {
+              return { results: [] };
+            }
+            throw new Error(`Unhandled SQL in tenant delete impact test: ${normalized}`);
+          },
+        };
+      },
+    },
+  };
+
+  const response = await handlers.handleTenantsRoute(
+    new Request("https://example.com/web/tenants/tenant-z/delete-impact"),
+    env,
+    new URL("https://example.com/web/tenants/tenant-z/delete-impact"),
+    {},
+    ["tenants", "tenant-z", "delete-impact"],
+    true,
+    { sub: "root", role: "platform_owner", tenant_id: "default" },
+  );
+
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.tenant.id, "tenant-z");
+  assert.equal(body.impact.deleted_tables.web_users, 2);
+  assert.equal(body.impact.deleted_tables.incidents, 4);
+  assert.equal(body.impact.total_rows, 15);
+});
+
+test("tenants route creates tenant even when optional tenant tables are not migrated yet", async () => {
+  const auditEvents = [];
+  const handlers = createTenantsRouteHandlers(createTenantsRouteDeps({
+    async readJsonOrThrowBadRequest() {
+      return {
+        name: "Aramid",
+        slug: "aramid-uy",
+        plan_code: "starter",
+        status: "active",
+      };
+    },
+    async logAuditEvent(_env, payload) {
+      auditEvents.push(payload);
+    },
+  }));
+
+  const env = {
+    DB: {
+      prepare(sql) {
+        const normalized = String(sql || "").replace(/\s+/g, " ").trim();
+        return {
+          bind(...args) {
+            this.args = args;
+            return this;
+          },
+          async all() {
+            if (normalized.startsWith("SELECT name FROM sqlite_master")) {
+              const tableName = this.args?.[0];
+              if (tableName === "web_users" || tableName === "installations" || tableName === "incidents") {
+                return { results: [{ name: tableName }] };
+              }
+              return { results: [] };
+            }
+            if (normalized.startsWith("PRAGMA table_info(tenants)")) {
+              return {
+                results: [{ name: "id" }, { name: "name" }, { name: "status" }],
+              };
+            }
+            if (normalized.startsWith("PRAGMA table_info(incidents)")) {
+              return {
+                results: [],
+              };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM web_users")) {
+              return { results: [{ total: 0 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM installations")) {
+              return { results: [{ total: 0 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM incidents")) {
+              return { results: [{ total: 0 }] };
+            }
+            if (normalized.startsWith("SELECT username FROM web_users")) {
+              return { results: [] };
+            }
+            if (normalized.includes("FROM tenants t WHERE t.id = ?")) {
+              return {
+                results: [
+                  {
+                    id: "aramid-uy",
+                    name: "Aramid",
+                    slug: "aramid-uy",
+                    status: "active",
+                    plan_code: "starter",
+                    created_at: "2026-03-28T23:00:00.000Z",
+                    updated_at: "2026-03-28T23:00:00.000Z",
+                  },
+                ],
+              };
+            }
+            throw new Error(`Unhandled SQL in tenant create fallback test: ${normalized}`);
+          },
+          async run() {
+            if (normalized.startsWith("INSERT INTO tenants")) {
+              return { meta: { changes: 1 } };
+            }
+            throw new Error(`Unhandled run SQL in tenant create fallback test: ${normalized}`);
+          },
+        };
+      },
+    },
+  };
+
+  const response = await handlers.handleTenantsRoute(
+    new Request("https://example.com/web/tenants", { method: "POST" }),
+    env,
+    new URL("https://example.com/web/tenants"),
+    {},
+    ["tenants"],
+    true,
+    { sub: "root", role: "super_admin", tenant_id: "default" },
+  );
+
+  const body = await response.json();
+  assert.equal(response.status, 201);
+  assert.equal(body.success, true);
+  assert.equal(body.tenant.id, "aramid-uy");
+  assert.equal(body.tenant.metrics.technicians_count, 0);
+  assert.equal(auditEvents[0].action, "tenant_created");
+});
+
+test("tenants route lists legacy tenants table without slug column", async () => {
+  const env = {
+    DB: {
+      prepare(sql) {
+        const normalized = String(sql || "").replace(/\s+/g, " ").trim();
+        return {
+          bind(...args) {
+            this.args = args;
+            return this;
+          },
+          async all() {
+            if (normalized.startsWith("PRAGMA table_info(tenants)")) {
+              return {
+                results: [{ name: "id" }, { name: "name" }, { name: "status" }],
+              };
+            }
+            if (normalized.startsWith("SELECT name FROM sqlite_master")) {
+              return {
+                results: [{ name: this.args?.[0] || "" }],
+              };
+            }
+            if (normalized.startsWith("PRAGMA table_info(incidents)")) {
+              return {
+                results: [],
+              };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM web_users")) {
+              return { results: [{ total: 1 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM technicians")) {
+              return { results: [{ total: 0 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM installations")) {
+              return { results: [{ total: 0 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM incidents")) {
+              return { results: [{ total: 0 }] };
+            }
+            if (normalized.startsWith("SELECT username FROM web_users")) {
+              return { results: [{ username: "root" }] };
+            }
+            if (normalized.includes("t.id AS slug") && normalized.includes("FROM tenants t")) {
+              return {
+                results: [
+                  {
+                    id: "legacy-tenant",
+                    name: "Legacy Tenant",
+                    slug: "legacy-tenant",
+                    status: "active",
+                    plan_code: "starter",
+                    created_at: "",
+                    updated_at: "",
+                  },
+                ],
+              };
+            }
+            throw new Error(`Unhandled SQL in legacy tenant list test: ${normalized}`);
+          },
+        };
+      },
+    },
+  };
+
+  const handlers = createTenantsRouteHandlers(createTenantsRouteDeps());
+  const response = await handlers.handleTenantsRoute(
+    new Request("https://example.com/web/tenants"),
+    env,
+    new URL("https://example.com/web/tenants"),
+    {},
+    ["tenants"],
+    true,
+    { sub: "root", role: "super_admin", tenant_id: "default" },
+  );
+
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.tenants.length, 1);
+  assert.equal(body.tenants[0].slug, "legacy-tenant");
+  assert.equal(body.tenants[0].plan_code, "starter");
+});
+
+test("tenants route rejects super admin outside default tenant", async () => {
+  const handlers = createTenantsRouteHandlers(createTenantsRouteDeps());
+  await assert.rejects(
+    () => handlers.handleTenantsRoute(
+      new Request("https://example.com/web/tenants"),
+      { DB: { prepare() { throw new Error("DB should not be queried"); } } },
+      new URL("https://example.com/web/tenants"),
+      {},
+      ["tenants"],
+      true,
+      { sub: "tenant-root", role: "super_admin", tenant_id: "tenant-a" },
+    ),
+    (error) => error instanceof Error && /plataforma/i.test(error.message),
+  );
+});
+
+test("tenants route deletes tenant and tenant-scoped rows except default", async () => {
+  const auditEvents = [];
+  const executedDeletes = [];
+  const handlers = createTenantsRouteHandlers(createTenantsRouteDeps({
+    async logAuditEvent(_env, payload) {
+      auditEvents.push(payload);
+    },
+  }));
+
+  const env = {
+    DB: {
+      prepare(sql) {
+        const normalized = String(sql || "").replace(/\s+/g, " ").trim();
+        return {
+          bind(...args) {
+            this.args = args;
+            return this;
+          },
+          async all() {
+            if (normalized.startsWith("PRAGMA table_info(tenants)")) {
+              return {
+                results: [
+                  { name: "id" },
+                  { name: "name" },
+                  { name: "slug" },
+                  { name: "status" },
+                  { name: "plan_code" },
+                ],
+              };
+            }
+            if (normalized.startsWith("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")) {
+              return { results: [{ name: this.args?.[0] || "" }] };
+            }
+            if (normalized.startsWith("SELECT name FROM sqlite_master WHERE type = 'table'")) {
+              return {
+                results: [
+                  { name: "tenants" },
+                  { name: "web_users" },
+                  { name: "technicians" },
+                  { name: "installations" },
+                  { name: "audit_logs" },
+                ],
+              };
+            }
+            if (normalized.startsWith("PRAGMA table_info(web_users)")) {
+              return { results: [{ name: "tenant_id" }] };
+            }
+            if (normalized.startsWith("PRAGMA table_info(technicians)")) {
+              return { results: [{ name: "tenant_id" }] };
+            }
+            if (normalized.startsWith("PRAGMA table_info(installations)")) {
+              return { results: [{ name: "tenant_id" }] };
+            }
+            if (normalized.startsWith("PRAGMA table_info(audit_logs)")) {
+              return { results: [{ name: "tenant_id" }] };
+            }
+            if (normalized.startsWith("PRAGMA table_info(incidents)")) {
+              return { results: [{ name: "tenant_id" }, { name: "deleted_at" }, { name: "incident_status" }] };
+            }
+            if (normalized.startsWith("PRAGMA foreign_key_list(")) {
+              return { results: [] };
+            }
+            if (normalized.includes("FROM tenants t WHERE t.id = ?")) {
+              return {
+                results: [{
+                  id: "tenant-z",
+                  name: "Tenant Z",
+                  slug: "tenant-z",
+                  status: "active",
+                  plan_code: "starter",
+                }],
+              };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM web_users")) {
+              return { results: [{ total: 2 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM technicians")) {
+              return { results: [{ total: 1 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM installations")) {
+              return { results: [{ total: 3 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM audit_logs")) {
+              return { results: [{ total: 4 }] };
+            }
+            if (normalized.startsWith("SELECT COUNT(*) AS total FROM incidents")) {
+              return { results: [{ total: 0 }] };
+            }
+            if (normalized.startsWith("SELECT username FROM web_users")) {
+              return { results: [] };
+            }
+            throw new Error(`Unhandled SQL in tenant delete test: ${normalized}`);
+          },
+          async run() {
+            executedDeletes.push(normalized);
+            return { meta: { changes: 1 } };
+          },
+        };
+      },
+    },
+  };
+
+  const response = await handlers.handleTenantsRoute(
+    new Request("https://example.com/web/tenants/tenant-z", { method: "DELETE" }),
+    env,
+    new URL("https://example.com/web/tenants/tenant-z"),
+    {},
+    ["tenants", "tenant-z"],
+    true,
+    { sub: "root", role: "platform_owner", tenant_id: "default" },
+  );
+
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.deleted, true);
+  assert.equal(body.tenant_id, "tenant-z");
+  assert.equal(body.deleted_tables.web_users, 2);
+  assert.equal(body.deleted_tables.installations, 3);
+  assert.ok(executedDeletes.some((sql) => sql.startsWith("DELETE FROM web_users")));
+  assert.ok(executedDeletes.some((sql) => sql.startsWith("DELETE FROM tenants")));
+  assert.equal(auditEvents[0].action, "tenant_deleted");
 });
 
 test("public tracking snapshot distinguishes delayed-again and closed-again milestones", async () => {
@@ -624,6 +1411,413 @@ test("lookup handler falls back to installation search when assets tables are un
       installation_id: 77,
     },
   });
+});
+
+test("technicians route lists tenant technicians for authenticated web sessions", async () => {
+  const { handleTechniciansRoute } = createTechniciansRouteHandlers(createTechniciansRouteDeps());
+
+  const db = {
+    prepare(sql) {
+      assert.match(sql, /FROM technicians t/);
+      return {
+        bind(...args) {
+          assert.deepEqual(args, ["tenant-a", 0]);
+          return this;
+        },
+        async all() {
+          return {
+            results: [
+              {
+                id: 4,
+                tenant_id: "tenant-a",
+                web_user_id: 7,
+                display_name: "Ana Campo",
+                email: "ana@example.com",
+                phone: "099000111",
+                employee_code: "TEC-01",
+                notes: "Turno manana",
+                is_active: 1,
+                created_at: "2026-03-28T10:00:00.000Z",
+                updated_at: "2026-03-28T10:00:00.000Z",
+                active_assignment_count: 2,
+              },
+            ],
+          };
+        },
+      };
+    },
+  };
+
+  const response = await handleTechniciansRoute(
+    new Request("https://worker.example/web/technicians", { method: "GET" }),
+    { DB: db },
+    new URL("https://worker.example/web/technicians"),
+    {},
+    ["technicians"],
+    true,
+    {
+      sub: "ops-admin",
+      tenant_id: "tenant-a",
+      role: "admin",
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.technicians.length, 1);
+  assert.equal(body.technicians[0].display_name, "Ana Campo");
+  assert.equal(body.technicians[0].active_assignment_count, 2);
+});
+
+test("technicians route creates a technician linked to a tenant web user", async () => {
+  const auditEvents = [];
+  const { handleTechniciansRoute } = createTechniciansRouteHandlers(createTechniciansRouteDeps({
+    async readJsonOrThrowBadRequest() {
+      return {
+        display_name: "Luis Rivera",
+        web_user_id: 9,
+        employee_code: "TEC-09",
+      };
+    },
+    async logAuditEvent(_env, payload) {
+      auditEvents.push(payload);
+    },
+  }));
+
+  let selectCount = 0;
+  const db = {
+    prepare(sql) {
+      if (sql.includes("FROM web_users")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [9, "tenant-a"]);
+            return this;
+          },
+          async all() {
+            return { results: [{ id: 9, username: "tech-user", tenant_id: "tenant-a", is_active: 1 }] };
+          },
+        };
+      }
+      if (sql.includes("INSERT INTO technicians")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [
+              "tenant-a",
+              9,
+              "Luis Rivera",
+              null,
+              null,
+              "TEC-09",
+              null,
+              "2026-03-28T18:00:00.000Z",
+              "2026-03-28T18:00:00.000Z",
+            ]);
+            return this;
+          },
+          async run() {
+            return { meta: { last_row_id: 12 } };
+          },
+        };
+      }
+      if (sql.includes("FROM technicians")) {
+        selectCount += 1;
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [12, "tenant-a"]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [{
+                id: 12,
+                tenant_id: "tenant-a",
+                web_user_id: 9,
+                display_name: "Luis Rivera",
+                email: null,
+                phone: null,
+                employee_code: "TEC-09",
+                notes: null,
+                is_active: 1,
+                created_at: "2026-03-28T18:00:00.000Z",
+                updated_at: "2026-03-28T18:00:00.000Z",
+              }],
+            };
+          },
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+
+  const response = await handleTechniciansRoute(
+    new Request("https://worker.example/web/technicians", { method: "POST" }),
+    { DB: db },
+    new URL("https://worker.example/web/technicians"),
+    {},
+    ["technicians"],
+    true,
+    {
+      sub: "ops-admin",
+      tenant_id: "tenant-a",
+      role: "admin",
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 201);
+  assert.equal(selectCount, 1);
+  assert.equal(body.technician.id, 12);
+  assert.equal(body.technician.web_user_id, 9);
+  assert.equal(auditEvents[0].action, "technician_created");
+});
+
+test("technicians route creates assignments for existing tenant entities", async () => {
+  const auditEvents = [];
+  const { handleTechniciansRoute } = createTechniciansRouteHandlers(createTechniciansRouteDeps({
+    async readJsonOrThrowBadRequest() {
+      return {
+        entity_type: "installation",
+        entity_id: 45,
+        assignment_role: "owner",
+      };
+    },
+    async logAuditEvent(_env, payload) {
+      auditEvents.push(payload);
+    },
+  }));
+
+  const db = {
+    prepare(sql) {
+      if (sql.includes("FROM technicians")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [12, "tenant-a"]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [{
+                id: 12,
+                tenant_id: "tenant-a",
+                display_name: "Luis Rivera",
+                is_active: 1,
+              }],
+            };
+          },
+        };
+      }
+      if (sql.includes("FROM installations")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [45, "tenant-a"]);
+            return this;
+          },
+          async all() {
+            return { results: [{ id: 45 }] };
+          },
+        };
+      }
+      if (sql.includes("INSERT INTO technician_assignments")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [
+              "tenant-a",
+              12,
+              "installation",
+              "45",
+              "owner",
+              7,
+              "ops-supervisor",
+              "2026-03-28T18:00:00.000Z",
+              null,
+            ]);
+            return this;
+          },
+          async run() {
+            return { meta: { last_row_id: 31 } };
+          },
+        };
+      }
+      if (sql.includes("FROM technician_assignments")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [31, "tenant-a"]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [{
+                id: 31,
+                tenant_id: "tenant-a",
+                technician_id: 12,
+                entity_type: "installation",
+                entity_id: "45",
+                assignment_role: "owner",
+                assigned_by_user_id: 7,
+                assigned_by_username: "ops-supervisor",
+                assigned_at: "2026-03-28T18:00:00.000Z",
+                unassigned_at: null,
+                metadata_json: null,
+              }],
+            };
+          },
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+
+  const response = await handleTechniciansRoute(
+    new Request("https://worker.example/web/technicians/12/assignments", { method: "POST" }),
+    { DB: db },
+    new URL("https://worker.example/web/technicians/12/assignments"),
+    {},
+    ["technicians", "12", "assignments"],
+    true,
+    {
+      sub: "ops-supervisor",
+      tenant_id: "tenant-a",
+      role: "supervisor",
+      user_id: 7,
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 201);
+  assert.equal(body.assignment.id, 31);
+  assert.equal(body.assignment.entity_type, "installation");
+  assert.equal(auditEvents[0].action, "technician_assignment_created");
+});
+
+test("technician assignments route soft-unassigns active assignments", async () => {
+  const auditEvents = [];
+  const { handleTechnicianAssignmentsRoute } = createTechniciansRouteHandlers(createTechniciansRouteDeps({
+    async logAuditEvent(_env, payload) {
+      auditEvents.push(payload);
+    },
+  }));
+
+  let updateCalled = false;
+  const db = {
+    prepare(sql) {
+      if (sql.includes("FROM technician_assignments")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [31, "tenant-a"]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [{
+                id: 31,
+                tenant_id: "tenant-a",
+                technician_id: 12,
+                entity_type: "installation",
+                entity_id: "45",
+                assignment_role: "owner",
+                assigned_by_user_id: 7,
+                assigned_by_username: "ops-supervisor",
+                assigned_at: "2026-03-28T18:00:00.000Z",
+                unassigned_at: null,
+                metadata_json: null,
+              }],
+            };
+          },
+        };
+      }
+      if (sql.includes("UPDATE technician_assignments")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, ["2026-03-28T18:00:00.000Z", 31, "tenant-a"]);
+            return this;
+          },
+          async run() {
+            updateCalled = true;
+            return { meta: { changes: 1 } };
+          },
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+
+  const response = await handleTechnicianAssignmentsRoute(
+    new Request("https://worker.example/web/technician-assignments/31", { method: "DELETE" }),
+    { DB: db },
+    new URL("https://worker.example/web/technician-assignments/31"),
+    {},
+    ["technician-assignments", "31"],
+    true,
+    {
+      sub: "ops-admin",
+      tenant_id: "tenant-a",
+      role: "admin",
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(updateCalled, true);
+  assert.equal(body.assignment.unassigned_at, "2026-03-28T18:00:00.000Z");
+  assert.equal(auditEvents[0].action, "technician_assignment_removed");
+});
+
+test("technician assignments route lists active assignments for an entity", async () => {
+  const { handleTechnicianAssignmentsRoute } = createTechniciansRouteHandlers(createTechniciansRouteDeps());
+
+  const db = {
+    prepare(sql) {
+      assert.match(sql, /FROM technician_assignments ta/);
+      return {
+        bind(...args) {
+          assert.deepEqual(args, ["tenant-a", "installation", "45", 1, 1]);
+          return this;
+        },
+        async all() {
+          return {
+            results: [{
+              id: 51,
+              tenant_id: "tenant-a",
+              technician_id: 12,
+              entity_type: "installation",
+              entity_id: "45",
+              assignment_role: "owner",
+              assigned_by_user_id: 7,
+              assigned_by_username: "ops-admin",
+              assigned_at: "2026-03-28T18:00:00.000Z",
+              unassigned_at: null,
+              metadata_json: null,
+              technician_display_name: "Luis Rivera",
+              technician_employee_code: "TEC-09",
+              technician_is_active: 1,
+            }],
+          };
+        },
+      };
+    },
+  };
+
+  const response = await handleTechnicianAssignmentsRoute(
+    new Request("https://worker.example/web/technician-assignments?entity_type=installation&entity_id=45", {
+      method: "GET",
+    }),
+    { DB: db },
+    new URL("https://worker.example/web/technician-assignments?entity_type=installation&entity_id=45"),
+    {},
+    ["technician-assignments"],
+    true,
+    {
+      sub: "ops-admin",
+      tenant_id: "tenant-a",
+      role: "admin",
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.assignments.length, 1);
+  assert.equal(body.assignments[0].technician_display_name, "Luis Rivera");
+  assert.equal(body.assignments[0].technician_is_active, true);
 });
 
 test("maintenance handler delegates cleanup and logs the operation", async () => {

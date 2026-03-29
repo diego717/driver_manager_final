@@ -70,6 +70,38 @@ export interface Incident {
   photos: IncidentPhoto[];
 }
 
+export interface TechnicianRecord {
+  id: number;
+  tenant_id: string;
+  web_user_id: number | null;
+  display_name: string;
+  email?: string;
+  phone?: string;
+  employee_code?: string;
+  notes?: string;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+  active_assignment_count?: number;
+}
+
+export interface TechnicianAssignment {
+  id: number;
+  tenant_id: string;
+  technician_id: number;
+  entity_type: "installation" | "incident" | "asset" | "zone" | string;
+  entity_id: string;
+  assignment_role: "owner" | "assistant" | "reviewer" | string;
+  assigned_by_user_id?: number | null;
+  assigned_by_username?: string;
+  assigned_at?: string;
+  unassigned_at?: string | null;
+  metadata_json?: string | null;
+  technician_display_name?: string;
+  technician_employee_code?: string;
+  technician_is_active?: boolean | null;
+}
+
 export interface InstallationRecord {
   id: number;
   timestamp?: string;
@@ -132,6 +164,7 @@ export interface CreateInstallationConformityInput {
   email_to: string;
   signature_data_url: string;
   summary_note?: string;
+  technician_name?: string;
   technician_note?: string;
   include_all_incident_photos?: boolean;
   photo_ids?: number[];

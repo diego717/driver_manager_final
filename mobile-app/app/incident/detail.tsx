@@ -20,6 +20,7 @@ import {
   type IncidentPhotoPreviewTarget,
   resolveIncidentPhotoPreviewTarget,
 } from "@/src/api/photos";
+import { getCurrentLinkedTechnicianContext, getTechnicianAssignmentsByEntity } from "@/src/api/technicians";
 import { readStoredWebSession } from "@/src/api/webAuth";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import RuntimeChip from "@/src/components/RuntimeChip";
@@ -27,9 +28,10 @@ import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import SectionCard from "@/src/components/SectionCard";
 import StatusChip from "@/src/components/StatusChip";
+import TechnicianAssignmentsPanel from "@/src/components/TechnicianAssignmentsPanel";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
-import { type Incident } from "@/src/types/api";
+import { type Incident, type TechnicianAssignment, type TechnicianRecord } from "@/src/types/api";
 import {
   formatDateTime,
   formatDuration,
@@ -95,6 +97,8 @@ export default function IncidentDetailScreen() {
   const [deletingIncident, setDeletingIncident] = useState(false);
   const [resolutionNote, setResolutionNote] = useState("");
   const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
+  const [linkedTechnician, setLinkedTechnician] = useState<TechnicianRecord | null>(null);
+  const [assignmentSummary, setAssignmentSummary] = useState<TechnicianAssignment[]>([]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [activePhotoIndex, setActivePhotoIndex] = useState(0);
   const { width: windowWidth } = useWindowDimensions();
@@ -138,8 +142,42 @@ export default function IncidentDetailScreen() {
       void readStoredWebSession()
         .then((session) => setWebSessionRole(session.role))
         .catch(() => setWebSessionRole(null));
+      void getCurrentLinkedTechnicianContext()
+        .then(({ technician }) => setLinkedTechnician(technician))
+        .catch(() => setLinkedTechnician(null));
     }, [loadIncident]),
   );
+
+  useEffect(() => {
+    let mounted = true;
+    if (!incident) {
+      setAssignmentSummary([]);
+      return () => {
+        mounted = false;
+      };
+    }
+
+    void Promise.all([
+      getTechnicianAssignmentsByEntity("incident", incident.id).catch(() => []),
+      getTechnicianAssignmentsByEntity("installation", incident.installation_id).catch(() => []),
+      incident.asset_id
+        ? getTechnicianAssignmentsByEntity("asset", incident.asset_id).catch(() => [])
+        : Promise.resolve([]),
+    ]).then(([incidentAssignments, installationAssignments, assetAssignments]) => {
+      if (!mounted) return;
+      const seen = new Set<number>();
+      const merged = [...incidentAssignments, ...installationAssignments, ...assetAssignments].filter((assignment) => {
+        if (!assignment?.id || seen.has(assignment.id)) return false;
+        seen.add(assignment.id);
+        return !assignment.unassigned_at;
+      });
+      setAssignmentSummary(merged);
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, [incident]);
 
   useEffect(() => {
     if (normalizeIncidentStatus(incident?.incident_status) !== "in_progress") {
@@ -238,7 +276,7 @@ export default function IncidentDetailScreen() {
 
     Alert.alert(
       "Eliminar incidencia",
-      `La incidencia #${incident.id} dejara de verse en la app y en web. Esta accion solo la puede hacer super_admin.`,
+      `La incidencia #${incident.id} dejara de verse en la app y en web. Esta accion solo la puede hacer platform_owner.`,
       [
         { text: "Cancelar", style: "cancel" },
         {
@@ -363,7 +401,13 @@ export default function IncidentDetailScreen() {
   const status = normalizeIncidentStatus(incident?.incident_status);
   const runtime = resolveIncidentRealDurationSeconds(incident, nowMs);
   const estimated = resolveIncidentEstimatedDurationSeconds(incident);
-  const canDeleteIncident = webSessionRole === "super_admin";
+  const canDeleteIncident = webSessionRole === "super_admin" || webSessionRole === "platform_owner";
+  const canManageTechnicianAssignments =
+    webSessionRole === "admin" || webSessionRole === "super_admin" || webSessionRole === "platform_owner";
+  const currentTechnicianAssigned = Boolean(
+    linkedTechnician?.id &&
+      assignmentSummary.some((assignment) => assignment.technician_id === linkedTechnician.id),
+  );
 
   return (
     <ScreenScaffold contentContainerStyle={styles.container}>
@@ -439,6 +483,16 @@ export default function IncidentDetailScreen() {
             <Text style={[styles.cardText, { color: palette.textSecondary }]}>
               Fecha: {formatDateTime(incident.created_at)}
             </Text>
+            {linkedTechnician ? (
+              <Text
+                style={[
+                  styles.cardText,
+                  { color: currentTechnicianAssigned ? palette.successText : palette.textSecondary },
+                ]}
+              >
+                Tu asignacion: {currentTechnicianAssigned ? "en tu cola" : "sin asignacion directa"}
+              </Text>
+            ) : null}
             {incident.resolved_at ? (
               <Text style={[styles.cardText, { color: palette.textSecondary }]}>
                 Resuelta: {formatDateTime(incident.resolved_at)}
@@ -518,6 +572,36 @@ export default function IncidentDetailScreen() {
               cursorColor={textInputAccentColor}
             />
           </SectionCard>
+
+          {assignmentSummary.length ? (
+            <SectionCard
+              title="Responsables"
+              description="Asignaciones heredadas de la incidencia, del caso o del activo."
+            >
+              {assignmentSummary.map((assignment) => (
+                <Text key={assignment.id} style={[styles.cardText, { color: palette.textSecondary }]}>
+                  {assignment.technician_display_name || `Tecnico #${assignment.technician_id}`} · {assignment.assignment_role} · {assignment.entity_type}
+                </Text>
+              ))}
+            </SectionCard>
+          ) : null}
+
+          {canManageTechnicianAssignments ? (
+            <SectionCard
+              title="Gestion operativa"
+              description="Asigna o quita responsables directos de esta incidencia desde mobile."
+            >
+              <TechnicianAssignmentsPanel
+                entityType="incident"
+                entityId={incident.id}
+                entityLabel={`Incidencia #${incident.id}`}
+                canManage={canManageTechnicianAssignments}
+                currentLinkedTechnicianId={linkedTechnician?.id ?? null}
+                emptyText="Sin tecnicos asignados directo a esta incidencia."
+                onAssignmentsChanged={setAssignmentSummary}
+              />
+            </SectionCard>
+          ) : null}
 
           <SectionCard title="Nota" description="Contexto principal de la incidencia.">
             <Text style={[styles.cardText, { color: palette.textSecondary }]}>

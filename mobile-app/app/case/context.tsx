@@ -22,12 +22,14 @@ import {
   listInstallations,
   updateInstallationRecord,
 } from "@/src/api/incidents";
+import { readStoredWebSession } from "@/src/api/webAuth";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import SectionCard from "@/src/components/SectionCard";
 import StatusChip from "@/src/components/StatusChip";
+import TechnicianAssignmentsPanel from "@/src/components/TechnicianAssignmentsPanel";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { captureCurrentGpsSnapshot } from "@/src/services/location";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
@@ -73,6 +75,7 @@ export default function CaseContextScreen() {
   const [creatingCase, setCreatingCase] = useState(false);
   const [capturingSiteGps, setCapturingSiteGps] = useState(false);
   const [savingSite, setSavingSite] = useState(false);
+  const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
   const [siteRadiusInput, setSiteRadiusInput] = useState("120");
   const [feedbackMessage, setFeedbackMessage] = useState<FeedbackState>(null);
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -112,6 +115,8 @@ export default function CaseContextScreen() {
   );
   const canSendConformity = Boolean(selectedCase) && selectedSummary.active === 0;
   const caseHasSiteConfig = useMemo(() => hasInstallationSiteConfig(selectedCase), [selectedCase]);
+  const canManageTechnicianAssignments =
+    webSessionRole === "admin" || webSessionRole === "super_admin" || webSessionRole === "platform_owner";
 
   const clearFeedbackSoon = useCallback(() => {
     if (feedbackTimeoutRef.current) {
@@ -205,6 +210,9 @@ export default function CaseContextScreen() {
     useCallback(() => {
       if (!hasActiveSession || !hasPrefilledContext) return;
       void loadContext();
+      void readStoredWebSession()
+        .then((session) => setWebSessionRole(session.role))
+        .catch(() => setWebSessionRole(null));
     }, [hasActiveSession, hasPrefilledContext, loadContext]),
   );
 
@@ -733,6 +741,44 @@ export default function CaseContextScreen() {
                 </TouchableOpacity>
               ) : null}
             </View>
+            </SectionCard>
+          ) : null}
+
+          {selectedCase ? (
+            <SectionCard
+              title="Tecnicos del caso"
+              description={
+                canManageTechnicianAssignments
+                  ? "Administra responsables del caso directamente desde mobile."
+                  : "Responsables asignados a este caso."
+              }
+            >
+              <TechnicianAssignmentsPanel
+                entityType="installation"
+                entityId={selectedCase.id}
+                entityLabel={`Caso #${selectedCase.id}`}
+                canManage={canManageTechnicianAssignments}
+                emptyText="Sin tecnicos asignados a este caso."
+              />
+            </SectionCard>
+          ) : null}
+
+          {assetDetail?.asset?.id ? (
+            <SectionCard
+              title="Tecnicos del equipo"
+              description={
+                canManageTechnicianAssignments
+                  ? "Administra responsables del equipo vinculado."
+                  : "Responsables asignados a este equipo."
+              }
+            >
+              <TechnicianAssignmentsPanel
+                entityType="asset"
+                entityId={assetDetail.asset.id}
+                entityLabel={assetDetail.asset.external_code || `Activo #${assetDetail.asset.id}`}
+                canManage={canManageTechnicianAssignments}
+                emptyText="Sin tecnicos asignados a este equipo."
+              />
             </SectionCard>
           ) : null}
         </>

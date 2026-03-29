@@ -5,9 +5,12 @@ import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, TouchableOpacity
 
 import { getAssetIncidents, linkAssetToInstallation, listAssets, type AssetRecord } from "@/src/api/assets";
 import { extractApiError } from "@/src/api/client";
+import { readStoredWebSession } from "@/src/api/webAuth";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
+import SectionCard from "@/src/components/SectionCard";
+import TechnicianAssignmentsPanel from "@/src/components/TechnicianAssignmentsPanel";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
@@ -35,6 +38,7 @@ export default function ExploreTabScreen() {
   const [showLinkForm, setShowLinkForm] = useState(false);
   const [linkInstallationId, setLinkInstallationId] = useState("");
   const [linking, setLinking] = useState(false);
+  const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
 
   const resolveIntent =
     normalizeString(Array.isArray(params.intent) ? params.intent[0] : params.intent).toLowerCase() === "resolve";
@@ -48,6 +52,8 @@ export default function ExploreTabScreen() {
     () => assets.find((item) => item.id === selectedAssetId) || assetDetail?.asset || null,
     [assetDetail?.asset, assets, selectedAssetId],
   );
+  const canManageTechnicianAssignments =
+    webSessionRole === "admin" || webSessionRole === "super_admin" || webSessionRole === "platform_owner";
 
   const loadAssets = useCallback(async () => {
     if (!hasActiveSession) return;
@@ -141,6 +147,9 @@ export default function ExploreTabScreen() {
     useCallback(() => {
       if (!hasActiveSession) return;
       void loadAssets();
+      void readStoredWebSession()
+        .then((session) => setWebSessionRole(session.role))
+        .catch(() => setWebSessionRole(null));
     }, [hasActiveSession, loadAssets]),
   );
 
@@ -354,6 +363,25 @@ export default function ExploreTabScreen() {
             </View>
           ) : null}
         </View>
+      ) : null}
+
+      {selectedAsset ? (
+        <SectionCard
+          title="Tecnicos del equipo"
+          description={
+            canManageTechnicianAssignments
+              ? "Administra responsables del activo desde mobile."
+              : "Responsables asignados a este equipo."
+          }
+        >
+          <TechnicianAssignmentsPanel
+            entityType="asset"
+            entityId={selectedAsset.id}
+            entityLabel={selectedAsset.external_code || `Activo #${selectedAsset.id}`}
+            canManage={canManageTechnicianAssignments}
+            emptyText="Sin tecnicos asignados a este equipo."
+          />
+        </SectionCard>
       ) : null}
     </ScreenScaffold>
   );

@@ -18,6 +18,7 @@
             if (section === 'incidents') options.loadIncidentsWorkspace?.();
             if (section === 'assets') options.loadAssets();
             if (section === 'drivers') options.loadDrivers();
+            if (section === 'tenants') options.loadTenants?.();
             if (section === 'audit') options.loadAuditLogs();
         }
 

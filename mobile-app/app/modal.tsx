@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Alert,
@@ -32,6 +32,7 @@ import {
   type ThemeMode,
 } from "@/src/storage/secure";
 import ScreenHero from "@/src/components/ScreenHero";
+import TechnicianDirectoryCard from "@/src/components/TechnicianDirectoryCard";
 import { clearSharedWebSessionState, refreshSharedWebSessionState, useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
 import { useThemePreference } from "@/src/theme/theme-preference";
@@ -97,6 +98,7 @@ function normalizeRouteParam(value: string | string[] | undefined): string {
 }
 
 export default function ApiSettingsScreen() {
+  const router = useRouter();
   const params = useLocalSearchParams<{ focus?: string | string[] }>();
   const { mode, resolvedScheme, setMode } = useThemePreference();
   const palette = useAppPalette();
@@ -139,6 +141,8 @@ export default function ApiSettingsScreen() {
     if (!hasActiveSession) return false;
     return Boolean(webSessionExpiresAt && Date.parse(webSessionExpiresAt) > Date.now());
   }, [hasActiveSession, webSessionExpiresAt]);
+  const canManageTechnicians =
+    webSessionRole === "admin" || webSessionRole === "super_admin" || webSessionRole === "platform_owner";
   const sessionStatusTitle = hasWebSession ? "Conectado" : "Sin sesion activa";
   const sessionStatusSubtitle = hasWebSession
     ? formatRelativeTimeUntil(webSessionExpiresAt)
@@ -755,6 +759,24 @@ export default function ApiSettingsScreen() {
             </TouchableOpacity>
           </View>
         </View>
+
+        {hasWebSession && canManageTechnicians ? (
+          <>
+            <TouchableOpacity
+              style={[
+                styles.secondaryButton,
+                { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
+              ]}
+              onPress={() => router.push("/technicians")}
+              disabled={saving || testing || webSigningIn || webClearing || changingTheme || changingBiometric}
+            >
+              <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>
+                Abrir vista de tecnicos
+              </Text>
+            </TouchableOpacity>
+            <TechnicianDirectoryCard enabled />
+          </>
+        ) : null}
 
         <View style={[styles.sectionCard, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
           <Text style={[styles.sectionCardTitle, { color: palette.title }]}>Opciones avanzadas</Text>

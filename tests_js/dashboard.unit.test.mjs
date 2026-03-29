@@ -256,7 +256,8 @@ function installGeolocationMock(window, implementation) {
 
 test("dashboard bootstrap shows login and masks protected panels without session", async () => {
   const { dom } = await setupDashboardApp();
-  const { document } = dom.window;
+  const { window } = dom;
+  const { document } = window;
 
   assert.ok(document.getElementById("loginModal").classList.contains("active"));
   assert.match(document.getElementById("recentInstallations").textContent, /Inicia sesi/i);
@@ -282,6 +283,7 @@ test("dashboard login flow authenticates and renders user context from live publ
   ]);
 
   const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
   const { document } = dom.window;
 
   await loginThroughForm(dom, {
@@ -352,6 +354,7 @@ test("dashboard overview renders gps observability metrics from statistics", asy
   ]);
 
   const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
   const { document } = dom.window;
 
   await loginThroughForm(dom, {
@@ -399,6 +402,7 @@ test("dashboard overview surfaces asset loan alerts in attention panel", async (
   ]);
 
   const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
   const { document } = dom.window;
 
   await loginThroughForm(dom, {
@@ -410,6 +414,688 @@ test("dashboard overview surfaces asset loan alerts in attention panel", async (
   assert.match(document.getElementById("attentionList").textContent, /1 equipo sigue sin devolverse/i);
   assert.match(document.getElementById("attentionList").textContent, /Prestamos proximos a vencer/i);
   assert.equal(document.getElementById("notifBadge").textContent, "5");
+});
+
+test("dashboard overview surfaces technician load in the attention panel", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/technicians",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          technicians: [
+            {
+              id: 7,
+              display_name: "Luis Rivera",
+              employee_code: "TEC-09",
+              web_user_id: 7,
+              is_active: true,
+              active_assignment_count: 3,
+            },
+            {
+              id: 8,
+              display_name: "Maria Campo",
+              employee_code: "TEC-10",
+              web_user_id: null,
+              is_active: true,
+              active_assignment_count: 1,
+            },
+          ],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { document } = dom.window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const attentionText = document.getElementById("attentionList").textContent || "";
+  assert.match(attentionText, /Luis Rivera/i);
+  assert.match(attentionText, /3 asignaciones activas/i);
+});
+
+test("super admin can open the tenants section and review tenant detail", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(buildWebSessionPayload({ username: "root", role: "super_admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/tenants",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          tenants: [
+            {
+              id: "tenant-a",
+              name: "Acme Uruguay",
+              slug: "acme-uy",
+              status: "active",
+              plan_code: "growth",
+              metrics: {
+                users_count: 4,
+                technicians_count: 2,
+                installations_count: 11,
+                active_incidents_count: 3,
+              },
+              admin_usernames: ["ana", "bruno"],
+            },
+          ],
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/tenants/tenant-a",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          tenant: {
+            id: "tenant-a",
+            name: "Acme Uruguay",
+            slug: "acme-uy",
+            status: "active",
+            plan_code: "growth",
+            metrics: {
+              users_count: 4,
+              technicians_count: 2,
+              installations_count: 11,
+              active_incidents_count: 3,
+            },
+            admin_usernames: ["ana", "bruno"],
+          },
+          admins: [
+            {
+              id: 7,
+              username: "ana",
+              role: "admin",
+              is_active: true,
+              last_login_at: "2026-03-28T17:00:00.000Z",
+              tenant_id: "tenant-a",
+            },
+          ],
+          latest_usage: {
+            usage_month: "2026-03",
+            users_count: 4,
+            storage_bytes: 2048,
+            incidents_count: 27,
+            recorded_at: "2026-03-28T18:00:00.000Z",
+          },
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = dom.window;
+
+  await loginThroughForm(dom, {
+    username: "root",
+    password: "StrongPass#2026",
+  });
+
+  await window.loadTenantsSection({ silent: false });
+  await window.selectTenantDetail("tenant-a");
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const tenantsText = document.getElementById("tenantsList").textContent || "";
+  const detailText = document.getElementById("tenantDetail").textContent || "";
+  assert.match(tenantsText, /Acme Uruguay/i);
+  assert.match(tenantsText, /ana, bruno/i);
+  assert.match(detailText, /growth/i);
+  assert.match(detailText, /27 incidencias/i);
+});
+
+test("super admin can create and update tenant web users from tenant detail", async () => {
+  const tenantUsers = [
+    {
+      id: 7,
+      username: "ana",
+      role: "admin",
+      is_active: true,
+      created_at: "2026-03-28T12:00:00.000Z",
+      updated_at: "2026-03-28T12:00:00.000Z",
+      last_login_at: "2026-03-28T17:00:00.000Z",
+      tenant_id: "tenant-a",
+    },
+  ];
+
+  const buildTenantPayload = () => ({
+    success: true,
+    tenant: {
+      id: "tenant-a",
+      name: "Acme Uruguay",
+      slug: "acme-uy",
+      status: "active",
+      plan_code: "growth",
+      metrics: {
+        users_count: tenantUsers.length,
+        technicians_count: 2,
+        installations_count: 11,
+        active_incidents_count: 3,
+      },
+      admin_usernames: tenantUsers.filter((user) => user.role === "admin").map((user) => user.username),
+    },
+    admins: tenantUsers.filter((user) => user.role === "admin"),
+    latest_usage: {
+      usage_month: "2026-03",
+      users_count: tenantUsers.length,
+      storage_bytes: 2048,
+      incidents_count: 27,
+      recorded_at: "2026-03-28T18:00:00.000Z",
+    },
+  });
+
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(buildWebSessionPayload({ username: "root", role: "super_admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/tenants",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          tenants: [
+            {
+              id: "tenant-a",
+              name: "Acme Uruguay",
+              slug: "acme-uy",
+              status: "active",
+              plan_code: "growth",
+              metrics: {
+                users_count: tenantUsers.length,
+                technicians_count: 2,
+                installations_count: 11,
+                active_incidents_count: 3,
+              },
+              admin_usernames: tenantUsers.filter((user) => user.role === "admin").map((user) => user.username),
+            },
+          ],
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/tenants/tenant-a",
+      resolver: async () => createJsonResponse(buildTenantPayload()),
+    },
+    {
+      method: "GET",
+      match: "/web/auth/users",
+      resolver: async ({ request }) => {
+        const url = new URL(request.url);
+        assert.equal(url.searchParams.get("tenant_id"), "tenant-a");
+        return createJsonResponse({
+          success: true,
+          users: tenantUsers.map((user) => ({ ...user })),
+          pagination: {
+            limit: 500,
+            has_more: false,
+            next_cursor: null,
+          },
+        });
+      },
+    },
+    {
+      method: "POST",
+      match: "/web/auth/users",
+      resolver: async ({ request }) => {
+        const body = await request.clone().json();
+        assert.equal(body.tenant_id, "tenant-a");
+        assert.equal(body.username, "bruno");
+        assert.equal(body.role, "admin");
+        tenantUsers.push({
+          id: 9,
+          username: body.username,
+          role: body.role,
+          is_active: body.is_active !== false,
+          created_at: "2026-03-28T19:00:00.000Z",
+          updated_at: "2026-03-28T19:00:00.000Z",
+          last_login_at: null,
+          tenant_id: body.tenant_id,
+        });
+        return createJsonResponse({
+          success: true,
+          user: {
+            id: 9,
+            username: body.username,
+            role: body.role,
+            tenant_id: body.tenant_id,
+          },
+        }, { status: 201 });
+      },
+    },
+    {
+      method: "PATCH",
+      match: "/web/auth/users/9",
+      resolver: async ({ request }) => {
+        const body = await request.clone().json();
+        assert.equal(body.role, "viewer");
+        assert.equal(body.is_active, false);
+        tenantUsers[1] = {
+          ...tenantUsers[1],
+          role: body.role,
+          is_active: body.is_active,
+          updated_at: "2026-03-28T20:00:00.000Z",
+        };
+        return createJsonResponse({
+          success: true,
+          user: {
+            id: 9,
+            username: tenantUsers[1].username,
+            role: tenantUsers[1].role,
+            is_active: tenantUsers[1].is_active,
+            tenant_id: tenantUsers[1].tenant_id,
+          },
+        });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+
+  await loginThroughForm(dom, {
+    username: "root",
+    password: "StrongPass#2026",
+  });
+
+  await window.loadTenantsSection({ silent: false });
+  await window.selectTenantDetail("tenant-a");
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.match(document.getElementById("tenantDetail").textContent || "", /Usuarios web/i);
+  assert.match(document.getElementById("tenantDetail").textContent || "", /ana/i);
+
+  const createBtn = Array.from(document.querySelectorAll("#tenantDetail button"))
+    .find((button) => /Crear usuario/i.test(button.textContent || ""));
+  assert.ok(createBtn);
+  createBtn.click();
+  await flushDashboardTasks();
+
+  document.getElementById("actionTenantUserUsername").value = "bruno";
+  document.getElementById("actionTenantUserPassword").value = "StrongPass#2026";
+  document.getElementById("actionTenantUserRole").value = "admin";
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.match(document.getElementById("tenantDetail").textContent || "", /bruno/i);
+
+  const userCards = Array.from(document.querySelectorAll("#tenantDetail .settings-assignment-card"));
+  const brunoCard = userCards.find((card) =>
+    /bruno/i.test(card.textContent || "") && card.querySelector("button"));
+  assert.ok(brunoCard);
+
+  const editBtn = Array.from(brunoCard.querySelectorAll("button"))
+    .find((button) => /Editar acceso/i.test(button.textContent || ""));
+  assert.ok(editBtn);
+  editBtn.click();
+  await flushDashboardTasks();
+
+  document.getElementById("actionTenantUserRole").value = "viewer";
+  document.getElementById("actionTenantUserIsActive").value = "0";
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const detailText = document.getElementById("tenantDetail").textContent || "";
+  assert.match(detailText, /bruno/i);
+  assert.match(detailText, /viewer/i);
+  assert.match(detailText, /inactivo/i);
+});
+
+test("super admin outside default tenant cannot access tenant admin center", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(buildWebSessionPayload({
+          username: "tenant-root",
+          role: "super_admin",
+          tenantId: "tenant-a",
+        })),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { document } = dom.window;
+
+  await loginThroughForm(dom, {
+    username: "tenant-root",
+    password: "StrongPass#2026",
+  });
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+  await dom.window.loadTenantsSection({ silent: true });
+  await flushDashboardTasks();
+
+  assert.equal(document.getElementById("tenantsSection").hidden, true);
+  assert.equal(document.getElementById("navTenantsLink").closest("li").hidden, true);
+});
+
+test("super admin can delete tenant users and tenants with confirmation", async () => {
+  const tenantUsers = [
+    {
+      id: 7,
+      username: "ana",
+      role: "admin",
+      is_active: true,
+      created_at: "2026-03-28T12:00:00.000Z",
+      updated_at: "2026-03-28T12:00:00.000Z",
+      last_login_at: "2026-03-28T17:00:00.000Z",
+      tenant_id: "tenant-a",
+    },
+  ];
+  let tenantDeleted = false;
+
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(buildWebSessionPayload({ username: "root", role: "platform_owner" })),
+    },
+    {
+      method: "GET",
+      match: "/web/tenants",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          tenants: tenantDeleted
+            ? []
+            : [{
+                id: "tenant-a",
+                name: "Acme Uruguay",
+                slug: "acme-uy",
+                status: "active",
+                plan_code: "growth",
+                metrics: {
+                  users_count: tenantUsers.length,
+                  technicians_count: 0,
+                  installations_count: 0,
+                  active_incidents_count: 0,
+                },
+                admin_usernames: tenantUsers.map((user) => user.username),
+              }],
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/tenants/tenant-a",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          tenant: {
+            id: "tenant-a",
+            name: "Acme Uruguay",
+            slug: "acme-uy",
+            status: "active",
+            plan_code: "growth",
+            metrics: {
+              users_count: tenantUsers.length,
+              technicians_count: 0,
+              installations_count: 0,
+              active_incidents_count: 0,
+            },
+            admin_usernames: tenantUsers.map((user) => user.username),
+          },
+          admins: tenantUsers,
+          latest_usage: null,
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/auth/users",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          users: tenantUsers.map((user) => ({ ...user })),
+          pagination: {
+            limit: 500,
+            has_more: false,
+            next_cursor: null,
+          },
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/auth/users/7/delete-impact",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          user: { ...tenantUsers[0] },
+          impact: {
+            sessions_invalidated: 1,
+            technician_links_to_clear: 0,
+            device_tokens_to_revoke: 2,
+          },
+        }),
+    },
+    {
+      method: "DELETE",
+      match: "/web/auth/users/7",
+      resolver: async () => {
+        tenantUsers.splice(0, tenantUsers.length);
+        return createJsonResponse({ success: true, deleted: true, user_id: 7 });
+      },
+    },
+    {
+      method: "GET",
+      match: "/web/tenants/tenant-a/delete-impact",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          tenant: {
+            id: "tenant-a",
+            name: "Acme Uruguay",
+          },
+          impact: {
+            deleted_tables: {
+              web_users: 0,
+              technicians: 0,
+              installations: 0,
+              incidents: 0,
+              audit_logs: 2,
+            },
+            total_rows: 2,
+          },
+        }),
+    },
+    {
+      method: "DELETE",
+      match: "/web/tenants/tenant-a",
+      resolver: async () => {
+        tenantDeleted = true;
+        return createJsonResponse({ success: true, deleted: true, tenant_id: "tenant-a" });
+      },
+    },
+    {
+      method: "GET",
+      match: "/web/technicians",
+      resolver: async () => createJsonResponse({ success: true, technicians: [] }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+
+  await loginThroughForm(dom, {
+    username: "root",
+    password: "StrongPass#2026",
+  });
+  await window.loadTenantsSection({ silent: false });
+  await window.selectTenantDetail("tenant-a");
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const userDeleteBtn = Array.from(document.querySelectorAll("#tenantDetail button"))
+    .find((button) => /Eliminar/i.test(button.textContent || ""));
+  assert.ok(userDeleteBtn);
+  userDeleteBtn.click();
+  await flushDashboardTasks();
+  assert.match(document.getElementById("actionModalFields").textContent || "", /Tokens de dispositivo a revocar/i);
+  assert.match(document.getElementById("actionModalFields").textContent || "", /2/);
+  document.getElementById("actionModalConfirmCheckbox").checked = true;
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.doesNotMatch(document.getElementById("tenantDetail").textContent || "", /ana/i);
+
+  document.getElementById("tenantsDeleteBtn").click();
+  await flushDashboardTasks();
+  assert.match(document.getElementById("actionModalFields").textContent || "", /Total estimado de filas/i);
+  assert.match(document.getElementById("actionModalFields").textContent || "", /2/);
+  document.getElementById("actionModalConfirmCheckbox").checked = true;
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.match(document.getElementById("tenantsList").textContent || "", /no hay tenants/i);
+});
+
+test("technician editor links web users by selector instead of manual id entry", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/technicians",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          technicians: [
+            {
+              id: 7,
+              display_name: "Luis Rivera",
+              employee_code: "TEC-09",
+              web_user_id: 7,
+              is_active: true,
+              active_assignment_count: 1,
+            },
+            {
+              id: 8,
+              display_name: "Maria Campo",
+              employee_code: "TEC-10",
+              web_user_id: null,
+              is_active: true,
+              active_assignment_count: 0,
+            },
+          ],
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/auth/users",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          users: [
+            { id: 7, username: "lrivera", role: "tecnico", tenant_id: "default", is_active: true },
+            { id: 9, username: "mcampo", role: "tecnico", tenant_id: "default", is_active: true },
+            { id: 10, username: "supervisor-1", role: "supervisor", tenant_id: "default", is_active: false },
+          ],
+          pagination: {
+            limit: 500,
+            has_more: false,
+            next_cursor: null,
+          },
+        }),
+    },
+    {
+      method: "PATCH",
+      match: "/web/technicians/8",
+      resolver: async ({ request }) => {
+        const body = await request.clone().json();
+        assert.equal(body.web_user_id, 9);
+        return createJsonResponse({
+          success: true,
+          technician: {
+            id: 8,
+            display_name: "Maria Campo",
+            employee_code: "TEC-10",
+            web_user_id: 9,
+            is_active: true,
+            active_assignment_count: 0,
+          },
+        });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { document } = dom.window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const settingsText = document.getElementById("settingsTechniciansList").textContent || "";
+  assert.match(settingsText, /lrivera/i);
+  assert.match(settingsText, /tecnico/i);
+
+  const cards = Array.from(document.querySelectorAll(".settings-technician-card"));
+  const mariaCard = cards.find((card) => /Maria Campo/i.test(card.textContent || ""));
+  assert.ok(mariaCard);
+
+  const editBtn = Array.from(mariaCard.querySelectorAll("button")).find((button) => /Editar/i.test(button.textContent || ""));
+  assert.ok(editBtn);
+  editBtn.click();
+  await flushDashboardTasks();
+
+  const webUserSelect = document.getElementById("actionTechnicianWebUserId");
+  assert.ok(webUserSelect);
+  const optionLabels = Array.from(webUserSelect.options).map((option) => option.textContent || "");
+  assert.match(optionLabels.join(" | "), /mcampo/i);
+  assert.doesNotMatch(optionLabels.join(" | "), /lrivera/i);
+
+  webUserSelect.value = "9";
+  document.getElementById("actionTechnicianDisplayName").value = "Maria Campo";
+  document.getElementById("actionModalSubmitBtn").click();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const patchCalls = router.calls.filter((call) => call.pathname === "/web/technicians/8" && call.method === "PATCH");
+  assert.equal(patchCalls.length, 1);
 });
 
 test("dashboard logout returns UI to protected-empty state and reopens login", async () => {
@@ -761,6 +1447,129 @@ test("asset detail can register and return a loan from the shared action modal",
   assert.equal(returnedLoanPayloads[0].return_notes, "Sin novedades");
   assert.match(document.getElementById("assetDetail").textContent, /Prestar equipo/i);
   assert.doesNotMatch(document.getElementById("assetDetail").textContent, /Prestamo activo \| Cliente Prestado/i);
+});
+
+test("asset detail surfaces assigned technicians for direct operational management", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+    {
+      method: "GET",
+      match: "/web/assets",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          items: [
+            {
+              id: 77,
+              external_code: "EQ-77",
+              brand: "Entrust",
+              model: "Sigma",
+              serial_number: "SN-77",
+              client_name: "QA",
+              status: "active",
+            },
+          ],
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/assets/77/incidents",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          asset: {
+            id: 77,
+            external_code: "EQ-77",
+            brand: "Entrust",
+            model: "Sigma",
+            serial_number: "SN-77",
+            client_name: "QA",
+            status: "active",
+          },
+          active_link: { installation_id: 12 },
+          links: [],
+          incidents: [],
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/assets/77/loans",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          items: [],
+          active_count: 0,
+          overdue_count: 0,
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/technicians",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          technicians: [
+            {
+              id: 7,
+              display_name: "Luis Rivera",
+              employee_code: "TEC-09",
+              web_user_id: 7,
+              is_active: true,
+              active_assignment_count: 1,
+            },
+          ],
+        }),
+    },
+    {
+      method: "GET",
+      match: ({ url }) =>
+        url.pathname === "/web/technician-assignments" &&
+        url.searchParams.get("entity_type") === "asset" &&
+        url.searchParams.get("entity_id") === "77",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          assignments: [
+            {
+              id: 51,
+              technician_id: 7,
+              technician_display_name: "Luis Rivera",
+              technician_employee_code: "TEC-09",
+              assignment_role: "owner",
+              assigned_by_username: "ops-admin",
+            },
+          ],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  await window.loadAssetDetail(77);
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const detailText = document.getElementById("assetDetail").textContent || "";
+  assert.match(detailText, /Técnicos del equipo/i);
+  assert.match(detailText, /Luis Rivera/i);
+  assert.match(detailText, /Asignar técnico/i);
 });
 
 test("reopening a resolved incident removes the resolution panel immediately", async () => {
@@ -1901,6 +2710,62 @@ test("asset incident creation includes geolocation payload", async () => {
   assert.equal(incidentPayloads[0].gps.source, "browser");
 });
 
+test("incident modal preselects the assigned technician for the installation", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/technicians",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          technicians: [
+            { id: 1, display_name: "Luis Rivera", employee_code: "TEC-09", is_active: true, active_assignment_count: 1 },
+            { id: 2, display_name: "Maria Campo", employee_code: "TEC-10", is_active: true, active_assignment_count: 0 },
+          ],
+        }),
+    },
+    {
+      method: "GET",
+      match: ({ url }) =>
+        url.pathname === "/web/technician-assignments" &&
+        url.searchParams.get("entity_type") === "installation" &&
+        url.searchParams.get("entity_id") === "45",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          assignments: [
+            {
+              id: 51,
+              technician_id: 1,
+              technician_display_name: "Luis Rivera",
+              technician_employee_code: "TEC-09",
+              assignment_role: "owner",
+            },
+          ],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+
+  window.createIncidentFromWeb(45);
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const technicianSelect = document.getElementById("actionIncidentTechnicianName");
+  assert.ok(technicianSelect instanceof window.HTMLSelectElement);
+  assert.equal(technicianSelect.value, "Luis Rivera");
+});
+
 test("incident creation includes geofence override note when capture is outside the site radius", async () => {
   const incidentPayloads = [];
   const router = createFetchRouter([
@@ -1986,6 +2851,100 @@ test("incident creation includes geofence override note when capture is outside 
     incidentPayloads[0].geofence_override_note,
     "Se opero desde el acceso perimetral autorizado.",
   );
+});
+
+test("incidents view shows assigned technician and can filter cards by technician", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/technicians",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          technicians: [
+            { id: 1, display_name: "Luis Rivera", employee_code: "TEC-09", is_active: true, active_assignment_count: 1 },
+            { id: 2, display_name: "Maria Campo", employee_code: "TEC-10", is_active: true, active_assignment_count: 0 },
+          ],
+        }),
+    },
+    {
+      method: "GET",
+      match: ({ url }) =>
+        url.pathname === "/web/technician-assignments" &&
+        url.searchParams.get("entity_type") === "installation" &&
+        url.searchParams.get("entity_id") === "45",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          assignments: [
+            {
+              id: 51,
+              technician_id: 1,
+              technician_display_name: "Luis Rivera",
+              technician_employee_code: "TEC-09",
+              assignment_role: "owner",
+            },
+          ],
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/conformity",
+      resolver: async () => createJsonResponse({ success: true, conformity: null }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+
+  await window.renderIncidents(
+    [
+      {
+        id: 18,
+        installation_id: 45,
+        note: "Primera incidencia",
+        severity: "medium",
+        incident_status: "open",
+        created_at: "2026-03-20T12:00:00.000Z",
+        reporter_username: "Maria Campo",
+        photos: [],
+      },
+      {
+        id: 19,
+        installation_id: 45,
+        note: "Segunda incidencia",
+        severity: "high",
+        incident_status: "in_progress",
+        created_at: "2026-03-20T12:20:00.000Z",
+        reporter_username: "ops-admin",
+        photos: [],
+      },
+    ],
+    45,
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const cards = Array.from(document.querySelectorAll("#incidentsList .incident-card"));
+  assert.equal(cards.length, 2);
+  assert.match(cards[0].textContent || "", /Tecnico asignado:\s*Luis Rivera/i);
+
+  const filterSelect = document.getElementById("incidentsTechnicianFilter");
+  assert.ok(filterSelect instanceof window.HTMLSelectElement);
+  filterSelect.value = "Maria Campo";
+  filterSelect.dispatchEvent(new Event("change", { bubbles: true }));
+
+  const visibleCards = cards.filter((card) => card.hidden !== true);
+  assert.equal(visibleCards.length, 1);
+  assert.match(visibleCards[0].textContent || "", /Primera incidencia/i);
 });
 
 test("conformity creation includes captured geolocation payload", async () => {

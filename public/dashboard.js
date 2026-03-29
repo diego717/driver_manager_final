@@ -90,6 +90,15 @@ let currentSelectedInstallationId = null;
 let currentAssetsData = [];
 let currentSelectedAssetId = null;
 let currentDriversData = [];
+let currentTechniciansData = [];
+let currentWebUsersData = [];
+let currentTenantsData = [];
+let currentSelectedTenantId = null;
+let currentTenantDetail = null;
+let currentTenantUsersData = [];
+const technicianAssignmentsByTechnicianId = new Map();
+const technicianAssignmentsByEntityKey = new Map();
+const expandedTechnicianAssignmentPanels = new Set();
 let selectedDriverFile = null;
 let currentTrendRangeDays = 7;
 let dashboardLoadPromise = null;
@@ -288,6 +297,7 @@ const SECTION_TITLES = {
     assets: 'Equipos',
     drivers: 'Drivers',
     incidents: 'Incidencias',
+    tenants: 'Tenants',
     audit: 'Auditoría',
     settings: 'Configuración',
 };
@@ -297,9 +307,21 @@ const SECTION_SUBTITLES = {
     assets: 'Equipos con acceso directo a incidencias y contexto',
     drivers: 'Versionado centralizado de controladores',
     incidents: 'Atiende eventos sin perder el contexto operativo',
+    tenants: 'Administra empresas, admins y estado de plataforma',
     audit: 'Trazas críticas y cumplimiento',
     settings: 'Preferencias operativas y atajos de gestión',
 };
+const TECHNICIAN_ENTITY_LABELS = Object.freeze({
+    installation: 'Registro',
+    incident: 'Incidencia',
+    asset: 'Equipo',
+    zone: 'Zona',
+});
+const TECHNICIAN_ASSIGNMENT_ROLE_LABELS = Object.freeze({
+    owner: 'Responsable',
+    assistant: 'Apoyo',
+    reviewer: 'Revisión',
+});
 const SECTION_REQUIRED_BINDINGS = Object.freeze({
     dashboard: [
         'kpiCriticalIncidentsValue',
@@ -350,6 +372,12 @@ const SECTION_REQUIRED_BINDINGS = Object.freeze({
         'refreshAudit',
         'auditLogs',
     ],
+    tenants: [
+        'tenantsList',
+        'tenantDetail',
+        'tenantsRefreshBtn',
+        'tenantsCreateBtn',
+    ],
     settings: [
         'settingsUsername',
         'settingsRole',
@@ -358,13 +386,14 @@ const SECTION_REQUIRED_BINDINGS = Object.freeze({
         'settingsLogoutBtn',
     ],
 });
-const MOBILE_NAV_OVERFLOW_SECTIONS = new Set(['drivers', 'audit', 'settings']);
+const MOBILE_NAV_OVERFLOW_SECTIONS = new Set(['drivers', 'tenants', 'audit', 'settings']);
 const HEADER_PRIMARY_ACTIONS = {
     dashboard: { icon: 'add_circle', label: 'Nuevo registro', action: 'createRecord' },
     installations: { icon: 'add_circle', label: 'Nuevo registro', action: 'createRecord' },
     assets: { icon: 'qr_code_2', label: 'Nuevo equipo + QR', action: 'createAsset' },
     drivers: { icon: 'cloud_upload', label: 'Subir driver', action: 'pickDriverFile' },
     incidents: { icon: 'warning', label: 'Nueva incidencia', action: 'createIncident' },
+    tenants: { icon: 'add_business', label: 'Nuevo tenant', action: 'createTenant' },
     audit: { icon: 'refresh', label: 'Actualizar auditoría', action: 'refreshAudit' },
     settings: { icon: 'description', label: 'Abrir auditoría', action: 'openAudit' },
 };
@@ -489,6 +518,7 @@ function waitForExistingScript(script, normalizedSrc) {
         script.addEventListener('load', handleLoad, { once: true });
         script.addEventListener('error', handleError, { once: true });
     });
+
 }
 
 function loadLazyScript(src) {
@@ -672,6 +702,7 @@ dashboardIncidents = window.createDashboardIncidents({
     api,
     bindIncidentEstimatedDurationFields,
     canCurrentUserEditAssets,
+    canCurrentUserManageTechnicianAssignments,
     closeActionModal,
     createMaterialIconNode,
     escapeHtml,
@@ -679,6 +710,10 @@ dashboardIncidents = window.createDashboardIncidents({
     formatDuration,
     geolocation: dashboardGeolocation,
     getActiveSectionName,
+    getAvailableTechnicians: () => currentTechniciansData.filter((item) => item && item.is_active),
+    getCurrentLinkedTechnician: () => currentTechniciansData.find((item) =>
+        item && Number(item.web_user_id) === Number(currentUser?.id)) || null,
+    getTechnicianAssignmentsForEntity: (...args) => loadTechnicianAssignmentsForEntity(...args),
     getInstallationById: getInstallationFromCache,
     getCurrentSelectedAssetId: () => currentSelectedAssetId,
     getCurrentSelectedInstallationId: () => currentSelectedInstallationId,
@@ -696,10 +731,12 @@ dashboardIncidents = window.createDashboardIncidents({
     normalizeSeverity,
     openActionConfirmModal,
     openActionModal,
+    openEntityTechnicianAssignmentModal,
     parseStrictInteger,
     readIncidentEstimatedDurationFromModal,
     recordAttentionStateIconName,
     renderContextualEmptyState,
+    renderEntityTechnicianAssignmentsPanel,
     requireActiveSession,
     resolveIncidentEstimatedDurationSeconds,
     resolveIncidentRealDurationSeconds,
@@ -719,6 +756,7 @@ dashboardAssets = window.createDashboardAssets({
     api,
     appendIncidentCard: (...args) => dashboardIncidents.appendIncidentCard(...args),
     canCurrentUserEditAssets,
+    canCurrentUserManageTechnicianAssignments,
     closeActionModal,
     createIncidentForAsset: (...args) => dashboardIncidents.createIncidentForAsset(...args),
     deriveAssetAttentionMetaFromIncidents: (...args) => dashboardIncidents.deriveAssetAttentionMetaFromIncidents(...args),
@@ -730,8 +768,10 @@ dashboardAssets = window.createDashboardAssets({
     openActionConfirmModal,
     openActionModal,
     openAssetLinkModal,
+    openEntityTechnicianAssignmentModal,
     parseStrictInteger,
     renderContextualEmptyState,
+    renderEntityTechnicianAssignmentsPanel,
     requireActiveSession,
     setCurrentAssetsData: (value) => {
         currentAssetsData = Array.isArray(value) ? value : [];
@@ -803,10 +843,11 @@ dashboardOverview = window.createDashboardOverview({
     ensureChartsReady: ensureChartLibrary,
     getCharts: () => charts,
     getConnectionStatus,
-    getCurrentTrendRangeDays: () => currentTrendRangeDays,
-    getCurrentUser: () => currentUser,
-    getLastCriticalIncidentsCount: () => lastCriticalIncidentsCount,
-    isChartAvailable,
+      getCurrentTrendRangeDays: () => currentTrendRangeDays,
+      getCurrentUser: () => currentUser,
+      getLastCriticalIncidentsCount: () => lastCriticalIncidentsCount,
+      getTechnicianLoadSummary,
+      isChartAvailable,
     kpiNumberAnimationMs: KPI_NUMBER_ANIMATION_MS,
     navigateToSectionByKey,
     readThemeToken,
@@ -878,6 +919,7 @@ dashboardAuth = window.createDashboardAuth({
         currentSelectedInstallationId = null;
         currentAssetsData = [];
         currentSelectedAssetId = null;
+        resetTechniciansState();
     },
     setCurrentUser: (user) => {
         currentUser = user;
@@ -1013,11 +1055,1825 @@ function updateSettingsSyncLabel(status = 'paused') {
 }
 
 function updateSettingsSummary() {
-    return dashboardAuth.updateSettingsSummary();
+    const result = dashboardAuth.updateSettingsSummary();
+    renderTechniciansSection();
+    renderTenantsSection();
+    return result;
 }
 
 function applyAuthenticatedUser(user) {
-    return dashboardAuth.applyAuthenticatedUser(user);
+    const result = dashboardAuth.applyAuthenticatedUser(user);
+    renderTechniciansSection();
+    renderTenantsSection();
+    return result;
+}
+
+function canCurrentUserManageTenants() {
+    const role = String(currentUser?.role || '').trim().toLowerCase();
+    const tenantId = String(currentUser?.tenant_id || '').trim().toLowerCase();
+    return (role === 'super_admin' || role === 'platform_owner') && tenantId === 'default';
+}
+
+function canCurrentUserAssignPlatformSuperAdmin() {
+    return canCurrentUserManageTenants();
+}
+
+function canCurrentUserManageTechnicians() {
+    const role = String(currentUser?.role || '').trim().toLowerCase();
+    return role === 'admin' || role === 'super_admin' || role === 'platform_owner';
+}
+
+function canCurrentUserManageTechnicianAssignments() {
+    const role = String(currentUser?.role || '').trim().toLowerCase();
+    return role === 'admin' || role === 'super_admin' || role === 'platform_owner' || role === 'supervisor';
+}
+
+function resetTechniciansState() {
+    currentTechniciansData = [];
+    currentWebUsersData = [];
+    technicianAssignmentsByTechnicianId.clear();
+    technicianAssignmentsByEntityKey.clear();
+    expandedTechnicianAssignmentPanels.clear();
+    renderTechniciansSection();
+    dashboardOverview?.renderTechnicianLoadAttention?.();
+}
+
+function resetTenantsState() {
+    currentTenantsData = [];
+    currentSelectedTenantId = null;
+    currentTenantDetail = null;
+    currentTenantUsersData = [];
+    renderTenantsSection();
+}
+
+function setTenantSummaryValue(id, value) {
+    const node = document.getElementById(id);
+    if (node) {
+        node.textContent = String(value ?? '-');
+    }
+}
+
+function formatBytes(bytes) {
+    const normalized = Number(bytes);
+    if (!Number.isFinite(normalized) || normalized <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let value = normalized;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+    }
+    return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function formatDateTime(value) {
+    const normalized = String(value || '').trim();
+    if (!normalized) return 'sin dato';
+
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) {
+        return normalized;
+    }
+
+    return new Intl.DateTimeFormat('es-UY', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+    }).format(parsed);
+}
+
+function normalizeMojibakeText(value) {
+    const normalized = String(value ?? '');
+    return normalized
+        .replaceAll('ÃƒÂ³', 'ó')
+        .replaceAll('ÃƒÂ©', 'é')
+        .replaceAll('ÃƒÂ¡', 'á')
+        .replaceAll('ÃƒÂº', 'ú')
+        .replaceAll('ÃƒÂ±', 'ñ')
+        .replaceAll('Ã‚Â·', '·')
+        .replaceAll('Â·', '·')
+        .replaceAll('sesiÃ', 'sesi')
+        .replaceAll('administraciÃ', 'administraci')
+        .replaceAll('secciÃ', 'secci')
+        .replaceAll('todavÃ', 'todaví')
+        .replaceAll('TÃ', 'Té')
+        .replaceAll('Uso mÃ', 'Uso má');
+}
+
+function repairTenantSectionMojibake(root) {
+    if (!root) return;
+    if (root.nodeType === Node.TEXT_NODE) {
+        root.textContent = normalizeMojibakeText(root.textContent);
+        return;
+    }
+    if (root.nodeType !== Node.ELEMENT_NODE) return;
+    Array.from(root.childNodes || []).forEach((node) => repairTenantSectionMojibake(node));
+}
+
+function getTenantUserRoleOptions() {
+    const options = [
+        ['admin', 'Admin'],
+        ['viewer', 'Solo lectura'],
+    ];
+    if (canCurrentUserAssignPlatformSuperAdmin()) {
+        options.push(['platform_owner', 'Platform owner']);
+    }
+    return options;
+}
+
+function buildTenantUserFields(user = null, tenantId = '') {
+    const fragment = document.createDocumentFragment();
+    const grid = document.createElement('div');
+    grid.className = 'action-modal-grid';
+
+    if (!user) {
+        const tenantInput = document.createElement('input');
+        tenantInput.type = 'text';
+        tenantInput.id = 'actionTenantUserTenantId';
+        tenantInput.value = tenantId;
+        tenantInput.readOnly = true;
+        grid.append(createModalInputGroup('Tenant', tenantInput, { htmlFor: tenantInput.id }));
+
+        const usernameInput = document.createElement('input');
+        usernameInput.type = 'text';
+        usernameInput.id = 'actionTenantUserUsername';
+        usernameInput.placeholder = 'Ej: admin_cliente';
+        usernameInput.autocomplete = 'off';
+        grid.append(createModalInputGroup('Usuario', usernameInput, { htmlFor: usernameInput.id }));
+
+        const passwordInput = document.createElement('input');
+        passwordInput.type = 'password';
+        passwordInput.id = 'actionTenantUserPassword';
+        passwordInput.placeholder = 'ClaveFuerte#2026';
+        passwordInput.autocomplete = 'new-password';
+        grid.append(createModalInputGroup('Contraseña', passwordInput, { htmlFor: passwordInput.id }));
+    }
+
+    const roleSelect = document.createElement('select');
+    roleSelect.id = 'actionTenantUserRole';
+    const normalizedTenantId = String(tenantId || user?.tenant_id || '').trim().toLowerCase();
+    getTenantUserRoleOptions()
+        .filter(([value]) => value !== 'platform_owner' || normalizedTenantId === 'default')
+        .forEach(([value, label]) => {
+        const selected = value === (user?.role || 'viewer');
+        roleSelect.appendChild(new Option(label, value, selected, selected));
+        });
+    grid.append(createModalInputGroup('Rol', roleSelect, { htmlFor: roleSelect.id }));
+
+    const activeSelect = document.createElement('select');
+    activeSelect.id = 'actionTenantUserIsActive';
+    const isActive = user ? user.is_active === true : true;
+    activeSelect.appendChild(new Option('Activo', '1', isActive, isActive));
+    activeSelect.appendChild(new Option('Inactivo', '0', !isActive, !isActive));
+    grid.append(createModalInputGroup('Estado', activeSelect, { htmlFor: activeSelect.id }));
+
+    fragment.append(grid);
+    return fragment;
+}
+
+async function loadTenantUsers(tenantId, options = {}) {
+    const normalizedTenantId = String(tenantId || '').trim().toLowerCase();
+    if (!normalizedTenantId || !hasActiveSession() || !canCurrentUserManageTenants()) {
+        currentTenantUsersData = [];
+        return [];
+    }
+
+    const silent = options?.silent === true;
+    try {
+        const users = [];
+        let nextCursor = null;
+
+        do {
+            const response = await api.getWebUsers({
+                tenant_id: normalizedTenantId,
+                limit: 500,
+                cursor: nextCursor || undefined,
+            });
+            const pageUsers = Array.isArray(response?.users) ? response.users : [];
+            users.push(...pageUsers);
+            nextCursor = response?.pagination?.has_more ? response?.pagination?.next_cursor || null : null;
+        } while (nextCursor);
+
+        currentTenantUsersData = users;
+        return currentTenantUsersData;
+    } catch (error) {
+        currentTenantUsersData = [];
+        if (!silent) {
+            showNotification(`No se pudo cargar usuarios del tenant: ${error?.message || error}`, 'error');
+        }
+        return [];
+    }
+}
+
+function openTenantUserCreateModal() {
+    const tenantId = String(currentSelectedTenantId || currentTenantDetail?.tenant?.id || '').trim().toLowerCase();
+    if (!tenantId) {
+        showNotification('Primero selecciona un tenant.', 'warning');
+        return;
+    }
+
+    openActionModal({
+        title: `Nuevo usuario para ${tenantId}`,
+        subtitle: 'El usuario quedará creado directamente dentro del tenant seleccionado.',
+        submitLabel: 'Crear usuario',
+        focusId: 'actionTenantUserUsername',
+        fields: buildTenantUserFields(null, tenantId),
+        onSubmit: async () => {
+            const username = String(document.getElementById('actionTenantUserUsername')?.value || '').trim();
+            const password = String(document.getElementById('actionTenantUserPassword')?.value || '').trim();
+            const role = String(document.getElementById('actionTenantUserRole')?.value || 'viewer').trim().toLowerCase();
+            const isActive = String(document.getElementById('actionTenantUserIsActive')?.value || '1').trim() === '1';
+
+            if (!username) {
+                setActionModalError('Debes indicar el nombre de usuario.');
+                return;
+            }
+            if (!password) {
+                setActionModalError('Debes indicar una contraseña inicial.');
+                return;
+            }
+
+            await api.createWebUser({
+                username,
+                password,
+                role,
+                tenant_id: tenantId,
+                is_active: isActive,
+            });
+
+            closeActionModal(true);
+            showNotification(`Usuario ${username} creado en ${tenantId}.`, 'success');
+            await Promise.all([
+                loadTenantsSection({ silent: true }),
+                selectTenantDetail(tenantId, { silent: true }),
+            ]);
+        },
+    });
+}
+
+function openTenantUserEditModal(user) {
+    const tenantId = String(currentSelectedTenantId || currentTenantDetail?.tenant?.id || '').trim().toLowerCase();
+    const userId = Number(user?.id);
+    if (!tenantId || !Number.isInteger(userId) || userId <= 0) {
+        showNotification('No pudimos identificar el usuario a actualizar.', 'error');
+        return;
+    }
+
+    openActionModal({
+        title: `Editar ${user?.username || `usuario #${userId}`}`,
+        subtitle: 'Ajusta el rol y el estado de acceso dentro de este tenant.',
+        submitLabel: 'Guardar cambios',
+        focusId: 'actionTenantUserRole',
+        fields: buildTenantUserFields(user, tenantId),
+        onSubmit: async () => {
+            const role = String(document.getElementById('actionTenantUserRole')?.value || user?.role || 'viewer').trim().toLowerCase();
+            const isActive = String(document.getElementById('actionTenantUserIsActive')?.value || (user?.is_active ? '1' : '0')).trim() === '1';
+
+            await api.updateWebUser(userId, {
+                role,
+                is_active: isActive,
+            });
+
+            closeActionModal(true);
+            showNotification(`Usuario ${user?.username || `#${userId}`} actualizado.`, 'success');
+            await Promise.all([
+                loadTenantsSection({ silent: true }),
+                selectTenantDetail(tenantId, { silent: true }),
+            ]);
+        },
+    });
+}
+
+function createDeleteImpactSummaryNode(title, rows = [], footnote = '') {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'action-impact-summary';
+
+    if (title) {
+        const heading = document.createElement('p');
+        heading.className = 'action-impact-summary-title';
+        heading.textContent = title;
+        wrapper.appendChild(heading);
+    }
+
+    const list = document.createElement('div');
+    list.className = 'action-impact-summary-list';
+    rows.forEach((row) => {
+        if (!row || !row.label) return;
+        const item = document.createElement('div');
+        item.className = 'action-impact-summary-item';
+        const label = document.createElement('span');
+        label.className = 'action-impact-summary-label';
+        label.textContent = row.label;
+        const value = document.createElement('strong');
+        value.className = 'action-impact-summary-value';
+        value.textContent = String(row.value ?? 0);
+        item.append(label, value);
+        list.appendChild(item);
+    });
+    wrapper.appendChild(list);
+
+    if (footnote) {
+        const note = document.createElement('p');
+        note.className = 'action-impact-summary-note';
+        note.textContent = footnote;
+        wrapper.appendChild(note);
+    }
+
+    return wrapper;
+}
+
+async function confirmDeleteTenantUser(user) {
+    const tenantId = String(currentSelectedTenantId || currentTenantDetail?.tenant?.id || '').trim().toLowerCase();
+    const userId = Number(user?.id);
+    if (!tenantId || !Number.isInteger(userId) || userId <= 0) {
+        showNotification('No pudimos identificar el usuario a eliminar.', 'error');
+        return;
+    }
+
+    let impact;
+    try {
+        impact = await api.getWebUserDeleteImpact(userId);
+    } catch (error) {
+        showNotification(error?.message || 'No pudimos calcular el impacto del borrado del usuario.', 'error');
+        return;
+    }
+
+    openActionConfirmModal({
+        title: `Eliminar ${user?.username || `usuario #${userId}`}`,
+        subtitle: 'Esta accion elimina el usuario web, invalida sus sesiones y desvincula su tecnico asociado si existe.',
+        fields: createDeleteImpactSummaryNode(
+            'Impacto previsto',
+            [
+                { label: 'Sesiones a invalidar', value: impact?.impact?.sessions_invalidated ?? 1 },
+                { label: 'Vinculos con tecnico a desvincular', value: impact?.impact?.technician_links_to_clear ?? 0 },
+                { label: 'Tokens de dispositivo a revocar', value: impact?.impact?.device_tokens_to_revoke ?? 0 },
+            ],
+            'El usuario se elimina de forma definitiva y la accion queda registrada en auditoria.',
+        ),
+        submitLabel: 'Eliminar usuario',
+        acknowledgementText: `Confirmo eliminar a ${user?.username || `usuario #${userId}`}.`,
+        missingConfirmationMessage: 'Debes confirmar la eliminacion del usuario.',
+        onSubmit: async () => {
+            await api.deleteWebUser(userId);
+            closeActionModal(true);
+            showNotification(`Usuario ${user?.username || `#${userId}`} eliminado.`, 'success');
+            await Promise.all([
+                loadTenantsSection({ silent: true }),
+                selectTenantDetail(tenantId, { silent: true }),
+                loadTechniciansSection({ silent: true, refreshAssignments: true }),
+            ]);
+        },
+    });
+}
+
+async function confirmDeleteTenant(tenant = null) {
+    const targetTenant = tenant || currentTenantDetail?.tenant || null;
+    const tenantId = String(targetTenant?.id || '').trim().toLowerCase();
+    if (!tenantId) {
+        showNotification('Selecciona un tenant primero.', 'warning');
+        return;
+    }
+
+    let impact;
+    try {
+        impact = await api.getTenantDeleteImpact(tenantId);
+    } catch (error) {
+        showNotification(error?.message || 'No pudimos calcular el impacto del borrado del tenant.', 'error');
+        return;
+    }
+
+    const deletedTables = impact?.impact?.deleted_tables || {};
+    const totalRows = Number(impact?.impact?.total_rows || 0);
+    const knownRows = Number(deletedTables.web_users || 0)
+        + Number(deletedTables.technicians || 0)
+        + Number(deletedTables.installations || 0)
+        + Number(deletedTables.incidents || 0);
+
+    openActionConfirmModal({
+        title: `Eliminar tenant ${targetTenant?.name || tenantId}`,
+        subtitle: 'Se eliminaran el tenant y todos sus datos asociados por tenant_id. Esta accion no se puede deshacer.',
+        fields: createDeleteImpactSummaryNode(
+            'Impacto previsto',
+            [
+                { label: 'Usuarios web', value: deletedTables.web_users ?? 0 },
+                { label: 'Tecnicos', value: deletedTables.technicians ?? 0 },
+                { label: 'Instalaciones', value: deletedTables.installations ?? 0 },
+                { label: 'Incidencias', value: deletedTables.incidents ?? 0 },
+                { label: 'Otros registros tenant-scoped', value: Math.max(0, totalRows - knownRows) },
+                { label: 'Total estimado de filas', value: totalRows },
+            ],
+            'Se eliminara el tenant y todos los datos asociados por tenant_id. La accion queda registrada en auditoria.',
+        ),
+        submitLabel: 'Eliminar tenant',
+        acknowledgementText: `Confirmo eliminar el tenant ${targetTenant?.name || tenantId}.`,
+        missingConfirmationMessage: 'Debes confirmar la eliminacion del tenant.',
+        onSubmit: async () => {
+            await api.deleteTenant(tenantId);
+            closeActionModal(true);
+            showNotification(`Tenant ${targetTenant?.name || tenantId} eliminado.`, 'success');
+            if (String(currentSelectedTenantId || '') === tenantId) {
+                currentSelectedTenantId = null;
+                currentTenantDetail = null;
+                currentTenantUsersData = [];
+            }
+            await loadTenantsSection({ silent: true });
+            renderTenantDetail();
+        },
+    });
+}
+
+function renderTenantDetail() {
+    const detailEl = document.getElementById('tenantDetail');
+    const editBtn = document.getElementById('tenantsEditBtn');
+    const deleteBtn = document.getElementById('tenantsDeleteBtn');
+    if (!detailEl || !editBtn || !deleteBtn) return;
+
+    if (!hasActiveSession()) {
+        detailEl.innerHTML = '<p class="settings-empty-state">Inicia sesiÃ³n para ver detalle de tenants.</p>';
+        editBtn.disabled = true;
+        deleteBtn.disabled = true;
+        return;
+    }
+
+    if (!canCurrentUserManageTenants()) {
+        detailEl.innerHTML = '<p class="settings-empty-state">Solo super admin puede gestionar tenants.</p>';
+        editBtn.disabled = true;
+        deleteBtn.disabled = true;
+        return;
+    }
+
+    const tenant = currentTenantDetail?.tenant || null;
+    if (!tenant) {
+        detailEl.innerHTML = '<p class="settings-empty-state">Selecciona un tenant para ver su detalle.</p>';
+        editBtn.disabled = true;
+        deleteBtn.disabled = true;
+        return;
+    }
+
+    editBtn.disabled = false;
+    deleteBtn.disabled = String(tenant.id || '').trim().toLowerCase() === 'default';
+    const latestUsage = currentTenantDetail?.latest_usage || null;
+    const admins = Array.isArray(currentTenantDetail?.admins) ? currentTenantDetail.admins : [];
+    const tenantUsers = Array.isArray(currentTenantUsersData) ? currentTenantUsersData : [];
+
+    detailEl.replaceChildren();
+
+    const metaGrid = document.createElement('div');
+    metaGrid.className = 'asset-meta-grid';
+    [
+        ['Identificador', tenant.id || '-'],
+        ['Slug', tenant.slug || '-'],
+        ['Plan', tenant.plan_code || '-'],
+        ['Estado', tenant.status || '-'],
+        ['Usuarios', tenant.metrics?.users_count ?? 0],
+        ['TÃ©cnicos', tenant.metrics?.technicians_count ?? 0],
+        ['Registros', tenant.metrics?.installations_count ?? 0],
+        ['Incidencias activas', tenant.metrics?.active_incidents_count ?? 0],
+    ].forEach(([label, value]) => {
+        const item = document.createElement('div');
+        item.className = 'asset-meta-item';
+        const small = document.createElement('small');
+        small.textContent = label;
+        const strong = document.createElement('strong');
+        strong.textContent = String(value);
+        item.append(small, strong);
+        metaGrid.append(item);
+    });
+    detailEl.append(metaGrid);
+
+    const adminsTitle = document.createElement('p');
+    adminsTitle.className = 'settings-actions-note';
+    adminsTitle.textContent = admins.length
+        ? `Admins del tenant (${admins.length})`
+        : 'Este tenant todavÃ­a no tiene admins dedicados.';
+    detailEl.append(adminsTitle);
+
+    if (admins.length) {
+        const adminsList = document.createElement('div');
+        adminsList.className = 'settings-assignment-list';
+        admins.forEach((admin) => {
+            const card = document.createElement('article');
+            card.className = 'settings-assignment-card';
+            const top = document.createElement('div');
+            top.className = 'settings-assignment-top';
+            const title = document.createElement('strong');
+            title.className = 'settings-assignment-title';
+            title.textContent = admin.username || `Usuario #${admin.id}`;
+            const meta = document.createElement('small');
+            meta.className = 'settings-assignment-meta';
+            meta.textContent = [
+                admin.role || 'admin',
+                admin.is_active ? 'activo' : 'inactivo',
+                admin.last_login_at ? `ultimo login ${formatDateTime(admin.last_login_at)}` : 'sin login',
+            ].join(' Â· ');
+            top.append(title, meta);
+            card.append(top);
+            adminsList.append(card);
+        });
+        detailEl.append(adminsList);
+    }
+
+    if (latestUsage) {
+        const usageNote = document.createElement('p');
+        usageNote.className = 'settings-actions-note';
+        usageNote.textContent =
+            `Uso mÃ¡s reciente (${latestUsage.usage_month}): ${latestUsage.users_count} usuarios, ` +
+            `${latestUsage.incidents_count} incidencias, ${formatBytes(latestUsage.storage_bytes)}.`;
+        detailEl.append(usageNote);
+    }
+
+    const usersSection = document.createElement('section');
+    usersSection.className = 'settings-inline-panel';
+
+    const usersHead = document.createElement('div');
+    usersHead.className = 'settings-panel-head';
+
+    const usersHeadingWrap = document.createElement('div');
+    const usersHeading = document.createElement('h4');
+    usersHeading.textContent = 'Usuarios web';
+    const usersCopy = document.createElement('p');
+    usersCopy.className = 'settings-panel-copy';
+    usersCopy.textContent = 'Crea usuarios ya vinculados al tenant y ajusta rol o estado sin salir de esta vista.';
+    usersHeadingWrap.append(usersHeading, usersCopy);
+
+    const usersActions = document.createElement('div');
+    usersActions.className = 'incident-actions settings-actions';
+    const createUserBtn = document.createElement('button');
+    createUserBtn.type = 'button';
+    createUserBtn.className = 'btn-primary';
+    createUserBtn.textContent = 'Crear usuario';
+    createUserBtn.addEventListener('click', () => {
+        openTenantUserCreateModal();
+    });
+    usersActions.append(createUserBtn);
+    usersHead.append(usersHeadingWrap, usersActions);
+    usersSection.append(usersHead);
+
+    const usersSummary = document.createElement('p');
+    usersSummary.className = 'settings-actions-note';
+    usersSummary.textContent = tenantUsers.length
+        ? `${tenantUsers.length} usuario(s) cargados en este tenant.`
+        : 'Este tenant todavia no tiene usuarios web cargados.';
+    usersSection.append(usersSummary);
+
+    if (tenantUsers.length) {
+        const usersList = document.createElement('div');
+        usersList.className = 'settings-assignment-list';
+        tenantUsers
+            .slice()
+            .sort((left, right) => String(left?.username || '').localeCompare(String(right?.username || ''), 'es'))
+            .forEach((user) => {
+                const card = document.createElement('article');
+                card.className = 'settings-assignment-card';
+
+                const top = document.createElement('div');
+                top.className = 'settings-assignment-top';
+
+                const copyWrap = document.createElement('div');
+                const title = document.createElement('strong');
+                title.className = 'settings-assignment-title';
+                title.textContent = user.username || `Usuario #${user.id}`;
+                const meta = document.createElement('small');
+                meta.className = 'settings-assignment-meta';
+                meta.textContent = [
+                    user.role || 'viewer',
+                    user.is_active ? 'activo' : 'inactivo',
+                    user.last_login_at ? `ultimo login ${formatDateTime(user.last_login_at)}` : 'sin login',
+                ].join(' Â· ');
+                copyWrap.append(title, meta);
+
+                const actions = document.createElement('div');
+                actions.className = 'settings-technician-actions';
+                const editUserBtn = document.createElement('button');
+                editUserBtn.type = 'button';
+                editUserBtn.className = 'btn-secondary';
+                editUserBtn.textContent = 'Editar acceso';
+                editUserBtn.addEventListener('click', () => {
+                    openTenantUserEditModal(user);
+                });
+                const deleteUserBtn = document.createElement('button');
+                deleteUserBtn.type = 'button';
+                deleteUserBtn.className = 'btn-secondary';
+                deleteUserBtn.textContent = 'Eliminar';
+                deleteUserBtn.addEventListener('click', () => {
+                    confirmDeleteTenantUser(user);
+                });
+                actions.append(editUserBtn, deleteUserBtn);
+
+                top.append(copyWrap, actions);
+                card.append(top);
+                usersList.append(card);
+            });
+        usersSection.append(usersList);
+    }
+
+    detailEl.append(usersSection);
+    repairTenantSectionMojibake(detailEl);
+}
+
+function renderTenantsSection() {
+    const listEl = document.getElementById('tenantsList');
+    const copyEl = document.getElementById('tenantsPermissionCopy');
+    const createBtn = document.getElementById('tenantsCreateBtn');
+    const navLink = document.getElementById('navTenantsLink')?.closest('li');
+    const mobileBtn = document.getElementById('mobileNavTenantsBtn');
+    const sectionEl = document.getElementById('tenantsSection');
+    if (!listEl || !copyEl || !createBtn || !sectionEl) return;
+
+    const canManage = canCurrentUserManageTenants();
+    if (navLink) {
+        navLink.hidden = !canManage;
+    }
+    if (mobileBtn) {
+        mobileBtn.hidden = !canManage;
+    }
+    sectionEl.hidden = !canManage;
+
+    if (!hasActiveSession()) {
+        setTenantSummaryValue('tenantsTotal', '-');
+        setTenantSummaryValue('tenantsActive', '-');
+        setTenantSummaryValue('tenantsSuspended', '-');
+        setTenantSummaryValue('tenantsUsers', '-');
+        copyEl.textContent = 'Inicia sesiÃ³n como super admin para ver la administraciÃ³n de tenants.';
+        listEl.innerHTML = '<p class="settings-empty-state">Inicia sesiÃ³n para ver tenants.</p>';
+        createBtn.disabled = true;
+        renderTenantDetail();
+        return;
+    }
+
+    if (!canManage) {
+        setTenantSummaryValue('tenantsTotal', '-');
+        setTenantSummaryValue('tenantsActive', '-');
+        setTenantSummaryValue('tenantsSuspended', '-');
+        setTenantSummaryValue('tenantsUsers', '-');
+        copyEl.textContent = 'Esta secciÃ³n queda reservada para super admin.';
+        listEl.innerHTML = '<p class="settings-empty-state">Solo super admin puede administrar tenants.</p>';
+        createBtn.disabled = true;
+        renderTenantDetail();
+        return;
+    }
+
+    createBtn.disabled = false;
+    copyEl.textContent = 'Administra empresas, planes, estado operativo y admins iniciales desde una sola consola.';
+
+    const tenants = Array.isArray(currentTenantsData) ? currentTenantsData : [];
+    setTenantSummaryValue('tenantsTotal', tenants.length);
+    setTenantSummaryValue('tenantsActive', tenants.filter((tenant) => tenant?.status === 'active').length);
+    setTenantSummaryValue('tenantsSuspended', tenants.filter((tenant) => tenant?.status === 'suspended').length);
+    setTenantSummaryValue(
+        'tenantsUsers',
+        tenants.reduce((sum, tenant) => sum + (Number(tenant?.metrics?.users_count || 0) || 0), 0),
+    );
+
+    if (!tenants.length) {
+        listEl.innerHTML = '<p class="settings-empty-state">TodavÃ­a no hay tenants cargados.</p>';
+        renderTenantDetail();
+        return;
+    }
+
+    listEl.replaceChildren();
+    tenants.forEach((tenant) => {
+        const card = document.createElement('article');
+        card.className = 'settings-technician-card';
+        if (String(currentSelectedTenantId || '') === String(tenant.id || '')) {
+            card.classList.add('is-selected');
+        }
+
+        const head = document.createElement('div');
+        head.className = 'settings-technician-head';
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'settings-technician-title';
+        const title = document.createElement('h4');
+        title.textContent = tenant.name || tenant.id || 'Tenant';
+        const subtitle = document.createElement('p');
+        subtitle.className = 'settings-technician-subtitle';
+        subtitle.textContent = [
+            tenant.id || '-',
+            tenant.plan_code || 'starter',
+            Array.isArray(tenant.admin_usernames) && tenant.admin_usernames.length
+                ? tenant.admin_usernames.join(', ')
+                : 'Sin admins visibles',
+        ].join(' Â· ');
+        titleWrap.append(title, subtitle);
+
+        const chips = document.createElement('div');
+        chips.className = 'settings-technician-chips';
+        const statusChip = document.createElement('span');
+        statusChip.className = `settings-chip${tenant.status === 'active' ? '' : ' is-muted'}`;
+        statusChip.textContent = tenant.status === 'active' ? 'Activo' : 'Suspendido';
+        chips.append(statusChip);
+        head.append(titleWrap, chips);
+        card.append(head);
+
+        const meta = document.createElement('div');
+        meta.className = 'asset-meta-grid';
+        [
+            ['Usuarios', tenant.metrics?.users_count ?? 0],
+            ['TÃ©cnicos', tenant.metrics?.technicians_count ?? 0],
+            ['Registros', tenant.metrics?.installations_count ?? 0],
+            ['Incidencias activas', tenant.metrics?.active_incidents_count ?? 0],
+        ].forEach(([label, value]) => {
+            const item = document.createElement('div');
+            item.className = 'asset-meta-item';
+            const small = document.createElement('small');
+            small.textContent = label;
+            const strong = document.createElement('strong');
+            strong.textContent = String(value);
+            item.append(small, strong);
+            meta.append(item);
+        });
+        card.append(meta);
+
+        const actions = document.createElement('div');
+        actions.className = 'settings-technician-actions';
+        const detailBtn = document.createElement('button');
+        detailBtn.type = 'button';
+        detailBtn.className = 'btn-secondary';
+        detailBtn.textContent = 'Ver detalle';
+        detailBtn.addEventListener('click', () => {
+            void selectTenantDetail(tenant.id);
+        });
+        actions.append(detailBtn);
+        card.append(actions);
+
+        listEl.append(card);
+    });
+
+    repairTenantSectionMojibake(listEl);
+    renderTenantDetail();
+}
+
+function buildTechnicianAssignmentEntityKey(entityType, entityId) {
+    const normalizedType = String(entityType || '').trim().toLowerCase();
+    const normalizedId = String(entityId || '').trim();
+    if (!normalizedType || !normalizedId) return '';
+    return `${normalizedType}:${normalizedId}`;
+}
+
+function updateTechniciansPermissionCopy() {
+    const copyEl = document.getElementById('settingsTechniciansPermissions');
+    const createBtn = document.getElementById('settingsCreateTechnicianBtn');
+    if (!copyEl || !createBtn) return;
+
+    if (!hasActiveSession()) {
+        copyEl.textContent = 'Inicia sesión para gestionar el staff técnico del tenant activo.';
+        createBtn.disabled = true;
+        return;
+    }
+
+    if (canCurrentUserManageTechnicians()) {
+        copyEl.textContent = 'Puedes crear, editar, activar o desactivar técnicos. Las asignaciones quedan auditadas por tenant.';
+        createBtn.disabled = false;
+        return;
+    }
+
+    if (canCurrentUserManageTechnicianAssignments()) {
+        copyEl.textContent = 'Puedes consultar técnicos y gestionar sus asignaciones operativas, pero no crear ni editar su ficha.';
+        createBtn.disabled = true;
+        return;
+    }
+
+    copyEl.textContent = 'Tienes acceso de consulta sobre el staff técnico del tenant.';
+    createBtn.disabled = true;
+}
+
+function setTechnicianSummaryValue(id, value) {
+    const node = document.getElementById(id);
+    if (node) {
+        node.textContent = String(value ?? '-');
+    }
+}
+
+function renderTechniciansSection() {
+    const listEl = document.getElementById('settingsTechniciansList');
+    if (!listEl) return;
+
+    updateTechniciansPermissionCopy();
+
+    if (!hasActiveSession()) {
+        setTechnicianSummaryValue('settingsTechniciansTotal', '-');
+        setTechnicianSummaryValue('settingsTechniciansActive', '-');
+        setTechnicianSummaryValue('settingsTechniciansLinked', '-');
+        setTechnicianSummaryValue('settingsTechniciansAssignments', '-');
+        listEl.innerHTML = '<p class="loading">Inicia sesión para ver técnicos.</p>';
+        return;
+    }
+
+    const technicians = Array.isArray(currentTechniciansData) ? currentTechniciansData : [];
+    const activeCount = technicians.filter((item) => item && item.is_active).length;
+    const linkedCount = technicians.filter((item) => Number.isInteger(parseStrictInteger(item?.web_user_id))).length;
+    const assignmentsCount = technicians.reduce((sum, item) => sum + (Number(item?.active_assignment_count || 0) || 0), 0);
+
+    setTechnicianSummaryValue('settingsTechniciansTotal', technicians.length);
+    setTechnicianSummaryValue('settingsTechniciansActive', activeCount);
+    setTechnicianSummaryValue('settingsTechniciansLinked', linkedCount);
+    setTechnicianSummaryValue('settingsTechniciansAssignments', assignmentsCount);
+
+    if (!technicians.length) {
+        listEl.innerHTML = '<p class="settings-empty-state">Todavía no hay técnicos cargados para este tenant.</p>';
+        return;
+    }
+
+    listEl.replaceChildren();
+
+    technicians.forEach((technician) => {
+        const card = document.createElement('article');
+        card.className = 'settings-technician-card';
+
+        const head = document.createElement('div');
+        head.className = 'settings-technician-head';
+
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'settings-technician-title';
+        const title = document.createElement('h4');
+        title.textContent = technician.display_name || `Técnico #${technician.id}`;
+        const subtitle = document.createElement('p');
+        subtitle.className = 'settings-technician-subtitle';
+        const subtitleParts = [
+            technician.employee_code ? `Código ${technician.employee_code}` : 'Sin código interno',
+            getTechnicianLinkedWebUserLabel(technician),
+        ];
+        subtitle.textContent = subtitleParts.join(' · ');
+        titleWrap.append(title, subtitle);
+
+        const chips = document.createElement('div');
+        chips.className = 'settings-technician-chips';
+
+        const statusChip = document.createElement('span');
+        statusChip.className = `settings-chip${technician.is_active ? '' : ' is-muted'}`;
+        statusChip.textContent = technician.is_active ? 'Activo' : 'Inactivo';
+        chips.append(statusChip);
+
+        if (technician.active_assignment_count > 0) {
+            const assignmentChip = document.createElement('span');
+            assignmentChip.className = 'settings-chip';
+            assignmentChip.textContent = `${technician.active_assignment_count} asignación${technician.active_assignment_count === 1 ? '' : 'es'}`;
+            chips.append(assignmentChip);
+        }
+
+        head.append(titleWrap, chips);
+
+        const meta = document.createElement('div');
+        meta.className = 'asset-meta-grid';
+        const fields = [
+            ['Email', technician.email || 'No informado'],
+            ['Teléfono', technician.phone || 'No informado'],
+            ['Notas', technician.notes || 'Sin notas operativas'],
+        ];
+        fields.forEach(([label, value]) => {
+            const item = document.createElement('div');
+            item.className = 'asset-meta-item';
+            const small = document.createElement('small');
+            small.textContent = label;
+            const strong = document.createElement('strong');
+            strong.textContent = value;
+            item.append(small, strong);
+            meta.append(item);
+        });
+
+        const actions = document.createElement('div');
+        actions.className = 'settings-technician-actions';
+
+        const assignmentsToggleBtn = document.createElement('button');
+        assignmentsToggleBtn.type = 'button';
+        assignmentsToggleBtn.className = 'btn-secondary';
+        assignmentsToggleBtn.textContent = expandedTechnicianAssignmentPanels.has(technician.id)
+            ? 'Ocultar asignaciones'
+            : 'Ver asignaciones';
+        assignmentsToggleBtn.addEventListener('click', () => {
+            if (expandedTechnicianAssignmentPanels.has(technician.id)) {
+                expandedTechnicianAssignmentPanels.delete(technician.id);
+                renderTechniciansSection();
+                return;
+            }
+            expandedTechnicianAssignmentPanels.add(technician.id);
+            void loadTechnicianAssignments(technician.id, { force: false, silent: true });
+        });
+        actions.append(assignmentsToggleBtn);
+
+        if (canCurrentUserManageTechnicianAssignments()) {
+            const assignBtn = document.createElement('button');
+            assignBtn.type = 'button';
+            assignBtn.className = 'btn-secondary';
+            assignBtn.textContent = 'Asignar';
+            assignBtn.addEventListener('click', () => {
+                openTechnicianAssignmentModal(technician);
+            });
+            actions.append(assignBtn);
+        }
+
+        if (canCurrentUserManageTechnicians()) {
+            const editBtn = document.createElement('button');
+            editBtn.type = 'button';
+            editBtn.className = 'btn-secondary';
+            editBtn.textContent = 'Editar';
+            editBtn.addEventListener('click', () => {
+                openTechnicianEditorModal(technician);
+            });
+            actions.append(editBtn);
+
+            const toggleBtn = document.createElement('button');
+            toggleBtn.type = 'button';
+            toggleBtn.className = technician.is_active ? 'btn-secondary' : 'btn-primary';
+            toggleBtn.textContent = technician.is_active ? 'Desactivar' : 'Activar';
+            toggleBtn.addEventListener('click', async () => {
+                try {
+                    await api.updateTechnician(technician.id, {
+                        is_active: !technician.is_active,
+                    });
+                    showNotification(
+                        technician.is_active
+                            ? `Técnico ${technician.display_name} desactivado.`
+                            : `Técnico ${technician.display_name} reactivado.`,
+                        technician.is_active ? 'info' : 'success',
+                    );
+                    await loadTechniciansSection({ silent: true });
+                } catch (error) {
+                    showNotification(`No se pudo actualizar el técnico: ${error?.message || error}`, 'error');
+                }
+            });
+            actions.append(toggleBtn);
+        }
+
+        card.append(head, meta, actions);
+
+        if (expandedTechnicianAssignmentPanels.has(technician.id)) {
+            const assignmentsWrap = document.createElement('div');
+            assignmentsWrap.className = 'settings-technician-assignments';
+            const cachedAssignments = technicianAssignmentsByTechnicianId.get(technician.id);
+
+            if (cachedAssignments === 'loading') {
+                const loading = document.createElement('p');
+                loading.className = 'loading';
+                loading.textContent = 'Cargando asignaciones...';
+                assignmentsWrap.append(loading);
+            } else {
+                const items = Array.isArray(cachedAssignments) ? cachedAssignments : [];
+                if (!items.length) {
+                    const empty = document.createElement('p');
+                    empty.className = 'settings-empty-state';
+                    empty.textContent = 'Sin asignaciones activas para este técnico.';
+                    assignmentsWrap.append(empty);
+                } else {
+                    const list = document.createElement('div');
+                    list.className = 'settings-assignment-list';
+                    items.forEach((assignment) => {
+                        const assignmentCard = document.createElement('div');
+                        assignmentCard.className = 'settings-assignment-card';
+
+                        const top = document.createElement('div');
+                        top.className = 'settings-assignment-top';
+                        const textWrap = document.createElement('div');
+                        const assignmentTitle = document.createElement('p');
+                        assignmentTitle.className = 'settings-assignment-title';
+                        const entityLabel = TECHNICIAN_ENTITY_LABELS[assignment.entity_type] || assignment.entity_type;
+                        assignmentTitle.textContent = `${entityLabel} ${assignment.entity_id}`;
+                        const assignmentMeta = document.createElement('p');
+                        assignmentMeta.className = 'settings-assignment-meta';
+                        const roleLabel = TECHNICIAN_ASSIGNMENT_ROLE_LABELS[assignment.assignment_role] || assignment.assignment_role;
+                        assignmentMeta.textContent = `${roleLabel} · asignado por ${assignment.assigned_by_username || 'sistema'}`;
+                        textWrap.append(assignmentTitle, assignmentMeta);
+                        top.append(textWrap);
+
+                        if (canCurrentUserManageTechnicianAssignments()) {
+                            const removeBtn = document.createElement('button');
+                            removeBtn.type = 'button';
+                            removeBtn.className = 'btn-secondary';
+                            removeBtn.textContent = 'Quitar';
+                            removeBtn.addEventListener('click', async () => {
+                                const confirmed = window.confirm(`¿Quitar la asignación ${entityLabel} ${assignment.entity_id}?`);
+                                if (!confirmed) return;
+                                try {
+                                    await api.deleteTechnicianAssignment(assignment.id);
+                                    showNotification('Asignación removida.', 'success');
+                                    await loadTechnicianAssignments(technician.id, { force: true, silent: true });
+                                } catch (error) {
+                                    showNotification(`No se pudo quitar la asignación: ${error?.message || error}`, 'error');
+                                }
+                            });
+                            top.append(removeBtn);
+                        }
+
+                        assignmentCard.append(top);
+                        list.append(assignmentCard);
+                    });
+                    assignmentsWrap.append(list);
+                }
+            }
+
+            card.append(assignmentsWrap);
+        }
+
+        listEl.append(card);
+    });
+}
+
+async function loadTechnicianAssignments(technicianId, options = {}) {
+    const force = options?.force === true;
+    const silent = options?.silent === true;
+    if (!Number.isInteger(parseStrictInteger(technicianId))) return [];
+
+    if (!force && Array.isArray(technicianAssignmentsByTechnicianId.get(technicianId))) {
+        renderTechniciansSection();
+        return technicianAssignmentsByTechnicianId.get(technicianId) || [];
+    }
+
+    technicianAssignmentsByTechnicianId.set(technicianId, 'loading');
+    renderTechniciansSection();
+
+    try {
+        const result = await api.getTechnicianAssignments(technicianId, {
+            includeInactive: false,
+        });
+        const assignments = Array.isArray(result?.assignments) ? result.assignments : [];
+        technicianAssignmentsByTechnicianId.set(technicianId, assignments);
+        renderTechniciansSection();
+        return assignments;
+    } catch (error) {
+        technicianAssignmentsByTechnicianId.delete(technicianId);
+        renderTechniciansSection();
+        if (!silent) {
+            showNotification(`No se pudieron cargar las asignaciones: ${error?.message || error}`, 'error');
+        }
+        return [];
+    }
+}
+
+async function loadTechnicianAssignmentsForEntity(entityType, entityId, options = {}) {
+    const key = buildTechnicianAssignmentEntityKey(entityType, entityId);
+    if (!key) {
+        return [];
+    }
+
+    const force = options?.force === true;
+    const silent = options?.silent === true;
+    const cached = technicianAssignmentsByEntityKey.get(key);
+    if (!force) {
+        if (Array.isArray(cached)) {
+            return cached;
+        }
+        if (cached && typeof cached.then === 'function') {
+            return cached;
+        }
+    }
+
+    const includeInactive = options?.includeInactive === true;
+    const pendingRequest = api.getTechnicianAssignmentsByEntity(entityType, entityId, {
+        includeInactive,
+    }).then((result) => {
+        const assignments = Array.isArray(result?.assignments) ? result.assignments : [];
+        technicianAssignmentsByEntityKey.set(key, assignments);
+        return assignments;
+    }).catch((error) => {
+        technicianAssignmentsByEntityKey.delete(key);
+        if (!silent) {
+            showNotification(`No se pudieron cargar las asignaciones operativas: ${error?.message || error}`, 'error');
+        }
+        return [];
+    });
+
+    technicianAssignmentsByEntityKey.set(key, pendingRequest);
+    return pendingRequest;
+}
+
+function getTechnicianLoadSummary() {
+    const technicians = Array.isArray(currentTechniciansData) ? currentTechniciansData : [];
+    const activeTechnicians = technicians.filter((item) => item && item.is_active);
+    const rankedItems = [...activeTechnicians]
+        .sort((left, right) => {
+            const byAssignments = Number(right?.active_assignment_count || 0) - Number(left?.active_assignment_count || 0);
+            if (byAssignments !== 0) return byAssignments;
+            return String(left?.display_name || '').localeCompare(String(right?.display_name || ''), 'es');
+        })
+        .slice(0, 4)
+        .map((item) => ({
+            id: Number(item.id),
+            display_name: String(item.display_name || '').trim() || `Técnico #${item.id}`,
+            employee_code: String(item.employee_code || '').trim(),
+            active_assignment_count: Math.max(0, Number(item.active_assignment_count) || 0),
+            linked_web_user: Number.isInteger(parseStrictInteger(item?.web_user_id)),
+        }));
+
+    return {
+        total: technicians.length,
+        active: activeTechnicians.length,
+        linked: activeTechnicians.filter((item) => Number.isInteger(parseStrictInteger(item?.web_user_id))).length,
+        items: rankedItems,
+    };
+}
+
+function getWebUserMap() {
+    const map = new Map();
+    (Array.isArray(currentWebUsersData) ? currentWebUsersData : []).forEach((user) => {
+        const userId = Number(user?.id);
+        if (Number.isInteger(userId) && userId > 0) {
+            map.set(userId, user);
+        }
+    });
+    return map;
+}
+
+function getTechnicianLinkedWebUserLabel(technician) {
+    const webUserId = Number(technician?.web_user_id);
+    if (!Number.isInteger(webUserId) || webUserId <= 0) {
+        return 'Sin usuario vinculado';
+    }
+
+    const linkedUser = getWebUserMap().get(webUserId);
+    if (!linkedUser) {
+        return `Usuario #${webUserId}`;
+    }
+
+    const username = String(linkedUser.username || '').trim() || `Usuario #${webUserId}`;
+    const role = String(linkedUser.role || '').trim();
+    const activeSuffix = linkedUser.is_active === false ? ' · inactivo' : '';
+    return role ? `${username} · ${role}${activeSuffix}` : `${username}${activeSuffix}`;
+}
+
+function getSelectableWebUsersForTechnician(technician = null) {
+    const currentTechnicianId = Number(technician?.id);
+    const linkedUserIds = new Set(
+        (Array.isArray(currentTechniciansData) ? currentTechniciansData : [])
+            .filter((item) => Number(item?.id) !== currentTechnicianId)
+            .map((item) => Number(item?.web_user_id))
+            .filter((userId) => Number.isInteger(userId) && userId > 0),
+    );
+
+    return (Array.isArray(currentWebUsersData) ? currentWebUsersData : [])
+        .filter((user) => {
+            const userId = Number(user?.id);
+            return Number.isInteger(userId) && userId > 0 && !linkedUserIds.has(userId);
+        })
+        .sort((left, right) => String(left?.username || '').localeCompare(String(right?.username || ''), 'es'));
+}
+
+async function loadWebUsersForTechnicians(options = {}) {
+    if (!hasActiveSession() || !canCurrentUserManageTechnicians()) {
+        currentWebUsersData = [];
+        return [];
+    }
+
+    const silent = options?.silent === true;
+    try {
+        const users = [];
+        let nextCursor = null;
+
+        do {
+            const response = await api.getWebUsers({
+                limit: 500,
+                cursor: nextCursor || undefined,
+            });
+            const pageUsers = Array.isArray(response?.users) ? response.users : [];
+            users.push(...pageUsers);
+            nextCursor = response?.pagination?.has_more ? response?.pagination?.next_cursor || null : null;
+        } while (nextCursor);
+
+        currentWebUsersData = users;
+        return currentWebUsersData;
+    } catch (error) {
+        currentWebUsersData = [];
+        if (!silent) {
+            showNotification(`No se pudo cargar la lista de usuarios web: ${error?.message || error}`, 'error');
+        }
+        return [];
+    }
+}
+
+async function loadTechniciansSection(options = {}) {
+    if (!hasActiveSession()) {
+        resetTechniciansState();
+        return [];
+    }
+
+    const silent = options?.silent === true;
+    const refreshAssignments = options?.refreshAssignments === true;
+    const expandedIds = Array.from(expandedTechnicianAssignmentPanels);
+
+    try {
+        const [result] = await Promise.all([
+            api.getTechnicians({
+                includeInactive: canCurrentUserManageTechnicians(),
+            }),
+            loadWebUsersForTechnicians({ silent: true }),
+        ]);
+        currentTechniciansData = Array.isArray(result?.technicians) ? result.technicians : [];
+        renderTechniciansSection();
+        dashboardOverview?.renderTechnicianLoadAttention?.();
+
+        if (refreshAssignments && expandedIds.length) {
+            await Promise.all(expandedIds.map((technicianId) =>
+                loadTechnicianAssignments(technicianId, { force: true, silent: true })));
+        }
+        return currentTechniciansData;
+    } catch (error) {
+        currentTechniciansData = [];
+        renderTechniciansSection();
+        dashboardOverview?.renderTechnicianLoadAttention?.();
+        if (!silent) {
+            showNotification(`No se pudo cargar la gestión de técnicos: ${error?.message || error}`, 'error');
+        }
+        return [];
+    }
+}
+
+async function selectTenantDetail(tenantId, options = {}) {
+    if (!hasActiveSession() || !canCurrentUserManageTenants()) {
+        currentSelectedTenantId = null;
+        currentTenantDetail = null;
+        currentTenantUsersData = [];
+        renderTenantsSection();
+        return null;
+    }
+
+    const normalizedTenantId = String(tenantId || '').trim().toLowerCase();
+    if (!normalizedTenantId) return null;
+
+    try {
+        const [response] = await Promise.all([
+            api.getTenant(normalizedTenantId),
+            loadTenantUsers(normalizedTenantId, { silent: options?.silent === true }),
+        ]);
+        currentSelectedTenantId = normalizedTenantId;
+        currentTenantDetail = response || null;
+        renderTenantsSection();
+        return currentTenantDetail;
+    } catch (error) {
+        if (options?.silent !== true) {
+            showNotification(`No se pudo cargar el detalle del tenant: ${error?.message || error}`, 'error');
+        }
+        currentTenantDetail = null;
+        currentTenantUsersData = [];
+        renderTenantsSection();
+        return null;
+    }
+}
+
+async function loadTenantsSection(options = {}) {
+    if (!hasActiveSession() || !canCurrentUserManageTenants()) {
+        resetTenantsState();
+        return [];
+    }
+
+    const silent = options?.silent === true;
+    try {
+        const response = await api.getTenants();
+        currentTenantsData = Array.isArray(response?.tenants) ? response.tenants : [];
+
+        if (!currentTenantsData.length) {
+            currentSelectedTenantId = null;
+            currentTenantDetail = null;
+            renderTenantsSection();
+            return [];
+        }
+
+        const nextTenantId = currentTenantsData.some((tenant) => String(tenant?.id) === String(currentSelectedTenantId))
+            ? currentSelectedTenantId
+            : String(currentTenantsData[0]?.id || '').trim();
+
+        renderTenantsSection();
+        if (nextTenantId) {
+            await selectTenantDetail(nextTenantId, { silent: true });
+        }
+        return currentTenantsData;
+    } catch (error) {
+        currentTenantsData = [];
+        currentSelectedTenantId = null;
+        currentTenantDetail = null;
+        renderTenantsSection();
+        if (!silent) {
+            showNotification(`No se pudo cargar tenants: ${error?.message || error}`, 'error');
+        }
+        return [];
+    }
+}
+
+function buildTenantModalFields(tenant = null) {
+    const fragment = document.createDocumentFragment();
+    const grid = document.createElement('div');
+    grid.className = 'action-modal-grid';
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.id = 'actionTenantName';
+    nameInput.value = String(tenant?.name || '');
+    nameInput.placeholder = 'Ej: Acme Uruguay';
+    grid.append(createModalInputGroup('Nombre', nameInput, { htmlFor: nameInput.id }));
+
+    const slugInput = document.createElement('input');
+    slugInput.type = 'text';
+    slugInput.id = 'actionTenantSlug';
+    slugInput.value = String(tenant?.slug || tenant?.id || '');
+    slugInput.placeholder = 'Ej: acme-uy';
+    grid.append(createModalInputGroup('Slug / identificador', slugInput, { htmlFor: slugInput.id }));
+
+    const planInput = document.createElement('input');
+    planInput.type = 'text';
+    planInput.id = 'actionTenantPlanCode';
+    planInput.value = String(tenant?.plan_code || 'starter');
+    planInput.placeholder = 'starter';
+    grid.append(createModalInputGroup('Plan', planInput, { htmlFor: planInput.id }));
+
+    const statusSelect = document.createElement('select');
+    statusSelect.id = 'actionTenantStatus';
+    [
+        ['active', 'Activo'],
+        ['suspended', 'Suspendido'],
+    ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        if (String(tenant?.status || 'active') === value) {
+            option.selected = true;
+        }
+        statusSelect.append(option);
+    });
+    grid.append(createModalInputGroup('Estado', statusSelect, { htmlFor: statusSelect.id }));
+
+    fragment.append(grid);
+    return fragment;
+}
+
+function openTenantEditorModal(tenant = null) {
+    if (!canCurrentUserManageTenants()) {
+        showNotification('Solo super admin puede editar tenants.', 'error');
+        return;
+    }
+
+    openActionModal({
+        title: tenant ? `Editar tenant ${tenant.name || tenant.id}` : 'Nuevo tenant',
+        subtitle: tenant
+            ? 'Ajusta nombre, slug, estado y plan del tenant.'
+            : 'Crea un tenant para una nueva empresa dentro de la plataforma.',
+        submitLabel: tenant ? 'Guardar tenant' : 'Crear tenant',
+        focusId: 'actionTenantName',
+        fields: buildTenantModalFields(tenant),
+        onSubmit: async () => {
+            const payload = {
+                name: String(document.getElementById('actionTenantName')?.value || '').trim(),
+                slug: String(document.getElementById('actionTenantSlug')?.value || '').trim(),
+                plan_code: String(document.getElementById('actionTenantPlanCode')?.value || '').trim(),
+                status: String(document.getElementById('actionTenantStatus')?.value || 'active').trim(),
+            };
+
+            if (!payload.name || !payload.slug) {
+                setActionModalError('Nombre y slug son obligatorios.');
+                return;
+            }
+
+            if (tenant?.id) {
+                await api.updateTenant(tenant.id, payload);
+                closeActionModal(true);
+                showNotification(`Tenant ${payload.name} actualizado.`, 'success');
+            } else {
+                const created = await api.createTenant(payload);
+                closeActionModal(true);
+                showNotification(`Tenant ${payload.name} creado.`, 'success');
+                currentSelectedTenantId = String(created?.tenant?.id || payload.slug || '').trim().toLowerCase() || currentSelectedTenantId;
+            }
+
+            await loadTenantsSection({ silent: true });
+        },
+    });
+}
+
+function buildTechnicianModalFields(technician = null) {
+    const fragment = document.createDocumentFragment();
+    const grid = document.createElement('div');
+    grid.className = 'action-modal-grid';
+
+    const displayNameInput = document.createElement('input');
+    displayNameInput.type = 'text';
+    displayNameInput.id = 'actionTechnicianDisplayName';
+    displayNameInput.value = String(technician?.display_name || '');
+    displayNameInput.placeholder = 'Ej: Luis Rivera';
+    grid.append(createModalInputGroup('Nombre visible', displayNameInput, { htmlFor: displayNameInput.id }));
+
+    const employeeCodeInput = document.createElement('input');
+    employeeCodeInput.type = 'text';
+    employeeCodeInput.id = 'actionTechnicianEmployeeCode';
+    employeeCodeInput.value = String(technician?.employee_code || '');
+    employeeCodeInput.placeholder = 'Ej: TEC-09';
+    grid.append(createModalInputGroup('Código interno', employeeCodeInput, { htmlFor: employeeCodeInput.id }));
+
+    const webUserSelect = document.createElement('select');
+    webUserSelect.id = 'actionTechnicianWebUserId';
+    const emptyOption = document.createElement('option');
+    emptyOption.value = '';
+    emptyOption.textContent = 'Sin usuario vinculado';
+    webUserSelect.append(emptyOption);
+    getSelectableWebUsersForTechnician(technician).forEach((user) => {
+        const option = document.createElement('option');
+        option.value = String(user.id);
+        const role = String(user.role || '').trim();
+        const activeSuffix = user.is_active === false ? ' · inactivo' : '';
+        option.textContent = role
+            ? `${user.username} · ${role}${activeSuffix}`
+            : `${user.username}${activeSuffix}`;
+        if (Number(user.id) === Number(technician?.web_user_id)) {
+            option.selected = true;
+        }
+        webUserSelect.append(option);
+    });
+    grid.append(createModalInputGroup('Usuario web vinculado', webUserSelect, { htmlFor: webUserSelect.id }));
+
+    const emailInput = document.createElement('input');
+    emailInput.type = 'email';
+    emailInput.id = 'actionTechnicianEmail';
+    emailInput.value = String(technician?.email || '');
+    emailInput.placeholder = 'correo@empresa.com';
+    grid.append(createModalInputGroup('Email', emailInput, { htmlFor: emailInput.id }));
+
+    const phoneInput = document.createElement('input');
+    phoneInput.type = 'text';
+    phoneInput.id = 'actionTechnicianPhone';
+    phoneInput.value = String(technician?.phone || '');
+    phoneInput.placeholder = '099 000 111';
+    grid.append(createModalInputGroup('Teléfono', phoneInput, { htmlFor: phoneInput.id }));
+
+    const notesInput = document.createElement('textarea');
+    notesInput.id = 'actionTechnicianNotes';
+    notesInput.rows = 4;
+    notesInput.value = String(technician?.notes || '');
+    notesInput.placeholder = 'Notas operativas o contexto del técnico';
+    fragment.append(grid, createModalInputGroup('Notas', notesInput, { htmlFor: notesInput.id }));
+    return fragment;
+}
+
+function openTechnicianEditorModal(technician = null) {
+    if (!canCurrentUserManageTechnicians()) {
+        showNotification('No tienes permisos para editar técnicos.', 'error');
+        return;
+    }
+
+    const openModal = () => openActionModal({
+        title: technician ? `Editar técnico #${technician.id}` : 'Nuevo técnico',
+        subtitle: technician
+            ? 'Ajusta la ficha operativa del técnico dentro del tenant actual.'
+            : 'Crea un técnico reutilizable para asignaciones operativas.',
+        submitLabel: technician ? 'Guardar cambios' : 'Crear técnico',
+        focusId: 'actionTechnicianDisplayName',
+        fields: buildTechnicianModalFields(technician),
+        onSubmit: async () => {
+            const displayName = String(document.getElementById('actionTechnicianDisplayName')?.value || '').trim();
+            const employeeCode = String(document.getElementById('actionTechnicianEmployeeCode')?.value || '').trim();
+            const email = String(document.getElementById('actionTechnicianEmail')?.value || '').trim();
+            const phone = String(document.getElementById('actionTechnicianPhone')?.value || '').trim();
+            const notes = String(document.getElementById('actionTechnicianNotes')?.value || '').trim();
+            const rawWebUserId = String(document.getElementById('actionTechnicianWebUserId')?.value || '').trim();
+            const webUserId = parseStrictInteger(rawWebUserId);
+
+            if (!displayName) {
+                setActionModalError('El nombre visible es obligatorio.');
+                return;
+            }
+
+            const payload = {
+                display_name: displayName,
+                employee_code: employeeCode,
+                email,
+                phone,
+                notes,
+                web_user_id: Number.isInteger(webUserId) && webUserId > 0 ? webUserId : null,
+            };
+
+            if (technician?.id) {
+                await api.updateTechnician(technician.id, payload);
+                closeActionModal(true);
+                showNotification(`Técnico ${displayName} actualizado.`, 'success');
+            } else {
+                await api.createTechnician(payload);
+                closeActionModal(true);
+                showNotification(`Técnico ${displayName} creado.`, 'success');
+            }
+
+            await loadTechniciansSection({ silent: true, refreshAssignments: true });
+        },
+    });
+
+    if (!currentWebUsersData.length) {
+        void loadWebUsersForTechnicians({ silent: false }).then(() => {
+            openModal();
+        });
+        return;
+    }
+
+    openModal();
+}
+
+function buildTechnicianAssignmentModalFields(technician) {
+    const fragment = document.createDocumentFragment();
+    const grid = document.createElement('div');
+    grid.className = 'action-modal-grid';
+
+    const entityTypeSelect = document.createElement('select');
+    entityTypeSelect.id = 'actionTechnicianAssignmentEntityType';
+    [
+        ['installation', 'Registro'],
+        ['incident', 'Incidencia'],
+        ['asset', 'Equipo'],
+        ['zone', 'Zona'],
+    ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        entityTypeSelect.append(option);
+    });
+    grid.append(createModalInputGroup('Entidad', entityTypeSelect, { htmlFor: entityTypeSelect.id }));
+
+    const entityIdInput = document.createElement('input');
+    entityIdInput.type = 'text';
+    entityIdInput.id = 'actionTechnicianAssignmentEntityId';
+    entityIdInput.placeholder = 'Ej: 45 o zona-centro';
+    grid.append(createModalInputGroup('ID entidad', entityIdInput, { htmlFor: entityIdInput.id }));
+
+    const assignmentRoleSelect = document.createElement('select');
+    assignmentRoleSelect.id = 'actionTechnicianAssignmentRole';
+    [
+        ['owner', 'Responsable'],
+        ['assistant', 'Apoyo'],
+        ['reviewer', 'Revisión'],
+    ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        assignmentRoleSelect.append(option);
+    });
+    grid.append(createModalInputGroup('Rol asignado', assignmentRoleSelect, { htmlFor: assignmentRoleSelect.id }));
+
+    const note = document.createElement('textarea');
+    note.id = 'actionTechnicianAssignmentNote';
+    note.rows = 3;
+    note.placeholder = `Contexto de asignación para ${technician?.display_name || 'el técnico'} (opcional)`;
+    fragment.append(grid, createModalInputGroup('Metadata', note, { htmlFor: note.id }));
+    return fragment;
+}
+
+function openTechnicianAssignmentModal(technician) {
+    if (!canCurrentUserManageTechnicianAssignments()) {
+        showNotification('No tienes permisos para asignar técnicos.', 'error');
+        return;
+    }
+
+    openActionModal({
+        title: `Asignar ${technician?.display_name || 'técnico'}`,
+        subtitle: 'Vincula este técnico a una entidad operativa del tenant.',
+        submitLabel: 'Guardar asignación',
+        focusId: 'actionTechnicianAssignmentEntityId',
+        fields: buildTechnicianAssignmentModalFields(technician),
+        onSubmit: async () => {
+            const entityType = String(document.getElementById('actionTechnicianAssignmentEntityType')?.value || '').trim();
+            const entityId = String(document.getElementById('actionTechnicianAssignmentEntityId')?.value || '').trim();
+            const assignmentRole = String(document.getElementById('actionTechnicianAssignmentRole')?.value || 'owner').trim();
+            const note = String(document.getElementById('actionTechnicianAssignmentNote')?.value || '').trim();
+
+            if (!entityId) {
+                setActionModalError('Debes indicar el identificador de la entidad.');
+                return;
+            }
+
+            const payload = {
+                entity_type: entityType,
+                entity_id: entityType === 'zone' ? entityId : Number(entityId),
+                assignment_role: assignmentRole,
+                metadata_json: note ? { note } : undefined,
+            };
+
+            await api.createTechnicianAssignment(technician.id, payload);
+            closeActionModal(true);
+            expandedTechnicianAssignmentPanels.add(technician.id);
+            showNotification(`Asignación guardada para ${technician.display_name}.`, 'success');
+            await loadTechniciansSection({ silent: true, refreshAssignments: false });
+            await loadTechnicianAssignments(technician.id, { force: true, silent: true });
+        },
+    });
+}
+
+function buildEntityTechnicianAssignmentFields(entityConfig = {}) {
+    const fragment = document.createDocumentFragment();
+    const grid = document.createElement('div');
+    grid.className = 'action-modal-grid';
+
+    const technicianSelect = document.createElement('select');
+    technicianSelect.id = 'actionEntityAssignmentTechnicianId';
+    technicianSelect.appendChild(new Option('Selecciona un técnico', ''));
+    currentTechniciansData
+        .filter((item) => item && item.is_active)
+        .sort((left, right) => String(left.display_name || '').localeCompare(String(right.display_name || ''), 'es'))
+        .forEach((technician) => {
+            const label = technician.employee_code
+                ? `${technician.display_name} · ${technician.employee_code}`
+                : technician.display_name;
+            technicianSelect.appendChild(new Option(label, String(technician.id)));
+        });
+    grid.append(createModalInputGroup('Técnico', technicianSelect, { htmlFor: technicianSelect.id }));
+
+    const assignmentRoleSelect = document.createElement('select');
+    assignmentRoleSelect.id = 'actionEntityAssignmentRole';
+    [
+        ['owner', 'Responsable'],
+        ['assistant', 'Apoyo'],
+        ['reviewer', 'Revisión'],
+    ].forEach(([value, label]) => {
+        assignmentRoleSelect.appendChild(new Option(label, value, value === entityConfig.defaultRole, value === entityConfig.defaultRole));
+    });
+    grid.append(createModalInputGroup('Rol asignado', assignmentRoleSelect, { htmlFor: assignmentRoleSelect.id }));
+
+    const note = document.createElement('textarea');
+    note.id = 'actionEntityAssignmentNote';
+    note.rows = 3;
+    note.placeholder = `Contexto de asignación para ${entityConfig.entityLabel || 'esta entidad'} (opcional)`;
+    fragment.append(grid, createModalInputGroup('Metadata', note, { htmlFor: note.id }));
+    return fragment;
+}
+
+async function openEntityTechnicianAssignmentModal(entityConfig = {}) {
+    if (!canCurrentUserManageTechnicianAssignments()) {
+        showNotification('No tienes permisos para asignar técnicos.', 'error');
+        return;
+    }
+
+    const entityType = String(entityConfig.entityType || '').trim().toLowerCase();
+    const entityId = String(entityConfig.entityId || '').trim();
+    const entityLabel = String(entityConfig.entityLabel || `${entityType} ${entityId}`).trim();
+    if (!entityType || !entityId) {
+        showNotification('No pudimos identificar la entidad operativa a asignar.', 'error');
+        return;
+    }
+
+    if (!currentTechniciansData.some((item) => item && item.is_active)) {
+        showNotification('Primero necesitas cargar al menos un técnico activo en el tenant.', 'warning');
+        return;
+    }
+
+    openActionModal({
+        title: `Asignar técnico a ${entityLabel}`,
+        subtitle: 'Esta asignación quedará disponible para operación, filtros y cola del tenant.',
+        submitLabel: 'Guardar asignación',
+        focusId: 'actionEntityAssignmentTechnicianId',
+        fields: buildEntityTechnicianAssignmentFields({
+            entityLabel,
+            defaultRole: entityConfig.defaultRole || 'owner',
+        }),
+        onSubmit: async () => {
+            const technicianId = parseStrictInteger(document.getElementById('actionEntityAssignmentTechnicianId')?.value);
+            const assignmentRole = String(document.getElementById('actionEntityAssignmentRole')?.value || 'owner').trim();
+            const note = String(document.getElementById('actionEntityAssignmentNote')?.value || '').trim();
+
+            if (!Number.isInteger(technicianId) || technicianId <= 0) {
+                setActionModalError('Debes seleccionar un técnico.');
+                return;
+            }
+
+            const currentAssignments = await loadTechnicianAssignmentsForEntity(entityType, entityId, {
+                force: true,
+                silent: true,
+            });
+            const duplicateAssignment = currentAssignments.find((assignment) =>
+                Number(assignment?.technician_id) === technicianId &&
+                String(assignment?.assignment_role || '').trim().toLowerCase() === assignmentRole.toLowerCase());
+            if (duplicateAssignment) {
+                setActionModalError('Ese técnico ya tiene una asignación activa con ese rol en esta entidad.');
+                return;
+            }
+
+            await api.createTechnicianAssignment(technicianId, {
+                entity_type: entityType,
+                entity_id: entityType === 'zone' ? entityId : Number(entityId),
+                assignment_role: assignmentRole,
+                metadata_json: note ? { note } : undefined,
+            });
+
+            closeActionModal(true);
+            technicianAssignmentsByEntityKey.delete(buildTechnicianAssignmentEntityKey(entityType, entityId));
+            showNotification(`Asignación guardada para ${entityLabel}.`, 'success');
+            await loadTechniciansSection({ silent: true, refreshAssignments: false });
+            if (typeof entityConfig.onApplied === 'function') {
+                await entityConfig.onApplied();
+            }
+            dashboardOverview?.renderTechnicianLoadAttention?.();
+        },
+    });
+}
+
+async function removeEntityTechnicianAssignment(assignment, entityConfig = {}) {
+    if (!canCurrentUserManageTechnicianAssignments()) {
+        showNotification('No tienes permisos para desasignar técnicos.', 'error');
+        return;
+    }
+
+    const entityLabel = String(entityConfig.entityLabel || 'esta entidad').trim();
+    const technicianName = String(
+        assignment?.technician_display_name || assignment?.display_name || assignment?.technician_name || 'el técnico',
+    ).trim();
+    const confirmed = window.confirm(`¿Quitar a ${technicianName} de ${entityLabel}?`);
+    if (!confirmed) return;
+
+    await api.deleteTechnicianAssignment(assignment.id);
+    technicianAssignmentsByEntityKey.delete(
+        buildTechnicianAssignmentEntityKey(entityConfig.entityType, entityConfig.entityId),
+    );
+    showNotification(`Asignación removida de ${entityLabel}.`, 'success');
+    await loadTechniciansSection({ silent: true, refreshAssignments: false });
+    if (typeof entityConfig.onApplied === 'function') {
+        await entityConfig.onApplied();
+    }
+    dashboardOverview?.renderTechnicianLoadAttention?.();
+}
+
+async function renderEntityTechnicianAssignmentsPanel(entityConfig = {}) {
+    const entityType = String(entityConfig.entityType || '').trim().toLowerCase();
+    const entityId = String(entityConfig.entityId || '').trim();
+    const entityLabel = String(entityConfig.entityLabel || `${entityType} ${entityId}`).trim();
+    const title = String(entityConfig.title || 'Técnicos asignados').trim();
+    const emptyText = String(entityConfig.emptyText || 'Sin técnicos asignados todavía.').trim();
+    const compact = entityConfig.compact === true;
+    const showEmptyMessage = entityConfig.showEmptyMessage !== false;
+
+    const panel = document.createElement('section');
+    panel.className = compact ? 'entity-technician-panel is-compact' : 'entity-technician-panel';
+
+    const head = document.createElement('div');
+    head.className = 'entity-technician-panel-head';
+    const heading = document.createElement('strong');
+    heading.textContent = title;
+    head.appendChild(heading);
+
+    if (canCurrentUserManageTechnicianAssignments()) {
+        const assignBtn = document.createElement('button');
+        assignBtn.type = 'button';
+        assignBtn.className = 'btn-secondary';
+        assignBtn.textContent = 'Asignar técnico';
+        assignBtn.addEventListener('click', () => {
+            void openEntityTechnicianAssignmentModal({
+                entityType,
+                entityId,
+                entityLabel,
+                defaultRole: entityConfig.defaultRole || 'owner',
+                onApplied: entityConfig.onApplied,
+            });
+        });
+        head.appendChild(assignBtn);
+    }
+    panel.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'entity-technician-panel-body';
+    panel.appendChild(body);
+
+    const assignments = await loadTechnicianAssignmentsForEntity(entityType, entityId, {
+        force: entityConfig.force === true,
+        silent: true,
+    });
+
+    if (!assignments.length) {
+        if (!showEmptyMessage) {
+            return panel;
+        }
+        const empty = document.createElement('p');
+        empty.className = 'asset-muted';
+        empty.textContent = emptyText;
+        body.appendChild(empty);
+        return panel;
+    }
+
+    assignments.forEach((assignment) => {
+        const item = document.createElement('div');
+        item.className = 'entity-technician-item';
+
+        const copy = document.createElement('div');
+        copy.className = 'entity-technician-copy';
+        const primary = document.createElement('strong');
+        const technicianName = String(assignment?.technician_display_name || '').trim() || `Técnico #${assignment?.technician_id || '-'}`;
+        primary.textContent = technicianName;
+        const meta = document.createElement('small');
+        const metaParts = [
+            TECHNICIAN_ASSIGNMENT_ROLE_LABELS[String(assignment?.assignment_role || '').trim()] || assignment?.assignment_role || 'Responsable',
+            assignment?.technician_employee_code ? `Código ${assignment.technician_employee_code}` : '',
+            assignment?.assigned_by_username ? `por ${assignment.assigned_by_username}` : '',
+        ].filter(Boolean);
+        meta.textContent = metaParts.join(' · ');
+        copy.append(primary, meta);
+        item.appendChild(copy);
+
+        if (canCurrentUserManageTechnicianAssignments()) {
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'btn-secondary';
+            removeBtn.textContent = 'Quitar';
+            removeBtn.addEventListener('click', () => {
+                void removeEntityTechnicianAssignment(assignment, {
+                    entityType,
+                    entityId,
+                    entityLabel,
+                    onApplied: entityConfig.onApplied,
+                });
+            });
+            item.appendChild(removeBtn);
+        }
+
+        body.appendChild(item);
+    });
+
+    return panel;
 }
 
 function normalizeSeverity(input) {
@@ -1610,6 +3466,9 @@ async function loadDashboard(config = {}) {
 
     dashboardLoadPromise = Promise.resolve(dashboardOverview.loadDashboard())
         .then((success) => {
+            if (hasActiveSession()) {
+                void loadTechniciansSection({ silent: true, refreshAssignments: true });
+            }
             if (success === false && !skipRetry) {
                 scheduleDashboardRetry(Math.max(900, followupDelayMs || 0));
             }
@@ -3776,6 +5635,9 @@ function updatePageTitleForSection(section) {
 
 function resolveHeaderPrimaryActionConfig(section) {
     const normalizedSection = SECTION_TITLES[section] ? section : 'dashboard';
+    if (normalizedSection === 'tenants' && !canCurrentUserManageTenants()) {
+        return HEADER_PRIMARY_ACTIONS.dashboard;
+    }
     if (normalizedSection === 'settings' && !canCurrentUserAccessAudit()) {
         return { icon: 'logout', label: 'Cerrar sesión', action: 'logout' };
     }
@@ -3794,6 +5656,14 @@ function executeHeaderPrimaryAction(actionKey) {
         case 'createAsset':
             navigateToSectionByKey('assets');
             showQrModal({ type: 'asset', value: '' });
+            return;
+        case 'createTenant':
+            if (!canCurrentUserManageTenants()) {
+                showNotification('Solo super admin puede crear tenants.', 'error');
+                return;
+            }
+            navigateToSectionByKey('tenants');
+            openTenantEditorModal();
             return;
         case 'pickDriverFile':
             navigateToSectionByKey('drivers');
@@ -3944,6 +5814,7 @@ const dashboardNavigation = window.createDashboardNavigation({
     loadDrivers,
     loadIncidentsWorkspace: (...args) => dashboardIncidents.showIncidentsWorkspace(...args),
     loadInstallations,
+    loadTenants: loadTenantsSection,
     prefersReducedMotion,
     sectionTransitionOutMs: SECTION_TRANSITION_OUT_MS,
     syncSSEForCurrentContext,
@@ -4003,6 +5874,10 @@ document.querySelectorAll('.nav-links a').forEach(link => {
         if (!requireActiveSession()) return;
         const section = link.dataset.section;
         if (!section) return;
+        if (section === 'tenants' && !canCurrentUserManageTenants()) {
+            showNotification('Solo super admin puede acceder a tenants.', 'error');
+            return;
+        }
         if (section === 'audit' && !canCurrentUserAccessAudit()) {
             showNotification('No tienes permisos para acceder a Auditoría.', 'error');
             return;
@@ -4024,6 +5899,46 @@ document.getElementById('settingsOpenAuditBtn')?.addEventListener('click', () =>
         return;
     }
     navigateToSectionByKey('audit');
+});
+
+document.getElementById('settingsRefreshTechniciansBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    void loadTechniciansSection({ silent: false, refreshAssignments: true });
+});
+
+document.getElementById('settingsCreateTechnicianBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    openTechnicianEditorModal(null);
+});
+
+document.getElementById('tenantsRefreshBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    void loadTenantsSection({ silent: false });
+});
+
+document.getElementById('tenantsCreateBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    openTenantEditorModal(null);
+});
+
+document.getElementById('tenantsEditBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    const tenant = currentTenantDetail?.tenant || null;
+    if (!tenant) {
+        showNotification('Selecciona un tenant primero.', 'warning');
+        return;
+    }
+    openTenantEditorModal(tenant);
+});
+
+document.getElementById('tenantsDeleteBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    const tenant = currentTenantDetail?.tenant || null;
+    if (!tenant) {
+        showNotification('Selecciona un tenant primero.', 'warning');
+        return;
+    }
+    confirmDeleteTenant(tenant);
 });
 
 

@@ -224,7 +224,7 @@ export function createWebUserAuthHelpers({
 
   function normalizeWebRole(roleRaw) {
     const role = normalizeOptionalString(roleRaw, WEB_DEFAULT_ROLE).toLowerCase();
-    if (!["admin", "viewer", "super_admin"].includes(role)) {
+    if (!["admin", "viewer", "super_admin", "platform_owner"].includes(role)) {
       throw new HttpError(400, "Rol web invalido.");
     }
     return role;
@@ -513,6 +513,19 @@ export function createWebUserAuthHelpers({
     }
   }
 
+  async function deleteWebUser(env, { userId }) {
+    try {
+      await env.DB.prepare(`
+        DELETE FROM web_users
+        WHERE id = ?
+      `)
+        .bind(userId)
+        .run();
+    } catch (error) {
+      ensureWebUsersTableAvailable(error);
+    }
+  }
+
   async function authenticateWebUserByCredentials(env, { username, password }) {
     const user = await getWebUserByUsername(env, username);
     if (!user) {
@@ -602,6 +615,7 @@ export function createWebUserAuthHelpers({
     upsertWebUserFromImport,
     updateWebUserRoleAndStatus,
     forceResetWebUserPassword,
+    deleteWebUser,
     authenticateWebUserByCredentials,
     verifyCurrentWebUserPassword,
   };

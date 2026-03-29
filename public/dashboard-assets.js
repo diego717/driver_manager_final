@@ -381,6 +381,20 @@
             }
             container.appendChild(activeLinkBanner);
 
+            if (typeof options.renderEntityTechnicianAssignmentsPanel === 'function') {
+                const techniciansPanel = await options.renderEntityTechnicianAssignmentsPanel({
+                    entityType: 'asset',
+                    entityId: asset.id,
+                    entityLabel: `equipo ${asset.external_code || `#${asset.id}`}`,
+                    title: 'Técnicos del equipo',
+                    emptyText: 'Sin técnicos asignados a este equipo.',
+                    onApplied: async () => {
+                        await loadAssetDetail(asset.id, { keepSelection: true });
+                    },
+                });
+                container.appendChild(techniciansPanel);
+            }
+
             if (activeLoan && loanMeta) {
                 const loanBanner = document.createElement('section');
                 loanBanner.className = `asset-loan-banner ${loanMeta.bannerClass}`;

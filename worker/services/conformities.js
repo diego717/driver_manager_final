@@ -922,6 +922,7 @@ export async function generateConformityPdf({
   signedByName,
   signedByDocument,
   summaryNote,
+  technicianName,
   technicianNote,
   generatedByUsername,
   signatureR2Key,
@@ -948,6 +949,9 @@ export async function generateConformityPdf({
     assetClientName: context.asset?.client_name,
     assetLabel: assetReference,
   });
+  const resolvedTechnicianName =
+    normalizeOptionalString(technicianName, "") ||
+    normalizeOptionalString(generatedByUsername, "SiteOps");
 
   let state = createPageState(pdfDoc);
   const heroHeight = 146;
@@ -1051,7 +1055,7 @@ export async function generateConformityPdf({
     font: titleFont,
     color: rgb(0.4, 0.48, 0.53),
   });
-  state.page.drawText(normalizePdfText(generatedByUsername || "SiteOps"), {
+  state.page.drawText(normalizePdfText(resolvedTechnicianName), {
     x: metaX,
     y: state.y - 108,
     size: 10.5,
@@ -1096,7 +1100,7 @@ export async function generateConformityPdf({
     width: cardWidth,
     height: cardHeight,
     label: "Responsable operativo",
-    value: generatedByUsername || "SiteOps",
+    value: resolvedTechnicianName,
   });
   state.y -= cardHeight + 18;
 
@@ -1614,7 +1618,8 @@ export async function sendConformityEmail(
     assetClientName,
     assetLabel: asset,
   });
-  const technician = normalizeOptionalString(technicianName, "equipo tecnico");
+  const technician =
+    normalizeOptionalString(technicianName, "") || "equipo tecnico";
   const generatedLabel = formatEmailDate(generatedAt);
   const summary = normalizeOptionalString(summaryNote, "");
   const normalizedIncidentCount = Math.max(0, Number(incidentCount) || 0);

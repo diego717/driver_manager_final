@@ -1,5 +1,17 @@
 (function attachDashboardAuthFactory(global) {
     function createDashboardAuth(options) {
+        function formatRoleLabel(role, tenantId = "") {
+            const normalizedRole = String(role || "").trim().toLowerCase();
+            const normalizedTenantId = String(tenantId || "").trim().toLowerCase();
+            if (
+                normalizedRole === "platform_owner" ||
+                (normalizedRole === "super_admin" && normalizedTenantId === "default")
+            ) {
+                return "platform_owner";
+            }
+            return String(role || "admin");
+        }
+
         function showLogin() {
             resetProtectedViews();
             syncRoleBasedNavigationAccess();
@@ -55,7 +67,7 @@
 
         function canCurrentUserAccessAudit() {
             const role = String(options.getCurrentUser()?.role || '').toLowerCase();
-            return role === 'admin' || role === 'super_admin';
+            return role === 'admin' || role === 'super_admin' || role === 'platform_owner';
         }
 
         function syncRoleBasedNavigationAccess() {
@@ -75,7 +87,10 @@
 
         function syncMobileNavContext() {
             const username = String(options.getCurrentUser()?.username || 'Usuario');
-            const role = String(options.getCurrentUser()?.role || 'admin');
+            const role = formatRoleLabel(
+                options.getCurrentUser()?.role || 'admin',
+                options.getCurrentUser()?.tenant_id || '',
+            );
             const initial = (username || 'U').charAt(0).toUpperCase();
 
             const mobileUsernameEl = document.getElementById('mobileNavUsername');
@@ -111,7 +126,7 @@
                 usernameEl.textContent = String(currentUser?.username || '-');
             }
             if (roleEl) {
-                roleEl.textContent = String(currentUser?.role || '-');
+                roleEl.textContent = formatRoleLabel(currentUser?.role || '-', currentUser?.tenant_id || '');
             }
             syncMobileNavContext();
             updateSettingsSyncLabel(options.getConnectionStatus());
@@ -120,7 +135,7 @@
         function applyAuthenticatedUser(user) {
             options.setCurrentUser(user);
             document.getElementById('username').textContent = user.username || 'Usuario';
-            document.getElementById('userRole').textContent = user.role || 'admin';
+            document.getElementById('userRole').textContent = formatRoleLabel(user.role || 'admin', user.tenant_id || '');
             const initial = (user.username || 'U').charAt(0).toUpperCase();
             const avatarEl = document.getElementById('userInitial');
             if (avatarEl) avatarEl.textContent = initial;
