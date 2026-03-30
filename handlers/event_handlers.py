@@ -60,10 +60,26 @@ class EventHandlers:
             details += f"Tamaño: {size_text} MB"
 
             self.main.drivers_tab.driver_details.setText(details)
+            if hasattr(self.main.drivers_tab, "detail_state_label"):
+                self.main.drivers_tab.detail_state_label.setText(
+                    f"Paquete listo: {driver['brand']} v{driver['version']}"
+                )
+                self.main.drivers_tab.detail_state_label.setProperty("class", "success")
+            if hasattr(self.main.drivers_tab, "catalog_context_label"):
+                self.main.drivers_tab.catalog_context_label.setText(
+                    f"{driver['brand']} seleccionado"
+                )
             self.main.drivers_tab.download_btn.setEnabled(True)
             self.main.drivers_tab.install_btn.setEnabled(True)
         else:
             self.main.drivers_tab.driver_details.clear()
+            if hasattr(self.main.drivers_tab, "detail_state_label"):
+                self.main.drivers_tab.detail_state_label.setText(
+                    "Sin seleccion. Elige un driver del catalogo para ver version, tamano y descripcion."
+                )
+                self.main.drivers_tab.detail_state_label.setProperty("class", "info")
+            if hasattr(self.main.drivers_tab, "catalog_context_label"):
+                self.main.drivers_tab.catalog_context_label.setText("Exploracion activa")
             self.main.drivers_tab.download_btn.setEnabled(False)
             self.main.drivers_tab.install_btn.setEnabled(False)
 
@@ -292,6 +308,13 @@ class EventHandlers:
         
         self.main.is_authenticated = False
         self.main.is_admin = False
+        self.main.is_super_admin = False
+        self.main.is_read_only = False
+        self.main.tenant_id = ""
+        self.main.can_manage_tenant_catalog = False
+        self.main.can_manage_platform = False
+        self.main.can_manage_operational_records = False
+        self.main.can_operate_incidents = False
         self.main.admin_tab.auth_status.setText("🔒 No autenticado")
         self.main.admin_tab.login_btn.setVisible(True)
         self.main.admin_tab.logout_btn.setVisible(False)

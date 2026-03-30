@@ -34,8 +34,45 @@ class TestUserAuthProvider(unittest.TestCase):
 
     def test_permissions_for_role(self):
         self.assertEqual(self.provider._permissions_for_role("super_admin"), ["all"])
-        self.assertEqual(self.provider._permissions_for_role("admin"), ["read", "write"])
+        self.assertIn("write", self.provider._permissions_for_role("admin"))
+        self.assertIn("manage_tenant", self.provider._permissions_for_role("admin"))
+        self.assertEqual(
+            self.provider._permissions_for_role("supervisor"),
+            ["read", "write_operational", "manage_assignments"],
+        )
+        self.assertEqual(
+            self.provider._permissions_for_role("tecnico"),
+            ["read", "write_operational"],
+        )
+        self.assertEqual(self.provider._permissions_for_role("solo_lectura"), ["read"])
         self.assertEqual(self.provider._permissions_for_role("viewer"), ["read"])
+
+    def test_build_web_current_user_supports_tenant_roles(self):
+        user = self.provider._build_web_current_user(
+            "campo01",
+            {
+                "id": 9,
+                "username": "campo01",
+                "role": "tecnico",
+                "tenant_id": "tenant-a",
+            },
+        )
+
+        self.assertEqual(user["role"], "tecnico")
+        self.assertEqual(user["tenant_id"], "tenant-a")
+        self.assertEqual(user["permissions"], ["read", "write_operational"])
+
+    def test_build_web_current_user_maps_legacy_viewer_to_solo_lectura(self):
+        user = self.provider._build_web_current_user(
+            "viewer01",
+            {
+                "username": "viewer01",
+                "role": "viewer",
+            },
+        )
+
+        self.assertEqual(user["role"], "solo_lectura")
+        self.assertEqual(user["permissions"], ["read"])
 
 
 if __name__ == "__main__":

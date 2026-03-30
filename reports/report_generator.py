@@ -22,6 +22,11 @@ class ReportGenerator:
             history_manager: Instancia de InstallationHistory
         """
         self.history = history_manager
+        self._installation_assignment_name_cache = {}
+
+    def _reset_assignment_name_cache(self):
+        """Limpiar cache por corrida para evitar nombres stale entre reportes."""
+        self._installation_assignment_name_cache = {}
     
     def generate_monthly_report(self, year, month, output_path=None):
         """
@@ -72,6 +77,7 @@ class ReportGenerator:
             }
         
         # Crear workbook
+        self._reset_assignment_name_cache()
         wb = openpyxl.Workbook()
         
         # Hoja 1: Resumen
@@ -126,6 +132,7 @@ class ReportGenerator:
                 'by_brand': {}
             }
 
+        self._reset_assignment_name_cache()
         wb = openpyxl.Workbook()
         self._create_summary_sheet(wb, installations, stats, f"Anual {year}")
         self._create_installations_sheet(wb, installations)
@@ -438,6 +445,8 @@ class ReportGenerator:
             
             time_minutes = inst['installation_time_seconds'] / 60 if inst['installation_time_seconds'] else 0
             
+            technician_display_name = self._resolve_installation_technician_display_name(inst)
+
             ws.cell(row, 1, date_str)
             ws.cell(row, 2, inst.get('client_name') or 'N/A')
             ws.cell(row, 3, inst.get('client_pc_name') or 'N/A')
@@ -445,7 +454,7 @@ class ReportGenerator:
             ws.cell(row, 5, inst['driver_version'])
             ws.cell(row, 6, 'Exitosa' if inst['status'] == 'success' else 'Fallida')
             ws.cell(row, 7, round(time_minutes, 1))
-            ws.cell(row, 8, inst.get('technician_name') or 'N/A')
+            ws.cell(row, 8, technician_display_name)
             ws.cell(row, 9, inst.get('notes') or '')
             
             # Colorear estado
@@ -461,6 +470,56 @@ class ReportGenerator:
         widths = [18, 25, 20, 15, 12, 12, 12, 20, 40]
         for col, width in enumerate(widths, 1):
             ws.column_dimensions[get_column_letter(col)].width = width
+
+    def _resolve_installation_technician_display_name(self, installation):
+        """Resolver nombre técnico consistente priorizando asignaciones estructuradas."""
+        installation = installation if isinstance(installation, dict) else {}
+        installation_id = installation.get("id")
+        tenant_hint = (
+            installation.get("tenant_id")
+            or getattr(self.history, "current_web_tenant_id", None)
+            or ""
+        )
+        cache_key = f"{tenant_hint}:{installation_id}" if installation_id else ""
+
+        if cache_key and cache_key in self._installation_assignment_name_cache:
+            return self._installation_assignment_name_cache[cache_key]
+
+        fallback_name = str(installation.get("technician_name") or "").strip() or "N/A"
+        resolved_name = fallback_name
+
+        if installation_id and hasattr(self.history, "list_entity_technician_assignments"):
+            try:
+                assignments = self.history.list_entity_technician_assignments(
+                    "installation",
+                    installation_id,
+                    include_inactive=False,
+                ) or []
+            except Exception:
+                assignments = []
+
+            if isinstance(assignments, list) and assignments:
+                owner_assignment = None
+                for assignment in assignments:
+                    if not isinstance(assignment, dict):
+                        continue
+                    if str(assignment.get("assignment_role") or "").strip().lower() == "owner":
+                        owner_assignment = assignment
+                        break
+                selected_assignment = owner_assignment or next(
+                    (a for a in assignments if isinstance(a, dict)),
+                    None,
+                )
+                if isinstance(selected_assignment, dict):
+                    resolved_name = (
+                        str(selected_assignment.get("technician_display_name") or "").strip()
+                        or fallback_name
+                    )
+
+        if cache_key:
+            self._installation_assignment_name_cache[cache_key] = resolved_name or "N/A"
+            return self._installation_assignment_name_cache[cache_key]
+        return resolved_name or "N/A"
     
     def _create_clients_sheet(self, wb, installations):
         """Crear hoja de resumen por cliente"""

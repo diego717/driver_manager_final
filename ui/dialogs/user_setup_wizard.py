@@ -1,164 +1,205 @@
 """
-Asistente de Configuración Inicial de Usuario
-Guía al usuario en la creación del primer super_admin
+Initial user setup wizard for the first super admin account.
 """
 
-from PyQt6.QtWidgets import QDialog, QLabel, QLineEdit, QMessageBox, QProgressBar, QVBoxLayout, QWizard, QWizardPage
-from PyQt6.QtGui import QFont
 import re
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QDialog,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QProgressBar,
+    QVBoxLayout,
+    QWizard,
+    QWizardPage,
+)
+
 from core.password_policy import PasswordPolicy
+from ui.theme_manager import resolve_theme_manager
+
+
+def _set_feedback_style(label, style_class, text):
+    """Apply a semantic feedback class to an inline label."""
+    label.setText(text)
+    label.setProperty("class", style_class)
+    label.style().unpolish(label)
+    label.style().polish(label)
 
 
 class WelcomePage(QWizardPage):
-    """Página de bienvenida del wizard"""
-    
-    def __init__(self):
-        super().__init__()
+    """Welcome page for the setup wizard."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.theme_manager = resolve_theme_manager(parent)
         self.setTitle("Bienvenido a SiteOps")
-        
+        self.setSubTitle("Prepara la cuenta principal y deja la base del sistema lista para operar.")
+
         layout = QVBoxLayout()
-        
+        layout.setSpacing(12)
+
+        eyebrow = QLabel("PRIMER INICIO")
+        eyebrow.setProperty("class", "chip")
+        layout.addWidget(eyebrow, alignment=Qt.AlignmentFlag.AlignLeft)
+
         welcome_text = QLabel(
-            "<h2>¡Bienvenido!</h2>"
-            "<p>Esta es la primera vez que ejecutas SiteOps.</p>"
-            "<p>Este asistente te guiará en la configuración inicial:</p>"
+            "<div style='line-height:1.6;'>"
+            "<div style='font-size:24px;font-weight:700;margin-bottom:10px;'>Activa la consola inicial</div>"
+            "<div>Esta es la primera vez que ejecutas SiteOps en Windows.</div>"
+            "<div style='margin-top:10px;'>Este asistente te va a guiar en tres pasos:</div>"
             "<ul>"
-            "<li>✅ Crear tu cuenta de super administrador</li>"
-            "<li>✅ Configurar la seguridad del sistema</li>"
-            "<li>✅ Establecer preferencias iniciales</li>"
+            "<li>Crear la cuenta de super administracion</li>"
+            "<li>Confirmar los criterios base de seguridad</li>"
+            "<li>Dejar preparado el entorno para seguir configurando</li>"
             "</ul>"
-            "<p><b>Tiempo estimado:</b> 2-3 minutos</p>"
+            "<div><b>Tiempo estimado:</b> 2-3 minutos</div>"
+            "</div>"
         )
         welcome_text.setWordWrap(True)
         layout.addWidget(welcome_text)
-        
+
         layout.addStretch()
-        
+
         info_box = QLabel(
-            "ℹ️ <b>Nota:</b> La cuenta que crees tendrá privilegios completos "
-            "para gestionar usuarios, drivers y configuraciones."
+            "La cuenta que crees tendra privilegios completos para gestionar usuarios, "
+            "drivers y configuraciones sensibles."
         )
         info_box.setWordWrap(True)
-        info_box.setStyleSheet("""
-            QLabel {
-                background-color: #E3F2FD;
-                color: #1565C0;
-                padding: 15px;
-                border-radius: 5px;
-                border: 1px solid #90CAF9;
-            }
-        """)
+        info_box.setProperty("class", "info")
         layout.addWidget(info_box)
-        
+
         self.setLayout(layout)
 
 
 class AdminAccountPage(QWizardPage):
-    """Página de creación de cuenta de administrador"""
-    
-    def __init__(self):
-        super().__init__()
+    """Page to create the first super admin account."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.theme_manager = resolve_theme_manager(parent)
         self.setTitle("Crear cuenta de super administrador")
-        self.setSubTitle("Esta será la cuenta principal con todos los privilegios")
-        
+        self.setSubTitle("Esta sera la cuenta principal con todos los privilegios.")
+
         layout = QVBoxLayout()
-        
-        # Campo de usuario
-        user_label = QLabel("Nombre de Usuario:")
-        user_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        layout.setSpacing(10)
+
+        intro = QLabel(
+            "Usa un nombre claro y una contrasena fuerte. El sistema valida ambos "
+            "campos en tiempo real para ayudarte a cerrar la configuracion sin errores."
+        )
+        intro.setWordWrap(True)
+        intro.setProperty("class", "sectionMeta")
+        layout.addWidget(intro)
+
+        user_label = QLabel("Nombre de usuario")
+        user_label.setFont(self.theme_manager.create_font("display", 10, 700))
         layout.addWidget(user_label)
-        
+
         self.username_input = QLineEdit()
-        self.username_input.setPlaceholderText("Ej: admin, tu_nombre, etc.")
+        self.username_input.setPlaceholderText("Ej: admin, diego, operaciones")
         self.username_input.textChanged.connect(self._validate_fields)
         self.registerField("username*", self.username_input)
         layout.addWidget(self.username_input)
-        
-        self.username_hint = QLabel("Mínimo 3 caracteres, solo letras, números y guiones")
-        self.username_hint.setStyleSheet("color: #666; font-size: 9pt;")
+
+        self.username_hint = QLabel("Minimo 3 caracteres, solo letras, numeros, guiones y guion bajo.")
+        self.username_hint.setWordWrap(True)
+        self.username_hint.setProperty("class", "sectionMeta")
         layout.addWidget(self.username_hint)
-        
-        layout.addSpacing(20)
-        
-        # Campo de contraseña
-        pass_label = QLabel("Contraseña:")
-        pass_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+
+        layout.addSpacing(8)
+
+        pass_label = QLabel("Contrasena")
+        pass_label.setFont(self.theme_manager.create_font("display", 10, 700))
         layout.addWidget(pass_label)
-        
+
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.setPlaceholderText(
-            f"Mínimo {PasswordPolicy.MIN_LENGTH} caracteres"
+            f"Minimo {PasswordPolicy.MIN_LENGTH} caracteres"
         )
         self.password_input.textChanged.connect(self._validate_fields)
         self.registerField("password*", self.password_input)
         layout.addWidget(self.password_input)
-        
+
         self.password_strength = QProgressBar()
         self.password_strength.setMaximum(4)
         self.password_strength.setTextVisible(False)
         self.password_strength.setMaximumHeight(10)
         layout.addWidget(self.password_strength)
-        
+
         self.password_hint = QLabel(PasswordPolicy.describe_requirements())
-        self.password_hint.setStyleSheet("color: #666; font-size: 9pt;")
+        self.password_hint.setWordWrap(True)
+        self.password_hint.setProperty("class", "sectionMeta")
         layout.addWidget(self.password_hint)
-        
-        layout.addSpacing(20)
-        
-        # Confirmar contraseña
-        confirm_label = QLabel("Confirmar Contraseña:")
-        confirm_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+
+        layout.addSpacing(8)
+
+        confirm_label = QLabel("Confirmar contrasena")
+        confirm_label.setFont(self.theme_manager.create_font("display", 10, 700))
         layout.addWidget(confirm_label)
-        
+
         self.confirm_input = QLineEdit()
         self.confirm_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.confirm_input.setPlaceholderText("Repite la contraseña")
+        self.confirm_input.setPlaceholderText("Repite la contrasena")
         self.confirm_input.textChanged.connect(self._validate_fields)
         self.registerField("confirm*", self.confirm_input)
         layout.addWidget(self.confirm_input)
-        
+
         self.confirm_hint = QLabel("")
-        self.confirm_hint.setStyleSheet("color: #666; font-size: 9pt;")
+        self.confirm_hint.setWordWrap(True)
+        self.confirm_hint.setProperty("class", "sectionMeta")
         layout.addWidget(self.confirm_hint)
-        
+
         layout.addStretch()
-        
-        # Advertencia de seguridad
+
         warning = QLabel(
-            "⚠️ <b>IMPORTANTE:</b> Guarda esta contraseña en un lugar seguro. "
-            "Si la pierdes, no podrás recuperar el acceso al sistema."
+            "Guarda esta contrasena en un lugar seguro. Si la pierdes, no podras "
+            "recuperar facilmente el acceso administrativo."
         )
         warning.setWordWrap(True)
-        warning.setStyleSheet("""
-            QLabel {
-                background-color: #FFF3E0;
-                color: #E65100;
-                padding: 15px;
-                border-radius: 5px;
-                border: 1px solid #FFB74D;
-            }
-        """)
+        warning.setProperty("class", "warning")
         layout.addWidget(warning)
-        
+
         self.setLayout(layout)
-    
+
+    def _set_strength_chunk(self, color):
+        self.password_strength.setStyleSheet(
+            f"QProgressBar::chunk {{ background-color: {color}; border-radius: 5px; }}"
+        )
+
     def _validate_fields(self):
-        """Validar campos en tiempo real"""
+        """Validate account fields in real time."""
         username = self.username_input.text()
         password = self.password_input.text()
         confirm = self.confirm_input.text()
 
         if username:
             if len(username) < 3:
-                self.username_hint.setText("Muy corto (mínimo 3 caracteres)")
-                self.username_hint.setStyleSheet("color: #D32F2F; font-size: 9pt;")
+                _set_feedback_style(
+                    self.username_hint,
+                    "status-error",
+                    "Muy corto. Debe tener al menos 3 caracteres.",
+                )
             elif not re.match(r"^[a-zA-Z0-9_-]+$", username):
-                self.username_hint.setText("Solo letras, números, guiones y guiones bajos")
-                self.username_hint.setStyleSheet("color: #D32F2F; font-size: 9pt;")
+                _set_feedback_style(
+                    self.username_hint,
+                    "status-error",
+                    "Solo se permiten letras, numeros, guiones y guion bajo.",
+                )
             else:
-                self.username_hint.setText("Nombre de usuario válido")
-                self.username_hint.setStyleSheet("color: #388E3C; font-size: 9pt;")
+                _set_feedback_style(
+                    self.username_hint,
+                    "status-ok",
+                    "Nombre de usuario valido.",
+                )
+        else:
+            _set_feedback_style(
+                self.username_hint,
+                "sectionMeta",
+                "Minimo 3 caracteres, solo letras, numeros, guiones y guion bajo.",
+            )
 
         if password:
             analysis = PasswordPolicy.analyze(password, username=username)
@@ -166,40 +207,43 @@ class AdminAccountPage(QWizardPage):
             self.password_strength.setValue(strength)
 
             if analysis["is_valid"]:
-                self.password_strength.setStyleSheet(
-                    "QProgressBar::chunk { background-color: #388E3C; }"
-                )
-                self.password_hint.setText("Contraseña válida")
-                self.password_hint.setStyleSheet("color: #1B5E20; font-size: 9pt;")
+                self._set_strength_chunk("#398f5f")
+                _set_feedback_style(self.password_hint, "status-ok", "Contrasena valida.")
             else:
                 first_error = (
                     analysis["errors"][0]
                     if analysis["errors"]
                     else PasswordPolicy.describe_requirements()
                 )
-                self.password_strength.setStyleSheet(
-                    "QProgressBar::chunk { background-color: #D32F2F; }"
-                )
-                self.password_hint.setText(first_error)
-                self.password_hint.setStyleSheet("color: #D32F2F; font-size: 9pt;")
+                self._set_strength_chunk("#ba5142")
+                _set_feedback_style(self.password_hint, "status-error", first_error)
         else:
             self.password_strength.setValue(0)
-            self.password_strength.setStyleSheet(
-                "QProgressBar::chunk { background-color: #D32F2F; }"
+            self._set_strength_chunk("#9fb4ca")
+            _set_feedback_style(
+                self.password_hint,
+                "sectionMeta",
+                PasswordPolicy.describe_requirements(),
             )
-            self.password_hint.setText(PasswordPolicy.describe_requirements())
-            self.password_hint.setStyleSheet("color: #666; font-size: 9pt;")
 
         if confirm:
             if password == confirm:
-                self.confirm_hint.setText("Las contraseñas coinciden")
-                self.confirm_hint.setStyleSheet("color: #388E3C; font-size: 9pt;")
+                _set_feedback_style(
+                    self.confirm_hint, "status-ok", "Las contrasenas coinciden."
+                )
             else:
-                self.confirm_hint.setText("Las contraseñas no coinciden")
-                self.confirm_hint.setStyleSheet("color: #D32F2F; font-size: 9pt;")
+                _set_feedback_style(
+                    self.confirm_hint, "status-error", "Las contrasenas no coinciden."
+                )
+        else:
+            _set_feedback_style(
+                self.confirm_hint,
+                "sectionMeta",
+                "Confirma la contrasena para continuar.",
+            )
 
     def _calculate_password_strength(self, password):
-        """Calcular fortaleza visual (0-4) usando score de la política compartida."""
+        """Map the shared policy score to the wizard progress bar."""
         _, _, score = PasswordPolicy.validate_with_score(
             password,
             username=self.username_input.text(),
@@ -215,227 +259,200 @@ class AdminAccountPage(QWizardPage):
         return 0
 
     def validatePage(self):
-        """Validar antes de avanzar"""
+        """Validate before advancing to the next step."""
         username = self.username_input.text()
         password = self.password_input.text()
         confirm = self.confirm_input.text()
 
         if len(username) < 3:
-            QMessageBox.warning(self, "Error", "El nombre de usuario debe tener al menos 3 caracteres")
+            QMessageBox.warning(
+                self, "Error", "El nombre de usuario debe tener al menos 3 caracteres."
+            )
             return False
 
         if not re.match(r"^[a-zA-Z0-9_-]+$", username):
             QMessageBox.warning(
                 self,
                 "Error",
-                "El nombre de usuario solo puede contener letras, números, guiones y guiones bajos",
+                "El nombre de usuario solo puede contener letras, numeros, guiones y guion bajo.",
             )
             return False
 
         if password != confirm:
-            QMessageBox.warning(self, "Error", "Las contraseñas no coinciden")
+            QMessageBox.warning(self, "Error", "Las contrasenas no coinciden.")
             return False
 
         is_valid, message = PasswordPolicy.validate(password, username=username)
         if not is_valid:
-            QMessageBox.warning(self, "Contraseña débil", message)
+            QMessageBox.warning(self, "Contrasena debil", message)
             return False
 
         return True
 
+
 class SecurityPage(QWizardPage):
-    """Página de configuración de seguridad"""
-    
-    def __init__(self):
-        super().__init__()
+    """Security overview page."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.setTitle("Configuracion de seguridad")
-        self.setSubTitle("Ajusta las opciones de seguridad del sistema")
-        
+        self.setSubTitle("Revisa el esquema base con el que se protege la informacion sensible.")
+
         layout = QVBoxLayout()
-        
+        layout.setSpacing(12)
+
         intro = QLabel(
-            "SiteOps utiliza cifrado AES-256 para proteger tus credenciales. "
-            "A continuación, configura las opciones de seguridad adicionales:"
+            "SiteOps protege credenciales y secretos con cifrado robusto. "
+            "Este resumen deja visibles las decisiones base antes de terminar la configuracion."
         )
         intro.setWordWrap(True)
+        intro.setProperty("class", "sectionMeta")
         layout.addWidget(intro)
-        
-        layout.addSpacing(20)
-        
-        # Información de cifrado
+
         encryption_info = QLabel(
-            "<b>🔐 Cifrado de Datos</b><br>"
-            "• Algoritmo: AES-256-CBC<br>"
-            "• Derivación de Claves: PBKDF2-HMAC-SHA256<br>"
-            "• Integridad: HMAC-SHA256<br>"
-            "• Passwords: Bcrypt (12 rounds)"
+            "<b>Proteccion de datos</b><br>"
+            "AES-256-CBC para cifrado operativo<br>"
+            "PBKDF2-HMAC-SHA256 para derivacion de claves<br>"
+            "HMAC-SHA256 para integridad<br>"
+            "Bcrypt (12 rounds) para passwords"
         )
         encryption_info.setWordWrap(True)
-        encryption_info.setStyleSheet("""
-            QLabel {
-                background-color: #F5F5F5;
-                padding: 15px;
-                border-radius: 5px;
-                border: 1px solid #E0E0E0;
-            }
-        """)
+        encryption_info.setProperty("class", "info")
         layout.addWidget(encryption_info)
-        
-        layout.addSpacing(20)
-        
-        # Opciones de seguridad (futuras)
-        options_label = QLabel("<b>Opciones Adicionales</b> (próximamente):")
-        layout.addWidget(options_label)
-        
+
+        options_title = QLabel("Capas siguientes")
+        options_title.setProperty("class", "sectionTitle")
+        layout.addWidget(options_title)
+
         options = QLabel(
-            "• 🔑 Autenticación de dos factores (2FA)\n"
-            "• 📱 Notificaciones de inicio de sesión\n"
-            "• 🕐 Sesiones con tiempo de expiración\n"
-            "• 🔄 Rotación automática de credenciales"
+            "2FA para cuentas administrativas\n"
+            "Alertas de inicio de sesion\n"
+            "Sesiones con expiracion controlada\n"
+            "Rotacion automatica de credenciales"
         )
-        options.setStyleSheet("color: #666; padding-left: 20px;")
+        options.setWordWrap(True)
+        options.setProperty("class", "sectionMeta")
         layout.addWidget(options)
-        
+
         layout.addStretch()
-        
         self.setLayout(layout)
 
 
 class CompletePage(QWizardPage):
-    """Página final del wizard"""
-    
-    def __init__(self):
-        super().__init__()
+    """Final success page."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.setTitle("Configuracion completa")
-        
+        self.setSubTitle("La consola ya esta lista para pasar a la configuracion operativa.")
+
         layout = QVBoxLayout()
-        
+        layout.setSpacing(12)
+
+        eyebrow = QLabel("READY TO OPERATE")
+        eyebrow.setProperty("class", "chip")
+        layout.addWidget(eyebrow, alignment=Qt.AlignmentFlag.AlignLeft)
+
         success_text = QLabel(
-            "<h2>🎉 ¡Listo!</h2>"
-            "<p>Tu cuenta de super administrador ha sido creada exitosamente.</p>"
+            "<div style='font-size:24px;font-weight:700;margin-bottom:8px;'>Todo listo</div>"
+            "<div>La cuenta de super administracion fue creada correctamente.</div>"
         )
         success_text.setWordWrap(True)
         layout.addWidget(success_text)
-        
-        layout.addSpacing(20)
-        
+
         next_steps = QLabel(
-            "<b>Próximos pasos:</b><br><br>"
-            "1️⃣ <b>Configurar Cloudflare R2</b><br>"
-            "   Ve a la pestaña 'Administración' y configura tus credenciales<br><br>"
-            "2️⃣ <b>Crear usuarios adicionales</b><br>"
-            "   Usa el botón 'Gestionar Usuarios' para crear más cuentas<br><br>"
-            "3️⃣ <b>Comenzar a usar SiteOps</b><br>"
-            "   Descarga e instala drivers para tus impresoras de tarjetas"
+            "<b>Proximos pasos</b><br><br>"
+            "1. Configura Cloudflare R2 desde Administracion.<br>"
+            "2. Crea usuarios adicionales segun tu operativa.<br>"
+            "3. Empieza a trabajar con drivers, activos e incidencias."
         )
         next_steps.setWordWrap(True)
-        next_steps.setStyleSheet("""
-            QLabel {
-                background-color: #E8F5E9;
-                color: #1B5E20;
-                padding: 20px;
-                border-radius: 5px;
-                border: 1px solid #A5D6A7;
-            }
-        """)
+        next_steps.setProperty("class", "success")
         layout.addWidget(next_steps)
-        
+
         layout.addStretch()
-        
+
         tip = QLabel(
-            "💡 <b>Consejo:</b> Guarda tu contraseña en un gestor de contraseñas seguro "
-            "como Bitwarden, 1Password o KeePass."
+            "Consejo: guarda la contrasena administrativa en un gestor seguro como "
+            "Bitwarden, 1Password o KeePass."
         )
         tip.setWordWrap(True)
-        tip.setStyleSheet("""
-            QLabel {
-                background-color: #FFF9C4;
-                color: #F57F17;
-                padding: 15px;
-                border-radius: 5px;
-                border: 1px solid #FFF59D;
-            }
-        """)
+        tip.setProperty("class", "warning")
         layout.addWidget(tip)
-        
+
         self.setLayout(layout)
 
 
 class UserSetupWizard(QWizard):
-    """Wizard de configuración inicial de usuario"""
-    
+    """Initial setup wizard shown when no admin user exists."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Configuración Inicial - SiteOps")
+        self.theme_manager = resolve_theme_manager(parent)
+        self.setObjectName("userSetupWizard")
+        self.setWindowTitle("Configuracion inicial - SiteOps")
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
-        self.setFixedSize(600, 500)
-        
-        # Páginas
-        self.welcome_page = WelcomePage()
-        self.account_page = AdminAccountPage()
-        self.security_page = SecurityPage()
-        self.complete_page = CompletePage()
-        
+        self.setFixedSize(640, 560)
+        self.setStyleSheet(
+            self.theme_manager.generate_stylesheet()
+            + """
+            QWizard#userSetupWizard {
+                background-color: transparent;
+            }
+            QWizard#userSetupWizard QWizardPage {
+                background-color: transparent;
+            }
+            QWizard#userSetupWizard QLabel[title="true"] {
+                font-size: 22px;
+                font-weight: 700;
+            }
+            """
+        )
+
+        self.welcome_page = WelcomePage(self)
+        self.account_page = AdminAccountPage(self)
+        self.security_page = SecurityPage(self)
+        self.complete_page = CompletePage(self)
+
         self.addPage(self.welcome_page)
         self.addPage(self.account_page)
         self.addPage(self.security_page)
         self.addPage(self.complete_page)
-        
-        # Botones personalizados
+
         self.setButtonText(QWizard.WizardButton.NextButton, "Siguiente >")
         self.setButtonText(QWizard.WizardButton.BackButton, "< Atras")
         self.setButtonText(QWizard.WizardButton.FinishButton, "Finalizar")
         self.setButtonText(QWizard.WizardButton.CancelButton, "Cancelar")
-        
-        # Estilo
-        self.setStyleSheet("""
-            QWizard {
-                background-color: #FFFFFF;
-            }
-            QWizardPage {
-                background-color: #FFFFFF;
-            }
-            QPushButton {
-                padding: 8px 20px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:disabled {
-                background-color: #E0E0E0;
-                color: #9E9E9E;
-            }
-        """)
-    
+
     def get_user_data(self):
-        """Obtener datos del usuario creado"""
+        """Return the credentials captured by the wizard."""
         return {
-            'username': self.field('username'),
-            'password': self.field('password')
+            "username": self.field("username"),
+            "password": self.field("password"),
         }
 
 
 def show_user_setup_wizard(parent=None):
-    """Mostrar el wizard de configuración inicial"""
+    """Show the initial setup wizard and return the created user data."""
     wizard = UserSetupWizard(parent)
-    
+
     if wizard.exec() == QDialog.DialogCode.Accepted:
         return wizard.get_user_data()
-    
+
     return None
 
 
-# Testing
 if __name__ == "__main__":
     import sys
     from PyQt6.QtWidgets import QApplication
-    
+
     app = QApplication(sys.argv)
-    
+
     user_data = show_user_setup_wizard()
-    
+
     if user_data:
         print(f"OK: Usuario creado: {user_data['username']}")
     else:
         print("ERROR: Configuracion cancelada")
-    
+
     sys.exit()

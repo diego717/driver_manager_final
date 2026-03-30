@@ -5,7 +5,6 @@ Custom drag and drop zone for driver uploads.
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QFileDialog, QLabel, QVBoxLayout, QWidget
 
 from core.logger import get_logger
@@ -32,7 +31,7 @@ class DropZoneWidget(QWidget):
         self.is_valid_file = False
 
         self.setAcceptDrops(True)
-        self.setMinimumHeight(150)
+        self.setMinimumHeight(176)
         self.setAccessibleName("Zona de carga de drivers")
         extensions = ", ".join(self.accepted_extensions)
         self.setAccessibleDescription(
@@ -44,32 +43,34 @@ class DropZoneWidget(QWidget):
     def init_ui(self):
         """Build the widget layout."""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(6)
+        layout.addStretch(1)
 
-        self.icon_label = QLabel("DRV")
-        self.icon_label.setFont(QFont("Segoe UI Variable Text", 24, QFont.Weight.Bold))
+        self.icon_label = QLabel("UPLOAD")
+        self.icon_label.setFont(self.theme_manager.create_font("mono", 18, 700))
         self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.icon_label.setProperty("class", "heroIcon")
         layout.addWidget(self.icon_label)
 
         self.text_label = QLabel("Arrastra un driver aqui")
-        self.text_label.setFont(QFont("Segoe UI Variable Text", 13, QFont.Weight.Bold))
+        self.text_label.setFont(self.theme_manager.create_font("display", 14, 700))
         self.text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.text_label)
 
         self.hint_label = QLabel("o haz clic para seleccionar")
-        self.hint_label.setFont(QFont("Segoe UI Variable Text", 10))
+        self.hint_label.setFont(self.theme_manager.create_font("body", 10))
         self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hint_label.setProperty("class", "subtle")
         layout.addWidget(self.hint_label)
 
         extensions_text = ", ".join(self.accepted_extensions)
         self.extensions_label = QLabel(f"Archivos permitidos: {extensions_text}")
-        self.extensions_label.setFont(QFont("Segoe UI Variable Text", 9))
+        self.extensions_label.setFont(self.theme_manager.create_font("mono", 9))
         self.extensions_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.extensions_label.setProperty("class", "subtle")
         layout.addWidget(self.extensions_label)
+        layout.addStretch(1)
 
         self.update_style("normal")
 
@@ -81,7 +82,7 @@ class DropZoneWidget(QWidget):
                 QWidget {{
                     background-color: {colors['dropzone_background']};
                     border: 2px dashed {colors['border_strong']};
-                    border-radius: 14px;
+                    border-radius: 16px;
                 }}
                 QWidget:hover {{
                     background-color: {colors['dropzone_hover']};
@@ -92,37 +93,37 @@ class DropZoneWidget(QWidget):
                 QWidget {{
                     background-color: {colors['panel_success']};
                     border: 2px dashed {colors['success']};
-                    border-radius: 14px;
+                    border-radius: 16px;
                 }}
             """,
             "dragging_invalid": f"""
                 QWidget {{
                     background-color: {colors['panel_error']};
                     border: 2px dashed {colors['error']};
-                    border-radius: 14px;
+                    border-radius: 16px;
                 }}
             """,
             "error": f"""
                 QWidget {{
                     background-color: {colors['panel_error']};
                     border: 2px solid {colors['error']};
-                    border-radius: 14px;
+                    border-radius: 16px;
                 }}
             """,
         }
         self.setStyleSheet(styles.get(state, styles["normal"]))
 
         if state == "dragging_valid":
-            self.icon_label.setText("OK")
+            self.icon_label.setText("READY")
             self.text_label.setText("Suelta para subir")
         elif state == "dragging_invalid":
-            self.icon_label.setText("NO")
+            self.icon_label.setText("ERROR")
             self.text_label.setText("Archivo no valido")
         elif state == "error":
-            self.icon_label.setText("ERR")
+            self.icon_label.setText("ERROR")
             self.text_label.setText("Error al procesar")
         else:
-            self.icon_label.setText("DRV")
+            self.icon_label.setText("UPLOAD")
             self.text_label.setText("Arrastra un driver aqui")
 
     def refresh_theme(self):

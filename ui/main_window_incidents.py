@@ -16,6 +16,17 @@ from PyQt6.QtWidgets import (
 )
 from managers.history_domain_rules import normalize_incident_status as normalize_domain_incident_status
 
+
+def _can_operate_incidents(window):
+    return bool(getattr(window, "can_operate_incidents", getattr(window, "is_admin", False)))
+
+
+def _can_manage_assignments(window):
+    return bool(
+        getattr(window, "can_manage_operational_records", getattr(window, "is_admin", False))
+    )
+
+
 def normalize_incident_status(_window, raw_value):
     return normalize_domain_incident_status(raw_value)
 
@@ -193,7 +204,7 @@ def render_incident_detail_html(window, incident):
 
     safe_note = html.escape(note or "Sin nota registrada.").replace("\n", "<br>")
     return f"""
-    <div style="font-family:'Segoe UI Variable Text','Segoe UI',sans-serif;color:{colors['text_primary']};">
+    <div style="font-family:'Source Sans 3','Segoe UI Variable Text','Segoe UI',sans-serif;color:{colors['text_primary']};">
         <table cellspacing="6" cellpadding="0" style="margin-bottom:10px;">
             {''.join(chip_rows)}
         </table>
@@ -334,10 +345,26 @@ def handle_thumbnail_failed(window, photo_id, _error):
 def _reset_incident_lists(window):
     window.history_tab.incidents_list.clear()
     window.history_tab.incident_photos_list.clear()
+    if hasattr(window.history_tab, "incident_assignments_list"):
+        window.history_tab.incident_assignments_list.clear()
+    if hasattr(window.history_tab, "installation_assignments_list"):
+        window.history_tab.installation_assignments_list.clear()
     window._thumbnail_item_map.clear()
     window.history_tab.incident_detail.clear()
     window.history_tab.upload_incident_photo_btn.setEnabled(False)
     window.history_tab.view_incident_photo_btn.setEnabled(False)
+    if hasattr(window.history_tab, "refresh_assignments_btn"):
+        window.history_tab.refresh_assignments_btn.setEnabled(False)
+    if hasattr(window.history_tab, "add_incident_assignment_btn"):
+        window.history_tab.add_incident_assignment_btn.setEnabled(False)
+    if hasattr(window.history_tab, "remove_incident_assignment_btn"):
+        window.history_tab.remove_incident_assignment_btn.setEnabled(False)
+    if hasattr(window.history_tab, "refresh_installation_assignments_btn"):
+        window.history_tab.refresh_installation_assignments_btn.setEnabled(False)
+    if hasattr(window.history_tab, "add_installation_assignment_btn"):
+        window.history_tab.add_installation_assignment_btn.setEnabled(False)
+    if hasattr(window.history_tab, "remove_installation_assignment_btn"):
+        window.history_tab.remove_installation_assignment_btn.setEnabled(False)
     if hasattr(window.history_tab, "incident_mark_open_btn"):
         window.history_tab.incident_mark_open_btn.setEnabled(False)
         window.history_tab.incident_mark_progress_btn.setEnabled(False)
@@ -410,9 +437,16 @@ def handle_incidents_installation_changed(window, current, _previous=None):
 
     has_installation = current is not None
     if hasattr(window.history_tab, "create_incident_btn"):
-        window.history_tab.create_incident_btn.setEnabled(has_installation and window.is_admin)
+        window.history_tab.create_incident_btn.setEnabled(
+            has_installation and _can_operate_incidents(window)
+        )
     if not has_installation:
         return
+
+    if hasattr(window.history_tab, "refresh_installation_assignments_btn"):
+        window.history_tab.refresh_installation_assignments_btn.setEnabled(True)
+    if hasattr(window.history_tab, "add_installation_assignment_btn"):
+        window.history_tab.add_installation_assignment_btn.setEnabled(_can_manage_assignments(window))
 
     installation = current.data(Qt.ItemDataRole.UserRole)
     if not isinstance(installation, dict):
@@ -421,6 +455,8 @@ def handle_incidents_installation_changed(window, current, _previous=None):
     record_id = installation.get("id")
     if record_id is None:
         return
+
+    refresh_installation_assignments(window)
 
     try:
         incidents = window.history.get_incidents_for_installation(record_id)
@@ -478,13 +514,17 @@ def handle_incident_item_changed(window, current, _previous=None, *, worker_cls)
     window.history_tab.incident_photos_list.clear()
     window._thumbnail_item_map.clear()
     window.history_tab.view_incident_photo_btn.setEnabled(False)
-    window.history_tab.upload_incident_photo_btn.setEnabled(current is not None and window.is_admin)
+    window.history_tab.upload_incident_photo_btn.setEnabled(
+        current is not None and _can_operate_incidents(window)
+    )
     if hasattr(window.history_tab, "incident_mark_open_btn"):
         window.history_tab.incident_mark_open_btn.setEnabled(False)
     if hasattr(window.history_tab, "incident_mark_progress_btn"):
         window.history_tab.incident_mark_progress_btn.setEnabled(False)
     if hasattr(window.history_tab, "incident_mark_resolved_btn"):
         window.history_tab.incident_mark_resolved_btn.setEnabled(False)
+    if hasattr(window.history_tab, "remove_incident_assignment_btn"):
+        window.history_tab.remove_incident_assignment_btn.setEnabled(False)
 
     if current is None:
         window.history_tab.incident_detail.clear()
@@ -498,10 +538,20 @@ def handle_incident_item_changed(window, current, _previous=None, *, worker_cls)
     incident_status = normalize_incident_status(window, incident.get("incident_status"))
     photos = incident.get("photos") or []
     window.history_tab.incident_detail.setHtml(render_incident_detail_html(window, incident))
-    if window.is_admin and hasattr(window.history_tab, "incident_mark_open_btn"):
+    if hasattr(window.history_tab.incident_detail, "verticalScrollBar"):
+        detail_scroll = window.history_tab.incident_detail.verticalScrollBar()
+        if detail_scroll is not None:
+            detail_scroll.setValue(0)
+    if hasattr(window.history_tab, "refresh_assignments_btn"):
+        window.history_tab.refresh_assignments_btn.setEnabled(True)
+    if hasattr(window.history_tab, "add_incident_assignment_btn"):
+        window.history_tab.add_incident_assignment_btn.setEnabled(_can_manage_assignments(window))
+    if _can_operate_incidents(window) and hasattr(window.history_tab, "incident_mark_open_btn"):
         window.history_tab.incident_mark_open_btn.setEnabled(incident_status != "open")
         window.history_tab.incident_mark_progress_btn.setEnabled(incident_status != "in_progress")
         window.history_tab.incident_mark_resolved_btn.setEnabled(incident_status != "resolved")
+
+    refresh_incident_assignments(window)
 
     for photo in photos:
         photo_id = photo.get("id")
@@ -527,9 +577,488 @@ def handle_incident_item_changed(window, current, _previous=None, *, worker_cls)
         window.history_tab.view_incident_photo_btn.setEnabled(True)
 
 
+def _assignment_role_label(role):
+    normalized = str(role or "owner").strip().lower()
+    if normalized == "assistant":
+        return "Apoyo"
+    if normalized == "reviewer":
+        return "Revision"
+    return "Titular"
+
+
+def _log_assignment_action(window, action, success, details):
+    user_manager = getattr(window, "user_manager", None)
+    current_user = getattr(user_manager, "current_user", None) if user_manager else None
+    if not user_manager or not isinstance(current_user, dict):
+        return
+    if not hasattr(user_manager, "_log_access"):
+        return
+    username = str(current_user.get("username") or "desktop")
+    try:
+        user_manager._log_access(action, username, bool(success), details or {})
+    except Exception:
+        pass
+
+
+def refresh_incident_assignments(window, *, message_box=None):
+    if not hasattr(window.history_tab, "incident_assignments_list"):
+        return
+    if not getattr(window, "history", None):
+        return
+    if not hasattr(window.history, "list_entity_technician_assignments"):
+        return
+
+    current_incident = window.history_tab.incidents_list.currentItem()
+    window.history_tab.incident_assignments_list.clear()
+    if hasattr(window.history_tab, "remove_incident_assignment_btn"):
+        window.history_tab.remove_incident_assignment_btn.setEnabled(False)
+
+    if current_incident is None:
+        return
+
+    incident = current_incident.data(Qt.ItemDataRole.UserRole)
+    incident_id = incident.get("id") if isinstance(incident, dict) else None
+    if incident_id is None:
+        return
+
+    try:
+        assignments = window.history.list_entity_technician_assignments(
+            "incident",
+            incident_id,
+            include_inactive=False,
+        )
+    except Exception as error:
+        if message_box is not None:
+            message_box.warning(window, "Error", f"No se pudieron cargar asignaciones:\n{error}")
+        else:
+            window.history_tab.incident_assignments_list.addItem(
+                f"Error cargando asignaciones: {error}"
+            )
+        return
+
+    if not assignments:
+        window.history_tab.incident_assignments_list.addItem("Sin asignaciones activas.")
+        return
+
+    for assignment in assignments:
+        assignment_id = assignment.get("id")
+        role_label = _assignment_role_label(assignment.get("assignment_role"))
+        technician_name = assignment.get("technician_display_name") or f"Tecnico #{assignment.get('technician_id')}"
+        code = str(assignment.get("technician_employee_code") or "").strip()
+        code_suffix = f" ({code})" if code else ""
+        text = f"[{role_label}] {technician_name}{code_suffix}"
+        item = QListWidgetItem(text)
+        item.setData(Qt.ItemDataRole.UserRole, assignment)
+        window.history_tab.incident_assignments_list.addItem(item)
+
+    if window.history_tab.incident_assignments_list.count() > 0:
+        window.history_tab.incident_assignments_list.setCurrentRow(0)
+        if hasattr(window.history_tab, "remove_incident_assignment_btn"):
+            window.history_tab.remove_incident_assignment_btn.setEnabled(_can_manage_assignments(window))
+
+
+def assign_technician_to_selected_incident(
+    window,
+    *,
+    message_box=QMessageBox,
+    input_dialog=QInputDialog,
+):
+    if not _can_manage_assignments(window):
+        message_box.warning(
+            window,
+            "Acceso denegado",
+            "Tu sesion no tiene permisos para gestionar asignaciones.",
+        )
+        return
+
+    current_incident = window.history_tab.incidents_list.currentItem()
+    if current_incident is None:
+        message_box.warning(window, "Atencion", "Selecciona una incidencia primero.")
+        return
+
+    incident = current_incident.data(Qt.ItemDataRole.UserRole)
+    incident_id = incident.get("id") if isinstance(incident, dict) else None
+    if incident_id is None:
+        message_box.warning(window, "Error", "No se pudo obtener el ID de la incidencia.")
+        return
+
+    try:
+        technicians = window.history.list_technicians(include_inactive=False)
+    except Exception as error:
+        message_box.warning(window, "Error", f"No se pudo cargar el directorio de tecnicos:\n{error}")
+        return
+
+    if not technicians:
+        message_box.information(window, "Sin tecnicos", "No hay tecnicos activos para asignar.")
+        return
+
+    choices = []
+    technician_map = {}
+    for technician in technicians:
+        technician_id = technician.get("id")
+        display_name = str(technician.get("display_name") or f"Tecnico #{technician_id}")
+        employee_code = str(technician.get("employee_code") or "").strip()
+        label = f"#{technician_id} - {display_name}"
+        if employee_code:
+            label += f" ({employee_code})"
+        choices.append(label)
+        technician_map[label] = technician
+
+    selected_label, ok = input_dialog.getItem(
+        window,
+        f"Asignar tecnico a incidencia #{incident_id}",
+        "Tecnico:",
+        choices,
+        0,
+        False,
+    )
+    if not ok:
+        return
+
+    selected_role, ok = input_dialog.getItem(
+        window,
+        "Rol de asignacion",
+        "Selecciona rol:",
+        ["owner", "assistant", "reviewer"],
+        0,
+        False,
+    )
+    if not ok:
+        return
+
+    selected_technician = technician_map.get(selected_label) or {}
+    technician_id = selected_technician.get("id")
+    if technician_id is None:
+        message_box.warning(window, "Error", "No se pudo resolver el tecnico seleccionado.")
+        return
+
+    try:
+        window.history.create_technician_assignment(
+            technician_id=technician_id,
+            entity_type="incident",
+            entity_id=incident_id,
+            assignment_role=selected_role,
+        )
+        _log_assignment_action(
+            window,
+            "incident_assignment_created",
+            True,
+            {
+                "entity_type": "incident",
+                "entity_id": incident_id,
+                "technician_id": technician_id,
+                "technician_display_name": selected_technician.get("display_name"),
+                "assignment_role": selected_role,
+            },
+        )
+        message_box.information(window, "Exito", "Asignacion creada correctamente.")
+        refresh_incident_assignments(window, message_box=message_box)
+    except Exception as error:
+        _log_assignment_action(
+            window,
+            "incident_assignment_create_failed",
+            False,
+            {
+                "entity_type": "incident",
+                "entity_id": incident_id,
+                "technician_id": technician_id,
+                "assignment_role": selected_role,
+                "error": str(error),
+            },
+        )
+        message_box.warning(window, "Error", f"No se pudo crear la asignacion:\n{error}")
+
+
+def remove_selected_incident_assignment(window, *, message_box=QMessageBox):
+    if not _can_manage_assignments(window):
+        message_box.warning(
+            window,
+            "Acceso denegado",
+            "Tu sesion no tiene permisos para gestionar asignaciones.",
+        )
+        return
+
+    if not hasattr(window.history_tab, "incident_assignments_list"):
+        return
+
+    current_assignment_item = window.history_tab.incident_assignments_list.currentItem()
+    if current_assignment_item is None:
+        message_box.warning(window, "Atencion", "Selecciona una asignacion primero.")
+        return
+
+    assignment = current_assignment_item.data(Qt.ItemDataRole.UserRole)
+    assignment_id = assignment.get("id") if isinstance(assignment, dict) else None
+    if assignment_id is None:
+        message_box.warning(window, "Atencion", "La fila seleccionada no corresponde a una asignacion activa.")
+        return
+
+    reply = message_box.question(
+        window,
+        "Confirmar",
+        f"¿Quitar asignacion #{assignment_id}?",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+    )
+    if reply != QMessageBox.StandardButton.Yes:
+        return
+
+    try:
+        window.history.remove_technician_assignment(assignment_id)
+        _log_assignment_action(
+            window,
+            "incident_assignment_removed",
+            True,
+            {
+                "entity_type": "incident",
+                "assignment_id": assignment_id,
+            },
+        )
+        message_box.information(window, "Exito", "Asignacion quitada correctamente.")
+        refresh_incident_assignments(window, message_box=message_box)
+    except Exception as error:
+        _log_assignment_action(
+            window,
+            "incident_assignment_remove_failed",
+            False,
+            {
+                "entity_type": "incident",
+                "assignment_id": assignment_id,
+                "error": str(error),
+            },
+        )
+        message_box.warning(window, "Error", f"No se pudo quitar la asignacion:\n{error}")
+
+
+def refresh_installation_assignments(window, *, message_box=None):
+    if not hasattr(window.history_tab, "installation_assignments_list"):
+        return
+    if not getattr(window, "history", None):
+        return
+    if not hasattr(window.history, "list_entity_technician_assignments"):
+        return
+
+    current_installation = window.history_tab.incidents_installations_list.currentItem()
+    window.history_tab.installation_assignments_list.clear()
+    if hasattr(window.history_tab, "remove_installation_assignment_btn"):
+        window.history_tab.remove_installation_assignment_btn.setEnabled(False)
+
+    if current_installation is None:
+        return
+
+    installation = current_installation.data(Qt.ItemDataRole.UserRole)
+    record_id = installation.get("id") if isinstance(installation, dict) else None
+    if record_id is None:
+        return
+
+    try:
+        assignments = window.history.list_entity_technician_assignments(
+            "installation",
+            record_id,
+            include_inactive=False,
+        )
+    except Exception as error:
+        if message_box is not None:
+            message_box.warning(window, "Error", f"No se pudieron cargar asignaciones del registro:\n{error}")
+        else:
+            window.history_tab.installation_assignments_list.addItem(
+                f"Error cargando asignaciones: {error}"
+            )
+        return
+
+    if not assignments:
+        window.history_tab.installation_assignments_list.addItem("Sin asignaciones activas.")
+        return
+
+    for assignment in assignments:
+        assignment_id = assignment.get("id")
+        role_label = _assignment_role_label(assignment.get("assignment_role"))
+        technician_name = assignment.get("technician_display_name") or f"Tecnico #{assignment.get('technician_id')}"
+        code = str(assignment.get("technician_employee_code") or "").strip()
+        code_suffix = f" ({code})" if code else ""
+        text = f"[{role_label}] {technician_name}{code_suffix}"
+        item = QListWidgetItem(text)
+        item.setData(Qt.ItemDataRole.UserRole, assignment)
+        window.history_tab.installation_assignments_list.addItem(item)
+
+    if window.history_tab.installation_assignments_list.count() > 0:
+        window.history_tab.installation_assignments_list.setCurrentRow(0)
+        if hasattr(window.history_tab, "remove_installation_assignment_btn"):
+            window.history_tab.remove_installation_assignment_btn.setEnabled(_can_manage_assignments(window))
+
+
+def assign_technician_to_selected_installation(
+    window,
+    *,
+    message_box=QMessageBox,
+    input_dialog=QInputDialog,
+):
+    if not _can_manage_assignments(window):
+        message_box.warning(
+            window,
+            "Acceso denegado",
+            "Tu sesion no tiene permisos para gestionar asignaciones.",
+        )
+        return
+
+    current_installation = window.history_tab.incidents_installations_list.currentItem()
+    if current_installation is None:
+        message_box.warning(window, "Atencion", "Selecciona un registro primero.")
+        return
+
+    installation = current_installation.data(Qt.ItemDataRole.UserRole)
+    record_id = installation.get("id") if isinstance(installation, dict) else None
+    if record_id is None:
+        message_box.warning(window, "Error", "No se pudo obtener el ID del registro.")
+        return
+
+    try:
+        technicians = window.history.list_technicians(include_inactive=False)
+    except Exception as error:
+        message_box.warning(window, "Error", f"No se pudo cargar el directorio de tecnicos:\n{error}")
+        return
+
+    if not technicians:
+        message_box.information(window, "Sin tecnicos", "No hay tecnicos activos para asignar.")
+        return
+
+    choices = []
+    technician_map = {}
+    for technician in technicians:
+        technician_id = technician.get("id")
+        display_name = str(technician.get("display_name") or f"Tecnico #{technician_id}")
+        employee_code = str(technician.get("employee_code") or "").strip()
+        label = f"#{technician_id} - {display_name}"
+        if employee_code:
+            label += f" ({employee_code})"
+        choices.append(label)
+        technician_map[label] = technician
+
+    selected_label, ok = input_dialog.getItem(
+        window,
+        f"Asignar tecnico a registro #{record_id}",
+        "Tecnico:",
+        choices,
+        0,
+        False,
+    )
+    if not ok:
+        return
+
+    selected_role, ok = input_dialog.getItem(
+        window,
+        "Rol de asignacion",
+        "Selecciona rol:",
+        ["owner", "assistant", "reviewer"],
+        0,
+        False,
+    )
+    if not ok:
+        return
+
+    selected_technician = technician_map.get(selected_label) or {}
+    technician_id = selected_technician.get("id")
+    if technician_id is None:
+        message_box.warning(window, "Error", "No se pudo resolver el tecnico seleccionado.")
+        return
+
+    try:
+        window.history.create_technician_assignment(
+            technician_id=technician_id,
+            entity_type="installation",
+            entity_id=record_id,
+            assignment_role=selected_role,
+        )
+        _log_assignment_action(
+            window,
+            "installation_assignment_created",
+            True,
+            {
+                "entity_type": "installation",
+                "entity_id": record_id,
+                "technician_id": technician_id,
+                "technician_display_name": selected_technician.get("display_name"),
+                "assignment_role": selected_role,
+            },
+        )
+        message_box.information(window, "Exito", "Asignacion creada correctamente.")
+        refresh_installation_assignments(window, message_box=message_box)
+    except Exception as error:
+        _log_assignment_action(
+            window,
+            "installation_assignment_create_failed",
+            False,
+            {
+                "entity_type": "installation",
+                "entity_id": record_id,
+                "technician_id": technician_id,
+                "assignment_role": selected_role,
+                "error": str(error),
+            },
+        )
+        message_box.warning(window, "Error", f"No se pudo crear la asignacion:\n{error}")
+
+
+def remove_selected_installation_assignment(window, *, message_box=QMessageBox):
+    if not _can_manage_assignments(window):
+        message_box.warning(
+            window,
+            "Acceso denegado",
+            "Tu sesion no tiene permisos para gestionar asignaciones.",
+        )
+        return
+
+    if not hasattr(window.history_tab, "installation_assignments_list"):
+        return
+
+    current_assignment_item = window.history_tab.installation_assignments_list.currentItem()
+    if current_assignment_item is None:
+        message_box.warning(window, "Atencion", "Selecciona una asignacion primero.")
+        return
+
+    assignment = current_assignment_item.data(Qt.ItemDataRole.UserRole)
+    assignment_id = assignment.get("id") if isinstance(assignment, dict) else None
+    if assignment_id is None:
+        message_box.warning(window, "Atencion", "La fila seleccionada no corresponde a una asignacion activa.")
+        return
+
+    reply = message_box.question(
+        window,
+        "Confirmar",
+        f"¿Quitar asignacion #{assignment_id}?",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+    )
+    if reply != QMessageBox.StandardButton.Yes:
+        return
+
+    try:
+        window.history.remove_technician_assignment(assignment_id)
+        _log_assignment_action(
+            window,
+            "installation_assignment_removed",
+            True,
+            {
+                "entity_type": "installation",
+                "assignment_id": assignment_id,
+            },
+        )
+        message_box.information(window, "Exito", "Asignacion quitada correctamente.")
+        refresh_installation_assignments(window, message_box=message_box)
+    except Exception as error:
+        _log_assignment_action(
+            window,
+            "installation_assignment_remove_failed",
+            False,
+            {
+                "entity_type": "installation",
+                "assignment_id": assignment_id,
+                "error": str(error),
+            },
+        )
+        message_box.warning(window, "Error", f"No se pudo quitar la asignacion:\n{error}")
+
+
 def create_incident_from_incidents_view(window, *, message_box=QMessageBox):
-    if not window.is_admin:
-        message_box.warning(window, "Acceso denegado", "Debes iniciar sesión como administrador.")
+    if not _can_operate_incidents(window):
+        message_box.warning(window, "Acceso denegado", "Tu sesión no tiene permisos operativos para incidencias.")
         return
 
     current_installation = window.history_tab.incidents_installations_list.currentItem()
@@ -547,8 +1076,8 @@ def create_incident_from_incidents_view(window, *, message_box=QMessageBox):
 
 
 def upload_photo_for_selected_incident(window, *, message_box=QMessageBox):
-    if not window.is_admin:
-        message_box.warning(window, "Acceso denegado", "Debes iniciar sesión como administrador.")
+    if not _can_operate_incidents(window):
+        message_box.warning(window, "Acceso denegado", "Tu sesión no tiene permisos operativos para incidencias.")
         return
 
     current_incident = window.history_tab.incidents_list.currentItem()
@@ -574,8 +1103,8 @@ def update_selected_incident_status(
     message_box=QMessageBox,
     input_dialog=QInputDialog,
 ):
-    if not window.is_admin:
-        message_box.warning(window, "Acceso denegado", "Debes iniciar sesión como administrador.")
+    if not _can_operate_incidents(window):
+        message_box.warning(window, "Acceso denegado", "Tu sesión no tiene permisos operativos para incidencias.")
         return
 
     current_incident = window.history_tab.incidents_list.currentItem()
@@ -660,8 +1189,8 @@ def create_incident_for_record(
     message_box=QMessageBox,
     input_dialog=QInputDialog,
 ):
-    if not window.is_admin:
-        message_box.warning(window, "Acceso denegado", "Debes iniciar sesión como administrador.")
+    if not _can_operate_incidents(window):
+        message_box.warning(window, "Acceso denegado", "Tu sesión no tiene permisos operativos para incidencias.")
         return
 
     window._show_status_hint(f"Creando incidencia para el registro #{record_id}.", "info", 4200)

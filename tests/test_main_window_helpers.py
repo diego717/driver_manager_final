@@ -205,8 +205,16 @@ class DummyHistoryTab:
         self.incidents_installations_list = DummyListWidget()
         self.incidents_list = DummyListWidget()
         self.incident_photos_list = DummyListWidget()
+        self.incident_assignments_list = DummyListWidget()
+        self.installation_assignments_list = DummyListWidget()
         self.incident_detail = DummyLabel()
         self.history_list = DummyListWidget()
+        self.refresh_assignments_btn = DummyButton()
+        self.add_incident_assignment_btn = DummyButton()
+        self.remove_incident_assignment_btn = DummyButton()
+        self.refresh_installation_assignments_btn = DummyButton()
+        self.add_installation_assignment_btn = DummyButton()
+        self.remove_installation_assignment_btn = DummyButton()
 
 
 class DummyAdminTab:
@@ -413,6 +421,25 @@ class MainWindowHelpersTests(unittest.TestCase):
         self.assertTrue(history_tab.create_manual_button.enabled)
         self.assertFalse(history_tab.create_incident_btn.enabled)
 
+    def test_apply_navigation_access_control_enables_manual_record_for_supervisor(self):
+        history_tab = DummyHistoryTab()
+        tabs = DummyTabs(current_index=1)
+        window = SimpleNamespace(
+            is_authenticated=True,
+            user_manager=SimpleNamespace(current_user={"role": "supervisor"}),
+            tabs=tabs,
+            drivers_tab_index=0,
+            history_tab_index=1,
+            incidents_tab_index=2,
+            admin_tab_index=3,
+            history_tab=history_tab,
+            statusBar=lambda: DummyStatusBar(),
+        )
+
+        apply_navigation_access_control(window)
+
+        self.assertTrue(history_tab.create_manual_button.enabled)
+
     def test_handle_tab_changed_redirects_when_tab_disabled(self):
         status_bar = DummyStatusBar()
         tabs = DummyTabs(current_index=1)
@@ -483,6 +510,10 @@ class MainWindowHelpersTests(unittest.TestCase):
 
         self.assertTrue(window.is_authenticated)
         self.assertTrue(window.is_admin)
+        self.assertTrue(window.is_super_admin)
+        self.assertEqual(window.tenant_id, "")
+        self.assertTrue(window.can_manage_platform)
+        self.assertTrue(window.can_operate_incidents)
         self.assertEqual(tabs.currentIndex(), 0)
         self.assertEqual(upload_toggles, [True])
         self.assertEqual(window.admin_tab.auth_status.text_value, "🔓 ops (super_admin)")
@@ -493,6 +524,45 @@ class MainWindowHelpersTests(unittest.TestCase):
         self.assertEqual(refresh_calls, ["drivers"])
         self.assertEqual(audit_calls, ["audit"])
         self.assertIn("load_r2", admin_updates)
+
+    def test_apply_authenticated_login_state_sets_operational_flags_for_supervisor(self):
+        logger = DummyLogger()
+        window = SimpleNamespace(
+            user_manager=SimpleNamespace(
+                current_user={
+                    "username": "coord",
+                    "role": "supervisor",
+                    "tenant_id": "tenant-a",
+                }
+            ),
+            is_authenticated=False,
+            is_admin=False,
+            tabs=DummyTabs(current_index=3),
+            drivers_tab_index=0,
+            admin_tab=DummyAdminTab(),
+            history_tab=DummyHistoryTab(),
+            drivers_tab=SimpleNamespace(toggle_upload_section=lambda value: None),
+            statusBar=lambda: DummyStatusBar(),
+            _apply_navigation_access_control=lambda: None,
+            _is_web_auth_context=lambda: True,
+            _sync_history_web_token_provider=lambda: None,
+            refresh_drivers_list=lambda: None,
+            refresh_audit_logs=lambda: None,
+            event_handlers=SimpleNamespace(
+                load_r2_config_to_admin_panel=lambda: None,
+                update_admin_drivers_list=lambda drivers: None,
+            ),
+        )
+
+        apply_authenticated_login_state(window, logger=logger)
+
+        self.assertTrue(window.is_authenticated)
+        self.assertFalse(window.is_admin)
+        self.assertFalse(window.is_super_admin)
+        self.assertEqual(window.tenant_id, "tenant-a")
+        self.assertTrue(window.can_manage_operational_records)
+        self.assertTrue(window.can_operate_incidents)
+        self.assertFalse(window.can_manage_platform)
 
     def test_run_admin_logout_resets_navigation_and_drivers(self):
         calls = []

@@ -3,7 +3,6 @@ Master password dialog.
 """
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -45,7 +44,7 @@ class MasterPasswordDialog(QDialog):
             "Configurar contrasena maestra" if self.is_first_time else "Contrasena maestra"
         )
         title = QLabel(title_text)
-        title.setFont(QFont("Segoe UI Variable Text", 16, QFont.Weight.Bold))
+        title.setFont(self.theme_manager.create_font("display", 16, 700))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setProperty("class", "heroTitle")
         layout.addWidget(title)
@@ -65,7 +64,7 @@ class MasterPasswordDialog(QDialog):
         layout.addWidget(desc)
 
         password_label = QLabel("Contrasena maestra")
-        password_label.setFont(QFont("Segoe UI Variable Text", 11, QFont.Weight.Bold))
+        password_label.setFont(self.theme_manager.create_font("display", 11, 700))
         layout.addWidget(password_label)
 
         self.password_input = QLineEdit()
@@ -78,7 +77,7 @@ class MasterPasswordDialog(QDialog):
 
         if self.is_first_time:
             confirm_label = QLabel("Confirmar contrasena")
-            confirm_label.setFont(QFont("Segoe UI Variable Text", 11, QFont.Weight.Bold))
+            confirm_label.setFont(self.theme_manager.create_font("display", 11, 700))
             layout.addWidget(confirm_label)
 
             self.confirm_input = QLineEdit()

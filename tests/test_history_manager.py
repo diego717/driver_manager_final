@@ -125,6 +125,7 @@ class TestInstallationHistory(unittest.TestCase):
         mock_config.load_config_data.return_value = {"api_url": "https://api.example.com/"}
         history = InstallationHistory(mock_config)
         history.set_web_token_provider(lambda: "token-web-123")
+        history.set_web_session_context_provider(lambda: {"tenant_id": "tenant-web"})
 
         mock_response = MagicMock()
         mock_response.content = b'{"ok": true}'
@@ -138,6 +139,7 @@ class TestInstallationHistory(unittest.TestCase):
         args, kwargs = mock_request.call_args
         self.assertEqual(args[1], "https://api.example.com/web/installations")
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer token-web-123")
+        self.assertEqual(kwargs["headers"]["X-Tenant-Id"], "tenant-web")
         self.assertNotIn("X-API-Token", kwargs["headers"])
 
     @patch.dict(os.environ, {"DRIVER_MANAGER_DESKTOP_AUTH_MODE": "web"}, clear=False)
@@ -485,6 +487,62 @@ class TestInstallationHistory(unittest.TestCase):
             params={
                 "start_date": "2026-02-01T00:00:00",
                 "end_date": "2026-03-01T00:00:00",
+            },
+        )
+
+    @patch.object(InstallationHistory, "_make_request")
+    def test_list_technicians_delegates_to_service_client(self, mock_make_request):
+        mock_make_request.return_value = {
+            "technicians": [
+                {
+                    "id": 1,
+                    "tenant_id": "tenant-a",
+                    "display_name": "Ana",
+                    "is_active": True,
+                }
+            ]
+        }
+
+        technicians = self.history.list_technicians(include_inactive=True)
+
+        self.assertEqual(len(technicians), 1)
+        self.assertEqual(technicians[0]["display_name"], "Ana")
+        mock_make_request.assert_called_once_with(
+            "get",
+            "technicians",
+            params={"include_inactive": "1"},
+        )
+
+    @patch.object(InstallationHistory, "_make_request")
+    def test_create_technician_assignment_delegates_to_service_client(self, mock_make_request):
+        mock_make_request.return_value = {
+            "assignment": {
+                "id": 401,
+                "tenant_id": "tenant-a",
+                "technician_id": 2,
+                "entity_type": "incident",
+                "entity_id": "9",
+                "assignment_role": "owner",
+                "assigned_by_username": "admin",
+                "assigned_at": "2026-03-29T10:00:00Z",
+            }
+        }
+
+        assignment = self.history.create_technician_assignment(
+            technician_id=2,
+            entity_type="incident",
+            entity_id=9,
+            assignment_role="owner",
+        )
+
+        self.assertEqual(assignment["id"], 401)
+        mock_make_request.assert_called_once_with(
+            "post",
+            "technicians/2/assignments",
+            json={
+                "entity_type": "incident",
+                "entity_id": "9",
+                "assignment_role": "owner",
             },
         )
 

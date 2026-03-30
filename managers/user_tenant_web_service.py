@@ -13,8 +13,16 @@ from core.exceptions import (
 class UserTenantWebService:
     """Operaciones de administracion web por tenant para UserManagerV2."""
 
+    ROLE_ALIASES = {
+        "viewer": "solo_lectura",
+    }
+
     def __init__(self, owner):
         self.owner = owner
+
+    def _normalize_role_label(self, role):
+        normalized_role = str(role or "solo_lectura").strip().lower() or "solo_lectura"
+        return self.ROLE_ALIASES.get(normalized_role, normalized_role)
 
     def create_tenant_web_user(self, username, password, role, tenant_id, admin_web_password):
         self.owner.logger.operation_start(
@@ -158,7 +166,7 @@ class UserTenantWebService:
             normalized.append(
                 {
                     "username": item.get("username"),
-                    "role": item.get("role", "viewer"),
+                    "role": self._normalize_role_label(item.get("role", "solo_lectura")),
                     "tenant_id": item.get("tenant_id"),
                     "active": bool(item.get("is_active", True)),
                     "last_login": item.get("last_login_at"),

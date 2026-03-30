@@ -239,6 +239,7 @@ class TestUserManagerV2(unittest.TestCase):
         )
 
         self.assertEqual(len(users), 1)
+        self.assertEqual(users[0]["role"], "solo_lectura")
         post_args, post_kwargs = mock_post.call_args
         self.assertEqual(post_args[0], "https://example.workers.dev/web/auth/verify-password")
         self.assertEqual(post_kwargs["headers"]["Authorization"], "Bearer token-current")
@@ -394,11 +395,22 @@ class TestUserManagerV2(unittest.TestCase):
         self.user_manager.authenticate("superadmin", self.superadmin_password)
 
         self.user_manager.create_user("admin_user", self.admin_password, role="admin")
-        self.user_manager.create_user("viewer_user", self.viewer_password, role="viewer")
+        self.user_manager.create_user("supervisor_user", self.viewer_password, role="supervisor")
+        self.user_manager.create_user("tecnico_user", self.viewer_password, role="tecnico")
+        self.user_manager.create_user("viewer_user", self.viewer_password, role="solo_lectura")
 
         users_data = self.user_manager._load_users()
 
-        self.assertEqual(users_data["users"]["admin_user"]["permissions"], ["read", "write"])
+        self.assertIn("write", users_data["users"]["admin_user"]["permissions"])
+        self.assertIn("manage_tenant", users_data["users"]["admin_user"]["permissions"])
+        self.assertEqual(
+            users_data["users"]["supervisor_user"]["permissions"],
+            ["read", "write_operational", "manage_assignments"],
+        )
+        self.assertEqual(
+            users_data["users"]["tecnico_user"]["permissions"],
+            ["read", "write_operational"],
+        )
         self.assertEqual(users_data["users"]["viewer_user"]["permissions"], ["read"])
         self.assertEqual(users_data["users"]["superadmin"]["permissions"], ["all"])
 

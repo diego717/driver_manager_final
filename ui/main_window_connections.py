@@ -36,8 +36,44 @@ def setup_main_window_connections(window):
         window.history_tab.incident_photos_list.currentItemChanged.connect(
             lambda current, _previous=None: window.history_tab.view_incident_photo_btn.setEnabled(current is not None)
         )
+    if hasattr(window.history_tab, "incident_assignments_list"):
+        window.history_tab.incident_assignments_list.currentItemChanged.connect(
+            lambda current, _previous=None: window.history_tab.remove_incident_assignment_btn.setEnabled(
+                current is not None
+                and bool(getattr(window, "can_manage_operational_records", getattr(window, "is_admin", False)))
+            )
+        )
+    if hasattr(window.history_tab, "installation_assignments_list"):
+        window.history_tab.installation_assignments_list.currentItemChanged.connect(
+            lambda current, _previous=None: window.history_tab.remove_installation_assignment_btn.setEnabled(
+                current is not None
+                and bool(getattr(window, "can_manage_operational_records", getattr(window, "is_admin", False)))
+            )
+        )
     if hasattr(window.history_tab, "refresh_incidents_view_btn"):
         window.history_tab.refresh_incidents_view_btn.clicked.connect(window.refresh_incidents_view)
+    if hasattr(window.history_tab, "refresh_assignments_btn"):
+        window.history_tab.refresh_assignments_btn.clicked.connect(window.refresh_incident_assignments)
+    if hasattr(window.history_tab, "refresh_installation_assignments_btn"):
+        window.history_tab.refresh_installation_assignments_btn.clicked.connect(
+            window.refresh_installation_assignments
+        )
+    if hasattr(window.history_tab, "add_incident_assignment_btn"):
+        window.history_tab.add_incident_assignment_btn.clicked.connect(
+            window.assign_technician_to_selected_incident
+        )
+    if hasattr(window.history_tab, "add_installation_assignment_btn"):
+        window.history_tab.add_installation_assignment_btn.clicked.connect(
+            window.assign_technician_to_selected_installation
+        )
+    if hasattr(window.history_tab, "remove_incident_assignment_btn"):
+        window.history_tab.remove_incident_assignment_btn.clicked.connect(
+            window.remove_selected_incident_assignment
+        )
+    if hasattr(window.history_tab, "remove_installation_assignment_btn"):
+        window.history_tab.remove_installation_assignment_btn.clicked.connect(
+            window.remove_selected_installation_assignment
+        )
     if hasattr(window.history_tab, "apply_incidents_filters_btn"):
         window.history_tab.apply_incidents_filters_btn.clicked.connect(window.apply_incidents_filters)
     if hasattr(window.history_tab, "incidents_severity_filter"):
@@ -80,6 +116,8 @@ def setup_main_window_connections(window):
 
     window.admin_tab.login_btn.clicked.connect(window.show_login_dialog)
     window.admin_tab.logout_btn.clicked.connect(window.on_admin_logout)
+    if hasattr(window.admin_tab, "user_mgmt_btn"):
+        window.admin_tab.user_mgmt_btn.clicked.connect(window.show_user_management)
     window.tabs.currentChanged.connect(window._on_tab_changed)
 
     window.admin_tab.show_account_btn.clicked.connect(
@@ -116,24 +154,21 @@ def setup_main_window_connections(window):
         )
 
     for widget in window.admin_tab.findChildren(QPushButton):
-        if "Guardar Configuración R2" in widget.text():
+        if "Guardar configuracion R2" in widget.text():
             widget.clicked.connect(window.event_handlers.save_r2_config)
-        elif "Probar Conexión" in widget.text():
+        elif "Probar conexion" in widget.text():
             widget.clicked.connect(window.test_r2_connection)
-        elif "❌ Eliminar Seleccionado" in widget.text():
+        elif "Eliminar seleccionado" in widget.text():
             widget.clicked.connect(window.delete_driver)
-        elif "Gestionar Usuarios" in widget.text():
-            widget.clicked.connect(window.show_user_management)
-        elif "Cambiar Contraseña" in widget.text():
+        elif "Cambiar contrasena" in widget.text():
             widget.clicked.connect(window.event_handlers.change_admin_password)
-        elif "Limpiar Caché" in widget.text():
+        elif "Limpiar cache" in widget.text():
             widget.clicked.connect(window.event_handlers.clear_cache)
 
-    for widget in window.drivers_tab.findChildren(QPushButton):
-        if "📁 Seleccionar Archivo" in widget.text():
-            widget.clicked.connect(window.select_driver_file)
-        elif "☁️ Subir a la Nube" in widget.text():
-            widget.clicked.connect(window.upload_driver)
+    if hasattr(window.drivers_tab, "select_driver_file_btn"):
+        window.drivers_tab.select_driver_file_btn.clicked.connect(window.select_driver_file)
+    if hasattr(window.drivers_tab, "upload_driver_btn"):
+        window.drivers_tab.upload_driver_btn.clicked.connect(window.upload_driver)
 
     if hasattr(window.admin_tab, "theme_combo"):
         window.admin_tab.theme_combo.currentTextChanged.connect(window.change_theme)

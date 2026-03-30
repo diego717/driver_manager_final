@@ -3,7 +3,6 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
-  PanResponder,
   StyleSheet,
   Switch,
   Text,
@@ -19,10 +18,22 @@ import { getAssetIncidents, type AssetIncidentsResponse } from "@/src/api/assets
 import { listInstallations } from "@/src/api/incidents";
 import { getCurrentLinkedTechnicianContext } from "@/src/api/technicians";
 import InlineFeedback from "@/src/components/InlineFeedback";
+import SignatureCanvas, {
+  SIGNATURE_STROKE_WIDTH,
+  SIGNATURE_VIEWBOX_HEIGHT,
+  SIGNATURE_VIEWBOX_WIDTH,
+} from "@/src/components/SignatureCanvas";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import SectionCard from "@/src/components/SectionCard";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
+import {
+  clearSignatureSession,
+  createSignatureSession,
+  getSignatureSession,
+  updateSignatureSession,
+} from "@/src/features/conformity/signature-session";
+import { fitSignaturePathsToViewBox } from "@/src/features/conformity/signature-paths";
 import { captureCurrentGpsSnapshot } from "@/src/services/location";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
@@ -44,6 +55,7 @@ import { formatDateTime } from "@/src/utils/incidents";
 
 const MIN_TOUCH_TARGET_SIZE = 44;
 const SIGNATURE_CANVAS_HEIGHT = 220;
+const SIGNATURE_PREVIEW_HEIGHT = 180;
 const SIGNATURE_EXPORT_DELAY_MS = 90;
 
 type SvgExportHandle = {
@@ -75,10 +87,6 @@ function validateEmailCandidate(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-function buildLinePath(x: number, y: number): string {
-  return `M ${x.toFixed(1)} ${y.toFixed(1)} L ${x.toFixed(1)} ${y.toFixed(1)}`;
-}
-
 export default function CaseConformityScreen() {
   const palette = useAppPalette();
   const router = useRouter();
@@ -91,6 +99,7 @@ export default function CaseConformityScreen() {
   const { checkingSession, hasActiveSession } = useSharedWebSessionState();
 
   const signatureSvgRef = useRef<Svg | null>(null);
+  const signatureSessionIdRef = useRef<string>("");
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const capturingGpsRef = useRef(false);
   const [record, setRecord] = useState<InstallationRecord | null>(null);
@@ -114,10 +123,7 @@ export default function CaseConformityScreen() {
   });
   const [capturingGps, setCapturingGps] = useState(false);
   const [gpsOverrideNote, setGpsOverrideNote] = useState("");
-  const [paths, setPaths] = useState<string[]>([]);
-  const [currentPath, setCurrentPath] = useState("");
-  const [hasSignature, setHasSignature] = useState(false);
-  const [isSigning, setIsSigning] = useState(false);
+  const [signaturePaths, setSignaturePaths] = useState<string[]>([]);
 
   const clearFeedbackSoon = useCallback(() => {
     if (feedbackTimeoutRef.current) {
@@ -151,6 +157,14 @@ export default function CaseConformityScreen() {
       });
     return () => {
       mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (signatureSessionIdRef.current) return;
+    signatureSessionIdRef.current = createSignatureSession([]);
+    return () => {
+      clearSignatureSession(signatureSessionIdRef.current);
     };
   }, []);
 
@@ -229,6 +243,16 @@ export default function CaseConformityScreen() {
     }, [captureGps, hasActiveSession, installationId, loadContext]),
   );
 
+  useFocusEffect(
+    useCallback(() => {
+      const sessionId = signatureSessionIdRef.current;
+      if (!sessionId) return;
+      const snapshot = getSignatureSession(sessionId);
+      if (!snapshot) return;
+      setSignaturePaths(snapshot.paths);
+    }, []),
+  );
+
   const geofencePreview = useMemo(
     () => evaluateGeofencePreview(gpsSnapshot, record),
     [gpsSnapshot, record],
@@ -237,52 +261,33 @@ export default function CaseConformityScreen() {
   const requiresGpsOverride = gpsSnapshot.status !== "captured";
   const requiresGeofenceOverride = gpsSnapshot.status === "captured" && geofencePreview.result === "outside";
   const showGpsOverrideField = requiresGpsOverride || requiresGeofenceOverride;
+  const previewSignaturePaths = useMemo(
+    () =>
+      fitSignaturePathsToViewBox(signaturePaths, {
+        width: SIGNATURE_VIEWBOX_WIDTH,
+        height: SIGNATURE_VIEWBOX_HEIGHT,
+        padding: 24,
+      }),
+    [signaturePaths],
+  );
 
   const clearSignature = useCallback(() => {
-    setPaths([]);
-    setCurrentPath("");
-    setHasSignature(false);
+    const sessionId = signatureSessionIdRef.current;
+    setSignaturePaths([]);
+    if (sessionId) {
+      updateSignatureSession(sessionId, []);
+    }
   }, []);
 
-  const panResponder = useMemo(() => {
-    const appendPoint = (x: number, y: number) => {
-      setCurrentPath((existing) => {
-        if (!existing) return buildLinePath(x, y);
-        return `${existing} L ${x.toFixed(1)} ${y.toFixed(1)}`;
-      });
-      setHasSignature(true);
-    };
-
-    const commitStroke = () => {
-      setCurrentPath((existing) => {
-        if (existing) {
-          setPaths((current) => [...current, existing]);
-        }
-        return "";
-      });
-    };
-
-    return PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (event) => {
-        setIsSigning(true);
-        appendPoint(event.nativeEvent.locationX, event.nativeEvent.locationY);
-      },
-      onPanResponderMove: (event) => {
-        appendPoint(event.nativeEvent.locationX, event.nativeEvent.locationY);
-      },
-      onPanResponderRelease: () => {
-        setIsSigning(false);
-        commitStroke();
-      },
-      onPanResponderTerminate: () => {
-        setIsSigning(false);
-        commitStroke();
-      },
-      onPanResponderTerminationRequest: () => false,
-    });
-  }, []);
+  const openSignatureWorkspace = useCallback(() => {
+    const sessionId = signatureSessionIdRef.current;
+    if (!sessionId) {
+      notify("error", "No pudimos preparar el espacio de firma.");
+      return;
+    }
+    updateSignatureSession(sessionId, signaturePaths);
+    router.push(`/case/signature?sessionId=${encodeURIComponent(sessionId)}` as never);
+  }, [notify, router, signaturePaths]);
 
   const exportSignatureDataUrl = useCallback(async (): Promise<string> => {
     await new Promise((resolve) => setTimeout(resolve, SIGNATURE_EXPORT_DELAY_MS));
@@ -319,7 +324,7 @@ export default function CaseConformityScreen() {
       notify("error", "Ingresa un email valido para generar la conformidad.");
       return;
     }
-    if (!hasSignature || (!paths.length && !currentPath)) {
+    if (!signaturePaths.length) {
       notify("error", "Falta la firma del cliente o responsable.");
       return;
     }
@@ -376,16 +381,14 @@ export default function CaseConformityScreen() {
     }
   }, [
     clearSignature,
-    currentPath,
     emailTo,
     exportSignatureDataUrl,
     geofencePreview.result,
     gpsOverrideNote,
     gpsSnapshot,
-    hasSignature,
     installationId,
     notify,
-    paths.length,
+    signaturePaths.length,
     signedByDocument,
     signedByName,
     sendEmail,
@@ -433,7 +436,7 @@ export default function CaseConformityScreen() {
   return (
     <ScreenScaffold
       contentContainerStyle={styles.container}
-      scrollViewProps={{ scrollEnabled: !isSigning, keyboardShouldPersistTaps: "handled" }}
+      scrollViewProps={{ keyboardShouldPersistTaps: "handled" }}
     >
       <Stack.Screen options={{ title: "Conformidad" }} />
       <ScreenHero
@@ -751,66 +754,79 @@ export default function CaseConformityScreen() {
 
       <SectionCard
         title="Firma"
-        description="Traza la firma directamente en la pantalla. El Worker genera el PDF y, si activaste el switch, lo envia por email."
+        description="Abre una vista dedicada para firmar mas comodo. La pantalla de firma se presenta en horizontal y vuelve al flujo al guardar."
         aside={
-          <TouchableOpacity
-            style={[
-              styles.clearButton,
-              { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-            ]}
-            onPress={clearSignature}
-            accessibilityRole="button"
-            accessibilityLabel="Limpiar firma"
-          >
-            <Text style={[styles.clearButtonText, { color: palette.refreshText }]}>Limpiar</Text>
-          </TouchableOpacity>
+          <View style={styles.signatureActions}>
+            <TouchableOpacity
+              style={[
+                styles.clearButton,
+                { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+              ]}
+              onPress={clearSignature}
+              accessibilityRole="button"
+              accessibilityLabel="Limpiar firma"
+            >
+              <Text style={[styles.clearButtonText, { color: palette.refreshText }]}>Limpiar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.clearButton,
+                { backgroundColor: palette.primaryButtonBg, borderColor: palette.primaryButtonBg },
+              ]}
+              onPress={openSignatureWorkspace}
+              accessibilityRole="button"
+              accessibilityLabel="Abrir espacio de firma"
+            >
+              <Text style={[styles.clearButtonText, { color: palette.primaryButtonText }]}>Abrir firma</Text>
+            </TouchableOpacity>
+          </View>
         }
       >
-        <View
-          style={[
-            styles.signatureShell,
-            { backgroundColor: palette.surface, borderColor: palette.border },
-          ]}
-          {...panResponder.panHandlers}
-        >
-          <Svg
-            ref={signatureSvgRef}
-            width="100%"
-            height={SIGNATURE_CANVAS_HEIGHT}
-            viewBox={`0 0 320 ${SIGNATURE_CANVAS_HEIGHT}`}
-          >
-            <Rect x="0" y="0" width="320" height={SIGNATURE_CANVAS_HEIGHT} fill={palette.surface} />
-            {paths.map((path, index) => (
-              <Path
-                key={`${path.slice(0, 24)}-${index}`}
-                d={path}
-                stroke={palette.accent}
-                strokeWidth="3.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                fill="none"
-              />
-            ))}
-            {currentPath ? (
-              <Path
-                d={currentPath}
-                stroke={palette.accent}
-                strokeWidth="3.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                fill="none"
-              />
-            ) : null}
-          </Svg>
-          {!hasSignature ? (
-            <View style={styles.signatureHintWrap} pointerEvents="none">
-              <Text style={[styles.signatureHint, { color: palette.textMuted }]}>
-                Firma aqui con el dedo o stylus.
-              </Text>
-            </View>
-          ) : null}
-        </View>
+        <SignatureCanvas
+          paths={signaturePaths}
+          onChange={setSignaturePaths}
+          height={SIGNATURE_PREVIEW_HEIGHT}
+          borderColor={palette.border}
+          backgroundColor={palette.surface}
+          strokeColor={palette.accent}
+          hintColor={palette.textMuted}
+          hint="Toca 'Abrir firma' para capturar la firma en grande y en horizontal."
+          fitToBounds
+        />
+        <Text style={[styles.signatureCaption, { color: palette.textSecondary }]}>
+          {signaturePaths.length
+            ? "Firma capturada. Puedes reabrirla para completarla o limpiarla antes de generar el PDF."
+            : "Todavia no hay firma guardada para esta conformidad."}
+        </Text>
       </SectionCard>
+
+      <View style={styles.hiddenSignatureExport} pointerEvents="none">
+        <Svg
+          ref={signatureSvgRef}
+          width={SIGNATURE_VIEWBOX_WIDTH}
+          height={SIGNATURE_VIEWBOX_HEIGHT}
+          viewBox={`0 0 ${SIGNATURE_VIEWBOX_WIDTH} ${SIGNATURE_VIEWBOX_HEIGHT}`}
+        >
+          <Rect
+            x="0"
+            y="0"
+            width={SIGNATURE_VIEWBOX_WIDTH}
+            height={SIGNATURE_VIEWBOX_HEIGHT}
+            fill={palette.surface}
+          />
+          {previewSignaturePaths.map((path, index) => (
+            <Path
+              key={`${path.slice(0, 24)}-export-${index}`}
+              d={path}
+              stroke={palette.accent}
+              strokeWidth={SIGNATURE_STROKE_WIDTH + 0.6}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              fill="none"
+            />
+          ))}
+        </Svg>
+      </View>
 
       <View style={styles.actionColumn}>
         <TouchableOpacity
@@ -981,23 +997,21 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontFamily: fontFamilies.semibold,
   },
-  signatureShell: {
-    position: "relative",
-    borderWidth: 1,
-    borderRadius: 20,
-    overflow: "hidden",
-    minHeight: SIGNATURE_CANVAS_HEIGHT,
-  },
-  signatureHintWrap: {
-    position: "absolute",
-    inset: 0,
+  signatureActions: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 8,
   },
-  signatureHint: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: fontFamilies.medium,
+  signatureCaption: {
+    marginTop: 10,
+    fontSize: 12.5,
+    lineHeight: 17,
+    fontFamily: fontFamilies.regular,
+  },
+  hiddenSignatureExport: {
+    position: "absolute",
+    opacity: 0,
+    pointerEvents: "none",
   },
   actionColumn: {
     gap: 10,

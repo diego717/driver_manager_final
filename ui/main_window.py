@@ -37,6 +37,8 @@ from ui.main_window_bootstrap import (
 from ui.main_window_connections import setup_main_window_connections
 from ui.main_window_incidents import (
     apply_incidents_filters as apply_incidents_filters_helper,
+    assign_technician_to_selected_incident as assign_technician_to_selected_incident_helper,
+    assign_technician_to_selected_installation as assign_technician_to_selected_installation_helper,
     build_photo_thumbnail_icon,
     create_incident_for_record as create_incident_for_record_helper,
     create_incident_from_incidents_view as create_incident_from_incidents_view_helper,
@@ -54,6 +56,10 @@ from ui.main_window_incidents import (
     record_attention_icon,
     record_attention_label,
     refresh_incidents_view as refresh_incidents_view_helper,
+    refresh_incident_assignments as refresh_incident_assignments_helper,
+    refresh_installation_assignments as refresh_installation_assignments_helper,
+    remove_selected_incident_assignment as remove_selected_incident_assignment_helper,
+    remove_selected_installation_assignment as remove_selected_installation_assignment_helper,
     render_incident_detail_html,
     select_incident_photo,
     show_incident_details,
@@ -309,13 +315,34 @@ class MainWindow(QMainWindow):
         token = getattr(self.user_manager, "current_web_token", None)
         return str(token or "").strip()
 
+    def _resolve_current_web_session_context(self):
+        """Obtener contexto de sesion web actual para tenant-aware requests."""
+        if not self.user_manager:
+            return {}
+        current_user = getattr(self.user_manager, "current_user", None) or {}
+        if not isinstance(current_user, dict):
+            return {}
+        if str(current_user.get("source") or "").strip().lower() != "web":
+            return {}
+        return {
+            "user_id": current_user.get("id"),
+            "username": current_user.get("username"),
+            "role": current_user.get("role"),
+            "tenant_id": current_user.get("tenant_id"),
+        }
+
     def _sync_history_web_token_provider(self):
-        """Conectar InstallationHistory con token web de sesión."""
-        provider = self._resolve_current_web_token
+        """Conectar InstallationHistory con token y contexto de sesion web."""
+        token_provider = self._resolve_current_web_token
+        session_context_provider = self._resolve_current_web_session_context
         if getattr(self, "history", None) and hasattr(self.history, "set_web_token_provider"):
-            self.history.set_web_token_provider(provider)
+            self.history.set_web_token_provider(token_provider)
+        if getattr(self, "history", None) and hasattr(self.history, "set_web_session_context_provider"):
+            self.history.set_web_session_context_provider(session_context_provider)
         if getattr(self, "history_manager", None) and hasattr(self.history_manager, "set_web_token_provider"):
-            self.history_manager.set_web_token_provider(provider)
+            self.history_manager.set_web_token_provider(token_provider)
+        if getattr(self, "history_manager", None) and hasattr(self.history_manager, "set_web_session_context_provider"):
+            self.history_manager.set_web_session_context_provider(session_context_provider)
 
     def _get_or_create_web_driver_manager(self):
         """Crear/reusar cliente de drivers web para este runtime."""
@@ -558,7 +585,9 @@ class MainWindow(QMainWindow):
     def _on_history_item_changed(self, item, _previous=None):
         """Sincronizar estado de botones según selección de historial."""
         has_selection = item is not None
-        self.history_tab.edit_button.setEnabled(has_selection and self.is_admin)
+        self.history_tab.edit_button.setEnabled(
+            has_selection and bool(getattr(self, "can_manage_operational_records", self.is_admin))
+        )
         if hasattr(self.history_tab, "view_incidents_button"):
             self.history_tab.view_incidents_button.setEnabled(has_selection)
 
@@ -762,6 +791,24 @@ class MainWindow(QMainWindow):
     def upload_photo_for_selected_incident(self):
         upload_photo_for_selected_incident_helper(self)
 
+    def refresh_incident_assignments(self):
+        refresh_incident_assignments_helper(self)
+
+    def assign_technician_to_selected_incident(self):
+        assign_technician_to_selected_incident_helper(self)
+
+    def remove_selected_incident_assignment(self):
+        remove_selected_incident_assignment_helper(self)
+
+    def refresh_installation_assignments(self):
+        refresh_installation_assignments_helper(self)
+
+    def assign_technician_to_selected_installation(self):
+        assign_technician_to_selected_installation_helper(self)
+
+    def remove_selected_installation_assignment(self):
+        remove_selected_installation_assignment_helper(self)
+
     def update_selected_incident_status(self, new_status):
         update_selected_incident_status_helper(self, new_status)
 
@@ -886,8 +933,12 @@ class MainWindow(QMainWindow):
 
     def create_manual_history_record(self):
         """Crear registro manual sin depender de instalación de driver previa."""
-        if not self.is_admin:
-            QMessageBox.warning(self, "Acceso denegado", "Debes iniciar sesión como administrador.")
+        if not bool(getattr(self, "can_manage_operational_records", self.is_admin)):
+            QMessageBox.warning(
+                self,
+                "Acceso denegado",
+                "Tu sesión no tiene permisos para crear registros manuales.",
+            )
             return
 
         self._show_status_hint(
@@ -1251,8 +1302,12 @@ class MainWindow(QMainWindow):
     
     def show_edit_installation_dialog(self):
         """Mostrar el diálogo para editar un registro de instalación."""
-        if not self.is_admin:
-            QMessageBox.warning(self, "Acceso Denegado", "No tienes permisos para editar registros de instalación.")
+        if not bool(getattr(self, "can_manage_operational_records", self.is_admin)):
+            QMessageBox.warning(
+                self,
+                "Acceso Denegado",
+                "Tu sesión no tiene permisos para editar registros de instalación.",
+            )
             return
 
         selected_items = self.history_tab.history_list.selectedItems()
@@ -1314,7 +1369,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "Debes iniciar sesión primero")
             return
         
-        dialog = UserManagementDialog(self.user_manager, self)
+        dialog = UserManagementDialog(
+            self.user_manager,
+            history_manager=self.history,
+            parent=self,
+        )
         dialog.exec()
 
     def show_qr_generator_dialog(self):

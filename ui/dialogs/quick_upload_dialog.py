@@ -6,7 +6,6 @@ import re
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -60,7 +59,7 @@ class QuickUploadDialog(QDialog):
         header_layout.addWidget(eyebrow, alignment=Qt.AlignmentFlag.AlignLeft)
 
         title = QLabel("Subir driver")
-        title.setFont(QFont("Segoe UI Variable Text", 16, QFont.Weight.Bold))
+        title.setFont(self.theme_manager.create_font("display", 16, 700))
         title.setProperty("class", "heroTitle")
         header_layout.addWidget(title)
 
@@ -74,7 +73,7 @@ class QuickUploadDialog(QDialog):
         file_layout = QVBoxLayout(file_group)
 
         self.filename_label = QLabel(self.file_path.name)
-        self.filename_label.setFont(QFont("Segoe UI Variable Text", 11, QFont.Weight.Bold))
+        self.filename_label.setFont(self.theme_manager.create_font("display", 11, 700))
         file_layout.addWidget(self.filename_label)
 
         file_info_layout = QHBoxLayout()
@@ -281,14 +280,14 @@ class UploadSuccessDialog(QDialog):
         layout.addWidget(eyebrow, alignment=Qt.AlignmentFlag.AlignCenter)
 
         title = QLabel("Driver subido correctamente")
-        title.setFont(QFont("Segoe UI Variable Text", 14, QFont.Weight.Bold))
+        title.setFont(self.theme_manager.create_font("display", 14, 700))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setProperty("class", "heroTitle")
         layout.addWidget(title)
 
         brand_label = QLabel(f"{self.driver_info['brand']} v{self.driver_info['version']}")
         brand_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        brand_label.setFont(QFont("Segoe UI Variable Text", 11, QFont.Weight.Bold))
+        brand_label.setFont(self.theme_manager.create_font("display", 11, 700))
         layout.addWidget(brand_label)
 
         if self.driver_info.get("description"):

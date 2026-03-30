@@ -9,11 +9,14 @@ from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -72,7 +75,8 @@ class QrGeneratorDialog(QDialog):
         super().__init__(parent)
         self.theme_manager = resolve_theme_manager(parent)
         self.setWindowTitle("Alta de equipo y QR")
-        self.setMinimumSize(760, 760)
+        self.resize(920, 760)
+        self.setMinimumSize(720, 640)
         self.setStyleSheet(self.theme_manager.generate_stylesheet())
 
         self._history_manager = history_manager
@@ -100,7 +104,8 @@ class QrGeneratorDialog(QDialog):
         self.client_input.setPlaceholderText("Ej: Cliente ACME")
         self.notes_input = QTextEdit()
         self.notes_input.setPlaceholderText("Notas opcionales del equipo")
-        self.notes_input.setFixedHeight(90)
+        self.notes_input.setMinimumHeight(96)
+        self.notes_input.setMaximumHeight(160)
 
         self.helper_label = QLabel("")
         self.helper_label.setWordWrap(True)
@@ -112,7 +117,7 @@ class QrGeneratorDialog(QDialog):
 
         self.preview_label = QLabel("Vista previa QR")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setMinimumHeight(300)
+        self.preview_label.setMinimumHeight(220)
         self.preview_label.setProperty("class", "info")
 
         self.details_label = QLabel("")
@@ -144,14 +149,65 @@ class QrGeneratorDialog(QDialog):
 
     def _build_layout(self):
         main_layout = QVBoxLayout(self)
-        form_layout = QFormLayout()
+        main_layout.setContentsMargins(18, 18, 18, 18)
+        main_layout.setSpacing(12)
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        main_layout.addWidget(scroll)
+
+        content = QWidget()
+        scroll.setWidget(content)
+
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(14)
+
+        hero = QVBoxLayout()
+        hero.setSpacing(6)
+
+        eyebrow = QLabel("QR / ACTIVOS")
+        eyebrow.setProperty("class", "chip")
+        hero.addWidget(eyebrow, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        title = QLabel("Alta de equipo y QR")
+        title.setFont(self.theme_manager.create_font("display", 18, 700))
+        title.setProperty("class", "heroTitle")
+        hero.addWidget(title)
+
+        subtitle = QLabel(
+            "Genera etiquetas locales para equipos o instalaciones, valida el payload "
+            "antes de imprimir y registra el activo cuando corresponda."
+        )
+        subtitle.setWordWrap(True)
+        subtitle.setProperty("class", "sectionMeta")
+        hero.addWidget(subtitle)
+        content_layout.addLayout(hero)
+
+        setup_group = QGroupBox("Configuracion del QR")
+        form_layout = QFormLayout(setup_group)
+        form_layout.setHorizontalSpacing(14)
+        form_layout.setVerticalSpacing(10)
         self.value_label = QLabel("ID instalacion:")
         form_layout.addRow("Tipo:", self.type_combo)
         form_layout.addRow(self.value_label, self.value_input)
-        main_layout.addLayout(form_layout)
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        content_layout.addWidget(setup_group)
 
         self.asset_fields_container = QWidget(self)
-        self.asset_fields_layout = QFormLayout(self.asset_fields_container)
+        asset_container_layout = QVBoxLayout(self.asset_fields_container)
+        asset_container_layout.setContentsMargins(0, 0, 0, 0)
+        asset_container_layout.setSpacing(10)
+
+        asset_intro = QLabel(
+            "Completa la ficha del activo para construir un codigo externo consistente."
+        )
+        asset_intro.setWordWrap(True)
+        asset_intro.setProperty("class", "sectionMeta")
+        asset_container_layout.addWidget(asset_intro)
+
+        self.asset_fields_layout = QFormLayout()
         self.asset_fields_layout.setContentsMargins(0, 0, 0, 0)
         self.asset_fields_layout.addRow("Codigo externo:", self.asset_code_input)
         self.asset_fields_layout.addRow("Marca:", self.brand_input)
@@ -159,26 +215,51 @@ class QrGeneratorDialog(QDialog):
         self.asset_fields_layout.addRow("Numero de serie:", self.serial_input)
         self.asset_fields_layout.addRow("Cliente:", self.client_input)
         self.asset_fields_layout.addRow("Notas:", self.notes_input)
-        main_layout.addWidget(self.asset_fields_container)
+        asset_container_layout.addLayout(self.asset_fields_layout)
 
-        main_layout.addWidget(self.helper_label)
-        main_layout.addWidget(self.error_label)
-        main_layout.addWidget(self.preview_label)
-        main_layout.addWidget(QLabel("Payload:"))
-        main_layout.addWidget(self.payload_value)
-        main_layout.addWidget(self.details_label)
-        preset_layout = QFormLayout()
-        preset_layout.addRow("Formato etiqueta:", self.label_preset_combo)
-        main_layout.addLayout(preset_layout)
+        asset_group = QGroupBox("Detalle del equipo")
+        asset_group_layout = QVBoxLayout(asset_group)
+        asset_group_layout.setContentsMargins(16, 18, 16, 14)
+        asset_group_layout.addWidget(self.asset_fields_container)
+        content_layout.addWidget(asset_group)
 
-        buttons_layout = QHBoxLayout()
-        buttons_layout.addWidget(self.generate_button)
-        buttons_layout.addWidget(self.save_asset_button)
-        buttons_layout.addWidget(self.copy_payload_button)
-        buttons_layout.addWidget(self.save_button)
-        buttons_layout.addStretch()
-        buttons_layout.addWidget(self.close_button)
-        main_layout.addLayout(buttons_layout)
+        content_layout.addWidget(self.helper_label)
+        content_layout.addWidget(self.error_label)
+
+        preview_group = QGroupBox("Vista previa")
+        preview_layout = QVBoxLayout(preview_group)
+        preview_layout.setSpacing(10)
+        preview_layout.addWidget(self.preview_label)
+        preview_layout.addWidget(self.details_label)
+        content_layout.addWidget(preview_group)
+
+        payload_group = QGroupBox("Payload y salida")
+        payload_layout = QFormLayout(payload_group)
+        payload_layout.setHorizontalSpacing(14)
+        payload_layout.setVerticalSpacing(10)
+        payload_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        payload_layout.addRow("Payload:", self.payload_value)
+        payload_layout.addRow("Formato etiqueta:", self.label_preset_combo)
+        content_layout.addWidget(payload_group)
+
+        buttons_layout = QGridLayout()
+        buttons_layout.setHorizontalSpacing(10)
+        buttons_layout.setVerticalSpacing(10)
+        self.generate_button.setProperty("class", "primary")
+        self.save_asset_button.setProperty("class", "info")
+        self.copy_payload_button.setProperty("class", "flat")
+        self.generate_button.setMinimumWidth(170)
+        self.save_asset_button.setMinimumWidth(170)
+        self.copy_payload_button.setMinimumWidth(170)
+        self.save_button.setMinimumWidth(170)
+        self.close_button.setMinimumWidth(170)
+        buttons_layout.addWidget(self.generate_button, 0, 0)
+        buttons_layout.addWidget(self.save_asset_button, 0, 1)
+        buttons_layout.addWidget(self.copy_payload_button, 0, 2)
+        buttons_layout.addWidget(self.save_button, 1, 0)
+        buttons_layout.addWidget(self.close_button, 1, 2)
+        content_layout.addLayout(buttons_layout)
+        content_layout.addStretch()
 
     def _setup_connections(self):
         self.type_combo.currentIndexChanged.connect(self._apply_type_meta)
@@ -232,7 +313,7 @@ class QrGeneratorDialog(QDialog):
         selected_type = self._selected_type()
         self._current_type = selected_type
         is_asset = selected_type == "asset"
-        self.asset_fields_container.setVisible(is_asset)
+        self.asset_fields_container.parentWidget().setVisible(is_asset)
         self.save_asset_button.setVisible(is_asset)
 
         if selected_type == "installation":
@@ -350,6 +431,7 @@ class QrGeneratorDialog(QDialog):
 
     def _set_error(self, message):
         self.error_label.setText(message or "")
+        self.error_label.setVisible(bool(message))
 
     def _reset_preview(self):
         self._current_payload = ""
@@ -361,6 +443,7 @@ class QrGeneratorDialog(QDialog):
         self.details_label.setText("")
         self.copy_payload_button.setEnabled(False)
         self.save_button.setEnabled(False)
+        self.error_label.setVisible(False)
 
     def generate_qr(self):
         try:

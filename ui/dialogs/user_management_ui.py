@@ -13,15 +13,37 @@ from datetime import datetime
 
 from ui.theme_manager import resolve_theme_manager
 
+ROLE_LABELS = {
+    "super_admin": "super_admin",
+    "admin": "admin",
+    "supervisor": "supervisor",
+    "tecnico": "tecnico",
+    "solo_lectura": "solo_lectura",
+    "viewer": "solo_lectura",
+}
+TECHNICIAN_CATALOG_MANAGER_ROLES = {"admin", "super_admin"}
+
+
+def normalize_role_name(role):
+    normalized = str(role or "solo_lectura").strip().lower() or "solo_lectura"
+    return ROLE_LABELS.get(normalized, normalized)
+
+
+def can_manage_technician_catalog(user_manager):
+    current_user = getattr(user_manager, "current_user", None) or {}
+    role = str(current_user.get("role") or "").strip().lower()
+    return role in TECHNICIAN_CATALOG_MANAGER_ROLES
+
 
 class UserManagementDialog(QDialog):
     """Diálogo para gestión de usuarios"""
     
-    def __init__(self, user_manager, parent=None):
+    def __init__(self, user_manager, history_manager=None, parent=None):
         super().__init__(parent)
         self.theme_manager = resolve_theme_manager(parent)
         self.colors = self.theme_manager.get_theme_colors()
         self.user_manager = user_manager
+        self.history_manager = history_manager
         auth_mode = str(getattr(self.user_manager, "auth_mode", "legacy") or "legacy").strip().lower()
         current_source = str(
             (getattr(self.user_manager, "current_user", {}) or {}).get("source") or ""
@@ -42,12 +64,25 @@ class UserManagementDialog(QDialog):
     
     def init_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+
+        eyebrow = QLabel("ADMIN / IDENTIDAD")
+        eyebrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        eyebrow.setProperty("class", "chip")
+        layout.addWidget(eyebrow, alignment=Qt.AlignmentFlag.AlignCenter)
 
         title = QLabel("Gestión de usuarios")
-        title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        title.setFont(self.theme_manager.create_font("display", 16, 700))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setProperty("class", "heroTitle")
         layout.addWidget(title)
+
+        subtitle = QLabel("Controla accesos, sesiones recientes y el origen de cada cuenta.")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setWordWrap(True)
+        subtitle.setProperty("class", "sectionMeta")
+        layout.addWidget(subtitle)
 
         current_user = self.user_manager.current_user
         if current_user:
@@ -85,11 +120,15 @@ class UserManagementDialog(QDialog):
         refresh_btn.clicked.connect(self.refresh_users)
         buttons_layout.addWidget(refresh_btn)
 
+        technicians_btn = QPushButton("Gestionar tecnicos")
+        technicians_btn.clicked.connect(self.open_technician_management)
+        buttons_layout.addWidget(technicians_btn)
+
         buttons_layout.addStretch()
         layout.addLayout(buttons_layout)
 
         users_label = QLabel("Usuarios registrados")
-        users_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        users_label.setFont(self.theme_manager.create_font("display", 12, 700))
         users_label.setProperty("class", "sectionTitle")
         layout.addWidget(users_label)
 
@@ -123,7 +162,7 @@ class UserManagementDialog(QDialog):
             layout.addLayout(user_buttons)
 
         logs_label = QLabel("Logs de acceso recientes")
-        logs_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        logs_label.setFont(self.theme_manager.create_font("display", 12, 700))
         logs_label.setProperty("class", "sectionTitle")
         layout.addWidget(logs_label)
 
@@ -192,7 +231,7 @@ class UserManagementDialog(QDialog):
 
         for row, user in enumerate(users):
             username = str(user.get("username") or "")
-            role = str(user.get("role") or "viewer")
+            role = normalize_role_name(user.get("role"))
             source = str(user.get("source") or "local").strip().lower() or "local"
             active = bool(user.get("active", True))
             tenant_id = user.get("tenant_id") or "-"
@@ -209,6 +248,12 @@ class UserManagementDialog(QDialog):
             elif role == "admin":
                 role_item.setBackground(QColor(self.colors["accent"]))
                 role_item.setForeground(QColor(self.colors["text_inverse"]))
+            elif role == "supervisor":
+                role_item.setBackground(QColor(self.colors["panel_warning"]))
+                role_item.setForeground(QColor(self.colors["text_primary"]))
+            elif role == "tecnico":
+                role_item.setBackground(QColor(self.colors["panel_info"]))
+                role_item.setForeground(QColor(self.colors["text_primary"]))
             self.users_table.setItem(row, 1, role_item)
 
             self.users_table.setItem(row, 2, QTableWidgetItem(str(tenant_id)))
@@ -358,6 +403,23 @@ class UserManagementDialog(QDialog):
                 self.refresh_users()
             else:
                 QMessageBox.warning(self, "Error", message)
+
+    def open_technician_management(self):
+        """Abrir gestion de tecnicos para el tenant de la sesion."""
+        if not getattr(self, "history_manager", None):
+            QMessageBox.warning(
+                self,
+                "No disponible",
+                "No hay cliente de historial disponible para gestionar tecnicos.",
+            )
+            return
+
+        dialog = TechnicianManagementDialog(
+            history_manager=self.history_manager,
+            user_manager=self.user_manager,
+            parent=self,
+        )
+        dialog.exec()
     
     def change_password(self):
         """Cambiar contraseña del usuario actual"""
@@ -450,7 +512,20 @@ class CreateUserDialog(QDialog):
         self.init_ui()
     
     def init_ui(self):
-        layout = QFormLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
+
+        title = QLabel("Crear usuario")
+        title.setProperty("class", "heroTitle")
+        root.addWidget(title)
+
+        subtitle = QLabel("Crea un usuario local o web con tenant y rol operativo.")
+        subtitle.setWordWrap(True)
+        subtitle.setProperty("class", "sectionMeta")
+        root.addWidget(subtitle)
+
+        layout = QFormLayout()
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setHorizontalSpacing(14)
         layout.setVerticalSpacing(10)
@@ -471,7 +546,7 @@ class CreateUserDialog(QDialog):
         layout.addRow("Confirmar:", self.confirm_password_input)
         
         self.role_combo = QComboBox()
-        self.role_combo.addItems(["admin", "viewer"])
+        self.role_combo.addItems(["admin", "supervisor", "tecnico", "solo_lectura"])
         layout.addRow("Rol:", self.role_combo)
 
         self.tenant_input = QLineEdit()
@@ -492,6 +567,7 @@ class CreateUserDialog(QDialog):
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addRow(button_box)
+        root.addLayout(layout)
     
     def get_data(self):
         return (
@@ -502,6 +578,292 @@ class CreateUserDialog(QDialog):
             self.tenant_input.text(),
             self.admin_web_password_input.text(),
         )
+
+
+class TechnicianFormDialog(QDialog):
+    """Formulario de alta/edicion para tecnicos."""
+
+    def __init__(self, parent=None, technician=None):
+        super().__init__(parent)
+        self.theme_manager = resolve_theme_manager(parent)
+        self.technician = technician or {}
+        self.setModal(True)
+        self.setStyleSheet(self.theme_manager.generate_stylesheet())
+        self.setWindowTitle("Editar tecnico" if technician else "Crear tecnico")
+        self.resize(520, 360)
+        self.init_ui()
+
+    def init_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
+
+        title = QLabel("Editar tecnico" if self.technician else "Crear tecnico")
+        title.setProperty("class", "heroTitle")
+        root.addWidget(title)
+
+        subtitle = QLabel(
+            "Completa identidad operativa, contacto y vinculo opcional con usuario web."
+        )
+        subtitle.setWordWrap(True)
+        subtitle.setProperty("class", "sectionMeta")
+        root.addWidget(subtitle)
+
+        layout = QFormLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setHorizontalSpacing(14)
+        layout.setVerticalSpacing(10)
+
+        self.display_name_input = QLineEdit(str(self.technician.get("display_name") or ""))
+        self.display_name_input.setPlaceholderText("Nombre visible del tecnico")
+        layout.addRow("Nombre:", self.display_name_input)
+
+        self.employee_code_input = QLineEdit(str(self.technician.get("employee_code") or ""))
+        self.employee_code_input.setPlaceholderText("Codigo interno (opcional)")
+        layout.addRow("Codigo:", self.employee_code_input)
+
+        self.email_input = QLineEdit(str(self.technician.get("email") or ""))
+        self.email_input.setPlaceholderText("mail@empresa.com (opcional)")
+        layout.addRow("Email:", self.email_input)
+
+        self.phone_input = QLineEdit(str(self.technician.get("phone") or ""))
+        self.phone_input.setPlaceholderText("+598... (opcional)")
+        layout.addRow("Telefono:", self.phone_input)
+
+        self.web_user_id_input = QLineEdit(
+            "" if self.technician.get("web_user_id") in (None, "") else str(self.technician.get("web_user_id"))
+        )
+        self.web_user_id_input.setPlaceholderText("ID de usuario web vinculado (opcional)")
+        layout.addRow("Web user ID:", self.web_user_id_input)
+
+        self.notes_input = QTextEdit(str(self.technician.get("notes") or ""))
+        self.notes_input.setPlaceholderText("Notas operativas (opcional)")
+        self.notes_input.setMaximumHeight(100)
+        layout.addRow("Notas:", self.notes_input)
+
+        self.active_checkbox = QCheckBox("Tecnico activo")
+        self.active_checkbox.setChecked(bool(self.technician.get("is_active", True)))
+        layout.addRow("Estado:", self.active_checkbox)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+        root.addLayout(layout)
+
+    def get_payload(self):
+        web_user_raw = self.web_user_id_input.text().strip()
+        if web_user_raw:
+            try:
+                web_user_id = int(web_user_raw)
+                if web_user_id <= 0:
+                    raise ValueError("non-positive")
+            except Exception as error:
+                raise ValueError("Web user ID debe ser un entero positivo.") from error
+        else:
+            web_user_id = None
+
+        return {
+            "display_name": self.display_name_input.text().strip(),
+            "employee_code": self.employee_code_input.text().strip(),
+            "email": self.email_input.text().strip(),
+            "phone": self.phone_input.text().strip(),
+            "notes": self.notes_input.toPlainText().strip(),
+            "web_user_id": web_user_id,
+            "is_active": bool(self.active_checkbox.isChecked()),
+        }
+
+
+class TechnicianManagementDialog(QDialog):
+    """Directorio de tecnicos para la app de Windows."""
+
+    def __init__(self, history_manager, user_manager, parent=None):
+        super().__init__(parent)
+        self.theme_manager = resolve_theme_manager(parent)
+        self.colors = self.theme_manager.get_theme_colors()
+        self.history_manager = history_manager
+        self.user_manager = user_manager
+        self.can_edit_catalog = can_manage_technician_catalog(user_manager)
+        self.setWindowTitle("Directorio de tecnicos")
+        self.resize(980, 620)
+        self.setStyleSheet(self.theme_manager.generate_stylesheet())
+        self.init_ui()
+        self.refresh_technicians()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+
+        title = QLabel("Directorio de tecnicos")
+        title.setFont(self.theme_manager.create_font("display", 15, 700))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setProperty("class", "heroTitle")
+        layout.addWidget(title)
+
+        subtitle = QLabel(
+            "Gestiona el catalogo operativo por tenant y vincula tecnicos con usuarios web."
+        )
+        subtitle.setWordWrap(True)
+        subtitle.setProperty("class", "sectionMeta")
+        layout.addWidget(subtitle)
+
+        role = str((getattr(self.user_manager, "current_user", {}) or {}).get("role") or "")
+        role_info = QLabel(f"Sesion actual: {role}")
+        role_info.setProperty("class", "info")
+        layout.addWidget(role_info)
+
+        if not self.can_edit_catalog:
+            warning = QLabel("Solo admin y super_admin pueden editar tecnicos. Vista en modo lectura.")
+            warning.setProperty("class", "warning")
+            warning.setWordWrap(True)
+            layout.addWidget(warning)
+
+        toolbar = QHBoxLayout()
+        self.include_inactive_checkbox = QCheckBox("Incluir inactivos")
+        self.include_inactive_checkbox.setChecked(True)
+        self.include_inactive_checkbox.stateChanged.connect(self.refresh_technicians)
+        toolbar.addWidget(self.include_inactive_checkbox)
+
+        refresh_btn = QPushButton("Actualizar")
+        refresh_btn.clicked.connect(self.refresh_technicians)
+        toolbar.addWidget(refresh_btn)
+
+        self.create_btn = QPushButton("Crear tecnico")
+        self.create_btn.clicked.connect(self.create_technician)
+        self.create_btn.setEnabled(self.can_edit_catalog)
+        toolbar.addWidget(self.create_btn)
+
+        self.edit_btn = QPushButton("Editar tecnico")
+        self.edit_btn.clicked.connect(self.edit_selected_technician)
+        self.edit_btn.setEnabled(self.can_edit_catalog)
+        toolbar.addWidget(self.edit_btn)
+
+        toolbar.addStretch()
+        layout.addLayout(toolbar)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(9)
+        self.table.setHorizontalHeaderLabels(
+            [
+                "ID",
+                "Nombre",
+                "Codigo",
+                "Email",
+                "Telefono",
+                "Web User ID",
+                "Estado",
+                "Asignaciones activas",
+                "Actualizado",
+            ]
+        )
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(8, QHeaderView.ResizeMode.ResizeToContents)
+        layout.addWidget(self.table)
+
+        self.status_label = QLabel("")
+        self.status_label.setProperty("class", "sectionMeta")
+        layout.addWidget(self.status_label)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def _selected_technician(self):
+        row = self.table.currentRow()
+        if row < 0:
+            return None
+        item = self.table.item(row, 0)
+        if item is None:
+            return None
+        payload = item.data(Qt.ItemDataRole.UserRole)
+        return payload if isinstance(payload, dict) else None
+
+    def refresh_technicians(self):
+        include_inactive = bool(self.include_inactive_checkbox.isChecked())
+        try:
+            technicians = self.history_manager.list_technicians(include_inactive=include_inactive)
+        except Exception as error:
+            QMessageBox.warning(self, "Error", f"No se pudo cargar tecnicos:\n{error}")
+            return
+
+        self.table.setRowCount(len(technicians))
+        for row, technician in enumerate(technicians):
+            technician_id = technician.get("id")
+            id_item = QTableWidgetItem(str(technician_id))
+            id_item.setData(Qt.ItemDataRole.UserRole, technician)
+            self.table.setItem(row, 0, id_item)
+            self.table.setItem(row, 1, QTableWidgetItem(str(technician.get("display_name") or "")))
+            self.table.setItem(row, 2, QTableWidgetItem(str(technician.get("employee_code") or "")))
+            self.table.setItem(row, 3, QTableWidgetItem(str(technician.get("email") or "")))
+            self.table.setItem(row, 4, QTableWidgetItem(str(technician.get("phone") or "")))
+            self.table.setItem(
+                row,
+                5,
+                QTableWidgetItem(
+                    "" if technician.get("web_user_id") in (None, "") else str(technician.get("web_user_id"))
+                ),
+            )
+
+            status_item = QTableWidgetItem("Activo" if technician.get("is_active", True) else "Inactivo")
+            if technician.get("is_active", True):
+                status_item.setBackground(QColor(self.colors["panel_success"]))
+            else:
+                status_item.setBackground(QColor(self.colors["surface_alt"]))
+            self.table.setItem(row, 6, status_item)
+
+            self.table.setItem(
+                row,
+                7,
+                QTableWidgetItem(str(int(technician.get("active_assignment_count") or 0))),
+            )
+            self.table.setItem(row, 8, QTableWidgetItem(str(technician.get("updated_at") or "")))
+
+        self.status_label.setText(f"Tecnicos cargados: {len(technicians)}")
+
+    def create_technician(self):
+        if not self.can_edit_catalog:
+            QMessageBox.warning(self, "Acceso denegado", "Tu rol no puede crear tecnicos.")
+            return
+        dialog = TechnicianFormDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            payload = dialog.get_payload()
+            self.history_manager.create_technician(**payload)
+        except Exception as error:
+            QMessageBox.warning(self, "Error", f"No se pudo crear tecnico:\n{error}")
+            return
+        QMessageBox.information(self, "Exito", "Tecnico creado correctamente.")
+        self.refresh_technicians()
+
+    def edit_selected_technician(self):
+        if not self.can_edit_catalog:
+            QMessageBox.warning(self, "Acceso denegado", "Tu rol no puede editar tecnicos.")
+            return
+        technician = self._selected_technician()
+        if not technician:
+            QMessageBox.warning(self, "Atencion", "Selecciona un tecnico para editar.")
+            return
+        dialog = TechnicianFormDialog(self, technician=technician)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            payload = dialog.get_payload()
+            self.history_manager.update_technician(technician.get("id"), **payload)
+        except Exception as error:
+            QMessageBox.warning(self, "Error", f"No se pudo actualizar tecnico:\n{error}")
+            return
+        QMessageBox.information(self, "Exito", "Tecnico actualizado correctamente.")
+        self.refresh_technicians()
 
 
 class LoginDialog(QDialog):
@@ -524,11 +886,22 @@ class LoginDialog(QDialog):
         layout.setContentsMargins(16, 14, 16, 16)
         layout.setSpacing(10)
 
+        eyebrow = QLabel("ACCESO / WINDOWS")
+        eyebrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        eyebrow.setProperty("class", "chip")
+        layout.addWidget(eyebrow, alignment=Qt.AlignmentFlag.AlignCenter)
+
         title = QLabel("Iniciar Sesi\u00f3n")
-        title.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
+        title.setFont(self.theme_manager.create_font("display", 15, 700))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setProperty("class", "heroTitle")
         layout.addWidget(title)
+
+        subtitle = QLabel("Entra con tu cuenta para continuar con operaciones y administraci\u00f3n.")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setWordWrap(True)
+        subtitle.setProperty("class", "sectionMeta")
+        layout.addWidget(subtitle)
 
         form_layout = QFormLayout()
         form_layout.setHorizontalSpacing(10)

@@ -1,8 +1,15 @@
 from pathlib import Path
 
 from PyQt6.QtCore import QThreadPool, Qt
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QLabel, QMainWindow, QProgressBar, QTabWidget, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QProgressBar,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from handlers.event_handlers import EventHandlers
 from handlers.report_handlers import ReportHandlers
@@ -41,6 +48,13 @@ def initialize_manager_state(
     window.report_gen = report_generator_cls(window.history)
     window.is_authenticated = False
     window.is_admin = False
+    window.is_super_admin = False
+    window.is_read_only = False
+    window.tenant_id = ""
+    window.can_manage_tenant_catalog = False
+    window.can_manage_platform = False
+    window.can_manage_operational_records = False
+    window.can_operate_incidents = False
     window.installation_start_time = None
     window._audit_logs_repair_attempted = False
     window._photo_thumbnail_cache = {}
@@ -71,15 +85,38 @@ def build_main_window_ui(window):
         raise TypeError("build_main_window_ui requiere una instancia de QMainWindow")
 
     central_widget = QWidget()
+    central_widget.setObjectName("appShell")
     window.setCentralWidget(central_widget)
     main_layout = QVBoxLayout(central_widget)
+    main_layout.setContentsMargins(20, 18, 20, 16)
+    main_layout.setSpacing(12)
 
-    header = QLabel("SiteOps - Impresoras de Tarjetas")
-    header.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-    header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    main_layout.addWidget(header)
+    header_container = QWidget()
+    header_container.setObjectName("appHeader")
+    header_layout = QHBoxLayout(header_container)
+    header_layout.setContentsMargins(14, 12, 14, 12)
+    header_layout.setSpacing(10)
+
+    title_block = QVBoxLayout()
+    title_block.setContentsMargins(0, 0, 0, 0)
+    title_block.setSpacing(2)
+    header_title = QLabel("SiteOps Console")
+    header_title.setProperty("class", "appHeaderTitle")
+    title_block.addWidget(header_title)
+
+    header_subtitle = QLabel("Operaciones de drivers, incidencias y activos en una sola vista.")
+    header_subtitle.setProperty("class", "appHeaderSubtitle")
+    title_block.addWidget(header_subtitle)
+    header_layout.addLayout(title_block, 1)
+
+    header_badge = QLabel("Windows")
+    header_badge.setProperty("class", "appHeaderBadge")
+    header_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    header_layout.addWidget(header_badge, 0, Qt.AlignmentFlag.AlignTop)
+    main_layout.addWidget(header_container)
 
     window.tabs = QTabWidget()
+    window.tabs.setObjectName("mainTabs")
     main_layout.addWidget(window.tabs)
 
     window.drivers_tab = DriversTab(window)
@@ -97,6 +134,7 @@ def build_main_window_ui(window):
     window.statusBar().showMessage("Listo para operar")
 
     window.progress_bar = QProgressBar()
+    window.progress_bar.setObjectName("globalProgress")
     window.progress_bar.setVisible(False)
     main_layout.addWidget(window.progress_bar)
 

@@ -25,6 +25,7 @@ class TestReportGenerator(unittest.TestCase):
     def _sample_installations(self):
         return [
             {
+                "id": 101,
                 "timestamp": "2026-02-13T10:00:00",
                 "client_name": "Cliente A",
                 "client_pc_name": "PC-01",
@@ -36,6 +37,7 @@ class TestReportGenerator(unittest.TestCase):
                 "notes": "OK",
             },
             {
+                "id": 102,
                 "timestamp": "2026-02-13T11:30:00",
                 "client_name": "Cliente B",
                 "client_pc_name": "PC-02",
@@ -64,6 +66,7 @@ class TestReportGenerator(unittest.TestCase):
         history = MagicMock()
         history.get_installations.return_value = self._sample_installations()
         history.get_statistics.return_value = self._sample_stats()
+        history.list_entity_technician_assignments.return_value = []
         generator = ReportGenerator(history)
 
         output = self._temp_xlsx_path("daily")
@@ -92,6 +95,7 @@ class TestReportGenerator(unittest.TestCase):
         history = MagicMock()
         history.get_installations.return_value = None
         history.get_statistics.return_value = None
+        history.list_entity_technician_assignments.return_value = []
         generator = ReportGenerator(history)
 
         output = self._temp_xlsx_path("monthly")
@@ -173,6 +177,7 @@ class TestReportGenerator(unittest.TestCase):
         history = MagicMock()
         history.get_installations.return_value = self._sample_installations()
         history.get_statistics.return_value = self._sample_stats()
+        history.list_entity_technician_assignments.return_value = []
         generator = ReportGenerator(history)
 
         output = self._temp_xlsx_path("yearly")
@@ -191,6 +196,83 @@ class TestReportGenerator(unittest.TestCase):
                 wb.close()
         finally:
             self._cleanup_file(output)
+
+    def test_installations_sheet_prefers_structured_assignment_display_name(self):
+        history = MagicMock()
+        history.get_installations.return_value = self._sample_installations()
+        history.get_statistics.return_value = self._sample_stats()
+
+        def _assignments(entity_type, entity_id, include_inactive=False):
+            if entity_type == "installation" and int(entity_id) == 101:
+                return [
+                    {
+                        "assignment_role": "owner",
+                        "technician_display_name": "Tecnico Owner",
+                    }
+                ]
+            return []
+
+        history.list_entity_technician_assignments.side_effect = _assignments
+        generator = ReportGenerator(history)
+
+        output = self._temp_xlsx_path("monthly_assignments")
+        try:
+            generator.generate_monthly_report(2026, 2, output_path=output)
+            wb = openpyxl.load_workbook(output, read_only=True, data_only=True)
+            try:
+                ws = wb["Instalaciones"]
+                self.assertEqual(ws["H2"].value, "Tecnico Owner")
+                self.assertEqual(ws["H3"].value, "Ana")
+            finally:
+                wb.close()
+        finally:
+            self._cleanup_file(output)
+
+    def test_assignment_name_cache_resets_between_report_runs(self):
+        history = MagicMock()
+        history.get_installations.return_value = self._sample_installations()
+        history.get_statistics.return_value = self._sample_stats()
+
+        assignment_names = ["Tecnico Uno", "Tecnico Dos"]
+        calls = {"value": 0}
+
+        def _assignments(entity_type, entity_id, include_inactive=False):
+            if entity_type == "installation" and int(entity_id) == 101:
+                idx = 0 if calls["value"] <= 1 else 1
+                return [
+                    {
+                        "assignment_role": "owner",
+                        "technician_display_name": assignment_names[idx],
+                    }
+                ]
+            return []
+
+        def _monthly_and_track(*args, **kwargs):
+            calls["value"] += 1
+            return _assignments(*args, **kwargs)
+
+        history.list_entity_technician_assignments.side_effect = _monthly_and_track
+        generator = ReportGenerator(history)
+
+        output_first = self._temp_xlsx_path("monthly_assignments_first")
+        output_second = self._temp_xlsx_path("monthly_assignments_second")
+        try:
+            generator.generate_monthly_report(2026, 2, output_path=output_first)
+            generator.generate_monthly_report(2026, 2, output_path=output_second)
+
+            wb_first = openpyxl.load_workbook(output_first, read_only=True, data_only=True)
+            wb_second = openpyxl.load_workbook(output_second, read_only=True, data_only=True)
+            try:
+                ws_first = wb_first["Instalaciones"]
+                ws_second = wb_second["Instalaciones"]
+                self.assertEqual(ws_first["H2"].value, "Tecnico Uno")
+                self.assertEqual(ws_second["H2"].value, "Tecnico Dos")
+            finally:
+                wb_first.close()
+                wb_second.close()
+        finally:
+            self._cleanup_file(output_first)
+            self._cleanup_file(output_second)
 
 
 if __name__ == "__main__":

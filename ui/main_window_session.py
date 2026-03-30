@@ -4,6 +4,11 @@ from managers.history_manager import InstallationHistory
 from managers.user_manager_v2 import UserManagerV2
 from ui.dialogs.user_management_ui import LoginDialog
 
+TENANT_ADMIN_ROLES = {"admin", "super_admin"}
+OPERATIONS_MANAGER_ROLES = {"admin", "super_admin", "supervisor"}
+INCIDENT_OPERATOR_ROLES = {"admin", "super_admin", "supervisor", "tecnico"}
+READ_ONLY_ROLES = {"solo_lectura", "viewer"}
+
 
 def is_user_authenticated(window):
     """Retornar si hay una sesión autenticada activa."""
@@ -21,6 +26,38 @@ def current_user_role(window):
     return str(window.user_manager.current_user.get("role") or "").strip().lower()
 
 
+def current_user_tenant_id(window):
+    """Obtener tenant_id activo desde la sesion actual."""
+    if not getattr(window, "user_manager", None) or not window.user_manager.current_user:
+        return ""
+    return str(window.user_manager.current_user.get("tenant_id") or "").strip()
+
+
+def can_manage_tenant_catalog(window):
+    """Indicar si el usuario puede administrar catalogos/config tenant."""
+    return current_user_role(window) in TENANT_ADMIN_ROLES
+
+
+def can_manage_platform(window):
+    """Indicar si el usuario puede administrar configuracion de plataforma."""
+    return current_user_role(window) == "super_admin"
+
+
+def can_manage_operational_records(window):
+    """Indicar si el usuario puede crear/coordinar trabajo operativo."""
+    return current_user_role(window) in OPERATIONS_MANAGER_ROLES
+
+
+def can_operate_incidents(window):
+    """Indicar si el usuario puede crear o actualizar incidencias."""
+    return current_user_role(window) in INCIDENT_OPERATOR_ROLES
+
+
+def is_read_only_user(window):
+    """Indicar si el usuario esta en un rol solo lectura."""
+    return current_user_role(window) in READ_ONLY_ROLES
+
+
 def apply_navigation_access_control(window):
     """Aplicar acceso a tabs y acciones según estado de sesión/rol."""
     can_access_protected_tabs = is_user_authenticated(window)
@@ -30,8 +67,7 @@ def apply_navigation_access_control(window):
     window.tabs.setTabEnabled(window.incidents_tab_index, can_access_protected_tabs)
     window.tabs.setTabEnabled(window.admin_tab_index, True)
 
-    role = current_user_role(window) if can_access_protected_tabs else ""
-    can_edit_history = role in ("admin", "super_admin")
+    can_edit_history = can_manage_operational_records(window) if can_access_protected_tabs else False
 
     if hasattr(window.history_tab, "create_manual_button"):
         window.history_tab.create_manual_button.setEnabled(can_edit_history)
@@ -229,6 +265,10 @@ def configure_admin_panel_for_role(window, username, user_role, *, logger):
     if user_role == "admin":
         logger.info(f"Configurando panel para admin: {username}")
 
+        if hasattr(window.admin_tab, "user_mgmt_btn"):
+            window.admin_tab.user_mgmt_btn.setVisible(True)
+            logger.debug("Boton gestion usuarios/tecnicos visible para admin")
+
         for widget in window.admin_tab.findChildren(QGroupBox):
             if "Cloudflare R2" in widget.title():
                 widget.setVisible(False)
@@ -252,7 +292,9 @@ def configure_admin_panel_for_role(window, username, user_role, *, logger):
         logger.info("Admin NO tiene acceso a credenciales R2")
         return
 
-    logger.info(f"Configurando panel para viewer: {username}")
+    logger.info(f"Configurando panel en modo lectura: {username} ({user_role})")
+    if hasattr(window.admin_tab, "user_mgmt_btn"):
+        window.admin_tab.user_mgmt_btn.setVisible(False)
     for widget in window.admin_tab.findChildren(QGroupBox):
         widget.setVisible(False)
 
@@ -265,7 +307,7 @@ def configure_admin_panel_for_role(window, username, user_role, *, logger):
         if any(text in placeholder for text in ["driver", "account", "key", "bucket"]):
             widget.setVisible(False)
 
-    logger.info("Viewer: solo lectura, sin acceso a panel admin")
+    logger.info("Rol sin privilegios administrativos: solo lectura y configuracion minima")
 
 
 def apply_authenticated_login_state(window, *, logger):
@@ -283,7 +325,14 @@ def apply_authenticated_login_state(window, *, logger):
     )
 
     window.is_authenticated = True
-    window.is_admin = user_role in ["admin", "super_admin"]
+    window.is_admin = user_role in TENANT_ADMIN_ROLES
+    window.is_super_admin = user_role == "super_admin"
+    window.is_read_only = user_role in READ_ONLY_ROLES
+    window.tenant_id = current_user_tenant_id(window)
+    window.can_manage_tenant_catalog = can_manage_tenant_catalog(window)
+    window.can_manage_platform = can_manage_platform(window)
+    window.can_manage_operational_records = can_manage_operational_records(window)
+    window.can_operate_incidents = can_operate_incidents(window)
     window._apply_navigation_access_control()
     window.tabs.setCurrentIndex(window.drivers_tab_index)
     window.drivers_tab.toggle_upload_section(window.is_admin)

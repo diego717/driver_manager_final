@@ -14,6 +14,7 @@ from managers.history_assets_client import HistoryAssetsClient
 from managers.history_incidents_client import HistoryIncidentsClient
 from managers.history_installations_client import HistoryInstallationsClient
 from managers.history_request_adapter import HistoryRequestAdapter
+from managers.technician_web_service import TechnicianWebService
 
 logger = get_logger()
 
@@ -48,6 +49,9 @@ class InstallationHistory:
         self.assets_client = HistoryAssetsClient(
             lambda *args, **kwargs: self._make_request(*args, **kwargs),
             incident_normalizer=self.incidents_client.normalize_incident_lifecycle_fields,
+        )
+        self.technicians_client = TechnicianWebService(
+            lambda *args, **kwargs: self._make_request(*args, **kwargs)
         )
         
         # Inicializar configuración de API
@@ -111,6 +115,10 @@ class InstallationHistory:
     def set_web_token_provider(self, token_provider):
         """Registrar proveedor de token web (Bearer) para endpoints /web/*."""
         self.request_adapter.set_web_token_provider(token_provider)
+
+    def set_web_session_context_provider(self, context_provider):
+        """Registrar proveedor del contexto de sesion web actual."""
+        self.request_adapter.set_web_session_context_provider(context_provider)
 
     def set_web_auth_failure_handler(self, failure_handler):
         """Registrar callback para invalidar sesión local cuando el Bearer falle con 401."""
@@ -1044,6 +1052,69 @@ class InstallationHistory:
             normalized_installation_id,
             notes=notes,
         )
+
+    def list_technicians(self, include_inactive=False):
+        """Listar tecnicos del tenant actual."""
+        return self.technicians_client.list_technicians(include_inactive=include_inactive)
+
+    def create_technician(
+        self,
+        display_name,
+        employee_code="",
+        email="",
+        phone="",
+        notes="",
+        web_user_id=None,
+    ):
+        """Crear tecnico en el tenant actual."""
+        return self.technicians_client.create_technician(
+            display_name=display_name,
+            employee_code=employee_code,
+            email=email,
+            phone=phone,
+            notes=notes,
+            web_user_id=web_user_id,
+        )
+
+    def update_technician(self, technician_id, **kwargs):
+        """Actualizar campos editables de un tecnico."""
+        return self.technicians_client.update_technician(technician_id, **kwargs)
+
+    def list_technician_assignments(self, technician_id, include_inactive=False):
+        """Listar asignaciones de un tecnico."""
+        return self.technicians_client.list_technician_assignments(
+            technician_id,
+            include_inactive=include_inactive,
+        )
+
+    def list_entity_technician_assignments(self, entity_type, entity_id, include_inactive=False):
+        """Listar asignaciones por entidad operativa."""
+        return self.technicians_client.list_entity_assignments(
+            entity_type,
+            entity_id,
+            include_inactive=include_inactive,
+        )
+
+    def create_technician_assignment(
+        self,
+        technician_id,
+        entity_type,
+        entity_id,
+        assignment_role="owner",
+        metadata_json=None,
+    ):
+        """Asignar tecnico a entidad operativa."""
+        return self.technicians_client.create_assignment(
+            technician_id=technician_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            assignment_role=assignment_role,
+            metadata_json=metadata_json,
+        )
+
+    def remove_technician_assignment(self, assignment_id):
+        """Quitar asignacion activa de tecnico."""
+        return self.technicians_client.remove_assignment(assignment_id)
     
     def get_statistics(self, start_date=None, end_date=None):
         """

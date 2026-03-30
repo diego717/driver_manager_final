@@ -30,6 +30,7 @@ class HistoryRequestAdapter:
         self.api_secret = None
         self.api_tenant_id = None
         self.web_token_provider = None
+        self.web_session_context_provider = None
         self.web_auth_failure_handler = None
         self.allow_unsigned_requests = str(
             os.getenv("DRIVER_MANAGER_ALLOW_UNSIGNED_REQUESTS", "")
@@ -41,6 +42,10 @@ class HistoryRequestAdapter:
     def set_web_token_provider(self, token_provider):
         """Registrar proveedor de token web (Bearer) para endpoints /web/*."""
         self.web_token_provider = token_provider
+
+    def set_web_session_context_provider(self, context_provider):
+        """Registrar proveedor del contexto de sesion web actual."""
+        self.web_session_context_provider = context_provider
 
     def set_web_auth_failure_handler(self, failure_handler):
         """Registrar callback para invalidar sesion local cuando el Bearer falle con 401."""
@@ -87,6 +92,24 @@ class HistoryRequestAdapter:
             return str(provider() or "").strip()
         except Exception:
             return ""
+
+    def _get_web_session_context(self):
+        provider = self.web_session_context_provider
+        if not callable(provider):
+            return {}
+        try:
+            context = provider() or {}
+        except Exception:
+            return {}
+        return context if isinstance(context, dict) else {}
+
+    def _resolve_active_tenant_id(self):
+        session_tenant_id = str(
+            self._get_web_session_context().get("tenant_id") or ""
+        ).strip()
+        if session_tenant_id:
+            return session_tenant_id
+        return str(self.api_tenant_id or "").strip()
 
     def _should_use_web_bearer_mode(self):
         mode = self._current_desktop_auth_mode()
@@ -229,8 +252,9 @@ class HistoryRequestAdapter:
                 "X-Request-Signature": signature,
                 "X-Request-Nonce": nonce,
             })
-            if self.api_tenant_id:
-                headers["X-Tenant-Id"] = self.api_tenant_id
+            active_tenant_id = self._resolve_active_tenant_id()
+            if active_tenant_id:
+                headers["X-Tenant-Id"] = active_tenant_id
 
         return headers
 
@@ -307,6 +331,9 @@ class HistoryRequestAdapter:
             headers = {
                 "Authorization": f"Bearer {web_access_token}",
             }
+            active_tenant_id = self._resolve_active_tenant_id()
+            if active_tenant_id:
+                headers["X-Tenant-Id"] = active_tenant_id
             if kwargs.get("data") is not None:
                 headers["Content-Type"] = "application/json"
             if extra_headers:

@@ -49,11 +49,33 @@ class AssetManagementDialog(QDialog):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(10)
+        root.setContentsMargins(18, 18, 18, 18)
+        root.setSpacing(14)
+
+        hero = QVBoxLayout()
+        hero.setSpacing(6)
+
+        eyebrow = QLabel("OPERACIONES / ACTIVOS")
+        eyebrow.setProperty("class", "chip")
+        hero.addWidget(eyebrow, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        title = QLabel("Gestion de equipos")
+        title.setFont(self.theme_manager.create_font("display", 18, 700))
+        title.setProperty("class", "heroTitle")
+        hero.addWidget(title)
+
+        subtitle = QLabel(
+            "Busca activos, revisa su estado operativo y conecta equipos con instalaciones o incidencias."
+        )
+        subtitle.setWordWrap(True)
+        subtitle.setProperty("class", "sectionMeta")
+        hero.addWidget(subtitle)
+        root.addLayout(hero)
 
         search_layout = QHBoxLayout()
-        search_layout.addWidget(QLabel("Buscar:"))
+        search_label = QLabel("Buscar")
+        search_label.setProperty("class", "sectionTitle")
+        search_layout.addWidget(search_label)
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Codigo, marca, modelo, serie o cliente")
         search_layout.addWidget(self.search_input)
@@ -66,6 +88,7 @@ class AssetManagementDialog(QDialog):
         root.addLayout(search_layout)
 
         self.summary_label = QLabel("Cargando equipos...")
+        self.summary_label.setProperty("class", "chip")
         root.addWidget(self.summary_label)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -76,7 +99,9 @@ class AssetManagementDialog(QDialog):
         left_panel.setMinimumWidth(340)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.addWidget(QLabel("Equipos"))
+        assets_title = QLabel("Catalogo de equipos")
+        assets_title.setProperty("class", "sectionTitle")
+        left_layout.addWidget(assets_title)
         self.assets_list = QListWidget()
         left_layout.addWidget(self.assets_list, 1)
         splitter.addWidget(left_panel)
@@ -85,6 +110,7 @@ class AssetManagementDialog(QDialog):
         right_panel.setMinimumWidth(840)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(12)
 
         form_group = QGroupBox("Detalle del equipo")
         form_layout = QFormLayout(form_group)
@@ -129,10 +155,15 @@ class AssetManagementDialog(QDialog):
 
         actions_layout = QHBoxLayout()
         self.save_btn = QPushButton("Guardar equipo")
+        self.save_btn.setProperty("class", "primary")
         self.delete_btn = QPushButton("Eliminar equipo")
+        self.delete_btn.setProperty("class", "danger")
         self.link_btn = QPushButton("Asociar a instalacion")
+        self.link_btn.setProperty("class", "info")
         self.incident_btn = QPushButton("Crear incidencia")
+        self.incident_btn.setProperty("class", "warning")
         self.qr_btn = QPushButton("QR del equipo")
+        self.qr_btn.setProperty("class", "info")
         actions_layout.addWidget(self.save_btn)
         actions_layout.addWidget(self.delete_btn)
         actions_layout.addWidget(self.link_btn)
@@ -143,6 +174,7 @@ class AssetManagementDialog(QDialog):
 
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
+        self.status_label.setProperty("class", "sectionMeta")
         right_layout.addWidget(self.status_label)
 
         links_group = QGroupBox("Vinculos de instalacion")

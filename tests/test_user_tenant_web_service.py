@@ -78,6 +78,7 @@ class TestUserTenantWebService(unittest.TestCase):
 
         self.assertEqual(len(users), 1)
         self.assertEqual(users[0]["username"], "viewer01")
+        self.assertEqual(users[0]["role"], "solo_lectura")
         self.assertEqual(users[0]["source"], "web")
         args, kwargs = mock_get.call_args
         self.assertEqual(args[0], "https://example.workers.dev/web/auth/users")

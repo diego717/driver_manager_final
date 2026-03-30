@@ -8,6 +8,10 @@ from core.exceptions import AuthenticationError, ConfigurationError, ValidationE
 class UserAuthProvider:
     """Proveedor de autenticacion web/sesion para UserManagerV2."""
 
+    READ_ONLY_ROLES = {"solo_lectura", "viewer"}
+    OPERATIONAL_ROLES = {"admin", "super_admin", "supervisor", "tecnico"}
+    SUPPORTED_WEB_ROLES = OPERATIONAL_ROLES | READ_ONLY_ROLES
+
     def __init__(self, owner):
         self.owner = owner
 
@@ -17,6 +21,19 @@ class UserAuthProvider:
 
     def _resolve_current_web_access_token(self):
         return str(self.owner.current_web_token or "").strip()
+
+    def _resolve_current_web_session_context(self):
+        current_user = self.owner.current_user if isinstance(self.owner.current_user, dict) else {}
+        if not current_user:
+            return {}
+        if str(current_user.get("source") or "").strip().lower() != "web":
+            return {}
+        return {
+            "user_id": current_user.get("id"),
+            "username": current_user.get("username"),
+            "role": current_user.get("role"),
+            "tenant_id": current_user.get("tenant_id"),
+        }
 
     def _bind_audit_api_client_hooks(self):
         client = self.owner.audit_api_client
@@ -30,6 +47,10 @@ class UserAuthProvider:
         auth_failure_handler_setter = getattr(client, "set_web_auth_failure_handler", None)
         if callable(auth_failure_handler_setter):
             auth_failure_handler_setter(self._handle_audit_api_web_auth_failure)
+
+        session_context_provider_setter = getattr(client, "set_web_session_context_provider", None)
+        if callable(session_context_provider_setter):
+            session_context_provider_setter(self._resolve_current_web_session_context)
 
     def _handle_audit_api_web_auth_failure(self, api_detail=""):
         had_web_token = bool(self._resolve_current_web_access_token())
@@ -104,19 +125,33 @@ class UserAuthProvider:
         return False
 
     def _permissions_for_role(self, role):
-        normalized_role = str(role or "viewer").strip().lower()
+        normalized_role = str(role or "solo_lectura").strip().lower()
         if normalized_role == "super_admin":
             return ["all"]
         if normalized_role == "admin":
-            return ["read", "write"]
+            return [
+                "read",
+                "write",
+                "write_operational",
+                "manage_assignments",
+                "manage_tenant",
+                "manage_drivers",
+                "manage_r2",
+            ]
+        if normalized_role == "supervisor":
+            return ["read", "write_operational", "manage_assignments"]
+        if normalized_role == "tecnico":
+            return ["read", "write_operational"]
         return ["read"]
 
     def _build_web_current_user(self, username, user_payload):
         payload = user_payload if isinstance(user_payload, dict) else {}
         resolved_username = str(payload.get("username") or username or "").strip()
-        role = str(payload.get("role") or "viewer").strip().lower() or "viewer"
-        if role not in ("super_admin", "admin", "viewer"):
-            role = "viewer"
+        role = str(payload.get("role") or "solo_lectura").strip().lower() or "solo_lectura"
+        if role == "viewer":
+            role = "solo_lectura"
+        if role not in self.SUPPORTED_WEB_ROLES:
+            role = "solo_lectura"
 
         return {
             "id": payload.get("id"),
