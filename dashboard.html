@@ -12,7 +12,20 @@
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link
+        rel="preload"
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700;800&display=swap"
+        as="style"
+    >
+    <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet"
+        media="all"
+    >
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.19.1/mapbox-gl.css" rel="stylesheet">
+    <noscript>
+        <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    </noscript>
 </head>
 
 <body>
@@ -212,7 +225,7 @@
                         <div class="gps-ops-head">
                             <div>
                                 <p class="gps-ops-eyebrow">Observabilidad GPS</p>
-                                <h3 id="gpsOpsTitle">Salud de captura y geofence</h3>
+                                <h3 id="gpsOpsTitle">Salud de captura y contexto GPS</h3>
                             </div>
                             <p class="gps-ops-description">Se consolida desde registros, incidencias y auditoría operativa.</p>
                         </div>
@@ -228,14 +241,14 @@
                                 <p id="gpsOpsFailuresMeta" class="gps-ops-meta">Sin incidencias de captura</p>
                             </article>
                             <article class="gps-ops-card gps-ops-card-outside">
-                                <p class="gps-ops-label">Fuera de radio</p>
+                                <p class="gps-ops-label">Registros fuera de referencia</p>
                                 <p id="gpsOpsOutsideValue" class="gps-ops-value">-</p>
-                                <p id="gpsOpsOutsideMeta" class="gps-ops-meta">Warnings geofence auditados</p>
+                                <p id="gpsOpsOutsideMeta" class="gps-ops-meta">Capturas alejadas de la referencia</p>
                             </article>
                             <article class="gps-ops-card gps-ops-card-override">
                                 <p class="gps-ops-label">Overrides auditados</p>
                                 <p id="gpsOpsOverridesValue" class="gps-ops-value">-</p>
-                                <p id="gpsOpsOverridesMeta" class="gps-ops-meta">Excepciones justificadas</p>
+                                <p id="gpsOpsOverridesMeta" class="gps-ops-meta">Justificaciones operativas</p>
                             </article>
                         </div>
                         <div class="gps-ops-foot">
@@ -313,12 +326,6 @@
                         <select id="brandFilter">
                             <option value="">Todas las marcas</option>
                         </select>
-                        <label for="geofenceFilter" class="sr-only">Filtrar por geofence</label>
-                        <select id="geofenceFilter">
-                            <option value="">Geofence: todos</option>
-                            <option value="configured">Con geofence</option>
-                            <option value="missing">Sin geofence</option>
-                        </select>
                         <label for="gpsFilter" class="sr-only">Filtrar por GPS</label>
                         <select id="gpsFilter">
                             <option value="">GPS: todos</option>
@@ -340,7 +347,7 @@
                     <!-- Action buttons -->
                     <div class="filter-actions">
                         <button id="installationsScanQrBtn" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">qr_code_scanner</span> Escanear QR</button>
-                        <button id="clearFilters" class="btn-secondary is-hidden"><span class="material-symbols-outlined icon-inline-sm">delete</span> Limpiar Filtros</button>
+                        <button id="clearFilters" class="btn-secondary" disabled><span class="material-symbols-outlined icon-inline-sm">delete</span> Limpiar Filtros</button>
                         <button id="applyFilters" class="btn-primary"><span class="material-symbols-outlined icon-inline-sm">filter_alt</span> Aplicar</button>
                         <button id="exportBtn" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">download</span> Exportar</button>
                     </div>
@@ -357,6 +364,60 @@
             </div>
             
             <div id="incidentsSection" class="section">
+                <section class="incident-map-shell" aria-labelledby="incidentMapTitle">
+                    <div class="incident-map-shell-head">
+                        <div>
+                            <p class="incident-map-eyebrow">Mapa operativo</p>
+                            <h3 id="incidentMapTitle">Incidencias con coordenada</h3>
+                            <p class="incident-map-description">Explora el trabajo en campo por ubicacion, cliente y equipo, y entra directo al caso desde cada punto.</p>
+                        </div>
+                        <div class="incident-map-controls">
+                            <div class="incident-map-segment" role="group" aria-label="Rango del mapa">
+                                <button type="button" class="incident-map-range-btn is-active" data-incident-map-days="30">30d</button>
+                                <button type="button" class="incident-map-range-btn" data-incident-map-days="7">7d</button>
+                                <button type="button" class="incident-map-range-btn" data-incident-map-days="90">90d</button>
+                                <button type="button" class="incident-map-range-btn" data-incident-map-days="all">Todo</button>
+                            </div>
+                            <label for="incidentMapStatusFilter" class="sr-only">Filtrar mapa por estado</label>
+                            <select id="incidentMapStatusFilter" class="incident-map-select">
+                                <option value="">Estado: todos</option>
+                                <option value="open">Abiertas</option>
+                                <option value="in_progress">En curso</option>
+                                <option value="paused">Pausadas</option>
+                                <option value="resolved">Resueltas</option>
+                            </select>
+                            <label for="incidentMapSeverityFilter" class="sr-only">Filtrar mapa por severidad</label>
+                            <select id="incidentMapSeverityFilter" class="incident-map-select">
+                                <option value="">Severidad: todas</option>
+                                <option value="critical">Crítica</option>
+                                <option value="high">Alta</option>
+                                <option value="medium">Media</option>
+                                <option value="low">Baja</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="incidentMapSummary" class="incident-map-summary" aria-live="polite">
+                        <span class="incident-map-summary-chip">Preparando mapa...</span>
+                    </div>
+
+                    <div class="incident-map-layout">
+                        <div class="incident-map-stage">
+                            <div id="incidentMapCanvas" class="incident-map-canvas" role="region" aria-label="Mapa de incidencias geolocalizadas"></div>
+                            <div class="incident-map-legend" aria-hidden="true">
+                                <span class="incident-map-legend-item"><i class="incident-map-legend-dot severity-critical"></i> Crítica</span>
+                                <span class="incident-map-legend-item"><i class="incident-map-legend-dot severity-high"></i> Alta</span>
+                                <span class="incident-map-legend-item"><i class="incident-map-legend-dot severity-medium"></i> Media</span>
+                                <span class="incident-map-legend-item"><i class="incident-map-legend-dot severity-low"></i> Baja</span>
+                            </div>
+                        </div>
+
+                        <aside id="incidentMapDetail" class="incident-map-detail">
+                            <p class="incident-map-detail-empty">Selecciona un punto para ver cliente, equipo y acceso directo a la incidencia.</p>
+                        </aside>
+                    </div>
+                </section>
+
                 <div class="filters incidents-toolbar">
                     <div class="incidents-focus-copy">
                         <strong>Atiende primero el evento.</strong>
@@ -458,10 +519,6 @@
                         <option value="update_web_user">Actualizar usuario</option>
                         <option value="create_incident">Crear incidencia</option>
                         <option value="create_installation">Crear registro</option>
-                        <option value="incident_geofence_warning">Geofence incidencia fuera de radio</option>
-                        <option value="override_incident_geofence">Override geofence incidencia</option>
-                        <option value="installation_conformity_geofence_warning">Geofence conformidad fuera de radio</option>
-                        <option value="override_installation_conformity_geofence">Override geofence conformidad</option>
                         <option value="override_installation_conformity_gps">Override GPS conformidad</option>
                     </select>
                     <button id="refreshAudit" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">refresh</span> Actualizar</button>
@@ -805,6 +862,8 @@
         </div>
     </div>
     
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.19.1/mapbox-gl.js" defer></script>
+    <script src="/dashboard-runtime.js" defer></script>
     <script src="/dashboard-qr.js" defer></script>
     <script src="/dashboard-api.js" defer></script>
     <script src="/dashboard-geolocation.js" defer></script>
@@ -819,7 +878,6 @@
     <script src="/dashboard-auth.js" defer></script>
     <script src="/dashboard-navigation.js" defer></script>
     <script src="/dashboard-bootstrap.js" defer></script>
-    <script src="/xlsx.bundle.js" defer></script>
     <script src="/dashboard.js" defer></script>
     <script src="/dashboard-pwa.js" defer></script>
 </body>

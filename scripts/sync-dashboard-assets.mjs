@@ -87,7 +87,6 @@ function rewriteServiceWorker(content, versions) {
     `/dashboard.css?v=${versions.css}`,
     `/chart.umd.js?v=${versions.chart}`,
     `/jsqr.js?v=${versions.jsqr}`,
-    `/xlsx.bundle.js?v=${versions.xlsx}`,
     `/dashboard-qr.js?v=${versions.qr}`,
     `/dashboard-api.js?v=${versions.api}`,
     `/dashboard-geolocation.js?v=${versions.geolocation}`,

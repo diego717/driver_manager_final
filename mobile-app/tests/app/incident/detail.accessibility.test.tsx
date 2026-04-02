@@ -46,6 +46,29 @@ function createDeferred<T>(): Deferred<T> {
 
 function createReactNativeMock() {
   const ReactModule = require("react") as typeof React;
+  const AnimatedView = ({ children, ...props }: any) =>
+    ReactModule.createElement("Animated.View", props, children);
+  class AnimatedValueMock {
+    private currentValue: number;
+    constructor(initialValue: number) {
+      this.currentValue = initialValue;
+    }
+    setValue(nextValue: number) {
+      this.currentValue = nextValue;
+    }
+    interpolate() {
+      return `${this.currentValue * 100}%`;
+    }
+  }
+  const createAnimatedDriver = (value: AnimatedValueMock, toValue?: number) => ({
+    start: (callback?: (result: { finished: boolean }) => void) => {
+      if (typeof toValue === "number") {
+        value.setValue(toValue);
+      }
+      callback?.({ finished: true });
+    },
+    stop: vi.fn(),
+  });
   const FlatList = ({
     children,
     data = [],
@@ -84,9 +107,35 @@ function createReactNativeMock() {
     );
   };
   return {
+    AccessibilityInfo: {
+      isReduceMotionEnabled: vi.fn(async () => false),
+      addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+    },
     ActivityIndicator: ({ children, ...props }: any) =>
       ReactModule.createElement("ActivityIndicator", props, children),
     Alert: { alert: vi.fn() },
+    Animated: {
+      Value: AnimatedValueMock,
+      timing: (value: AnimatedValueMock, config: { toValue: number }) =>
+        createAnimatedDriver(value, config?.toValue),
+      spring: (value: AnimatedValueMock, config: { toValue: number }) =>
+        createAnimatedDriver(value, config?.toValue),
+      parallel: (
+        animations: Array<{ start?: (callback?: (result: { finished: boolean }) => void) => void }>,
+      ) => ({
+        start: (callback?: (result: { finished: boolean }) => void) => {
+          animations.forEach((animation) => animation?.start?.());
+          callback?.({ finished: true });
+        },
+        stop: vi.fn(),
+      }),
+      View: AnimatedView,
+    },
+    Easing: {
+      out: (fn: unknown) => fn,
+      quad: vi.fn(),
+      cubic: vi.fn(),
+    },
     FlatList,
     Image: ({ children, ...props }: any) => ReactModule.createElement("Image", props, children),
     ScrollView: ({ children, ...props }: any) =>

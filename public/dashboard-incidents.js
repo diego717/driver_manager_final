@@ -2,7 +2,10 @@
     function createDashboardIncidents(options) {
         const INCIDENT_PHOTO_UPLOAD_MAX_FILES = 5;
         const INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES = 5 * 1024 * 1024;
+        const INCIDENT_PHOTO_UPLOAD_TARGET_FILE_BYTES = Math.round(2.5 * 1024 * 1024);
         const INCIDENT_PHOTO_UPLOAD_MAX_BATCH_BYTES = 20 * 1024 * 1024;
+        const INCIDENT_PHOTO_UPLOAD_MAX_DIMENSION = 1600;
+        const INCIDENT_PHOTO_UPLOAD_COMPRESS_QUALITIES = [0.82, 0.72, 0.62, 0.52, 0.42];
         const INCIDENT_PHOTO_UPLOAD_LABEL = `Subir fotos (max ${INCIDENT_PHOTO_UPLOAD_MAX_FILES} / 20MB)`;
         const INCIDENT_STATUS_ACTION_DEFINITIONS = {
             open: { label: 'Abrir', icon: 'radio_button_checked' },
@@ -29,6 +32,27 @@
         const CONFORMITY_SIGNATURE_CANVAS_ID = 'actionConformitySignatureCanvas';
         const CONFORMITY_SIGNATURE_CLEAR_ID = 'actionConformitySignatureClearBtn';
         let currentConformitySignaturePad = null;
+        const INCIDENT_MAP_DEFAULT_DAYS = '30';
+        const INCIDENT_MAP_DEFAULT_LIMIT = 240;
+        const INCIDENT_MAP_ALLOWED_DAYS = new Set(['7', '30', '90', 'all']);
+        const INCIDENT_MAP_SOURCE_ID = 'incident-map-source';
+        const INCIDENT_MAP_LAYER_ID = 'incident-map-points';
+        const INCIDENT_MAP_LAYER_HALO_ID = 'incident-map-points-halo';
+        const INCIDENT_MAP_DEFAULT_CENTER = [-56.1645, -34.9011];
+        let incidentMapState = {
+            days: INCIDENT_MAP_DEFAULT_DAYS,
+            status: '',
+            severity: '',
+            incidents: [],
+            selectedIncidentId: null,
+            loading: false,
+            map: null,
+            mapLoaded: false,
+            currentStyleUrl: '',
+            currentToken: '',
+            pendingFitBounds: false,
+        };
+        let incidentMapRequestVersion = 0;
 
         function canCurrentUserAuditDeletedIncidents() {
             const role = String(options.getCurrentUser?.()?.role || '').toLowerCase();
@@ -54,6 +78,118 @@
                 return `${Math.round(numericBytes / 1024)}KB`;
             }
             return `${numericBytes}B`;
+        }
+
+        function readPhotoFileAsDataUrl(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result || ''));
+                reader.onerror = () => reject(new Error('No se pudo leer la foto seleccionada.'));
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function loadImageForOptimization(sourceUrl) {
+            return new Promise((resolve, reject) => {
+                const image = new Image();
+                image.onload = () => resolve(image);
+                image.onerror = () => reject(new Error('No se pudo decodificar la foto seleccionada.'));
+                image.src = sourceUrl;
+            });
+        }
+
+        function canvasToBlob(canvas, mimeType, quality) {
+            return new Promise((resolve, reject) => {
+                canvas.toBlob((blob) => {
+                    if (blob) {
+                        resolve(blob);
+                        return;
+                    }
+                    reject(new Error('No se pudo exportar la foto optimizada.'));
+                }, mimeType, quality);
+            });
+        }
+
+        async function optimizeIncidentPhotoFile(file) {
+            const originalSize = Math.max(0, Number(file?.size) || 0);
+            const normalizedType = String(file?.type || '').trim().toLowerCase();
+            const canOptimize =
+                file instanceof File &&
+                /^image\/(jpeg|jpg|webp|png)$/i.test(normalizedType) &&
+                typeof FileReader !== 'undefined' &&
+                typeof Image !== 'undefined' &&
+                typeof document !== 'undefined';
+
+            if (!canOptimize) {
+                return { file, optimized: false, originalSize, finalSize: originalSize };
+            }
+
+            try {
+                const sourceUrl = await readPhotoFileAsDataUrl(file);
+                const image = await loadImageForOptimization(sourceUrl);
+                const width = Math.max(1, Number(image.naturalWidth || image.width) || 1);
+                const height = Math.max(1, Number(image.naturalHeight || image.height) || 1);
+                const ratio = Math.min(1, INCIDENT_PHOTO_UPLOAD_MAX_DIMENSION / Math.max(width, height));
+                const targetWidth = Math.max(1, Math.round(width * ratio));
+                const targetHeight = Math.max(1, Math.round(height * ratio));
+
+                const canvas = document.createElement('canvas');
+                canvas.width = targetWidth;
+                canvas.height = targetHeight;
+                const context = canvas.getContext('2d');
+                if (!context) {
+                    return { file, optimized: false, originalSize, finalSize: originalSize };
+                }
+                context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+                const shouldPreservePng = normalizedType === 'image/png';
+                const exportMimeType = shouldPreservePng ? 'image/png' : 'image/jpeg';
+                const exportName = shouldPreservePng
+                    ? String(file.name || 'incident-photo').replace(/\.[a-z0-9]+$/i, '.png')
+                    : String(file.name || 'incident-photo').replace(/\.[a-z0-9]+$/i, '.jpg');
+
+                let bestBlob = null;
+                let bestSize = Number.POSITIVE_INFINITY;
+                const qualities = shouldPreservePng ? [undefined] : INCIDENT_PHOTO_UPLOAD_COMPRESS_QUALITIES;
+
+                for (const quality of qualities) {
+                    const blob = await canvasToBlob(canvas, exportMimeType, quality);
+                    const blobSize = Math.max(0, Number(blob.size) || 0);
+                    if (blobSize > 0 && blobSize < bestSize) {
+                        bestBlob = blob;
+                        bestSize = blobSize;
+                    }
+                    if (
+                        blobSize >= 1024 &&
+                        blobSize <= INCIDENT_PHOTO_UPLOAD_TARGET_FILE_BYTES
+                    ) {
+                        bestBlob = blob;
+                        bestSize = blobSize;
+                        break;
+                    }
+                }
+
+                if (!bestBlob || !Number.isFinite(bestSize) || bestSize <= 0) {
+                    return { file, optimized: false, originalSize, finalSize: originalSize };
+                }
+
+                if (bestSize >= originalSize && ratio === 1 && !shouldPreservePng) {
+                    return { file, optimized: false, originalSize, finalSize: originalSize };
+                }
+
+                const optimizedFile = new File([bestBlob], exportName, {
+                    type: exportMimeType,
+                    lastModified: Date.now(),
+                });
+                return {
+                    file: optimizedFile,
+                    optimized: optimizedFile.size !== originalSize || optimizedFile.type !== normalizedType,
+                    originalSize,
+                    finalSize: Math.max(0, Number(optimizedFile.size) || 0),
+                };
+            } catch {
+                return { file, optimized: false, originalSize, finalSize: originalSize };
+            }
         }
 
         function runIncidentRefreshInBackground(config = {}, failureMessage = 'La incidencia se guardo, pero no pudimos refrescar la vista.') {
@@ -169,7 +305,17 @@
             chip.className = 'incident-highlight-chip';
             chip.dataset.tone = tone;
             chip.textContent = text;
+            requestAnimationFrame(() => {
+                chip.classList.add('is-visible');
+            });
             return chip;
+        }
+
+        function pulseIncidentHighlightChip(chip) {
+            if (!(chip instanceof HTMLElement)) return;
+            chip.classList.remove('is-pulsing');
+            void chip.offsetWidth;
+            chip.classList.add('is-pulsing');
         }
 
         function normalizeIncidentContextText(value) {
@@ -267,34 +413,6 @@
                 highlights.appendChild(runtimeChip);
             }
 
-            const geofenceResult = String(incident?.geofence_result || '').trim().toLowerCase();
-            const geofenceDistance = Number(incident?.geofence_distance_m);
-            const geofenceRadius = Number(incident?.geofence_radius_m);
-            if (geofenceResult === 'inside') {
-                highlights.appendChild(
-                    createIncidentHighlightChip(
-                        Number.isFinite(geofenceDistance) && Number.isFinite(geofenceRadius)
-                            ? `Geofence: dentro (${Math.round(geofenceDistance)} / ${Math.round(geofenceRadius)} m)`
-                            : 'Geofence: dentro del radio',
-                        'resolved',
-                    ),
-                );
-            } else if (geofenceResult === 'outside') {
-                highlights.appendChild(
-                    createIncidentHighlightChip(
-                        Number.isFinite(geofenceDistance) && Number.isFinite(geofenceRadius)
-                            ? `Geofence: fuera (${Math.round(geofenceDistance)} / ${Math.round(geofenceRadius)} m)`
-                            : 'Geofence: fuera del radio',
-                        'high',
-                    ),
-                );
-            }
-            if (String(incident?.geofence_override_note || '').trim()) {
-                highlights.appendChild(
-                    createIncidentHighlightChip('Override geofence auditado', 'warning'),
-                );
-            }
-
             if (
                 (!Number.isInteger(installationId) || installationId <= 0)
                 && (!Number.isInteger(assetId) || assetId <= 0)
@@ -305,16 +423,7 @@
             parent.appendChild(highlights);
         }
 
-        function notifyGeofenceWarning(result, entityLabel) {
-            const geofenceResult = String(result?.geofence_result || result?.incident?.geofence_result || '').trim().toLowerCase();
-            if (geofenceResult !== 'outside') return;
-            const distance = Number(result?.geofence_distance_m ?? result?.incident?.geofence_distance_m);
-            const radius = Number(result?.geofence_radius_m ?? result?.incident?.geofence_radius_m);
-            const detail = Number.isFinite(distance) && Number.isFinite(radius)
-                ? ` (${Math.round(distance)}m / ${Math.round(radius)}m)`
-                : '';
-            options.showNotification(`${entityLabel} fuera del radio configurado${detail}.`, 'warning');
-        }
+        function notifyGeofenceWarning() {}
 
         function hasValidSiteConfig(installation) {
             return Number.isFinite(Number(installation?.site_lat))
@@ -370,6 +479,612 @@
                 distance_m: distance,
                 radius_m: radius,
             };
+        }
+
+        function buildIncidentMapsUrl(incident) {
+            const lat = Number(incident?.gps_lat);
+            const lng = Number(incident?.gps_lng);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return '';
+            return `https://www.google.com/maps?q=${lat},${lng}`;
+        }
+
+        function resolveIncidentMapboxToken() {
+            const globalToken = String(window.__DM_MAPBOX_ACCESS_TOKEN__ || '').trim();
+            if (globalToken) return globalToken;
+            try {
+                return String(window.localStorage.getItem('dm_mapbox_access_token') || '').trim();
+            } catch {
+                return '';
+            }
+        }
+
+        function resolveIncidentMapStyleUrl() {
+            const isDark = document.body?.dataset?.theme === 'dark';
+            const themeStyle = String(
+                isDark
+                    ? window.__DM_MAPBOX_STYLE_URL_DARK__ || ''
+                    : window.__DM_MAPBOX_STYLE_URL_LIGHT__ || '',
+            ).trim();
+            if (themeStyle) return themeStyle;
+
+            const globalStyle = String(window.__DM_MAPBOX_STYLE_URL__ || '').trim();
+            if (globalStyle) return globalStyle;
+            try {
+                const themeStoredStyle = String(
+                    isDark
+                        ? window.localStorage.getItem('dm_mapbox_style_url_dark') || ''
+                        : window.localStorage.getItem('dm_mapbox_style_url_light') || '',
+                ).trim();
+                if (themeStoredStyle) return themeStoredStyle;
+                const storedStyle = String(window.localStorage.getItem('dm_mapbox_style_url') || '').trim();
+                if (storedStyle) return storedStyle;
+            } catch {
+                // ignore localStorage access issues
+            }
+            return isDark
+                ? 'mapbox://styles/mapbox/dark-v11'
+                : 'mapbox://styles/mapbox/light-v11';
+        }
+
+        function renderIncidentMapCanvasMessage(message, tone = 'neutral') {
+            const canvas = document.getElementById('incidentMapCanvas');
+            if (!canvas) return;
+            canvas.innerHTML = '';
+            const state = document.createElement('div');
+            state.className = `incident-map-empty incident-map-empty-${tone}`;
+            const icon = document.createElement('span');
+            icon.className = 'material-symbols-outlined';
+            icon.textContent = tone === 'error' ? 'map_off' : 'explore_off';
+            const copy = document.createElement('div');
+            const title = document.createElement('strong');
+            title.textContent = tone === 'error' ? 'No pudimos iniciar el mapa' : 'Mapa listo para configurar';
+            const body = document.createElement('p');
+            body.textContent = message;
+            copy.append(title, body);
+            state.append(icon, copy);
+            canvas.appendChild(state);
+        }
+
+        function destroyIncidentMap() {
+            if (incidentMapState.map && typeof incidentMapState.map.remove === 'function') {
+                incidentMapState.map.remove();
+            }
+            incidentMapState.map = null;
+            incidentMapState.mapLoaded = false;
+            incidentMapState.currentStyleUrl = '';
+            incidentMapState.currentToken = '';
+        }
+
+        function buildIncidentMapGeoJson(incidents) {
+            return {
+                type: 'FeatureCollection',
+                features: (Array.isArray(incidents) ? incidents : [])
+                    .filter((incident) => (
+                        Number.isFinite(Number(incident?.gps_lat)) && Number.isFinite(Number(incident?.gps_lng))
+                    ))
+                    .map((incident) => {
+                        const incidentId = options.parseStrictInteger(incident?.id) || 0;
+                        return {
+                            type: 'Feature',
+                            geometry: {
+                                type: 'Point',
+                                coordinates: [Number(incident.gps_lng), Number(incident.gps_lat)],
+                            },
+                            properties: {
+                                id: incidentId,
+                                client_name: String(incident?.installation_client_name || '').trim(),
+                                asset_code: String(incident?.asset_code || '').trim(),
+                                severity: getIncidentMapSeverityTone(incident?.severity),
+                                status: getIncidentMapStatusTone(incident?.incident_status),
+                                selected: incidentId === incidentMapState.selectedIncidentId ? 1 : 0,
+                            },
+                        };
+                    }),
+            };
+        }
+
+        function ensureIncidentMapLayers(mapInstance) {
+            if (!mapInstance || !incidentMapState.mapLoaded) return;
+
+            if (!mapInstance.getSource(INCIDENT_MAP_SOURCE_ID)) {
+                mapInstance.addSource(INCIDENT_MAP_SOURCE_ID, {
+                    type: 'geojson',
+                    data: buildIncidentMapGeoJson([]),
+                });
+            }
+
+            if (!mapInstance.getLayer(INCIDENT_MAP_LAYER_HALO_ID)) {
+                mapInstance.addLayer({
+                    id: INCIDENT_MAP_LAYER_HALO_ID,
+                    type: 'circle',
+                    source: INCIDENT_MAP_SOURCE_ID,
+                    paint: {
+                        'circle-radius': [
+                            'case',
+                            ['==', ['get', 'selected'], 1],
+                            16,
+                            11,
+                        ],
+                        'circle-color': [
+                            'match',
+                            ['get', 'severity'],
+                            'critical', '#ef5b4d',
+                            'high', '#f09a29',
+                            'medium', '#0f756d',
+                            '#3fa57c',
+                        ],
+                        'circle-opacity': [
+                            'case',
+                            ['==', ['get', 'selected'], 1],
+                            0.24,
+                            0.12,
+                        ],
+                        'circle-stroke-width': 0,
+                    },
+                });
+            }
+
+            if (!mapInstance.getLayer(INCIDENT_MAP_LAYER_ID)) {
+                mapInstance.addLayer({
+                    id: INCIDENT_MAP_LAYER_ID,
+                    type: 'circle',
+                    source: INCIDENT_MAP_SOURCE_ID,
+                    paint: {
+                        'circle-radius': [
+                            'case',
+                            ['==', ['get', 'selected'], 1],
+                            8,
+                            6,
+                        ],
+                        'circle-color': [
+                            'match',
+                            ['get', 'severity'],
+                            'critical', '#ff6b5c',
+                            'high', '#ef7f1a',
+                            'medium', '#0f756d',
+                            '#3fa57c',
+                        ],
+                        'circle-stroke-width': [
+                            'case',
+                            ['==', ['get', 'selected'], 1],
+                            3,
+                            2,
+                        ],
+                        'circle-stroke-color': '#ffffff',
+                        'circle-opacity': [
+                            'match',
+                            ['get', 'status'],
+                            'resolved', 0.68,
+                            'paused', 0.8,
+                            0.96,
+                        ],
+                    },
+                });
+            }
+        }
+
+        function syncIncidentMapSource() {
+            if (!incidentMapState.map || !incidentMapState.mapLoaded) return [];
+            ensureIncidentMapLayers(incidentMapState.map);
+            const source = incidentMapState.map.getSource(INCIDENT_MAP_SOURCE_ID);
+            const geoJson = buildIncidentMapGeoJson(incidentMapState.incidents);
+            if (source && typeof source.setData === 'function') {
+                source.setData(geoJson);
+            }
+            return geoJson.features || [];
+        }
+
+        function fitIncidentMapToFeatures(features) {
+            if (!incidentMapState.map || !Array.isArray(features) || !features.length) return;
+            if (features.length === 1) {
+                incidentMapState.map.easeTo({
+                    center: features[0].geometry.coordinates,
+                    zoom: 12.6,
+                    duration: 700,
+                });
+                return;
+            }
+
+            const bounds = new window.mapboxgl.LngLatBounds();
+            features.forEach((feature) => {
+                bounds.extend(feature.geometry.coordinates);
+            });
+            incidentMapState.map.fitBounds(bounds, {
+                padding: { top: 68, right: 72, bottom: 68, left: 72 },
+                duration: 700,
+                maxZoom: 12.8,
+            });
+        }
+
+        function focusIncidentInMap() {
+            if (!incidentMapState.map || !incidentMapState.mapLoaded || !incidentMapState.selectedIncidentId) return;
+            const selectedIncident = incidentMapState.incidents.find((incident) => (
+                options.parseStrictInteger(incident?.id) === incidentMapState.selectedIncidentId
+            ));
+            if (!selectedIncident) return;
+            const lng = Number(selectedIncident?.gps_lng);
+            const lat = Number(selectedIncident?.gps_lat);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+            incidentMapState.map.easeTo({
+                center: [lng, lat],
+                duration: 550,
+                offset: [0, -40],
+            });
+        }
+
+        function getIncidentMapSeverityTone(severity) {
+            const normalized = options.normalizeSeverity(severity);
+            if (normalized === 'critical') return 'critical';
+            if (normalized === 'high') return 'high';
+            if (normalized === 'medium') return 'medium';
+            return 'low';
+        }
+
+        function getIncidentMapSeverityLabel(severity) {
+            const normalized = options.normalizeSeverity(severity);
+            if (normalized === 'critical') return 'Crítica';
+            if (normalized === 'high') return 'Alta';
+            if (normalized === 'medium') return 'Media';
+            return 'Baja';
+        }
+
+        function getIncidentMapStatusTone(status) {
+            const normalized = options.normalizeIncidentStatus(status);
+            if (normalized === 'resolved') return 'resolved';
+            if (normalized === 'in_progress') return 'active';
+            if (normalized === 'paused') return 'paused';
+            return 'open';
+        }
+
+        function formatIncidentMapRelativeTime(isoValue) {
+            const timestamp = Date.parse(String(isoValue || ''));
+            if (!Number.isFinite(timestamp)) return 'Sin fecha';
+            const diffMs = Date.now() - timestamp;
+            if (diffMs < 60 * 1000) return 'Hace instantes';
+            const diffHours = Math.floor(diffMs / (60 * 60 * 1000));
+            if (diffHours < 24) return `Hace ${diffHours}h`;
+            const diffDays = Math.floor(diffHours / 24);
+            if (diffDays < 30) return `Hace ${diffDays}d`;
+            return options.formatDateTime?.(isoValue) || String(isoValue || '').trim() || 'Sin fecha';
+        }
+
+        function updateIncidentMapSummary(incidents) {
+            const summary = document.getElementById('incidentMapSummary');
+            if (!summary) return;
+
+            const total = incidents.length;
+            const critical = incidents.filter((incident) => options.normalizeSeverity(incident?.severity) === 'critical').length;
+            const active = incidents.filter((incident) => ['open', 'in_progress', 'paused'].includes(options.normalizeIncidentStatus(incident?.incident_status))).length;
+            const uniqueClients = new Set(
+                incidents
+                    .map((incident) => String(incident?.installation_client_name || '').trim())
+                    .filter(Boolean),
+            ).size;
+
+            summary.replaceChildren();
+
+            [
+                `${total} punto${total === 1 ? '' : 's'} visibles`,
+                `${critical} crítica${critical === 1 ? '' : 's'}`,
+                `${active} activa${active === 1 ? '' : 's'}`,
+                `${uniqueClients} cliente${uniqueClients === 1 ? '' : 's'}`,
+            ].forEach((label) => {
+                const chip = document.createElement('span');
+                chip.className = 'incident-map-summary-chip';
+                chip.textContent = label;
+                summary.appendChild(chip);
+            });
+        }
+
+        function renderIncidentMapDetailList(container, incidents) {
+            const list = document.createElement('div');
+            list.className = 'incident-map-recent-list';
+            incidents.slice(0, 6).forEach((incident) => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'incident-map-recent-item';
+                button.dataset.incidentId = String(options.parseStrictInteger(incident?.id) || '');
+                if (options.parseStrictInteger(incident?.id) === incidentMapState.selectedIncidentId) {
+                    button.classList.add('is-active');
+                }
+
+                const title = document.createElement('strong');
+                title.textContent = String(incident?.installation_client_name || `Incidencia #${incident?.id || '-'}`).trim();
+                const meta = document.createElement('span');
+                const assetCode = String(incident?.asset_code || '').trim();
+                meta.textContent = `${assetCode || `Registro #${incident?.installation_id || '-'}`} · ${formatIncidentMapRelativeTime(incident?.created_at)}`;
+                button.append(title, meta);
+                button.addEventListener('click', () => {
+                    incidentMapState.selectedIncidentId = options.parseStrictInteger(incident?.id);
+                    renderIncidentMap();
+                });
+                list.appendChild(button);
+            });
+            container.appendChild(list);
+        }
+
+        function renderIncidentMapDetail() {
+            const container = document.getElementById('incidentMapDetail');
+            if (!container) return;
+            container.replaceChildren();
+
+            if (incidentMapState.loading) {
+                const loading = document.createElement('p');
+                loading.className = 'loading';
+                loading.textContent = 'Cargando contexto del mapa...';
+                container.appendChild(loading);
+                return;
+            }
+
+            if (!incidentMapState.incidents.length) {
+                const empty = document.createElement('p');
+                empty.className = 'incident-map-detail-empty';
+                empty.textContent = 'No hay incidencias con coordenadas para este filtro.';
+                container.appendChild(empty);
+                return;
+            }
+
+            const selectedIncident = incidentMapState.incidents.find((incident) => (
+                options.parseStrictInteger(incident?.id) === incidentMapState.selectedIncidentId
+            )) || incidentMapState.incidents[0];
+            const selectedIncidentId = options.parseStrictInteger(selectedIncident?.id);
+            incidentMapState.selectedIncidentId = selectedIncidentId;
+
+            const header = document.createElement('div');
+            header.className = 'incident-map-detail-head';
+            const eyebrow = document.createElement('span');
+            eyebrow.className = 'incident-map-detail-eyebrow';
+            eyebrow.textContent = `Incidencia #${selectedIncidentId || '-'}`;
+            const title = document.createElement('h4');
+            title.textContent = String(selectedIncident?.installation_client_name || 'Sin cliente').trim() || 'Sin cliente';
+            const summary = document.createElement('p');
+            const assetCode = String(selectedIncident?.asset_code || '').trim();
+            summary.textContent = `${assetCode || 'Sin equipo'} · ${options.incidentStatusLabel(selectedIncident?.incident_status)} · ${formatIncidentMapRelativeTime(selectedIncident?.created_at)}`;
+            header.append(eyebrow, title, summary);
+            container.appendChild(header);
+
+            const metrics = document.createElement('div');
+            metrics.className = 'incident-map-detail-metrics';
+            [
+                ['Severidad', getIncidentMapSeverityLabel(selectedIncident?.severity)],
+                ['Tecnico', String(selectedIncident?.reporter_username || 'Sin dato').trim() || 'Sin dato'],
+                ['Precision', Number.isFinite(Number(selectedIncident?.gps_accuracy_m)) ? `${Math.round(Number(selectedIncident.gps_accuracy_m))} m` : 'Sin dato'],
+                ['Registro', `#${options.parseStrictInteger(selectedIncident?.installation_id) || '-'}`],
+            ].forEach(([label, value]) => {
+                const metric = document.createElement('div');
+                metric.className = 'incident-map-detail-metric';
+                const metricLabel = document.createElement('span');
+                metricLabel.textContent = label;
+                const metricValue = document.createElement('strong');
+                metricValue.textContent = value;
+                metric.append(metricLabel, metricValue);
+                metrics.appendChild(metric);
+            });
+            container.appendChild(metrics);
+
+            const note = document.createElement('p');
+            note.className = 'incident-map-detail-note';
+            note.textContent = String(selectedIncident?.note || '').trim() || 'Sin nota operativa.';
+            container.appendChild(note);
+
+            const coordinate = document.createElement('p');
+            coordinate.className = 'incident-map-detail-coordinate';
+            coordinate.textContent = `Lat ${Number(selectedIncident?.gps_lat).toFixed(5)} · Lng ${Number(selectedIncident?.gps_lng).toFixed(5)}`;
+            container.appendChild(coordinate);
+
+            const actions = document.createElement('div');
+            actions.className = 'incident-map-detail-actions';
+
+            const openCaseBtn = document.createElement('button');
+            openCaseBtn.type = 'button';
+            openCaseBtn.className = 'btn-primary';
+            openCaseBtn.innerHTML = '<span class="material-symbols-outlined icon-inline-sm">warning</span> Abrir caso';
+            openCaseBtn.addEventListener('click', async () => {
+                await showIncidentsForInstallation(selectedIncident?.installation_id, {
+                    focusIncidentId: selectedIncidentId,
+                });
+            });
+            actions.appendChild(openCaseBtn);
+
+            const mapsUrl = buildIncidentMapsUrl(selectedIncident);
+            if (mapsUrl) {
+                const mapsLink = document.createElement('a');
+                mapsLink.className = 'btn-secondary';
+                mapsLink.href = mapsUrl;
+                mapsLink.target = '_blank';
+                mapsLink.rel = 'noreferrer noopener';
+                mapsLink.innerHTML = '<span class="material-symbols-outlined icon-inline-sm">travel_explore</span> Ver en Maps';
+                actions.appendChild(mapsLink);
+            }
+            container.appendChild(actions);
+
+            const recentTitle = document.createElement('p');
+            recentTitle.className = 'incident-map-recent-title';
+            recentTitle.textContent = 'Puntos recientes';
+            container.appendChild(recentTitle);
+            renderIncidentMapDetailList(container, incidentMapState.incidents);
+        }
+
+        function ensureIncidentMapInstance() {
+            const canvas = document.getElementById('incidentMapCanvas');
+            if (!canvas) return false;
+            if (!window.mapboxgl || typeof window.mapboxgl.Map !== 'function') {
+                destroyIncidentMap();
+                renderIncidentMapCanvasMessage('Mapbox GL JS no pudo cargarse en este navegador.', 'error');
+                return false;
+            }
+
+            const token = resolveIncidentMapboxToken();
+            if (!token) {
+                destroyIncidentMap();
+                renderIncidentMapCanvasMessage('Configura `dm_mapbox_access_token` para ver el mapa real de incidencias.', 'neutral');
+                return false;
+            }
+
+            const styleUrl = resolveIncidentMapStyleUrl();
+            const requiresRebuild =
+                !incidentMapState.map
+                || incidentMapState.currentToken !== token
+                || incidentMapState.currentStyleUrl !== styleUrl;
+
+            if (!requiresRebuild) {
+                return true;
+            }
+
+            destroyIncidentMap();
+            canvas.innerHTML = '';
+            window.mapboxgl.accessToken = token;
+
+            const map = new window.mapboxgl.Map({
+                container: canvas,
+                style: styleUrl,
+                center: INCIDENT_MAP_DEFAULT_CENTER,
+                zoom: 8.8,
+                attributionControl: false,
+            });
+            map.addControl(new window.mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
+
+            map.on('load', () => {
+                incidentMapState.mapLoaded = true;
+                ensureIncidentMapLayers(map);
+                renderIncidentMap();
+            });
+            map.on('mouseenter', INCIDENT_MAP_LAYER_ID, () => {
+                map.getCanvas().style.cursor = 'pointer';
+            });
+            map.on('mouseleave', INCIDENT_MAP_LAYER_ID, () => {
+                map.getCanvas().style.cursor = '';
+            });
+            map.on('click', INCIDENT_MAP_LAYER_ID, (event) => {
+                const feature = Array.isArray(event?.features) ? event.features[0] : null;
+                const incidentId = options.parseStrictInteger(feature?.properties?.id);
+                if (!Number.isInteger(incidentId) || incidentId <= 0) return;
+                incidentMapState.selectedIncidentId = incidentId;
+                renderIncidentMap();
+            });
+            map.on('error', () => {
+                if (!incidentMapState.mapLoaded) {
+                    renderIncidentMapCanvasMessage('Mapbox no pudo inicializarse. Revisa el token o la conectividad.', 'error');
+                }
+            });
+
+            incidentMapState.map = map;
+            incidentMapState.currentStyleUrl = styleUrl;
+            incidentMapState.currentToken = token;
+            return true;
+        }
+
+        function renderIncidentMap() {
+            updateIncidentMapSummary(Array.isArray(incidentMapState.incidents) ? incidentMapState.incidents : []);
+            const mapReady = ensureIncidentMapInstance();
+
+            if (!mapReady) {
+                renderIncidentMapDetail();
+                return;
+            }
+
+            const incidents = Array.isArray(incidentMapState.incidents) ? incidentMapState.incidents : [];
+            if (!incidentMapState.mapLoaded) {
+                renderIncidentMapDetail();
+                return;
+            }
+
+            if (!incidentMapState.selectedIncidentId) {
+                incidentMapState.selectedIncidentId = options.parseStrictInteger(incidents[0]?.id);
+            }
+
+            const features = syncIncidentMapSource();
+            if (incidentMapState.pendingFitBounds) {
+                fitIncidentMapToFeatures(features);
+                incidentMapState.pendingFitBounds = false;
+            } else if (incidentMapState.selectedIncidentId) {
+                focusIncidentInMap();
+            }
+
+            renderIncidentMapDetail();
+        }
+
+        async function loadIncidentMap(config = {}) {
+            const requestVersion = ++incidentMapRequestVersion;
+            incidentMapState.loading = true;
+            if (config.resetSelection === true) {
+                incidentMapState.selectedIncidentId = null;
+            }
+            incidentMapState.pendingFitBounds = config.fitBounds !== false;
+            renderIncidentMap();
+
+            try {
+                const response = await options.api.getIncidentMap({
+                    days: incidentMapState.days,
+                    status: incidentMapState.status,
+                    severity: incidentMapState.severity,
+                    limit: INCIDENT_MAP_DEFAULT_LIMIT,
+                });
+                if (requestVersion !== incidentMapRequestVersion) return;
+                incidentMapState.incidents = Array.isArray(response?.incidents) ? response.incidents : [];
+                const selectedStillExists = incidentMapState.incidents.some((incident) => (
+                    options.parseStrictInteger(incident?.id) === incidentMapState.selectedIncidentId
+                ));
+                if (!selectedStillExists) {
+                    incidentMapState.selectedIncidentId = options.parseStrictInteger(incidentMapState.incidents[0]?.id);
+                }
+            } catch (error) {
+                if (requestVersion !== incidentMapRequestVersion) return;
+                incidentMapState.incidents = [];
+                options.showNotification(
+                    `No se pudo cargar el mapa de incidencias: ${error?.message || error}`,
+                    'warning',
+                );
+            } finally {
+                if (requestVersion !== incidentMapRequestVersion) return;
+                incidentMapState.loading = false;
+                renderIncidentMap();
+            }
+        }
+
+        function bindIncidentMapControls() {
+            if (document.body.dataset.incidentMapBound === '1') return;
+            document.body.dataset.incidentMapBound = '1';
+
+            document.querySelectorAll('.incident-map-range-btn').forEach((button) => {
+                button.addEventListener('click', () => {
+                    const nextDays = String(button.dataset.incidentMapDays || '').trim().toLowerCase();
+                    if (!INCIDENT_MAP_ALLOWED_DAYS.has(nextDays) || nextDays === incidentMapState.days) return;
+                    incidentMapState.days = nextDays;
+                    document.querySelectorAll('.incident-map-range-btn').forEach((btn) => {
+                        btn.classList.toggle('is-active', btn === button);
+                    });
+                    void loadIncidentMap({ resetSelection: true });
+                });
+            });
+
+            const statusFilter = document.getElementById('incidentMapStatusFilter');
+            if (statusFilter) {
+                statusFilter.addEventListener('change', () => {
+                    incidentMapState.status = String(statusFilter.value || '').trim().toLowerCase();
+                    void loadIncidentMap({ resetSelection: true });
+                });
+            }
+
+            const severityFilter = document.getElementById('incidentMapSeverityFilter');
+            if (severityFilter) {
+                severityFilter.addEventListener('change', () => {
+                    incidentMapState.severity = String(severityFilter.value || '').trim().toLowerCase();
+                    void loadIncidentMap({ resetSelection: true });
+                });
+            }
+        }
+
+        function focusIncidentCard(incidentId) {
+            const numericIncidentId = options.parseStrictInteger(incidentId);
+            if (!Number.isInteger(numericIncidentId) || numericIncidentId <= 0) return;
+            const card = document.querySelector(`.incident-card[data-incident-id="${numericIncidentId}"]`);
+            if (!(card instanceof HTMLElement)) return;
+            card.classList.add('incident-card-spotlight');
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            window.setTimeout(() => {
+                card.classList.remove('incident-card-spotlight');
+            }, 2200);
         }
 
         async function copyTextToClipboard(value) {
@@ -1238,20 +1953,13 @@
                 }
 
                 const status = String(snapshot?.status || 'pending').trim().toLowerCase() || 'pending';
-                const geofencePreview = evaluateClientGeofence(snapshot, targetInstallation);
                 const requiresGpsOverride = status !== 'captured' && state?.inflight !== true;
-                const requiresGeofenceOverride = status === 'captured' && geofencePreview?.result === 'outside';
-                const requiresOverride = requiresGpsOverride || requiresGeofenceOverride;
+                const requiresOverride = requiresGpsOverride;
                 overrideWrap.hidden = !requiresOverride;
                 overrideInput.required = requiresOverride;
                 if (overrideHelp instanceof HTMLElement) {
                     if (requiresGpsOverride) {
                         overrideHelp.textContent = `La captura GPS quedo en estado "${status}". Para cerrar la conformidad debes dejar motivo de override.`;
-                    } else if (requiresGeofenceOverride) {
-                        const detail = Number.isFinite(geofencePreview?.distance_m) && Number.isFinite(geofencePreview?.radius_m)
-                            ? ` (${Math.round(geofencePreview.distance_m)}m / ${Math.round(geofencePreview.radius_m)}m)`
-                            : '';
-                        overrideHelp.textContent = `La captura GPS quedo fuera del radio configurado${detail}. Para continuar debes justificar la excepcion.`;
                     } else {
                         overrideHelp.textContent = 'GPS listo para adjuntar en la conformidad.';
                     }
@@ -1296,9 +2004,7 @@
                     const gpsSnapshot = gpsController?.getSnapshotForSubmit?.() || latestGpsSnapshot || null;
                     const gpsStatus = String(gpsSnapshot?.status || 'pending').trim().toLowerCase() || 'pending';
                     const gpsOverrideNote = String(document.getElementById(CONFORMITY_GPS_OVERRIDE_INPUT_ID)?.value || '').trim();
-                    const geofencePreview = evaluateClientGeofence(gpsSnapshot, targetInstallation);
                     let gpsPayload = gpsSnapshot;
-                    let geofenceOverrideNote = '';
                     if (gpsStatus !== 'captured') {
                         if (!gpsOverrideNote) {
                             options.setActionModalError('Si no hay una captura GPS valida, debes registrar motivo de override.');
@@ -1309,12 +2015,6 @@
                             source: 'override',
                             note: gpsOverrideNote,
                         };
-                    } else if (geofencePreview?.result === 'outside') {
-                        if (!gpsOverrideNote) {
-                            options.setActionModalError('La captura GPS quedo fuera del radio configurado. Debes justificar la excepcion.');
-                            return;
-                        }
-                        geofenceOverrideNote = gpsOverrideNote;
                     }
 
                     const result = await options.api.createInstallationConformity(targetInstallationId, {
@@ -1328,7 +2028,6 @@
                         include_all_incident_photos: true,
                         send_email: sendEmail,
                         gps: gpsPayload,
-                        geofence_override_note: geofenceOverrideNote,
                     });
 
                     options.closeActionModal(true);
@@ -1347,10 +2046,6 @@
                             return {};
                         }
                     })();
-                    if (String(metadata?.geofence?.override_note || '').trim()) {
-                        options.showNotification('Conformidad generada con override geofence auditado.', 'warning');
-                    }
-                    notifyGeofenceWarning(metadata?.geofence || null, 'Advertencia geofence conformidad');
                     runIncidentRefreshInBackground(
                         { installationId: targetInstallationId },
                         'La conformidad se genero, pero no pudimos refrescar el registro.',
@@ -1471,23 +2166,6 @@
                 summaryId: 'actionIncidentGpsSummary',
                 buttonId: 'actionIncidentGpsRetryBtn',
             }));
-
-            const geofenceOverrideInput = document.createElement('textarea');
-            geofenceOverrideInput.id = INCIDENT_GEOFENCE_OVERRIDE_INPUT_ID;
-            geofenceOverrideInput.rows = 3;
-            geofenceOverrideInput.placeholder = 'Explica por que continuas fuera del radio configurado.';
-            const geofenceOverrideGroup = createInputGroup('Motivo de excepcion geofence', geofenceOverrideInput, {
-                htmlFor: geofenceOverrideInput.id,
-                className: 'full-width',
-            });
-            geofenceOverrideGroup.id = INCIDENT_GEOFENCE_OVERRIDE_WRAP_ID;
-            geofenceOverrideGroup.hidden = true;
-            const geofenceOverrideHelp = document.createElement('p');
-            geofenceOverrideHelp.id = INCIDENT_GEOFENCE_OVERRIDE_HELP_ID;
-            geofenceOverrideHelp.className = 'asset-muted';
-            geofenceOverrideHelp.textContent = 'Solo se usa cuando la captura queda fuera del radio del sitio.';
-            geofenceOverrideGroup.appendChild(geofenceOverrideHelp);
-            fragment.appendChild(geofenceOverrideGroup);
 
             const applyLabel = document.createElement('label');
             applyLabel.className = 'action-checkbox';
@@ -2011,6 +2689,7 @@
                 if (runtimeChip instanceof HTMLElement && runtimeText) {
                     runtimeChip.dataset.tone = statusValue === 'resolved' ? 'resolved' : statusValue;
                     runtimeChip.textContent = runtimeText;
+                    pulseIncidentHighlightChip(runtimeChip);
                     if (statusValue === 'in_progress') {
                         const runtimeStartMs = options.resolveIncidentRuntimeStartMs(incident);
                         if (Number.isFinite(runtimeStartMs) && runtimeStartMs > 0) {
@@ -2151,6 +2830,9 @@
             incidentCard.dataset.severity = severityValue;
             incidentCard.dataset.updating = 'false';
             incidentCard.__incidentData = buildLiveIncidentCardState(incident, config);
+            requestAnimationFrame(() => {
+                incidentCard.classList.add('is-visible');
+            });
 
             const incidentHeader = document.createElement('div');
             incidentHeader.className = 'incident-header';
@@ -2537,6 +3219,14 @@
 
             const actions = document.createElement('div');
             actions.className = 'incidents-header-actions';
+            const utilityActions = document.createElement('div');
+            utilityActions.className = 'incidents-header-utility-actions';
+            const secondaryActions = document.createElement('div');
+            secondaryActions.className = 'incidents-header-secondary-actions';
+            const shareActions = document.createElement('div');
+            shareActions.className = 'incidents-header-share-actions';
+            const primaryActions = document.createElement('div');
+            primaryActions.className = 'incidents-header-primary-actions';
             const technicianFilterWrap = document.createElement('label');
             technicianFilterWrap.className = 'incidents-technician-filter';
             technicianFilterWrap.hidden = true;
@@ -2569,16 +3259,23 @@
                 auditToggleText.textContent = 'Mostrar eliminadas (auditoría)';
 
                 auditToggleWrap.append(auditToggle, auditToggleText);
-                actions.appendChild(auditToggleWrap);
+                utilityActions.appendChild(auditToggleWrap);
             }
 
             if (canCurrentUserManagePublicTracking()) {
-                actions.appendChild(shareTrackingBtn);
+                shareActions.appendChild(shareTrackingBtn);
             }
-            actions.append(technicianFilterWrap, conformityBtn, createIncidentBtn, backButton);
+            secondaryActions.append(createIncidentBtn, backButton);
+            primaryActions.appendChild(conformityBtn);
+            actions.append(secondaryActions, utilityActions, shareActions, primaryActions);
 
             header.append(headerMain, actions);
             fragment.appendChild(header);
+
+            const listToolbar = document.createElement('div');
+            listToolbar.className = 'incidents-list-toolbar';
+            listToolbar.appendChild(technicianFilterWrap);
+            fragment.appendChild(listToolbar);
 
             if (!incidents || !incidents.length) {
                 const emptyStateHost = document.createElement('div');
@@ -2624,6 +3321,7 @@
         function showIncidentsWorkspaceLanding() {
             const container = document.getElementById('incidentsList');
             if (!container) return;
+            bindIncidentMapControls();
             container.replaceChildren();
             options.renderContextualEmptyState(container, {
                 title: 'Sin registro seleccionado',
@@ -2638,6 +3336,8 @@
 
         function showIncidentsWorkspace() {
             if (!options.requireActiveSession()) return;
+            bindIncidentMapControls();
+            void loadIncidentMap();
             const currentInstallationId = options.parseStrictInteger(options.getCurrentSelectedInstallationId?.());
             if (Number.isInteger(currentInstallationId) && currentInstallationId > 0) {
                 void showIncidentsForInstallation(currentInstallationId);
@@ -2698,24 +3398,8 @@
                     return;
                 }
 
-                const installation = resolveTargetInstallationForGeofence();
-                const preview = evaluateClientGeofence(snapshot, installation);
-                const requiresOverride = String(snapshot?.status || '').trim().toLowerCase() === 'captured'
-                    && preview?.result === 'outside';
-                overrideWrap.hidden = !requiresOverride;
-                overrideInput.required = requiresOverride;
-                if (overrideHelp instanceof HTMLElement) {
-                    if (requiresOverride) {
-                        const detail = Number.isFinite(preview?.distance_m) && Number.isFinite(preview?.radius_m)
-                            ? ` (${Math.round(preview.distance_m)}m / ${Math.round(preview.radius_m)}m)`
-                            : '';
-                        overrideHelp.textContent = `La captura GPS quedo fuera del radio configurado${detail}. Si la policy hard esta activa, este motivo sera obligatorio.`;
-                    } else if (hasValidSiteConfig(installation)) {
-                        overrideHelp.textContent = 'GPS listo. Solo se pedira excepcion si la captura queda fuera del radio.';
-                    } else {
-                        overrideHelp.textContent = 'No hay geofence configurado para este registro.';
-                    }
-                }
+                overrideWrap.hidden = true;
+                overrideInput.required = false;
             }
 
             const modalOpened = options.openActionModal({
@@ -2773,19 +3457,6 @@
                         apply_to_installation: applyToInstallation,
                         gps: gpsController?.getSnapshotForSubmit?.(),
                     };
-                    const geofencePreview = evaluateClientGeofence(
-                        payload.gps || latestIncidentGpsSnapshot,
-                        resolveTargetInstallationForGeofence(),
-                    );
-                    const geofenceOverrideNote = String(document.getElementById(INCIDENT_GEOFENCE_OVERRIDE_INPUT_ID)?.value || '').trim();
-                    if (geofencePreview?.result === 'outside' && !geofenceOverrideNote) {
-                        options.setActionModalError('La captura GPS quedo fuera del radio configurado. Debes justificar la excepcion para continuar cuando la policy hard este activa.');
-                        return;
-                    }
-                    if (geofencePreview?.result === 'outside' && geofenceOverrideNote) {
-                        payload.geofence_override_note = geofenceOverrideNote;
-                    }
-
                     let result;
                     let resolvedInstallationId = Number.isInteger(targetInstallationId) ? targetInstallationId : null;
 
@@ -2823,11 +3494,6 @@
                             : 'Incidencia creada',
                         'success',
                     );
-                    if (String(result?.incident?.geofence_override_note || '').trim()) {
-                        options.showNotification('Incidencia registrada con override geofence auditado.', 'warning');
-                    }
-                    notifyGeofenceWarning(result, 'Advertencia geofence incidencia');
-
                     if (isAssetContext) {
                         runIncidentRefreshInBackground(
                             { assetId: numericAssetId, installationId: resolvedInstallationId },
@@ -2893,7 +3559,7 @@
             });
         }
 
-        async function showIncidentsForInstallation(installationId) {
+        async function showIncidentsForInstallation(installationId, config = {}) {
             if (!options.requireActiveSession()) return;
             options.setCurrentSelectedInstallationId(Number.parseInt(String(installationId), 10));
             const container = document.getElementById('incidentsList');
@@ -2908,6 +3574,14 @@
                     includeDeleted: includeDeletedIncidentsAudit && canCurrentUserAuditDeletedIncidents(),
                 });
                 await renderIncidents(data.incidents || [], installationId);
+                if (isActive) {
+                    void loadIncidentMap();
+                }
+                if (options.parseStrictInteger(config.focusIncidentId) > 0) {
+                    requestAnimationFrame(() => {
+                        focusIncidentCard(config.focusIncidentId);
+                    });
+                }
             } catch (error) {
                 const message = String(error?.message || '').trim()
                     || 'Error cargando incidencias';
@@ -2951,18 +3625,6 @@
                     );
                 }
 
-                const oversizedFiles = filesToUpload.filter((file) =>
-                    Math.max(0, Number(file?.size) || 0) > INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES,
-                );
-                if (oversizedFiles.length > 0) {
-                    const firstOversized = oversizedFiles[0];
-                    options.showNotification(
-                        `La foto ${firstOversized?.name || 'seleccionada'} supera el maximo de ${formatPhotoBytes(INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES)} por archivo.`,
-                        'error',
-                    );
-                    return;
-                }
-
                 const totalBatchBytes = filesToUpload.reduce(
                     (sum, file) => sum + Math.max(0, Number(file?.size) || 0),
                     0,
@@ -2975,20 +3637,31 @@
                     return;
                 }
 
-                if (filesToUpload.length > 1) {
-                    options.showNotification(
-                        `Subiendo ${filesToUpload.length} fotos (${formatPhotoBytes(totalBatchBytes)}) a incidencia #${targetIncidentId}...`,
-                        'info',
-                    );
-                }
+                options.showNotification(
+                    filesToUpload.length > 1
+                        ? `Preparando y optimizando ${filesToUpload.length} fotos (${formatPhotoBytes(totalBatchBytes)}) para incidencia #${targetIncidentId}...`
+                        : `Preparando y optimizando 1 foto para incidencia #${targetIncidentId}...`,
+                    'info',
+                );
 
                 let uploadedCount = 0;
+                let optimizedCount = 0;
                 const failedFiles = [];
 
                 for (const file of filesToUpload) {
                     try {
-                        await options.api.uploadIncidentPhoto(targetIncidentId, file);
+                        const optimized = await optimizeIncidentPhotoFile(file);
+                        const uploadFile = optimized.file;
+                        if (Math.max(0, Number(uploadFile?.size) || 0) > INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES) {
+                            throw new Error(
+                                `La foto ${uploadFile?.name || 'seleccionada'} supera el maximo de ${formatPhotoBytes(INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES)} luego de optimizarla.`,
+                            );
+                        }
+                        await options.api.uploadIncidentPhoto(targetIncidentId, uploadFile);
                         uploadedCount += 1;
+                        if (optimized.optimized) {
+                            optimizedCount += 1;
+                        }
                     } catch (error) {
                         failedFiles.push({
                             name: String(file?.name || '').trim() || 'archivo',
@@ -3015,7 +3688,9 @@
                     );
                 } else {
                     options.showNotification(
-                        `${uploadedLabel} a incidencia #${targetIncidentId}.`,
+                        optimizedCount > 0
+                            ? `${uploadedLabel} a incidencia #${targetIncidentId}. ${optimizedCount} optimizada(s) antes de subir.`
+                            : `${uploadedLabel} a incidencia #${targetIncidentId}.`,
                         'success',
                     );
                 }

@@ -663,8 +663,8 @@ export default function CaseContextScreen() {
 
           {selectedCase ? (
             <SectionCard
-              title="Sitio operativo"
-              description="Configura el punto y radio que usaran GPS/geofence para este caso."
+              title="Referencia operativa"
+              description="Configura el punto y radio de referencia que quedaran asociados a este caso."
             >
             <View
               style={[
@@ -678,7 +678,7 @@ export default function CaseContextScreen() {
               <Text style={[styles.supportText, { color: palette.textSecondary }]}>
                 {caseHasSiteConfig
                   ? `Lat ${Number(selectedCase.site_lat).toFixed(5)} · Lng ${Number(selectedCase.site_lng).toFixed(5)} · radio ${Math.round(Number(selectedCase.site_radius_m) || 0)} m`
-                  : "Todavia no hay geofence para este caso. Puedes fijarlo desde tu ubicacion actual."}
+                  : "Todavia no hay una referencia cargada para este caso. Puedes fijarla desde tu ubicacion actual."}
               </Text>
             </View>
 

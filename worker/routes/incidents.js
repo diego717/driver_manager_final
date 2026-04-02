@@ -56,6 +56,184 @@ export function createIncidentsRouteHandlers({
   corsHeaders,
   syncPublicTrackingSnapshotForInstallation,
 }) {
+  async function handleIncidentMapRoute(
+    request,
+    env,
+    corsPolicy,
+    routeParts,
+    incidentsTenantId,
+  ) {
+    if (!(routeParts.length === 2 && routeParts[0] === "incidents" && routeParts[1] === "map")) {
+      return null;
+    }
+    if (request.method !== "GET") {
+      return null;
+    }
+
+    try {
+      const url = new URL(request.url);
+      const daysRaw = normalizeOptionalString(url.searchParams.get("days"), "30").toLowerCase();
+      const status = normalizeOptionalString(url.searchParams.get("status"), "").toLowerCase();
+      const severity = normalizeOptionalString(url.searchParams.get("severity"), "").toLowerCase();
+      const parsedLimit = Number.parseInt(
+        normalizeOptionalString(url.searchParams.get("limit"), "240"),
+        10,
+      );
+      const limit = Number.isInteger(parsedLimit)
+        ? Math.min(500, Math.max(25, parsedLimit))
+        : 240;
+
+      const allowedStatuses = new Set(["open", "in_progress", "paused", "resolved"]);
+      const allowedSeverities = new Set(["low", "medium", "high", "critical"]);
+      if (status && !allowedStatuses.has(status)) {
+        throw new HttpError(400, "Filtro de estado invalido.");
+      }
+      if (severity && !allowedSeverities.has(severity)) {
+        throw new HttpError(400, "Filtro de severidad invalido.");
+      }
+
+      const conditions = [
+        "i.tenant_id = ?",
+        "i.deleted_at IS NULL",
+        "i.gps_capture_status = ?",
+        "i.gps_lat IS NOT NULL",
+        "i.gps_lng IS NOT NULL",
+      ];
+      const bindings = [incidentsTenantId, "captured"];
+
+      if (daysRaw && daysRaw !== "all") {
+        const parsedDays = Number.parseInt(daysRaw, 10);
+        if (!Number.isInteger(parsedDays) || parsedDays <= 0) {
+          throw new HttpError(400, "Filtro de dias invalido.");
+        }
+        conditions.push(`i.created_at >= datetime('now', ?)`);
+        bindings.push(`-${parsedDays} days`);
+      }
+
+      if (status) {
+        conditions.push("i.incident_status = ?");
+        bindings.push(status);
+      }
+      if (severity) {
+        conditions.push("i.severity = ?");
+        bindings.push(severity);
+      }
+
+      const { results } = await env.DB.prepare(`
+        SELECT
+          i.id,
+          i.installation_id,
+          i.asset_id,
+          i.geofence_distance_m,
+          i.geofence_radius_m,
+          i.geofence_result,
+          i.geofence_checked_at,
+          i.geofence_override_note,
+          i.geofence_override_by,
+          i.geofence_override_at,
+          i.reporter_username,
+          i.note,
+          i.time_adjustment_seconds,
+          i.estimated_duration_seconds,
+          i.severity,
+          i.source,
+          i.created_at,
+          i.incident_status,
+          i.status_updated_at,
+          i.status_updated_by,
+          i.resolved_at,
+          i.resolved_by,
+          i.resolution_note,
+          i.checklist_json,
+          i.evidence_note,
+          i.work_started_at,
+          i.work_ended_at,
+          i.actual_duration_seconds,
+          i.gps_lat,
+          i.gps_lng,
+          i.gps_accuracy_m,
+          i.gps_captured_at,
+          i.gps_capture_source,
+          i.gps_capture_status,
+          i.gps_capture_note,
+          inst.client_name AS installation_client_name,
+          inst.driver_brand AS installation_brand,
+          inst.driver_version AS installation_version,
+          COALESCE(
+            asset.external_code,
+            (
+              SELECT linked_asset.external_code
+              FROM asset_installation_links links
+              INNER JOIN assets linked_asset
+                ON linked_asset.id = links.asset_id
+               AND linked_asset.tenant_id = links.tenant_id
+              WHERE links.installation_id = i.installation_id
+                AND links.tenant_id = i.tenant_id
+                AND links.unlinked_at IS NULL
+              ORDER BY links.linked_at DESC, links.id DESC
+              LIMIT 1
+            )
+          ) AS asset_code,
+          COALESCE(
+            asset.brand,
+            (
+              SELECT linked_asset.brand
+              FROM asset_installation_links links
+              INNER JOIN assets linked_asset
+                ON linked_asset.id = links.asset_id
+               AND linked_asset.tenant_id = links.tenant_id
+              WHERE links.installation_id = i.installation_id
+                AND links.tenant_id = i.tenant_id
+                AND links.unlinked_at IS NULL
+              ORDER BY links.linked_at DESC, links.id DESC
+              LIMIT 1
+            )
+          ) AS asset_brand,
+          COALESCE(
+            asset.model,
+            (
+              SELECT linked_asset.model
+              FROM asset_installation_links links
+              INNER JOIN assets linked_asset
+                ON linked_asset.id = links.asset_id
+               AND linked_asset.tenant_id = links.tenant_id
+              WHERE links.installation_id = i.installation_id
+                AND links.tenant_id = i.tenant_id
+                AND links.unlinked_at IS NULL
+              ORDER BY links.linked_at DESC, links.id DESC
+              LIMIT 1
+            )
+          ) AS asset_model
+        FROM incidents i
+        INNER JOIN installations inst
+          ON inst.id = i.installation_id
+         AND inst.tenant_id = i.tenant_id
+        LEFT JOIN assets asset
+          ON asset.id = i.asset_id
+         AND asset.tenant_id = i.tenant_id
+        WHERE ${conditions.join("\n          AND ")}
+        ORDER BY i.created_at DESC, i.id DESC
+        LIMIT ?
+      `)
+        .bind(...bindings, limit)
+        .all();
+
+      const incidents = (results || []).map((incident) => mapIncidentRow(incident, []));
+      return jsonResponse(request, env, corsPolicy, {
+        success: true,
+        incidents,
+      });
+    } catch (error) {
+      if (isMissingIncidentReadModelColumnsError(error)) {
+        throw new HttpError(
+          500,
+          "La tabla incidents no tiene las migraciones GPS/geofence aplicadas. Ejecuta 0017_geolocation_capture.sql, 0018_geofencing_soft.sql y 0019_geofence_hard_overrides.sql.",
+        );
+      }
+      throw error;
+    }
+  }
+
   function resolveIncidentActorUsername(isWebRoute, webSession, data) {
     return normalizeOptionalString(
       isWebRoute ? webSession?.sub : data?.reporter_username || data?.username,
@@ -1390,6 +1568,7 @@ export function createIncidentsRouteHandlers({
   }
 
   return {
+    handleIncidentMapRoute,
     handleIncidentDetailRoute,
     handleIncidentDeleteRoute,
     handleInstallationIncidentsRoute,

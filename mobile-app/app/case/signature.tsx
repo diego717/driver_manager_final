@@ -13,6 +13,7 @@ import {
   getSignatureSession,
   updateSignatureSession,
 } from "@/src/features/conformity/signature-session";
+import { triggerSuccessHaptic } from "@/src/services/haptics";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -38,6 +39,9 @@ export default function CaseSignatureScreen() {
       return;
     }
     updateSignatureSession(sessionId, paths);
+    if (paths.length) {
+      void triggerSuccessHaptic();
+    }
     router.back();
   };
 

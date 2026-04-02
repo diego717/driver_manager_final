@@ -48,9 +48,10 @@ type WizardStep = 0 | 1 | 2 | 3;
 
 const IMAGE_PICK_QUALITY = 1;
 const MAX_UPLOAD_PHOTO_BYTES = 5 * 1024 * 1024;
+const TARGET_UPLOAD_PHOTO_BYTES = Math.round(2.5 * 1024 * 1024);
 const MIN_UPLOAD_PHOTO_BYTES = 1024;
-const MAX_IMAGE_DIMENSION = 1920;
-const COMPRESS_QUALITIES = [0.85, 0.75, 0.65, 0.55, 0.45];
+const MAX_IMAGE_DIMENSION = 1600;
+const COMPRESS_QUALITIES = [0.82, 0.72, 0.62, 0.52, 0.42];
 const MIN_TOUCH_TARGET_SIZE = 44;
 
 const STEP_TITLES = ["Checklist", "Nota", "Fotos", "Confirmacion"] as const;
@@ -286,7 +287,10 @@ export default function UploadIncidentPhotoScreen() {
           bestUri = compressed.uri;
           bestSize = compressedSize;
         }
-        if (compressedSize >= MIN_UPLOAD_PHOTO_BYTES && compressedSize <= MAX_UPLOAD_PHOTO_BYTES) {
+        if (
+          compressedSize >= MIN_UPLOAD_PHOTO_BYTES &&
+          compressedSize <= TARGET_UPLOAD_PHOTO_BYTES
+        ) {
           bestUri = compressed.uri;
           bestSize = compressedSize;
           break;

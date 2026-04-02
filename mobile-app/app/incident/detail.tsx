@@ -4,6 +4,8 @@ import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   FlatList,
   Image,
   StyleSheet,
@@ -29,6 +31,7 @@ import ScreenScaffold from "@/src/components/ScreenScaffold";
 import SectionCard from "@/src/components/SectionCard";
 import StatusChip from "@/src/components/StatusChip";
 import TechnicianAssignmentsPanel from "@/src/components/TechnicianAssignmentsPanel";
+import { useReducedMotion } from "@/src/hooks/useReducedMotion";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
 import { type Incident, type TechnicianAssignment, type TechnicianRecord } from "@/src/types/api";
@@ -102,6 +105,9 @@ export default function IncidentDetailScreen() {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [activePhotoIndex, setActivePhotoIndex] = useState(0);
   const { width: windowWidth } = useWindowDimensions();
+  const reducedMotion = useReducedMotion();
+  const activePhotoOpacity = useState(() => new Animated.Value(1))[0];
+  const activePhotoTranslateY = useState(() => new Animated.Value(0))[0];
 
   const loadIncident = useCallback(async () => {
     if (!Number.isInteger(installationId) || installationId <= 0) {
@@ -188,6 +194,31 @@ export default function IncidentDetailScreen() {
     }, 1000);
     return () => clearInterval(timerId);
   }, [incident]);
+
+  useEffect(() => {
+    if (reducedMotion) {
+      activePhotoOpacity.setValue(1);
+      activePhotoTranslateY.setValue(0);
+      return;
+    }
+
+    activePhotoOpacity.setValue(0.58);
+    activePhotoTranslateY.setValue(6);
+    Animated.parallel([
+      Animated.timing(activePhotoOpacity, {
+        toValue: 1,
+        duration: 180,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(activePhotoTranslateY, {
+        toValue: 0,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [activePhotoIndex, activePhotoOpacity, activePhotoTranslateY, reducedMotion]);
 
   useEffect(() => {
     let isMounted = true;
@@ -660,6 +691,18 @@ export default function IncidentDetailScreen() {
                     ? `Vista activa: ${activePhoto.file_name}`
                     : "Desliza para recorrer las fotos de la incidencia."}
                 </Text>
+                <Animated.View
+                  style={{
+                    opacity: activePhotoOpacity,
+                    transform: [{ translateY: activePhotoTranslateY }],
+                  }}
+                >
+                  <Text style={[styles.photoRailHint, { color: palette.textSecondary }]}>
+                    {activePhoto
+                      ? `Tomada ${formatDateTime(activePhoto.created_at)}. Toca la foto para verla completa.`
+                      : "Desliza para recorrer las fotos de la incidencia."}
+                  </Text>
+                </Animated.View>
                 <FlatList
                   testID="incident-photos-list"
                   data={incident.photos}

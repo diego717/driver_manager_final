@@ -25,6 +25,7 @@ import SectionCard from "@/src/components/SectionCard";
 import StatusChip from "@/src/components/StatusChip";
 import SyncStatusBanner from "@/src/components/SyncStatusBanner";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
+import { triggerSuccessHaptic, triggerWarningHaptic } from "@/src/services/haptics";
 import { captureCurrentGpsSnapshot } from "@/src/services/location";
 import { enqueueCreateIncident, registerIncidentExecutors } from "@/src/services/sync/incident-outbox-service";
 import { runSync } from "@/src/services/sync/sync-runner";
@@ -38,8 +39,6 @@ import {
   type TechnicianRecord,
 } from "@/src/types/api";
 import {
-  evaluateGeofencePreview,
-  formatGeofenceSummary,
   formatGpsStatusLabel,
   formatGpsSummary,
   hasInstallationSiteConfig,
@@ -150,14 +149,9 @@ export default function CreateIncidentScreen() {
       }
     );
   }, [installationId, installations]);
-  const geofencePreview = useMemo(
-    () => evaluateGeofencePreview(gpsSnapshot, selectedCase),
-    [gpsSnapshot, selectedCase],
-  );
   const hasSiteConfig = useMemo(() => hasInstallationSiteConfig(selectedCase), [selectedCase]);
   const requiresGpsOverride = gpsSnapshot.status !== "captured";
-  const requiresGeofenceOverride = gpsSnapshot.status === "captured" && geofencePreview.result === "outside";
-  const showGpsOverrideField = requiresGpsOverride || requiresGeofenceOverride;
+  const showGpsOverrideField = requiresGpsOverride;
 
   const clearFeedbackSoon = useCallback(() => {
     if (feedbackTimeoutRef.current) {
@@ -252,15 +246,16 @@ export default function CreateIncidentScreen() {
     if (!hasActiveSession || !installationId) return;
 
     if (!note.trim()) {
+      void triggerWarningHaptic();
       notify("warning", "Escribe la incidencia antes de guardar.");
       return;
     }
 
     let gpsPayload: GpsCapturePayload = gpsSnapshot;
-    let geofenceOverrideNote = "";
     const normalizedOverride = gpsOverrideNote.trim();
     if (gpsSnapshot.status !== "captured") {
       if (!normalizedOverride) {
+        void triggerWarningHaptic();
         notify("warning", "Si no hay GPS valido, registra un motivo de override antes de guardar.");
         return;
       }
@@ -269,12 +264,6 @@ export default function CreateIncidentScreen() {
         source: "override",
         note: normalizedOverride,
       };
-    } else if (geofencePreview.result === "outside") {
-      if (!normalizedOverride) {
-        notify("warning", "La captura GPS quedo fuera del radio. Debes justificar la excepcion.");
-        return;
-      }
-      geofenceOverrideNote = normalizedOverride;
     }
 
     try {
@@ -289,7 +278,6 @@ export default function CreateIncidentScreen() {
         severity,
         source: "mobile",
         gps: gpsPayload,
-        geofenceOverrideNote,
       });
 
       setLastCreatedIncidentId(localId as unknown as number); // localId used for navigation
@@ -298,10 +286,12 @@ export default function CreateIncidentScreen() {
       // ── Connectivity-aware feedback ──
       const online = await isOnline();
       if (online) {
+        void triggerSuccessHaptic();
         notify("success", "Incidencia guardada. Sincronizando con el servidor...");
         // Non-blocking flush — the engine has a re-entrancy guard
         runSync();
       } else {
+        void triggerSuccessHaptic();
         notify("info" as InlineFeedbackTone, "Incidencia guardada en el dispositivo. Pendiente de sincronizar.");
       }
 
@@ -328,6 +318,7 @@ export default function CreateIncidentScreen() {
         }
       }
     } catch (error) {
+      void triggerWarningHaptic();
       notify("error", `Error al guardar la incidencia: ${extractApiError(error)}`);
     } finally {
       setSubmitting(false);
@@ -492,8 +483,8 @@ export default function CreateIncidentScreen() {
       </SectionCard>
 
       <SectionCard
-        title="GPS y geofence"
-        description="La incidencia intenta registrar ubicacion y compararla contra el sitio configurado del caso."
+        title="GPS"
+        description="La incidencia intenta registrar tu ubicacion actual como respaldo operativo."
         aside={
           <TouchableOpacity
             style={[
@@ -542,24 +533,9 @@ export default function CreateIncidentScreen() {
           <Text style={[styles.gpsBody, { color: palette.textSecondary }]}>
             {formatGpsSummary(gpsSnapshot)}
           </Text>
-          <Text
-            style={[
-              styles.gpsFootnote,
-              {
-                color:
-                  geofencePreview.result === "outside"
-                    ? palette.warningText
-                    : geofencePreview.result === "inside"
-                      ? palette.successText
-                      : palette.textMuted,
-              },
-            ]}
-          >
-            {formatGeofenceSummary(geofencePreview)}
-          </Text>
           {hasSiteConfig ? (
             <Text style={[styles.gpsFootnote, { color: palette.textMuted }]}>
-              Sitio: {Number(selectedCase?.site_lat).toFixed(5)}, {Number(selectedCase?.site_lng).toFixed(5)} · radio{" "}
+              Referencia del caso: {Number(selectedCase?.site_lat).toFixed(5)}, {Number(selectedCase?.site_lng).toFixed(5)} · radio{" "}
               {Math.round(Number(selectedCase?.site_radius_m) || 0)} m
             </Text>
           ) : null}
@@ -567,9 +543,7 @@ export default function CreateIncidentScreen() {
 
         {showGpsOverrideField ? (
           <>
-            <Text style={[styles.label, { color: palette.label }]}>
-              {requiresGeofenceOverride ? "Motivo de excepcion geofence" : "Motivo de override GPS"}
-            </Text>
+            <Text style={[styles.label, { color: palette.label }]}>Motivo de override GPS</Text>
             <TextInput
               value={gpsOverrideNote}
               onChangeText={setGpsOverrideNote}
@@ -578,32 +552,19 @@ export default function CreateIncidentScreen() {
                 styles.overrideInput,
                 {
                   backgroundColor: palette.inputBg,
-                  borderColor: requiresGeofenceOverride ? palette.warningText : palette.inputBorder,
+                  borderColor: palette.inputBorder,
                   color: palette.textPrimary,
                 },
               ]}
               multiline
-              placeholder={
-                requiresGeofenceOverride
-                  ? "Explica por que registras la incidencia fuera del radio configurado."
-                  : "Explica por que registras la incidencia sin coordenadas validas."
-              }
+              placeholder="Explica por que registras la incidencia sin coordenadas validas."
               placeholderTextColor={palette.placeholder}
               selectionColor={textInputAccentColor}
               cursorColor={textInputAccentColor}
-              accessibilityLabel={
-                requiresGeofenceOverride ? "Motivo de excepcion geofence" : "Motivo de override GPS"
-              }
+              accessibilityLabel="Motivo de override GPS"
             />
-            <Text
-              style={[
-                styles.gpsFootnote,
-                { color: requiresGeofenceOverride ? palette.warningText : palette.textMuted },
-              ]}
-            >
-              {requiresGeofenceOverride
-                ? "Si la politica hard geofence esta activa en web, esta justificacion evita el bloqueo."
-                : "Solo se usa cuando el telefono no entrega una ubicacion util para auditar la incidencia."}
+            <Text style={[styles.gpsFootnote, { color: palette.textMuted }]}>
+              Solo se usa cuando el telefono no entrega una ubicacion util para auditar la incidencia.
             </Text>
           </>
         ) : null}

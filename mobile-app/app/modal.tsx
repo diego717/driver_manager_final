@@ -4,8 +4,10 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   KeyboardAvoidingView,
   Keyboard,
+  Easing,
   type LayoutChangeEvent,
   Platform,
   ScrollView,
@@ -34,6 +36,7 @@ import {
 import ScreenHero from "@/src/components/ScreenHero";
 import TechnicianDirectoryCard from "@/src/components/TechnicianDirectoryCard";
 import { clearSharedWebSessionState, refreshSharedWebSessionState, useSharedWebSessionState } from "@/src/session/web-session-store";
+import { useReducedMotion } from "@/src/hooks/useReducedMotion";
 import { useAppPalette } from "@/src/theme/palette";
 import { useThemePreference } from "@/src/theme/theme-preference";
 import { fontFamilies } from "@/src/theme/typography";
@@ -104,6 +107,9 @@ export default function ApiSettingsScreen() {
   const palette = useAppPalette();
   const { hasActiveSession } = useSharedWebSessionState();
   const scrollViewRef = useRef<ScrollView | null>(null);
+  const reducedMotion = useReducedMotion();
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentTranslateY = useRef(new Animated.Value(0)).current;
   const loginFocusHandledRef = useRef(false);
 
   const [loading, setLoading] = useState(true);
@@ -160,6 +166,31 @@ export default function ApiSettingsScreen() {
     if (options?.showAlert === false) return;
     Alert.alert(title, message);
   };
+
+  useEffect(() => {
+    if (reducedMotion) {
+      contentOpacity.setValue(1);
+      contentTranslateY.setValue(0);
+      return;
+    }
+
+    contentOpacity.setValue(0);
+    contentTranslateY.setValue(14);
+    Animated.parallel([
+      Animated.timing(contentOpacity, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(contentTranslateY, {
+        toValue: 0,
+        duration: 280,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [contentOpacity, contentTranslateY, reducedMotion]);
 
   useEffect(() => {
     if (!feedbackMessage) return;
@@ -474,6 +505,13 @@ export default function ApiSettingsScreen() {
         contentInset={{ bottom: keyboardHeight }}
         contentOffset={{ x: 0, y: 0 }}
       >
+        <Animated.View
+          style={{
+            opacity: contentOpacity,
+            transform: [{ translateY: contentTranslateY }],
+            gap: 12,
+          }}
+        >
         <ScreenHero
           eyebrow="Control movil"
           title="Configuracion y acceso"
@@ -800,6 +838,7 @@ export default function ApiSettingsScreen() {
         </View>
 
         <View style={{ height: keyboardHeight > 0 ? keyboardHeight + 24 : 24 }} />
+        </Animated.View>
       </ScrollView>
     </KeyboardAvoidingView>
   );

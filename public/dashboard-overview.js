@@ -478,14 +478,14 @@
             if (gpsOutsideMetaEl) {
                 gpsOutsideMetaEl.textContent = outsideCount > 0
                     ? `Incidencias ${Number(warnings.incident_outside_count) || 0} | Conformidad ${Number(warnings.conformity_outside_count) || 0}`
-                    : 'Warnings geofence auditados';
+                    : 'Capturas alejadas de la referencia';
             }
 
             const gpsOverridesMetaEl = document.getElementById('gpsOpsOverridesMeta');
             if (gpsOverridesMetaEl) {
                 gpsOverridesMetaEl.textContent = overrideCount > 0
-                    ? `Incidencias ${Number(overrides.incident_geofence_count) || 0} | Conformidad ${Number(overrides.conformity_geofence_count) || 0} + GPS ${Number(overrides.conformity_gps_count) || 0}`
-                    : 'Excepciones justificadas';
+                    ? `Ubicacion ${Number(overrides.incident_geofence_count) || 0} | Conformidad ${Number(overrides.conformity_geofence_count) || 0} + GPS ${Number(overrides.conformity_gps_count) || 0}`
+                    : 'Justificaciones operativas';
             }
 
             const gpsInstallationsMetaEl = document.getElementById('gpsOpsInstallationsMeta');

@@ -328,6 +328,23 @@
                 const suffix = query.toString() ? `?${query.toString()}` : '';
                 return request(`/web/installations/${installationId}/incidents${suffix}`);
             },
+            getIncidentMap(params = {}) {
+                const query = new URLSearchParams();
+                if (params?.days !== undefined && params?.days !== null && String(params.days).trim()) {
+                    query.set('days', String(params.days).trim());
+                }
+                if (params?.status) {
+                    query.set('status', String(params.status).trim());
+                }
+                if (params?.severity) {
+                    query.set('severity', String(params.severity).trim());
+                }
+                if (params?.limit) {
+                    query.set('limit', String(params.limit).trim());
+                }
+                const suffix = query.toString() ? `?${query.toString()}` : '';
+                return request(`/web/incidents/map${suffix}`);
+            },
             lookupCode(code, type) {
                 const query = new URLSearchParams({
                     code: String(code || '').trim(),

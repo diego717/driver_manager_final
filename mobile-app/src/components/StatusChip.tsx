@@ -1,6 +1,7 @@
-import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useRef } from "react";
+import { Animated, Easing, StyleSheet, Text } from "react-native";
 
+import { useReducedMotion } from "@/src/hooks/useReducedMotion";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 import {
@@ -19,11 +20,14 @@ type StatusChipProps = {
 
 export default function StatusChip({ value, kind = "incident" }: StatusChipProps) {
   const palette = useAppPalette();
+  const reducedMotion = useReducedMotion();
   const incidentStatus = normalizeIncidentStatus(value);
   const attentionStatus = normalizeRecordAttentionState(value);
   const normalized = kind === "attention" ? attentionStatus : incidentStatus;
   const label =
     kind === "attention" ? getRecordAttentionStateLabel(value) : getIncidentStatusLabel(value);
+  const scale = useRef(new Animated.Value(1)).current;
+  const opacity = useRef(new Animated.Value(1)).current;
 
   let backgroundColor = palette.infoBg;
   let borderColor = palette.infoBorder;
@@ -47,10 +51,38 @@ export default function StatusChip({ value, kind = "incident" }: StatusChipProps
     color = palette.secondaryButtonText;
   }
 
+  useEffect(() => {
+    if (reducedMotion) {
+      scale.setValue(1);
+      opacity.setValue(1);
+      return;
+    }
+
+    scale.setValue(0.96);
+    opacity.setValue(0.72);
+    Animated.parallel([
+      Animated.spring(scale, {
+        toValue: 1,
+        damping: 14,
+        stiffness: 220,
+        mass: 0.9,
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 180,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [label, normalized, opacity, reducedMotion, scale]);
+
   return (
-    <View style={[styles.chip, { backgroundColor, borderColor }]}>
+    <Animated.View
+      style={[styles.chip, { backgroundColor, borderColor, opacity, transform: [{ scale }] }]}
+    >
       <Text style={[styles.label, { color }]}>{label}</Text>
-    </View>
+    </Animated.View>
   );
 }
 

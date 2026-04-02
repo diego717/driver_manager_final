@@ -107,6 +107,7 @@ let dashboardLoadingRequests = 0;
 const LAZY_ASSET_PATHS = {
     chart: '/chart.umd.js',
     jsqr: '/jsqr.js',
+    xlsx: '/xlsx.bundle.js',
 };
 const lazyAssetPromises = new Map();
 const lazyAssetWarnings = new Set();
@@ -346,6 +347,8 @@ const SECTION_REQUIRED_BINDINGS = Object.freeze({
         'installationsTable',
     ],
     incidents: [
+        'incidentMapCanvas',
+        'incidentMapDetail',
         'incidentsList',
     ],
     assets: [
@@ -393,7 +396,7 @@ const HEADER_PRIMARY_ACTIONS = {
     assets: { icon: 'qr_code_2', label: 'Nuevo equipo + QR', action: 'createAsset' },
     drivers: { icon: 'cloud_upload', label: 'Subir driver', action: 'pickDriverFile' },
     incidents: { icon: 'warning', label: 'Nueva incidencia', action: 'createIncident' },
-    tenants: { icon: 'add_business', label: 'Nuevo tenant', action: 'createTenant' },
+    tenants: { icon: 'add_business', label: 'Nuevo tenant', action: 'createTenant', hidden: true },
     audit: { icon: 'refresh', label: 'Actualizar auditoría', action: 'refreshAudit' },
     settings: { icon: 'description', label: 'Abrir auditoría', action: 'openAudit' },
 };
@@ -611,6 +614,20 @@ async function ensureJsQrLibrary() {
     }
 }
 
+async function ensureXlsxLibrary() {
+    if (window.XLSX?.utils?.book_new && typeof window.XLSX.writeFile === 'function') {
+        return true;
+    }
+    try {
+        await loadLazyScript(LAZY_ASSET_PATHS.xlsx);
+        return window.XLSX?.utils?.book_new && typeof window.XLSX.writeFile === 'function';
+    } catch (error) {
+        console.error('No se pudo cargar XLSX:', error);
+        showNotification('No pudimos activar la exportacion Excel en este momento.', 'warning');
+        return false;
+    }
+}
+
 // Chart.js default configuration
 function isChartAvailable() {
     return typeof Chart !== 'undefined' && Chart && Chart.defaults;
@@ -620,9 +637,30 @@ function applyChartDefaults(theme = 'light') {
     if (!isChartAvailable()) return;
     Chart.defaults.color = readThemeToken('--text-secondary', theme === 'dark' ? '#8b93a5' : '#5f6b7a');
     Chart.defaults.borderColor = readThemeToken('--border', theme === 'dark' ? '#2e3240' : '#dce1e8');
-    Chart.defaults.font.family = "'Source Sans 3', 'Segoe UI', sans-serif";
-    Chart.defaults.plugins.title.font.family = "'IBM Plex Sans Condensed', 'Source Sans 3', sans-serif";
-    Chart.defaults.plugins.legend.labels.font.family = "'IBM Plex Mono', 'Source Sans 3', monospace";
+    Chart.defaults.font = {
+        ...(Chart.defaults.font || {}),
+        family: "'Source Sans 3', 'Segoe UI', sans-serif",
+    };
+
+    const defaultPlugins = Chart.defaults.plugins || {};
+    Chart.defaults.plugins = defaultPlugins;
+    defaultPlugins.title = {
+        ...(defaultPlugins.title || {}),
+        font: {
+            ...((defaultPlugins.title && defaultPlugins.title.font) || {}),
+            family: "'IBM Plex Sans Condensed', 'Source Sans 3', sans-serif",
+        },
+    };
+    defaultPlugins.legend = {
+        ...(defaultPlugins.legend || {}),
+        labels: {
+            ...((defaultPlugins.legend && defaultPlugins.legend.labels) || {}),
+            font: {
+                ...((defaultPlugins.legend && defaultPlugins.legend.labels && defaultPlugins.legend.labels.font) || {}),
+                family: "'IBM Plex Mono', 'Source Sans 3', monospace",
+            },
+        },
+    };
 }
 
 if (isChartAvailable()) {
@@ -1629,6 +1667,7 @@ function renderTenantDetail() {
                 top.className = 'settings-assignment-top';
 
                 const copyWrap = document.createElement('div');
+                copyWrap.className = 'settings-assignment-copy';
                 const title = document.createElement('strong');
                 title.className = 'settings-assignment-title';
                 title.textContent = user.username || `Usuario #${user.id}`;
@@ -3003,7 +3042,7 @@ function buildManualRecordFields(defaultClient) {
     siteToggleRow.append(siteToggleInput, siteToggleText);
     const siteToggleHelp = document.createElement('p');
     siteToggleHelp.className = 'asset-muted';
-    siteToggleHelp.textContent = 'Si la captura es valida, el registro nacera con geofence configurado para incidencias y conformidad.';
+    siteToggleHelp.textContent = 'Si la captura es valida, el registro nacera con una referencia operativa para futuras incidencias y cierres.';
     siteToggleWrap.append(siteToggleRow, siteToggleHelp);
     grid.appendChild(siteToggleWrap);
 
@@ -3201,7 +3240,7 @@ function buildInstallationSiteConfigFields(installation = {}) {
 
     const help = document.createElement('p');
     help.className = 'asset-muted';
-    help.textContent = 'Si dejas los tres campos vacios, el geofence queda deshabilitado para este registro.';
+    help.textContent = 'Si dejas los tres campos vacios, el registro quedara sin referencia operativa guardada.';
     const helpWrap = document.createElement('div');
     helpWrap.className = 'input-group full-width';
     helpWrap.appendChild(help);
@@ -3220,7 +3259,7 @@ async function openInstallationSiteConfigModal(installation) {
 
     openActionModal({
         title: `Configurar sitio #${installationId}`,
-        subtitle: 'Define la referencia geografica para warnings de geofence en incidencias y conformidad.',
+        subtitle: 'Define la referencia geografica del registro para futuras consultas operativas.',
         submitLabel: 'Guardar sitio',
         focusId: 'actionInstallationSiteLat',
         fields: buildInstallationSiteConfigFields(installation),
@@ -3260,7 +3299,7 @@ async function openInstallationSiteConfigModal(installation) {
 
             showNotification(
                 payload.site_lat === null
-                    ? `Geofence deshabilitado para registro #${installationId}.`
+                    ? `Referencia operativa removida del registro #${installationId}.`
                     : `Sitio actualizado para registro #${installationId}.`,
                 payload.site_lat === null ? 'info' : 'success',
             );
@@ -3514,7 +3553,10 @@ function updateFilterChips() {
     chipsContainer.replaceChildren();
     let hasFilters = Object.keys(filters).length > 0;
 
-    clearBtn?.classList.toggle('is-hidden', !hasFilters);
+    if (clearBtn instanceof HTMLButtonElement) {
+        clearBtn.disabled = !hasFilters;
+        clearBtn.classList.toggle('is-disabled', !hasFilters);
+    }
 
     const appendChip = (label, value, filterType) => {
         const chip = document.createElement('span');
@@ -3543,10 +3585,6 @@ function updateFilterChips() {
 
     if (filters.brand) {
         appendChip('Marca:', filters.brand, 'brand');
-    }
-
-    if (filters.geofence) {
-        appendChip('Geofence:', filters.geofence === 'configured' ? 'Con geofence' : 'Sin geofence', 'geofence');
     }
 
     if (filters.gps) {
@@ -3583,7 +3621,9 @@ function removeFilter(filterType) {
             document.getElementById('brandFilter').value = '';
             break;
         case 'geofence':
-            document.getElementById('geofenceFilter').value = '';
+            if (document.getElementById('geofenceFilter')) {
+                document.getElementById('geofenceFilter').value = '';
+            }
             break;
         case 'gps':
             document.getElementById('gpsFilter').value = '';
@@ -3603,7 +3643,9 @@ function removeFilter(filterType) {
 function clearAllFilters() {
     document.getElementById('searchInput').value = '';
     document.getElementById('brandFilter').value = '';
-    document.getElementById('geofenceFilter').value = '';
+    if (document.getElementById('geofenceFilter')) {
+        document.getElementById('geofenceFilter').value = '';
+    }
     document.getElementById('gpsFilter').value = '';
     document.getElementById('startDate').value = '';
     document.getElementById('endDate').value = '';
@@ -3992,9 +4034,15 @@ function exportToCSV(data, filename = 'registros.csv') {
     showNotification(`Exportado: ${filename}`, 'success');
 }
 
-function exportToExcel(data, filename = 'registros.xls') {
+async function exportToExcel(data, filename = 'registros.xls') {
     if (!data || !data.length) {
         showNotification('No hay datos para exportar', 'error');
+        return;
+    }
+
+    const hasXlsx = await ensureXlsxLibrary();
+    if (!hasXlsx) {
+        showNotification('No se pudo cargar el exportador Excel', 'error');
         return;
     }
 
@@ -4416,7 +4464,7 @@ function setupExportButtons() {
         closeMenu();
     });
 
-    menu?.addEventListener('click', (event) => {
+    menu?.addEventListener('click', async (event) => {
         const option = event.target.closest('.export-option');
         if (!option) return;
 
@@ -4424,7 +4472,12 @@ function setupExportButtons() {
         if (format === 'csv') {
             exportToCSV(currentInstallationsData);
         } else if (format === 'excel') {
-            exportToExcel(currentInstallationsData);
+            option.disabled = true;
+            try {
+                await exportToExcel(currentInstallationsData);
+            } finally {
+                option.disabled = false;
+            }
         }
         closeMenu();
     });
@@ -4519,18 +4572,69 @@ function setupAdvancedFilters() {
         clearBtn.addEventListener('click', clearAllFilters);
     }
 
-    const actionsContainer = document.querySelector('.filter-actions');
-    if (actionsContainer && !document.getElementById('createManualRecordBtn')) {
+    const installationsSection = document.getElementById('installationsSection');
+    const actionsContainer = installationsSection?.querySelector('.filter-actions');
+    if (actionsContainer instanceof HTMLElement) {
+        actionsContainer.classList.add('records-filter-actions');
+    }
+    const applyFiltersBtn = document.getElementById('applyFilters');
+    const clearFiltersBtn = document.getElementById('clearFilters');
+    const exportBtn = document.getElementById('exportBtn');
+    const scanQrBtn = document.getElementById('installationsScanQrBtn');
+
+    if (actionsContainer instanceof HTMLElement && !actionsContainer.querySelector('.records-filter-actions-primary')) {
+        const primaryGroup = document.createElement('div');
+        primaryGroup.className = 'records-filter-actions-primary';
+        const secondaryGroup = document.createElement('div');
+        secondaryGroup.className = 'records-filter-actions-secondary';
+
+        if (scanQrBtn) {
+            secondaryGroup.appendChild(scanQrBtn);
+        }
+        if (clearFiltersBtn) {
+            secondaryGroup.appendChild(clearFiltersBtn);
+        }
+        if (applyFiltersBtn) {
+            secondaryGroup.appendChild(applyFiltersBtn);
+        }
+        if (exportBtn) {
+            secondaryGroup.appendChild(exportBtn);
+        }
+
+        actionsContainer.replaceChildren(primaryGroup, secondaryGroup);
+    }
+
+    const primaryActionsGroup = actionsContainer?.querySelector('.records-filter-actions-primary');
+    const secondaryActionsGroup = actionsContainer?.querySelector('.records-filter-actions-secondary');
+
+    if (primaryActionsGroup instanceof HTMLElement && !document.getElementById('createManualRecordBtn')) {
         const createRecordBtn = document.createElement('button');
         createRecordBtn.id = 'createManualRecordBtn';
-        createRecordBtn.className = 'btn-secondary';
+        createRecordBtn.className = 'btn-primary';
         setElementTextWithMaterialIcon(createRecordBtn, 'edit_note', 'Nuevo registro manual');
         createRecordBtn.addEventListener('click', () => {
             void createManualRecordFromWeb();
         });
-        actionsContainer.insertBefore(createRecordBtn, document.getElementById('applyFilters'));
+        primaryActionsGroup.appendChild(createRecordBtn);
     }
-    if (actionsContainer && !document.getElementById('openQrGeneratorBtn')) {
+
+    if (secondaryActionsGroup instanceof HTMLElement && !document.getElementById('recordsUtilityActions')) {
+        const utilityActions = document.createElement('details');
+        utilityActions.id = 'recordsUtilityActions';
+        utilityActions.className = 'records-utility-actions';
+
+        const utilitySummary = document.createElement('summary');
+        utilitySummary.textContent = 'Mas acciones';
+
+        const utilityList = document.createElement('div');
+        utilityList.className = 'records-utility-actions-list';
+        utilityActions.append(utilitySummary, utilityList);
+        secondaryActionsGroup.insertBefore(utilityActions, applyFiltersBtn || null);
+    }
+
+    const utilityActionsList = document.getElementById('recordsUtilityActions')?.querySelector('.records-utility-actions-list');
+
+    if (utilityActionsList instanceof HTMLElement && !document.getElementById('openQrGeneratorBtn')) {
         const qrButton = document.createElement('button');
         qrButton.id = 'openQrGeneratorBtn';
         qrButton.type = 'button';
@@ -4539,9 +4643,9 @@ function setupAdvancedFilters() {
         qrButton.addEventListener('click', () => {
             showQrModal({ type: 'asset', value: '' });
         });
-        actionsContainer.insertBefore(qrButton, document.getElementById('applyFilters'));
+        utilityActionsList.appendChild(qrButton);
     }
-    if (actionsContainer && !document.getElementById('associateAssetBtn')) {
+    if (utilityActionsList instanceof HTMLElement && !document.getElementById('associateAssetBtn')) {
         const associateButton = document.createElement('button');
         associateButton.id = 'associateAssetBtn';
         associateButton.type = 'button';
@@ -4550,9 +4654,9 @@ function setupAdvancedFilters() {
         associateButton.addEventListener('click', () => {
             void associateAssetFromWeb();
         });
-        actionsContainer.insertBefore(associateButton, document.getElementById('applyFilters'));
+        utilityActionsList.appendChild(associateButton);
     }
-    if (actionsContainer && !document.getElementById('lookupAssetBtn')) {
+    if (utilityActionsList instanceof HTMLElement && !document.getElementById('lookupAssetBtn')) {
         const lookupButton = document.createElement('button');
         lookupButton.id = 'lookupAssetBtn';
         lookupButton.type = 'button';
@@ -4561,7 +4665,7 @@ function setupAdvancedFilters() {
         lookupButton.addEventListener('click', () => {
             void openAssetLookupFromWeb();
         });
-        actionsContainer.insertBefore(lookupButton, document.getElementById('applyFilters'));
+        utilityActionsList.appendChild(lookupButton);
     }
 
     // Keyboard shortcut: Ctrl+K to focus search
@@ -4651,9 +4755,9 @@ function buildInstallationSiteBadge(installation) {
     const badge = document.createElement('span');
     badge.className = `installation-site-badge ${hasSiteConfig ? 'is-configured' : 'is-missing'}`;
     if (hasSiteConfig) {
-        badge.textContent = `Geofence ${Math.round(Number(installation.site_radius_m))} m`;
+        badge.textContent = `Referencia ${Math.round(Number(installation.site_radius_m))} m`;
     } else {
-        badge.textContent = 'Sin geofence';
+        badge.textContent = 'Sin referencia';
     }
     return badge;
 }
@@ -4729,6 +4833,38 @@ function buildInstallationTimeSummary(installation) {
     return wrapper;
 }
 
+function buildInstallationTextStack(primaryText, secondaryText = '', options = {}) {
+    const wrapper = document.createElement('div');
+    wrapper.className = `installation-record-stack ${options.wrapperClass || ''}`.trim();
+
+    const primary = document.createElement('div');
+    primary.className = `installation-record-primary ${options.primaryClass || ''}`.trim();
+    primary.textContent = primaryText;
+    wrapper.appendChild(primary);
+
+    if (secondaryText) {
+        const secondary = document.createElement('div');
+        secondary.className = `installation-record-secondary ${options.secondaryClass || ''}`.trim();
+        secondary.textContent = secondaryText;
+        wrapper.appendChild(secondary);
+    }
+
+    return wrapper;
+}
+
+function buildInstallationDateSummary(timestampValue) {
+    const rawDate = timestampValue ? new Date(timestampValue) : null;
+    if (!(rawDate instanceof Date) || Number.isNaN(rawDate.getTime())) {
+        return buildInstallationTextStack('Sin fecha');
+    }
+
+    return buildInstallationTextStack(
+        rawDate.toLocaleDateString('es-ES'),
+        rawDate.toLocaleTimeString('es-ES'),
+        { wrapperClass: 'installation-date-summary' },
+    );
+}
+
 function renderInstallationsTable(installations) {
     const container = document.getElementById('installationsTable');
     container.replaceChildren();
@@ -4766,13 +4902,20 @@ function renderInstallationsTable(installations) {
 
         const idCell = document.createElement('td');
         idCell.dataset.label = 'ID';
-        const strong = document.createElement('strong');
-        strong.textContent = `#${inst.id ?? 'N/A'}`;
-        idCell.appendChild(strong);
+        idCell.className = 'installation-record-cell installation-record-id';
+        idCell.appendChild(
+            buildInstallationTextStack(
+                `#${inst.id ?? 'N/A'}`,
+                String(inst.technician_name || inst.reporter_username || '').trim(),
+                { primaryClass: 'installation-record-id-value' },
+            ),
+        );
 
         const clientCell = document.createElement('td');
         clientCell.dataset.label = 'Cliente';
+        clientCell.className = 'installation-record-cell installation-record-client';
         const clientPrimary = document.createElement('div');
+        clientPrimary.className = 'installation-record-primary';
         clientPrimary.textContent = inst.client_name || 'N/A';
         const badgesWrap = document.createElement('div');
         badgesWrap.className = 'installation-meta-badges';
@@ -4783,10 +4926,12 @@ function renderInstallationsTable(installations) {
 
         const brandCell = document.createElement('td');
         brandCell.dataset.label = 'Marca';
-        brandCell.textContent = inst.driver_brand || 'N/A';
+        brandCell.className = 'installation-record-cell installation-record-brand';
+        brandCell.appendChild(buildInstallationTextStack(inst.driver_brand || 'N/A'));
 
         const attentionCell = document.createElement('td');
         attentionCell.dataset.label = 'Atención';
+        attentionCell.className = 'installation-record-cell installation-record-attention';
         const attentionBadge = document.createElement('span');
         const attentionMeta = buildRecordAttentionBadge(inst);
         attentionBadge.className = `badge ${attentionMeta.stateClass}`;
@@ -4795,19 +4940,28 @@ function renderInstallationsTable(installations) {
 
         const timeCell = document.createElement('td');
         timeCell.dataset.label = 'Tiempo';
+        timeCell.className = 'installation-record-cell installation-record-time';
         timeCell.appendChild(buildInstallationTimeSummary(inst));
 
         const notesCell = document.createElement('td');
         notesCell.dataset.label = 'Notas';
-        notesCell.textContent = formatInstallationRecordNotePreview(inst.notes);
+        notesCell.className = 'installation-record-cell installation-record-notes';
+        notesCell.appendChild(
+            buildInstallationTextStack(
+                formatInstallationRecordNotePreview(inst.notes),
+                'Contexto del registro',
+                { primaryClass: 'installation-record-note-text' },
+            ),
+        );
 
         const dateCell = document.createElement('td');
         dateCell.dataset.label = 'Fecha';
-        dateCell.textContent = new Date(inst.timestamp).toLocaleString('es-ES');
+        dateCell.className = 'installation-record-cell installation-record-date-cell';
+        dateCell.appendChild(buildInstallationDateSummary(inst.timestamp));
 
         const qrCell = document.createElement('td');
         qrCell.dataset.label = 'Acciones';
-        qrCell.className = 'table-actions-cell';
+        qrCell.className = 'table-actions-cell installation-record-cell installation-record-actions';
         const actionsGroup = document.createElement('div');
         actionsGroup.className = 'table-actions-group';
         const qrButton = document.createElement('button');
@@ -5704,6 +5858,7 @@ function syncHeaderPrimaryAction(section) {
     iconEl.textContent = actionConfig.icon;
     labelEl.textContent = actionConfig.label;
     actionBtn.setAttribute('aria-label', actionConfig.label);
+    actionBtn.hidden = actionConfig.hidden === true;
 }
 
 function closeHeaderOverflowMenu(options = {}) {

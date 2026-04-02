@@ -15,6 +15,7 @@ import { lookupCode } from "@/src/api/scan";
 import { extractApiError } from "@/src/api/client";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
+import { triggerSuccessHaptic, triggerWarningHaptic } from "@/src/services/haptics";
 import { parseScannedPayload } from "@/src/utils/scan";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
@@ -50,6 +51,7 @@ export default function ScanScreen() {
   const resolveAndNavigate = async (rawValue: string) => {
     const parsed = parseScannedPayload(rawValue);
     if (!parsed) {
+      void triggerWarningHaptic();
       Alert.alert(
         "Codigo invalido",
         "Formato esperado: dm://installation/{id} o dm://asset/{external_code}",
@@ -61,11 +63,13 @@ export default function ScanScreen() {
     setResolving(true);
     try {
       if (parsed.type === "installation") {
+        void triggerSuccessHaptic();
         navigateToCaseContext({ installationId: parsed.installationId });
         return;
       }
 
       const lookup = await lookupCode(parsed.externalCode, "asset");
+      void triggerSuccessHaptic();
       navigateToCaseContext({
         installationId: lookup.match.installation_id ?? undefined,
         assetExternalCode:
@@ -75,6 +79,7 @@ export default function ScanScreen() {
         assetRecordId: lookup.match.asset_record_id ?? undefined,
       });
     } catch (error) {
+      void triggerWarningHaptic();
       Alert.alert("No se pudo resolver", extractApiError(error));
       setLocked(false);
     } finally {
@@ -89,6 +94,7 @@ export default function ScanScreen() {
   };
 
   const onManualSubmit = () => {
+    if (!manualCode.trim()) return;
     setLocked(true);
     void resolveAndNavigate(manualCode);
   };

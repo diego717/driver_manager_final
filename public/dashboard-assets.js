@@ -423,6 +423,10 @@
 
             const toolbar = document.createElement('div');
             toolbar.className = 'asset-detail-toolbar';
+            const primaryActions = document.createElement('div');
+            primaryActions.className = 'asset-detail-toolbar-primary';
+            const secondaryActions = document.createElement('div');
+            secondaryActions.className = 'asset-detail-toolbar-secondary';
 
             const createIncidentBtn = document.createElement('button');
             createIncidentBtn.type = 'button';
@@ -444,10 +448,12 @@
             qrBtn.type = 'button';
             qrBtn.className = 'btn-secondary';
             qrBtn.textContent = 'Ver QR';
+            qrBtn.classList.add('asset-detail-toolbar-utility-btn');
             qrBtn.addEventListener('click', () => {
                 options.showAssetQrModal(asset);
             });
-            toolbar.append(createIncidentBtn, linkBtn, qrBtn);
+            primaryActions.appendChild(createIncidentBtn);
+            secondaryActions.append(linkBtn, qrBtn);
 
             if (options.canCurrentUserEditAssets()) {
                 const loanBtn = document.createElement('button');
@@ -461,7 +467,12 @@
                         openCreateLoanModal(asset);
                     }
                 });
-                toolbar.appendChild(loanBtn);
+                if (activeLoan) {
+                    loanBtn.className = 'btn-primary';
+                    primaryActions.appendChild(loanBtn);
+                } else {
+                    secondaryActions.appendChild(loanBtn);
+                }
 
                 const normalizedStatus = String(asset.status || '').trim().toLowerCase();
                 const isInactiveAsset = normalizedStatus === 'inactive' || normalizedStatus === 'retired';
@@ -476,13 +487,25 @@
 
                 const deleteBtn = document.createElement('button');
                 deleteBtn.type = 'button';
-                deleteBtn.className = 'btn-secondary';
+                deleteBtn.className = 'btn-secondary btn-danger-subtle asset-detail-danger-action';
                 deleteBtn.textContent = 'Eliminar equipo';
                 deleteBtn.addEventListener('click', () => {
                     void deleteAssetFromWeb(asset);
                 });
-                toolbar.append(statusBtn, deleteBtn);
+
+                const moreActions = document.createElement('details');
+                moreActions.className = 'asset-detail-more-actions';
+
+                const moreSummary = document.createElement('summary');
+                moreSummary.textContent = 'Mas acciones';
+
+                const moreList = document.createElement('div');
+                moreList.className = 'asset-detail-more-actions-list';
+                moreList.append(statusBtn, deleteBtn);
+                moreActions.append(moreSummary, moreList);
+                secondaryActions.appendChild(moreActions);
             }
+            toolbar.append(primaryActions, secondaryActions);
             container.appendChild(toolbar);
 
             if (loans.length || data?.loan_error) {

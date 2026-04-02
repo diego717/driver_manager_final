@@ -1,6 +1,7 @@
-import React, { type ReactNode } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import React, { type ReactNode, useEffect, useRef } from "react";
+import { Animated, Easing, StyleSheet, Text, View } from "react-native";
 
+import { useReducedMotion } from "@/src/hooks/useReducedMotion";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -14,19 +15,47 @@ type SectionCardProps = {
 export default function SectionCard(props: SectionCardProps) {
   const { title, description, aside, children } = props;
   const palette = useAppPalette();
+  const reducedMotion = useReducedMotion();
+  const opacity = useRef(new Animated.Value(reducedMotion ? 1 : 0)).current;
+  const translateY = useRef(new Animated.Value(reducedMotion ? 0 : 10)).current;
+
+  useEffect(() => {
+    if (reducedMotion) {
+      opacity.setValue(1);
+      translateY.setValue(0);
+      return;
+    }
+
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 260,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [opacity, reducedMotion, translateY]);
 
   return (
-    <View
+    <Animated.View
       style={[
         styles.card,
         {
+          opacity,
+          transform: [{ translateY }],
           backgroundColor: palette.cardBg,
           borderColor: palette.cardBorder,
           shadowColor: palette.shadowColor,
         },
       ]}
-    >
-      <View style={styles.header}>
+      >
+        <View style={styles.header}>
         <View style={styles.headerText}>
           <Text style={[styles.title, { color: palette.textPrimary }]}>{title}</Text>
           {description ? (
@@ -36,7 +65,7 @@ export default function SectionCard(props: SectionCardProps) {
         {aside}
       </View>
       {children}
-    </View>
+    </Animated.View>
   );
 }
 

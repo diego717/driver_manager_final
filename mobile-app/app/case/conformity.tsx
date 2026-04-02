@@ -34,6 +34,7 @@ import {
   updateSignatureSession,
 } from "@/src/features/conformity/signature-session";
 import { fitSignaturePathsToViewBox } from "@/src/features/conformity/signature-paths";
+import { triggerSuccessHaptic, triggerWarningHaptic } from "@/src/services/haptics";
 import { captureCurrentGpsSnapshot } from "@/src/services/location";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
@@ -45,8 +46,6 @@ import {
   type TechnicianRecord,
 } from "@/src/types/api";
 import {
-  evaluateGeofencePreview,
-  formatGeofenceSummary,
   formatGpsStatusLabel,
   formatGpsSummary,
   hasInstallationSiteConfig,
@@ -253,14 +252,9 @@ export default function CaseConformityScreen() {
     }, []),
   );
 
-  const geofencePreview = useMemo(
-    () => evaluateGeofencePreview(gpsSnapshot, record),
-    [gpsSnapshot, record],
-  );
   const hasSiteConfig = useMemo(() => hasInstallationSiteConfig(record), [record]);
   const requiresGpsOverride = gpsSnapshot.status !== "captured";
-  const requiresGeofenceOverride = gpsSnapshot.status === "captured" && geofencePreview.result === "outside";
-  const showGpsOverrideField = requiresGpsOverride || requiresGeofenceOverride;
+  const showGpsOverrideField = requiresGpsOverride;
   const previewSignaturePaths = useMemo(
     () =>
       fitSignaturePathsToViewBox(signaturePaths, {
@@ -317,23 +311,26 @@ export default function CaseConformityScreen() {
     const normalizedName = signedByName.trim();
     const normalizedEmail = normalizeEmailCandidate(emailTo);
     if (!normalizedName) {
+      void triggerWarningHaptic();
       notify("error", "El nombre del firmante es obligatorio.");
       return;
     }
     if (!validateEmailCandidate(normalizedEmail)) {
+      void triggerWarningHaptic();
       notify("error", "Ingresa un email valido para generar la conformidad.");
       return;
     }
     if (!signaturePaths.length) {
+      void triggerWarningHaptic();
       notify("error", "Falta la firma del cliente o responsable.");
       return;
     }
 
     let gpsPayload: GpsCapturePayload = gpsSnapshot;
-    let geofenceOverrideNote = "";
     const normalizedGpsOverride = gpsOverrideNote.trim();
     if (gpsSnapshot.status !== "captured") {
       if (!normalizedGpsOverride) {
+        void triggerWarningHaptic();
         notify("error", "Si no hay GPS valido, registra un motivo de override antes de generar el PDF.");
         return;
       }
@@ -342,12 +339,6 @@ export default function CaseConformityScreen() {
         source: "override",
         note: normalizedGpsOverride,
       };
-    } else if (geofencePreview.result === "outside") {
-      if (!normalizedGpsOverride) {
-        notify("error", "La captura GPS quedo fuera del radio. Debes justificar la excepcion.");
-        return;
-      }
-      geofenceOverrideNote = normalizedGpsOverride;
     }
 
     try {
@@ -364,9 +355,9 @@ export default function CaseConformityScreen() {
         include_all_incident_photos: true,
         send_email: sendEmail,
         gps: gpsPayload,
-        geofence_override_note: geofenceOverrideNote,
       });
       setLatestConformity(response.conformity);
+      void triggerSuccessHaptic();
       notify(
         "success",
         sendEmail
@@ -375,6 +366,7 @@ export default function CaseConformityScreen() {
       );
       clearSignature();
     } catch (error) {
+      void triggerWarningHaptic();
       notify("error", `No se pudo generar la conformidad: ${extractApiError(error)}`);
     } finally {
       setSubmitting(false);
@@ -383,7 +375,6 @@ export default function CaseConformityScreen() {
     clearSignature,
     emailTo,
     exportSignatureDataUrl,
-    geofencePreview.result,
     gpsOverrideNote,
     gpsSnapshot,
     installationId,
@@ -525,8 +516,8 @@ export default function CaseConformityScreen() {
       ) : null}
 
       <SectionCard
-        title="GPS y geofence"
-        description="El cierre intenta registrar la ubicacion actual y compararla con el sitio configurado del caso."
+        title="GPS"
+        description="El cierre intenta registrar tu ubicacion actual como respaldo operativo."
         aside={
           <TouchableOpacity
             style={[
@@ -575,24 +566,9 @@ export default function CaseConformityScreen() {
           <Text style={[styles.gpsBody, { color: palette.textSecondary }]}>
             {formatGpsSummary(gpsSnapshot)}
           </Text>
-          <Text
-            style={[
-              styles.gpsFootnote,
-              {
-                color:
-                  geofencePreview.result === "outside"
-                    ? palette.warningText
-                    : geofencePreview.result === "inside"
-                      ? palette.successText
-                      : palette.textMuted,
-              },
-            ]}
-          >
-            {formatGeofenceSummary(geofencePreview)}
-          </Text>
           {hasSiteConfig ? (
             <Text style={[styles.gpsFootnote, { color: palette.textMuted }]}>
-              Sitio: {Number(record?.site_lat).toFixed(5)}, {Number(record?.site_lng).toFixed(5)} · radio{" "}
+              Referencia del caso: {Number(record?.site_lat).toFixed(5)}, {Number(record?.site_lng).toFixed(5)} · radio{" "}
               {Math.round(Number(record?.site_radius_m) || 0)} m
             </Text>
           ) : null}
@@ -600,9 +576,7 @@ export default function CaseConformityScreen() {
 
         {showGpsOverrideField ? (
           <>
-            <Text style={[styles.label, { color: palette.label }]}>
-              {requiresGeofenceOverride ? "Motivo de excepcion geofence" : "Motivo de override GPS"}
-            </Text>
+            <Text style={[styles.label, { color: palette.label }]}>Motivo de override GPS</Text>
             <TextInput
               value={gpsOverrideNote}
               onChangeText={setGpsOverrideNote}
@@ -612,31 +586,18 @@ export default function CaseConformityScreen() {
                 styles.multilineInput,
                 {
                   backgroundColor: palette.inputBg,
-                  borderColor: requiresGeofenceOverride ? palette.warningText : palette.inputBorder,
+                  borderColor: palette.inputBorder,
                   color: palette.textPrimary,
                 },
               ]}
-              placeholder={
-                requiresGeofenceOverride
-                  ? "Explica por que cierras fuera del radio configurado."
-                  : "Explica por que cierras sin una coordenada valida."
-              }
+              placeholder="Explica por que cierras sin una coordenada valida."
               placeholderTextColor={palette.placeholder}
               selectionColor={textInputAccentColor}
               cursorColor={textInputAccentColor}
-              accessibilityLabel={
-                requiresGeofenceOverride ? "Motivo de excepcion geofence" : "Motivo de override GPS"
-              }
+              accessibilityLabel="Motivo de override GPS"
             />
-            <Text
-              style={[
-                styles.gpsFootnote,
-                { color: requiresGeofenceOverride ? palette.warningText : palette.textMuted },
-              ]}
-            >
-              {requiresGeofenceOverride
-                ? "Si la politica hard geofence esta activa, esta justificacion pasa a auditoria."
-                : "Solo se usa si el dispositivo no pudo entregar una captura GPS util."}
+            <Text style={[styles.gpsFootnote, { color: palette.textMuted }]}>
+              Solo se usa si el dispositivo no pudo entregar una captura GPS util.
             </Text>
           </>
         ) : null}

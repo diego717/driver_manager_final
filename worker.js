@@ -184,11 +184,13 @@ function dashboardAssetSecurityHeaders() {
       "base-uri 'self'",
       "frame-ancestors 'none'",
       "object-src 'none'",
-      "img-src 'self' data: blob:",
+      "img-src 'self' data: blob: https://api.mapbox.com https://*.tiles.mapbox.com",
       "font-src 'self' data: https://fonts.gstatic.com",
-      "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
-      "script-src 'self'",
-      "style-src 'self' https://fonts.googleapis.com",
+      "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://api.mapbox.com https://events.mapbox.com https://*.tiles.mapbox.com",
+      "script-src 'self' https://api.mapbox.com",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.mapbox.com",
+      "worker-src 'self' blob:",
+      "child-src 'self' blob:",
       "manifest-src 'self'",
     ].join("; "),
   };
@@ -211,6 +213,7 @@ const DASHBOARD_ASSET_PATHS = {
   "dashboard-auth.js": "/dashboard-auth.js",
   "dashboard-navigation.js": "/dashboard-navigation.js",
   "dashboard-bootstrap.js": "/dashboard-bootstrap.js",
+  "dashboard-runtime.js": "/dashboard-runtime.js",
   "dashboard.js": "/dashboard.js",
   "dashboard-pwa.js": "/dashboard-pwa.js",
   "public-tracking.js": "/public-tracking.js",
@@ -253,6 +256,7 @@ function dashboardAssetContentType(assetPath) {
     assetPath === "/dashboard-auth.js" ||
     assetPath === "/dashboard-navigation.js" ||
     assetPath === "/dashboard-bootstrap.js" ||
+    assetPath === "/dashboard-runtime.js" ||
     assetPath === "/dashboard.js" ||
     assetPath === "/dashboard-pwa.js" ||
     assetPath === "/public-tracking.js" ||
@@ -267,7 +271,13 @@ function dashboardAssetContentType(assetPath) {
 }
 
 function dashboardAssetCacheControl(assetPath) {
-  if (assetPath === "/dashboard" || assetPath === "/dashboard.html") return "public, max-age=0, must-revalidate";
+  if (
+    assetPath === "/dashboard" ||
+    assetPath === "/dashboard.html" ||
+    assetPath === "/dashboard-runtime.js"
+  ) {
+    return "public, max-age=0, must-revalidate";
+  }
   if (assetPath === "/sw.js") return "no-cache";
   return "public, max-age=31536000, immutable";
 }
@@ -289,10 +299,62 @@ function dashboardFallbackHtml() {
 </html>`;
 }
 
+function buildDashboardRuntimeConfigScript(env) {
+  const runtimeConfig = {};
+  const mapboxToken = normalizeOptionalString(
+    env?.MAPBOX_PUBLIC_TOKEN || env?.MAPBOX_ACCESS_TOKEN || "",
+    "",
+  ).trim();
+  const mapboxStyleUrl = normalizeOptionalString(env?.MAPBOX_STYLE_URL || "", "").trim();
+  const mapboxStyleUrlLight = normalizeOptionalString(
+    env?.MAPBOX_STYLE_URL_LIGHT || "",
+    "",
+  ).trim();
+  const mapboxStyleUrlDark = normalizeOptionalString(
+    env?.MAPBOX_STYLE_URL_DARK || "",
+    "",
+  ).trim();
+
+  if (mapboxToken) {
+    runtimeConfig.__DM_MAPBOX_ACCESS_TOKEN__ = mapboxToken;
+  }
+  if (mapboxStyleUrl) {
+    runtimeConfig.__DM_MAPBOX_STYLE_URL__ = mapboxStyleUrl;
+  }
+  if (mapboxStyleUrlLight) {
+    runtimeConfig.__DM_MAPBOX_STYLE_URL_LIGHT__ = mapboxStyleUrlLight;
+  }
+  if (mapboxStyleUrlDark) {
+    runtimeConfig.__DM_MAPBOX_STYLE_URL_DARK__ = mapboxStyleUrlDark;
+  }
+
+  const entries = Object.entries(runtimeConfig);
+  if (!entries.length) return "void 0;";
+
+  return entries
+    .map(([key, value]) => `window.${key} = ${JSON.stringify(String(value))};`)
+    .join("");
+}
+
 async function serveDashboardStaticAsset(request, env, corsPolicy, routeParts) {
   if (request.method !== "GET" && request.method !== "HEAD") return null;
   const assetPath = resolveDashboardAssetPath(routeParts);
   if (!assetPath) return null;
+
+  if (assetPath === "/dashboard-runtime.js") {
+    const headers = new Headers({
+      ...corsHeaders(request, env, corsPolicy),
+      ...dashboardAssetSecurityHeaders(),
+      "Content-Type": "application/javascript; charset=utf-8",
+      "Cache-Control": dashboardAssetCacheControl(assetPath),
+    });
+    appendVaryHeader(headers, "Accept-Encoding");
+    const runtimeScript = buildDashboardRuntimeConfigScript(env);
+    return new Response(request.method === "HEAD" ? null : runtimeScript, {
+      status: 200,
+      headers,
+    });
+  }
 
   if (!env?.ASSETS || typeof env.ASSETS.fetch !== "function") {
     if (assetPath === "/dashboard" || assetPath === "/dashboard.html") {
@@ -6236,6 +6298,17 @@ export default {
       if (installationIncidentsResponse) {
         return installationIncidentsResponse;
       }
+      const incidentMapResponse = await incidentsRouteHandlers.handleIncidentMapRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+        incidentsTenantId,
+      );
+      if (incidentMapResponse) {
+        return incidentMapResponse;
+      }
+
       const incidentDetailResponse = await incidentsRouteHandlers.handleIncidentDetailRoute(
         request,
         env,

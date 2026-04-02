@@ -20,3 +20,16 @@ vi.mock("react-native-safe-area-context", () => ({
 vi.mock("expo-web-browser", () => ({
   openBrowserAsync: vi.fn(async () => ({ type: "opened" })),
 }));
+
+vi.mock("expo-haptics", () => ({
+  NotificationFeedbackType: {
+    Success: "success",
+    Warning: "warning",
+  },
+  ImpactFeedbackStyle: {
+    Light: "light",
+  },
+  notificationAsync: vi.fn(async () => undefined),
+  selectionAsync: vi.fn(async () => undefined),
+  impactAsync: vi.fn(async () => undefined),
+}));
