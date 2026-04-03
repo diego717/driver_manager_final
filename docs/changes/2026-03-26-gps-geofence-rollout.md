@@ -1,5 +1,7 @@
 # 2026-03-26 - rollout tecnico de GPS y geofence
 
+> Nota historica: al 2 de abril de 2026, geofence fue retirado del flujo activo del producto. Esta nota describe el rollout original y no el estado vigente.
+
 ## Resumen
 
 Se consolida el track de GPS tagging y geofencing en dashboard, Worker, D1 y PDF de conformidad, quedando la mayor parte del trabajo tecnico implementado y pendiente principalmente de rollout operativo por tenant.

@@ -1,5 +1,8 @@
 import { getCurrentWebSession, type WebSessionUser } from "./webAuth";
-import { type TechnicianAssignment, type TechnicianRecord } from "../types/api";
+import { assignedIncidentsMapRepository } from "../db/repositories/assigned-incidents-map-repository";
+import { technicianAssignmentsCacheRepository } from "../db/repositories/technician-assignments-cache-repository";
+import { type AssignedIncidentMapItem, type TechnicianAssignment, type TechnicianRecord } from "../types/api";
+import { getStoredLinkedTechnician, setStoredLinkedTechnician } from "../storage/secure";
 import { ensurePositiveInt } from "../utils/validation";
 import { signedJsonRequest } from "./client";
 
@@ -30,6 +33,16 @@ interface CreateAssignmentResponse {
   success: boolean;
   assignment: TechnicianAssignment;
 }
+
+interface AssignedIncidentsMapResponse {
+  success: boolean;
+  technician: TechnicianRecord | null;
+  incidents: AssignedIncidentMapItem[];
+}
+
+let lastLinkedTechnicianContextSource: "network" | "cache" = "network";
+let lastTechnicianAssignmentsSource: "network" | "cache" = "network";
+let lastAssignedIncidentsMapSource: "network" | "cache" = "network";
 
 function normalizeOptionalString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -86,6 +99,40 @@ function normalizeTechnicianAssignment(assignment: TechnicianAssignment): Techni
       assignment.technician_is_active === null || assignment.technician_is_active === undefined
         ? null
         : Boolean(assignment.technician_is_active),
+  };
+}
+
+function normalizeAssignedIncidentMapItem(item: AssignedIncidentMapItem): AssignedIncidentMapItem {
+  const normalizeNullableNumber = (value: unknown): number | null => {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  return {
+    ...item,
+    id: Number(item.id),
+    installation_id: Number(item.installation_id),
+    asset_id: normalizePositiveNumber(item.asset_id),
+    note: normalizeOptionalString(item.note),
+    severity: normalizeOptionalString(item.severity || "low").toLowerCase(),
+    incident_status: normalizeOptionalString(item.incident_status || "open").toLowerCase(),
+    created_at: normalizeOptionalString(item.created_at),
+    target_lat: normalizeNullableNumber(item.target_lat),
+    target_lng: normalizeNullableNumber(item.target_lng),
+    target_label: normalizeOptionalString(item.target_label) || null,
+    dispatch_place_name: normalizeOptionalString(item.dispatch_place_name) || null,
+    dispatch_address: normalizeOptionalString(item.dispatch_address) || null,
+    dispatch_reference: normalizeOptionalString(item.dispatch_reference) || null,
+    dispatch_contact_name: normalizeOptionalString(item.dispatch_contact_name) || null,
+    dispatch_contact_phone: normalizeOptionalString(item.dispatch_contact_phone) || null,
+    dispatch_notes: normalizeOptionalString(item.dispatch_notes) || null,
+    installation_client_name: normalizeOptionalString(item.installation_client_name) || null,
+    installation_label: normalizeOptionalString(item.installation_label) || null,
+    asset_code: normalizeOptionalString(item.asset_code) || null,
+    assignment_role: normalizeOptionalString(item.assignment_role || "owner").toLowerCase(),
+    assignment_source: normalizeOptionalString(item.assignment_source || "").toLowerCase() || null,
+    assigned_at: normalizeOptionalString(item.assigned_at) || null,
   };
 }
 
@@ -170,15 +217,27 @@ export async function getTechnicianAssignments(
     query.set("include_inactive", "1");
   }
   const suffix = query.toString();
-  const response = await signedJsonRequest<TechnicianAssignmentsResponse>({
-    method: "GET",
-    path: suffix
-      ? `/technicians/${technicianId}/assignments?${suffix}`
-      : `/technicians/${technicianId}/assignments`,
-  });
-  return Array.isArray(response.assignments)
-    ? response.assignments.map(normalizeTechnicianAssignment)
-    : [];
+  try {
+    const response = await signedJsonRequest<TechnicianAssignmentsResponse>({
+      method: "GET",
+      path: suffix
+        ? `/technicians/${technicianId}/assignments?${suffix}`
+        : `/technicians/${technicianId}/assignments`,
+    });
+    const assignments = Array.isArray(response.assignments)
+      ? response.assignments.map(normalizeTechnicianAssignment)
+      : [];
+    await technicianAssignmentsCacheRepository.replaceForTechnician(technicianId, assignments);
+    lastTechnicianAssignmentsSource = "network";
+    return assignments;
+  } catch (error) {
+    const cachedAssignments = await technicianAssignmentsCacheRepository.listByTechnicianId(technicianId);
+    if (cachedAssignments.length > 0) {
+      lastTechnicianAssignmentsSource = "cache";
+      return cachedAssignments;
+    }
+    throw error;
+  }
 }
 
 export async function getTechnicianAssignmentsByEntity(
@@ -214,17 +273,112 @@ export async function getCurrentLinkedTechnicianContext(): Promise<{
   technician: TechnicianRecord | null;
 }> {
   const session = await getCurrentWebSession();
-  const technicians = await listTechnicians({ includeInactive: true });
-  const linkedTechnician = technicians.find(
-    (technician) =>
-      technician.web_user_id !== null &&
-      technician.web_user_id === normalizePositiveNumber(session.user.id),
-  ) || null;
+  try {
+    const technicians = await listTechnicians({ includeInactive: true });
+    const linkedTechnician = technicians.find(
+      (technician) =>
+        technician.web_user_id !== null &&
+        technician.web_user_id === normalizePositiveNumber(session.user.id),
+    ) || null;
 
-  return {
-    user: session.user,
-    technician: linkedTechnician,
-  };
+    await setStoredLinkedTechnician(linkedTechnician
+      ? {
+          id: linkedTechnician.id,
+          tenantId: linkedTechnician.tenant_id,
+          webUserId: linkedTechnician.web_user_id,
+          displayName: linkedTechnician.display_name,
+          employeeCode: linkedTechnician.employee_code || null,
+          isActive: linkedTechnician.is_active,
+        }
+      : null);
+    lastLinkedTechnicianContextSource = "network";
+
+    return {
+      user: session.user,
+      technician: linkedTechnician,
+    };
+  } catch (error) {
+    const cachedTechnician = await getStoredLinkedTechnician();
+    if (cachedTechnician?.id) {
+      lastLinkedTechnicianContextSource = "cache";
+      return {
+        user: session.user,
+        technician: {
+          id: cachedTechnician.id,
+          tenant_id: cachedTechnician.tenantId || "",
+          web_user_id: cachedTechnician.webUserId,
+          display_name: cachedTechnician.displayName || "",
+          employee_code: cachedTechnician.employeeCode || "",
+          is_active: cachedTechnician.isActive !== false,
+        },
+      };
+    }
+    throw error;
+  }
+}
+
+export async function listAssignedIncidentsMap(): Promise<{
+  technician: TechnicianRecord | null;
+  incidents: AssignedIncidentMapItem[];
+}> {
+  try {
+    const response = await signedJsonRequest<AssignedIncidentsMapResponse>({
+      method: "GET",
+      path: "/me/assigned-incidents-map",
+    });
+    const technician = response.technician ? normalizeTechnicianRecord(response.technician) : null;
+    const incidents = Array.isArray(response.incidents)
+      ? response.incidents.map(normalizeAssignedIncidentMapItem)
+      : [];
+    await assignedIncidentsMapRepository.replaceAll(incidents);
+    if (technician) {
+      await setStoredLinkedTechnician({
+        id: technician.id,
+        tenantId: technician.tenant_id,
+        webUserId: technician.web_user_id,
+        displayName: technician.display_name,
+        employeeCode: technician.employee_code || null,
+        isActive: technician.is_active,
+      });
+    }
+    lastAssignedIncidentsMapSource = "network";
+    return {
+      technician,
+      incidents,
+    };
+  } catch (error) {
+    const cachedIncidents = await assignedIncidentsMapRepository.listAll();
+    const cachedTechnician = await getStoredLinkedTechnician();
+    if (cachedIncidents.length > 0 || cachedTechnician?.id) {
+      lastAssignedIncidentsMapSource = "cache";
+      return {
+        technician: cachedTechnician?.id
+          ? {
+              id: cachedTechnician.id,
+              tenant_id: cachedTechnician.tenantId || "",
+              web_user_id: cachedTechnician.webUserId,
+              display_name: cachedTechnician.displayName || "",
+              employee_code: cachedTechnician.employeeCode || "",
+              is_active: cachedTechnician.isActive !== false,
+            }
+          : null,
+        incidents: cachedIncidents,
+      };
+    }
+    throw error;
+  }
+}
+
+export function getLastLinkedTechnicianContextSource(): "network" | "cache" {
+  return lastLinkedTechnicianContextSource;
+}
+
+export function getLastTechnicianAssignmentsSource(): "network" | "cache" {
+  return lastTechnicianAssignmentsSource;
+}
+
+export function getLastAssignedIncidentsMapSource(): "network" | "cache" {
+  return lastAssignedIncidentsMapSource;
 }
 
 export async function createTechnicianAssignment(

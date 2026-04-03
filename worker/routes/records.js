@@ -55,12 +55,9 @@ export function createRecordsRouteHandlers({
           gps_capture_source,
           gps_capture_status,
           gps_capture_note,
-          site_lat,
-          site_lng,
-          site_radius_m,
           tenant_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
         .bind(
           payload.timestamp,
@@ -73,9 +70,6 @@ export function createRecordsRouteHandlers({
           payload.os_info,
           payload.notes,
           ...gpsBindValues(gps),
-          payload.site_lat,
-          payload.site_lng,
-          payload.site_radius_m,
           recordsTenantId,
         )
         .run();

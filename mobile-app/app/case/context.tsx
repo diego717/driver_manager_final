@@ -20,7 +20,6 @@ import { extractApiError } from "@/src/api/client";
 import {
   createInstallationRecord,
   listInstallations,
-  updateInstallationRecord,
 } from "@/src/api/incidents";
 import { readStoredWebSession } from "@/src/api/webAuth";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
@@ -31,15 +30,26 @@ import SectionCard from "@/src/components/SectionCard";
 import StatusChip from "@/src/components/StatusChip";
 import TechnicianAssignmentsPanel from "@/src/components/TechnicianAssignmentsPanel";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
-import { captureCurrentGpsSnapshot } from "@/src/services/location";
+import { enqueueCreateCase } from "@/src/services/sync/case-outbox-service";
+import { runSync } from "@/src/services/sync/sync-runner";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
 import { type InstallationRecord } from "@/src/types/api";
-import { formatGpsStatusLabel, formatGpsSummary, hasInstallationSiteConfig } from "@/src/utils/gps";
 import { deriveRecordIncidentSummary } from "@/src/utils/incidents";
 
 const MIN_TOUCH_TARGET_SIZE = 44;
+
+async function isOnline(): Promise<boolean> {
+  try {
+    const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? "";
+    if (!apiBase) return true;
+    await fetch(`${apiBase}/health`, { method: "HEAD", signal: AbortSignal.timeout(3000) });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 type FeedbackState = {
   tone: InlineFeedbackTone;
@@ -73,10 +83,7 @@ export default function CaseContextScreen() {
   );
   const [loadingContext, setLoadingContext] = useState(false);
   const [creatingCase, setCreatingCase] = useState(false);
-  const [capturingSiteGps, setCapturingSiteGps] = useState(false);
-  const [savingSite, setSavingSite] = useState(false);
   const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
-  const [siteRadiusInput, setSiteRadiusInput] = useState("120");
   const [feedbackMessage, setFeedbackMessage] = useState<FeedbackState>(null);
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -114,7 +121,6 @@ export default function CaseContextScreen() {
     [selectedCase],
   );
   const canSendConformity = Boolean(selectedCase) && selectedSummary.active === 0;
-  const caseHasSiteConfig = useMemo(() => hasInstallationSiteConfig(selectedCase), [selectedCase]);
   const canManageTechnicianAssignments =
     webSessionRole === "admin" || webSessionRole === "super_admin" || webSessionRole === "platform_owner";
 
@@ -185,13 +191,6 @@ export default function CaseContextScreen() {
       const [records, assetResponse] = await Promise.all([recordsPromise, assetPromise]);
       setInstallations(records);
       setAssetDetail(assetResponse);
-      const nextCaseId = routeInstallationId || Number(assetResponse?.active_link?.installation_id) || null;
-      const matchedCase = nextCaseId
-        ? records.find((item) => item.id === nextCaseId) || null
-        : null;
-      if (matchedCase && Number.isFinite(Number(matchedCase.site_radius_m)) && Number(matchedCase.site_radius_m) > 0) {
-        setSiteRadiusInput(String(Math.round(Number(matchedCase.site_radius_m))));
-      }
     } catch (error) {
       notify("error", `No se pudo resolver el contexto: ${extractApiError(error)}`);
     } finally {
@@ -231,12 +230,6 @@ export default function CaseContextScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    if (selectedCase && Number.isFinite(Number(selectedCase.site_radius_m)) && Number(selectedCase.site_radius_m) > 0) {
-      setSiteRadiusInput(String(Math.round(Number(selectedCase.site_radius_m))));
-    }
-  }, [selectedCase?.id, selectedCase?.site_radius_m]);
-
   const openWorkCase = useCallback(
     (installationId: number) => {
       router.push(`/work?installationId=${installationId}` as never);
@@ -258,6 +251,25 @@ export default function CaseContextScreen() {
 
     try {
       setCreatingCase(true);
+      const online = await isOnline();
+
+      if (!online) {
+        await enqueueCreateCase({
+          clientName: assetDetail.asset.client_name?.trim() || "Sin cliente",
+          notes: `Caso iniciado desde equipo ${assetDetail.asset.external_code}${assetDetail.asset.notes ? `\n${assetDetail.asset.notes}` : ""}`,
+          status: "manual",
+          driverBrand: assetDetail.asset.brand?.trim() || "Equipo registrado",
+          driverVersion: assetDetail.asset.model?.trim() || "Sin modelo",
+          driverDescription: `Caso creado desde mobile para equipo ${assetDetail.asset.external_code}`,
+          osInfo: "mobile",
+          installationTimeSeconds: 0,
+        });
+        runSync();
+        notify("info", "Caso guardado localmente. Se sincronizara cuando vuelva la conectividad.");
+        router.replace("/(tabs)" as never);
+        return;
+      }
+
       const created = await createInstallationRecord({
         client_name: assetDetail.asset.client_name?.trim() || "Sin cliente",
         notes: `Caso iniciado desde equipo ${assetDetail.asset.external_code}${assetDetail.asset.notes ? `\n${assetDetail.asset.notes}` : ""}`,
@@ -282,61 +294,6 @@ export default function CaseContextScreen() {
       setCreatingCase(false);
     }
   }, [assetDetail, buildIncidentRoute, notify, router]);
-
-  const captureAndSaveSite = useCallback(async () => {
-    if (!selectedCase || capturingSiteGps || savingSite) return;
-
-    const parsedRadius = Number.parseFloat(siteRadiusInput.replace(",", "."));
-    if (!Number.isFinite(parsedRadius) || parsedRadius <= 0) {
-      notify("warning", "Ingresa un radio valido en metros para guardar el sitio.");
-      return;
-    }
-
-    try {
-      setCapturingSiteGps(true);
-      const snapshot = await captureCurrentGpsSnapshot();
-      if (snapshot.status !== "captured" || !Number.isFinite(snapshot.lat) || !Number.isFinite(snapshot.lng)) {
-        notify(
-          "warning",
-          `No se pudo fijar el sitio. ${formatGpsStatusLabel(snapshot.status)}: ${formatGpsSummary(snapshot)}`,
-        );
-        return;
-      }
-
-      setSavingSite(true);
-      await updateInstallationRecord(selectedCase.id, {
-        site_lat: snapshot.lat,
-        site_lng: snapshot.lng,
-        site_radius_m: Math.round(parsedRadius),
-      });
-      await loadContext();
-      notify("success", `Sitio operativo guardado con radio de ${Math.round(parsedRadius)} m.`);
-    } catch (error) {
-      notify("error", `No se pudo guardar el sitio operativo: ${extractApiError(error)}`);
-    } finally {
-      setCapturingSiteGps(false);
-      setSavingSite(false);
-    }
-  }, [capturingSiteGps, loadContext, notify, savingSite, selectedCase, siteRadiusInput]);
-
-  const clearSiteConfig = useCallback(async () => {
-    if (!selectedCase || savingSite) return;
-
-    try {
-      setSavingSite(true);
-      await updateInstallationRecord(selectedCase.id, {
-        site_lat: null,
-        site_lng: null,
-        site_radius_m: null,
-      });
-      await loadContext();
-      notify("success", "Se limpio el sitio operativo del caso.");
-    } catch (error) {
-      notify("error", `No se pudo limpiar el sitio operativo: ${extractApiError(error)}`);
-    } finally {
-      setSavingSite(false);
-    }
-  }, [loadContext, notify, savingSite, selectedCase]);
 
   if (checkingSession) {
     return (
@@ -660,89 +617,6 @@ export default function CaseContextScreen() {
             />
           )}
           </SectionCard>
-
-          {selectedCase ? (
-            <SectionCard
-              title="Referencia operativa"
-              description="Configura el punto y radio de referencia que quedaran asociados a este caso."
-            >
-            <View
-              style={[
-                styles.contextCard,
-                { backgroundColor: palette.surfaceAlt, borderColor: palette.border },
-              ]}
-            >
-              <Text style={[styles.caseTitle, { color: palette.textPrimary }]}>
-                {caseHasSiteConfig ? "Sitio configurado" : "Sin sitio configurado"}
-              </Text>
-              <Text style={[styles.supportText, { color: palette.textSecondary }]}>
-                {caseHasSiteConfig
-                  ? `Lat ${Number(selectedCase.site_lat).toFixed(5)} · Lng ${Number(selectedCase.site_lng).toFixed(5)} · radio ${Math.round(Number(selectedCase.site_radius_m) || 0)} m`
-                  : "Todavia no hay una referencia cargada para este caso. Puedes fijarla desde tu ubicacion actual."}
-              </Text>
-            </View>
-
-            <Text style={[styles.fieldLabel, { color: palette.textPrimary }]}>Radio en metros</Text>
-            <TextInput
-              value={siteRadiusInput}
-              onChangeText={setSiteRadiusInput}
-              keyboardType="numeric"
-              style={[
-                styles.input,
-                { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary },
-              ]}
-              placeholder="120"
-              placeholderTextColor={palette.placeholder}
-              selectionColor={textInputAccentColor}
-              cursorColor={textInputAccentColor}
-              accessibilityLabel="Radio del sitio operativo en metros"
-            />
-
-            <View style={styles.actionColumn}>
-              <TouchableOpacity
-                style={[
-                  styles.primaryButton,
-                  { backgroundColor: palette.primaryButtonBg },
-                  (capturingSiteGps || savingSite) && styles.buttonDisabled,
-                ]}
-                onPress={() => {
-                  void captureAndSaveSite();
-                }}
-                disabled={capturingSiteGps || savingSite}
-                accessibilityRole="button"
-                accessibilityLabel={`Guardar sitio operativo del caso ${selectedCase.id}`}
-                accessibilityState={{ disabled: capturingSiteGps || savingSite, busy: capturingSiteGps || savingSite }}
-              >
-                {capturingSiteGps || savingSite ? (
-                  <ActivityIndicator color={palette.primaryButtonText} />
-                ) : (
-                  <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
-                    Usar ubicacion actual como sitio
-                  </Text>
-                )}
-              </TouchableOpacity>
-              {caseHasSiteConfig ? (
-                <TouchableOpacity
-                  style={[
-                    styles.ghostButton,
-                    { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-                    savingSite && styles.buttonDisabled,
-                  ]}
-                  onPress={() => {
-                    void clearSiteConfig();
-                  }}
-                  disabled={savingSite}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Limpiar sitio operativo del caso ${selectedCase.id}`}
-                >
-                  <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>
-                    Limpiar sitio
-                  </Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-            </SectionCard>
-          ) : null}
 
           {selectedCase ? (
             <SectionCard

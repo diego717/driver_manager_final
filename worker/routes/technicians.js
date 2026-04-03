@@ -14,6 +14,8 @@ export function createTechniciansRouteHandlers({
   logAuditEvent,
   getClientIpForRateLimit,
   nowIso,
+  listDeviceTokensForUserIds,
+  sendPushNotification,
 }) {
   function parseBooleanQuery(value, fallback = false) {
     const normalized = normalizeOptionalString(value, "").toLowerCase();
@@ -132,6 +134,30 @@ export function createTechniciansRouteHandlers({
     return results?.[0] || null;
   }
 
+  async function loadTechnicianByWebUserId(env, webUserId, tenantId) {
+    const { results } = await env.DB.prepare(`
+      SELECT
+        id,
+        tenant_id,
+        web_user_id,
+        display_name,
+        email,
+        phone,
+        employee_code,
+        notes,
+        is_active,
+        created_at,
+        updated_at
+      FROM technicians
+      WHERE web_user_id = ?
+        AND tenant_id = ?
+      LIMIT 1
+    `)
+      .bind(webUserId, tenantId)
+      .all();
+    return results?.[0] || null;
+  }
+
   async function ensureTenantScopedWebUser(env, userId, tenantId) {
     const { results } = await env.DB.prepare(`
       SELECT id, username, tenant_id, is_active
@@ -191,6 +217,121 @@ export function createTechniciansRouteHandlers({
     return false;
   }
 
+  async function loadActiveAssignmentForTechnicianEntity(
+    env,
+    tenantId,
+    technicianId,
+    entityType,
+    entityId,
+    assignmentRole,
+  ) {
+    const { results } = await env.DB.prepare(`
+      SELECT
+        id,
+        tenant_id,
+        technician_id,
+        entity_type,
+        entity_id,
+        assignment_role,
+        assigned_by_user_id,
+        assigned_by_username,
+        assigned_at,
+        unassigned_at,
+        metadata_json
+      FROM technician_assignments
+      WHERE tenant_id = ?
+        AND technician_id = ?
+        AND entity_type = ?
+        AND entity_id = ?
+        AND assignment_role = ?
+        AND unassigned_at IS NULL
+      ORDER BY assigned_at DESC, id DESC
+      LIMIT 1
+    `)
+      .bind(tenantId, technicianId, entityType, entityId, assignmentRole)
+      .all();
+    return results?.[0] || null;
+  }
+
+  async function loadIncidentAssignmentPushContext(env, tenantId, incidentId) {
+    const { results } = await env.DB.prepare(`
+      SELECT
+        id,
+        tenant_id,
+        installation_id,
+        severity,
+        target_lat,
+        target_lng,
+        target_label,
+        dispatch_place_name,
+        dispatch_address,
+        dispatch_reference
+      FROM incidents
+      WHERE id = ?
+        AND tenant_id = ?
+        AND deleted_at IS NULL
+      LIMIT 1
+    `)
+      .bind(incidentId, tenantId)
+      .all();
+    return results?.[0] || null;
+  }
+
+  function buildIncidentAssignmentPushPayload({
+    assignmentId,
+    technicianId,
+    assignmentRole,
+    incident,
+  }) {
+    const incidentId = Number.parseInt(String(incident?.id || ""), 10);
+    const installationId = Number.parseInt(String(incident?.installation_id || ""), 10);
+    if (!Number.isInteger(incidentId) || incidentId <= 0 || !Number.isInteger(installationId) || installationId <= 0) {
+      return null;
+    }
+
+    const placeName = normalizeOptionalString(incident?.dispatch_place_name, "");
+    const address = normalizeOptionalString(incident?.dispatch_address, "");
+    const reference = normalizeOptionalString(incident?.dispatch_reference, "");
+    const label = normalizeOptionalString(incident?.target_label, "");
+    const severity = normalizeOptionalString(incident?.severity, "");
+    const targetLat = normalizeOptionalString(incident?.target_lat, "");
+    const targetLng = normalizeOptionalString(incident?.target_lng, "");
+    const role = normalizeOptionalString(assignmentRole, "owner");
+
+    const contextLabel = placeName || address || label || `instalacion #${installationId}`;
+
+    return {
+      title: "Incidencia asignada",
+      body: `Te asignaron la incidencia #${incidentId} en ${contextLabel}`,
+      data: {
+        path: `/incident/detail?incidentId=${incidentId}&installationId=${installationId}`,
+        incidentId: String(incidentId),
+        incident_id: String(incidentId),
+        installationId: String(installationId),
+        installation_id: String(installationId),
+        technicianId: String(technicianId),
+        technician_id: String(technicianId),
+        assignmentId: String(assignmentId),
+        assignment_id: String(assignmentId),
+        assignmentRole: role,
+        assignment_role: role,
+        severity,
+        targetLabel: label,
+        target_label: label,
+        targetLat,
+        target_lat: targetLat,
+        targetLng,
+        target_lng: targetLng,
+        dispatchPlaceName: placeName,
+        dispatch_place_name: placeName,
+        dispatchAddress: address,
+        dispatch_address: address,
+        dispatchReference: reference,
+        dispatch_reference: reference,
+      },
+    };
+  }
+
   function serializeTechnician(row) {
     if (!row) return null;
     return {
@@ -235,6 +376,169 @@ export function createTechniciansRouteHandlers({
     };
   }
 
+  function getAssignmentSourcePriority(value) {
+    const normalized = normalizeOptionalString(value, "").toLowerCase();
+    if (normalized === "incident") return 0;
+    if (normalized === "installation") return 1;
+    if (normalized === "asset") return 2;
+    return 99;
+  }
+
+  function getAssignmentRolePriority(value) {
+    const normalized = normalizeOptionalString(value, "owner").toLowerCase();
+    if (normalized === "owner") return 0;
+    if (normalized === "assistant") return 1;
+    return 2;
+  }
+
+  function serializeAssignedIncidentMapRow(row) {
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      installation_id: Number(row.installation_id),
+      asset_id:
+        row.asset_id === null || row.asset_id === undefined
+          ? null
+          : Number(row.asset_id),
+      note: normalizeOptionalString(row.note, ""),
+      severity: normalizeOptionalString(row.severity, "low").toLowerCase(),
+      incident_status: normalizeOptionalString(row.incident_status, "open").toLowerCase(),
+      created_at: normalizeOptionalString(row.created_at, ""),
+      target_lat:
+        row.target_lat === null || row.target_lat === undefined
+          ? null
+          : Number(row.target_lat),
+      target_lng:
+        row.target_lng === null || row.target_lng === undefined
+          ? null
+          : Number(row.target_lng),
+      target_label: normalizeOptionalString(row.target_label, "").trim() || null,
+      dispatch_place_name: normalizeOptionalString(row.dispatch_place_name, "").trim() || null,
+      dispatch_address: normalizeOptionalString(row.dispatch_address, "").trim() || null,
+      dispatch_reference: normalizeOptionalString(row.dispatch_reference, "").trim() || null,
+      dispatch_contact_name: normalizeOptionalString(row.dispatch_contact_name, "").trim() || null,
+      dispatch_contact_phone: normalizeOptionalString(row.dispatch_contact_phone, "").trim() || null,
+      dispatch_notes: normalizeOptionalString(row.dispatch_notes, "").trim() || null,
+      installation_client_name:
+        normalizeOptionalString(row.installation_client_name, "").trim() || null,
+      installation_label:
+        normalizeOptionalString(row.installation_label, "").trim() || null,
+      asset_code: normalizeOptionalString(row.asset_code, "").trim() || null,
+      assignment_role: normalizeOptionalString(row.assignment_role, "owner").toLowerCase(),
+      assignment_source: normalizeOptionalString(row.assignment_source, "").toLowerCase() || null,
+      assigned_at: normalizeOptionalString(row.assigned_at, "").trim() || null,
+    };
+  }
+
+  async function loadAssignedIncidentsForTechnicianMap(env, tenantId, technicianId) {
+    const { results } = await env.DB.prepare(`
+      SELECT
+        i.id,
+        i.installation_id,
+        i.asset_id,
+        i.note,
+        i.severity,
+        i.incident_status,
+        i.created_at,
+        i.target_lat,
+        i.target_lng,
+        i.target_label,
+        i.dispatch_place_name,
+        i.dispatch_address,
+        i.dispatch_reference,
+        i.dispatch_contact_name,
+        i.dispatch_contact_phone,
+        i.dispatch_notes,
+        inst.client_name AS installation_client_name,
+        TRIM(
+          COALESCE(inst.client_name, '') ||
+          CASE
+            WHEN NULLIF(TRIM(inst.driver_description), '') IS NOT NULL
+              THEN ' · ' || TRIM(inst.driver_description)
+            ELSE ''
+          END
+        ) AS installation_label,
+        COALESCE(
+          asset.external_code,
+          (
+            SELECT linked_asset.external_code
+            FROM asset_installation_links links
+            INNER JOIN assets linked_asset
+              ON linked_asset.id = links.asset_id
+             AND linked_asset.tenant_id = links.tenant_id
+            WHERE links.installation_id = i.installation_id
+              AND links.tenant_id = i.tenant_id
+              AND links.unlinked_at IS NULL
+            ORDER BY links.linked_at DESC, links.id DESC
+            LIMIT 1
+          )
+        ) AS asset_code,
+        ta.assignment_role,
+        ta.entity_type AS assignment_source,
+        ta.assigned_at
+      FROM technician_assignments ta
+      INNER JOIN incidents i
+        ON (
+          (ta.entity_type = 'incident' AND ta.entity_id = CAST(i.id AS TEXT))
+          OR (ta.entity_type = 'installation' AND ta.entity_id = CAST(i.installation_id AS TEXT))
+          OR (ta.entity_type = 'asset' AND i.asset_id IS NOT NULL AND ta.entity_id = CAST(i.asset_id AS TEXT))
+        )
+       AND i.tenant_id = ta.tenant_id
+       AND i.deleted_at IS NULL
+      INNER JOIN installations inst
+        ON inst.id = i.installation_id
+       AND inst.tenant_id = i.tenant_id
+      LEFT JOIN assets asset
+        ON asset.id = i.asset_id
+       AND asset.tenant_id = i.tenant_id
+      WHERE ta.tenant_id = ?
+        AND ta.technician_id = ?
+        AND ta.unassigned_at IS NULL
+        AND ta.entity_type IN ('incident', 'installation', 'asset')
+        AND LOWER(COALESCE(i.incident_status, 'open')) != 'resolved'
+      ORDER BY
+        CASE ta.entity_type
+          WHEN 'incident' THEN 0
+          WHEN 'installation' THEN 1
+          ELSE 2
+        END ASC,
+        CASE ta.assignment_role
+          WHEN 'owner' THEN 0
+          WHEN 'assistant' THEN 1
+          ELSE 2
+        END ASC,
+        i.created_at DESC,
+        i.id DESC
+    `)
+      .bind(tenantId, technicianId)
+      .all();
+
+    const deduped = new Map();
+    for (const row of results || []) {
+      const incidentId = Number(row?.id);
+      if (!Number.isInteger(incidentId) || incidentId <= 0) continue;
+      const current = deduped.get(incidentId);
+      if (!current) {
+        deduped.set(incidentId, row);
+        continue;
+      }
+      const nextPriority = getAssignmentSourcePriority(row?.assignment_source);
+      const currentPriority = getAssignmentSourcePriority(current?.assignment_source);
+      if (nextPriority < currentPriority) {
+        deduped.set(incidentId, row);
+        continue;
+      }
+      if (
+        nextPriority === currentPriority &&
+        getAssignmentRolePriority(row?.assignment_role) < getAssignmentRolePriority(current?.assignment_role)
+      ) {
+        deduped.set(incidentId, row);
+      }
+    }
+
+    return Array.from(deduped.values()).map(serializeAssignedIncidentMapRow).filter(Boolean);
+  }
+
   async function handleTechniciansRoute(
     request,
     env,
@@ -244,6 +548,44 @@ export function createTechniciansRouteHandlers({
     isWebRoute,
     webSession,
   ) {
+    if (
+      routeParts.length === 2 &&
+      routeParts[0] === "me" &&
+      routeParts[1] === "assigned-incidents-map" &&
+      request.method === "GET"
+    ) {
+      requireAuthenticatedWebSession(isWebRoute, webSession);
+      const sessionTenantId = normalizeRealtimeTenantId(webSession?.tenant_id);
+      const sessionUserId =
+        Number.isInteger(webSession?.user_id) && Number(webSession.user_id) > 0
+          ? Number(webSession.user_id)
+          : null;
+      if (!sessionUserId) {
+        throw new HttpError(401, "Sesion web invalida.");
+      }
+
+      const technician = await loadTechnicianByWebUserId(env, sessionUserId, sessionTenantId);
+      if (!technician) {
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          technician: null,
+          incidents: [],
+        });
+      }
+
+      const incidents = await loadAssignedIncidentsForTechnicianMap(
+        env,
+        sessionTenantId,
+        Number(technician.id),
+      );
+
+      return jsonResponse(request, env, corsPolicy, {
+        success: true,
+        technician: serializeTechnician(technician),
+        incidents,
+      });
+    }
+
     if (!routeParts.length || routeParts[0] !== "technicians") {
       return null;
     }
@@ -499,6 +841,22 @@ export function createTechniciansRouteHandlers({
         throw new HttpError(404, "Entidad de asignacion no encontrada en este tenant.");
       }
 
+      const existingAssignment = await loadActiveAssignmentForTechnicianEntity(
+        env,
+        sessionTenantId,
+        technicianId,
+        payload.entityType,
+        payload.entityId,
+        payload.assignmentRole,
+      );
+      if (existingAssignment) {
+        return jsonResponse(request, env, corsPolicy, {
+          success: true,
+          already_exists: true,
+          assignment: serializeAssignment(existingAssignment),
+        });
+      }
+
       const assignedAt = nowIso();
       const assignedByUserId =
         Number.isInteger(webSession?.user_id) && Number(webSession.user_id) > 0
@@ -568,6 +926,38 @@ export function createTechniciansRouteHandlers({
         ipAddress: getClientIpForRateLimit(request),
         platform: "web",
       });
+
+      if (
+        payload.entityType === "incident" &&
+        technician?.web_user_id !== null &&
+        technician?.web_user_id !== undefined
+      ) {
+        try {
+          const incident = await loadIncidentAssignmentPushContext(
+            env,
+            sessionTenantId,
+            Number.parseInt(payload.entityId, 10),
+          );
+          const notification = buildIncidentAssignmentPushPayload({
+            assignmentId,
+            technicianId,
+            assignmentRole: payload.assignmentRole,
+            incident,
+          });
+          if (notification) {
+            const fcmTokens = await listDeviceTokensForUserIds(
+              env,
+              [Number(technician.web_user_id)],
+              sessionTenantId,
+            );
+            if (fcmTokens.length > 0) {
+              await sendPushNotification(env, fcmTokens, notification);
+            }
+          }
+        } catch {
+          // Best effort: una falla de push no debe impedir registrar la asignacion.
+        }
+      }
 
       return jsonResponse(request, env, corsPolicy, {
         success: true,

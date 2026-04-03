@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls as QQC2
 
 Rectangle {
     id: root
@@ -1014,13 +1015,14 @@ Rectangle {
                                                 required property string meta
                                                 required property string tag
                                                 width: ListView.view.width
-                                                height: 84
+                                                implicitHeight: recordCardColumn.implicitHeight + 28
                                                 radius: 16
                                                 color: ListView.isCurrentItem ? "#d5e4f3" : "#ffffff"
                                                 border.width: 1
                                                 border.color: ListView.isCurrentItem ? "#3a6a95" : root.line
 
                                                 Column {
+                                                    id: recordCardColumn
                                                     anchors.fill: parent
                                                     anchors.margins: 14
                                                     spacing: 4
@@ -1031,7 +1033,8 @@ Rectangle {
                                                         font.family: root.displayFamily()
                                                         font.pixelSize: 18
                                                         font.weight: Font.Bold
-                                                        elide: Text.ElideRight
+                                                        width: parent.width
+                                                        wrapMode: Text.WordWrap
                                                     }
 
                                                     Text {
@@ -1039,7 +1042,8 @@ Rectangle {
                                                         color: root.subInk
                                                         font.family: root.bodyFamily()
                                                         font.pixelSize: 12
-                                                        elide: Text.ElideRight
+                                                        width: parent.width
+                                                        wrapMode: Text.WordWrap
                                                     }
 
                                                     Text {
@@ -1048,6 +1052,8 @@ Rectangle {
                                                         font.family: root.bodyFamily()
                                                         font.pixelSize: 12
                                                         font.weight: Font.DemiBold
+                                                        width: parent.width
+                                                        wrapMode: Text.WordWrap
                                                     }
                                                 }
 
@@ -1081,6 +1087,7 @@ Rectangle {
                                         id: incidentsPanelContent
                                         width: parent.width
                                         spacing: 14
+                                        property bool compactSecondaryPanels: width < 980
 
                                         Text {
                                             text: incidentsBridge.selectedIncidentTitle
@@ -1101,7 +1108,7 @@ Rectangle {
 
                                         Rectangle {
                                             width: parent.width
-                                            height: 184
+                                            height: Math.min(236, Math.max(112, incidentsListView.contentHeight + 16))
                                             radius: 18
                                             color: "#183049"
                                             border.width: 1
@@ -1122,13 +1129,14 @@ Rectangle {
                                                     required property string meta
                                                     required property string tag
                                                     width: ListView.view.width
-                                                    height: 84
+                                                    implicitHeight: incidentCardColumn.implicitHeight + 28
                                                     radius: 15
                                                     color: ListView.isCurrentItem ? "#2b4763" : "#14283e"
                                                     border.width: 1
                                                     border.color: ListView.isCurrentItem ? "#d0ad72" : "#2a4765"
 
                                                     Column {
+                                                        id: incidentCardColumn
                                                         anchors.fill: parent
                                                         anchors.margins: 14
                                                         spacing: 4
@@ -1139,7 +1147,8 @@ Rectangle {
                                                             font.family: root.displayFamily()
                                                             font.pixelSize: 18
                                                             font.weight: Font.Bold
-                                                            elide: Text.ElideRight
+                                                            width: parent.width
+                                                            wrapMode: Text.WordWrap
                                                         }
 
                                                         Text {
@@ -1147,7 +1156,8 @@ Rectangle {
                                                             color: "#9ab8d5"
                                                             font.family: root.bodyFamily()
                                                             font.pixelSize: 12
-                                                            elide: Text.ElideRight
+                                                            width: parent.width
+                                                            wrapMode: Text.WordWrap
                                                         }
 
                                                         Text {
@@ -1155,8 +1165,9 @@ Rectangle {
                                                             color: "#d0ad72"
                                                             font.family: root.bodyFamily()
                                                             font.pixelSize: 12
-                                                            elide: Text.ElideRight
-                                                            maximumLineCount: 1
+                                                            width: parent.width
+                                                            wrapMode: Text.WordWrap
+                                                            maximumLineCount: 2
                                                         }
                                                     }
 
@@ -1171,7 +1182,8 @@ Rectangle {
                                             }
                                         }
 
-                                        Row {
+                                        Flow {
+                                            width: parent.width
                                             spacing: 10
 
                                             Rectangle {
@@ -1263,13 +1275,15 @@ Rectangle {
                                             }
                                         }
 
-                                        RowLayout {
+                                        GridLayout {
                                             width: parent.width
-                                            spacing: 14
+                                            columns: incidentsPanelContent.compactSecondaryPanels ? 1 : 2
+                                            rowSpacing: 14
+                                            columnSpacing: 14
 
                                             Rectangle {
                                                 Layout.fillWidth: true
-                                                Layout.preferredHeight: 356
+                                                Layout.preferredHeight: 392
                                                 radius: 18
                                                 color: "#183049"
                                                 border.width: 1
@@ -1284,7 +1298,7 @@ Rectangle {
 
                                                     Rectangle {
                                                         width: parent.width
-                                                        height: 238
+                                                        height: 274
                                                         radius: 14
                                                         color: "#14283e"
                                                         border.width: 1
@@ -1406,7 +1420,7 @@ Rectangle {
 
                                             Rectangle {
                                                 Layout.fillWidth: true
-                                                Layout.preferredHeight: 356
+                                                Layout.preferredHeight: 392
                                                 radius: 18
                                                 color: "#183049"
                                                 border.width: 1
@@ -1419,24 +1433,93 @@ Rectangle {
 
                                                     Text { text: "Asignaciones"; color: "#eef5fb"; font.family: root.displayFamily(); font.pixelSize: 20; font.weight: Font.Bold }
 
+                                                    Rectangle {
+                                                        width: parent.width
+                                                        height: 92
+                                                        radius: 14
+                                                        color: "#14283e"
+                                                        border.width: 1
+                                                        border.color: "#2a4765"
+
+                                                        Column {
+                                                            anchors.fill: parent
+                                                            anchors.margins: 12
+                                                            spacing: 4
+
+                                                            Text {
+                                                                text: incidentsBridge.assignmentPanelTitle
+                                                                color: "#eef5fb"
+                                                                font.family: root.displayFamily()
+                                                                font.pixelSize: 18
+                                                                font.weight: Font.Bold
+                                                                width: parent.width
+                                                                wrapMode: Text.WordWrap
+                                                            }
+
+                                                            Text {
+                                                                text: incidentsBridge.assignmentPanelMeta
+                                                                color: "#9ab8d5"
+                                                                font.family: root.bodyFamily()
+                                                                font.pixelSize: 12
+                                                                wrapMode: Text.WordWrap
+                                                            }
+                                                        }
+                                                    }
+
+                                                    Flow {
+                                                        width: parent.width
+                                                        spacing: 10
+
+                                                        Rectangle {
+                                                            width: 120
+                                                            height: 42
+                                                            radius: 14
+                                                            color: incidentsBridge.canManageAssignments ? "#14283e" : "#44586d"
+                                                            border.width: 1
+                                                            border.color: incidentsBridge.canManageAssignments ? "#35516d" : "#546b81"
+                                                            Text { anchors.centerIn: parent; text: "Actualizar"; color: "#eef5fb"; font.family: root.bodyFamily(); font.pixelSize: 13; font.weight: Font.Bold }
+                                                            MouseArea { anchors.fill: parent; enabled: incidentsBridge.canManageAssignments; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: incidentsBridge.refreshAssignments() }
+                                                        }
+
+                                                        Rectangle {
+                                                            width: 132
+                                                            height: 42
+                                                            radius: 14
+                                                            color: incidentsBridge.canManageAssignments ? "#f4f8fd" : "#94a8bb"
+                                                            Text { anchors.centerIn: parent; text: "Asignar"; color: "#102033"; font.family: root.bodyFamily(); font.pixelSize: 13; font.weight: Font.Bold }
+                                                            MouseArea { anchors.fill: parent; enabled: incidentsBridge.canManageAssignments; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: incidentsBridge.assignTechnician() }
+                                                        }
+
+                                                        Rectangle {
+                                                            width: 132
+                                                            height: 42
+                                                            radius: 14
+                                                            color: incidentsBridge.canRemoveAssignment ? "#d0ad72" : "#8b7a61"
+                                                            Text { anchors.centerIn: parent; text: "Quitar"; color: "#102033"; font.family: root.bodyFamily(); font.pixelSize: 13; font.weight: Font.Bold }
+                                                            MouseArea { anchors.fill: parent; enabled: incidentsBridge.canRemoveAssignment; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: incidentsBridge.removeAssignment() }
+                                                        }
+                                                    }
+
                                                     ListView {
                                                         anchors.left: parent.left
                                                         anchors.right: parent.right
-                                                        height: 160
+                                                        height: 196
                                                         clip: true
                                                         spacing: 8
                                                         model: incidentsBridge.assignmentsListModel
+                                                        currentIndex: incidentsBridge.currentAssignmentIndex
 
                                                         delegate: Rectangle {
+                                                            required property int index
                                                             required property string title
                                                             required property string meta
                                                             required property string tag
                                                             width: ListView.view.width
                                                             height: 62
                                                             radius: 14
-                                                            color: "#14283e"
+                                                            color: ListView.isCurrentItem ? "#2b4763" : "#14283e"
                                                             border.width: 1
-                                                            border.color: "#2a4765"
+                                                            border.color: ListView.isCurrentItem ? "#d0ad72" : "#2a4765"
 
                                                             Column {
                                                                 anchors.fill: parent
@@ -1446,6 +1529,507 @@ Rectangle {
                                                                 Text { text: title; color: "#eef5fb"; font.family: root.bodyFamily(); font.pixelSize: 13; font.weight: Font.DemiBold; elide: Text.ElideRight }
                                                                 Text { text: (meta ? meta + " - " : "") + tag; color: "#9ab8d5"; font.family: root.bodyFamily(); font.pixelSize: 11; elide: Text.ElideRight }
                                                             }
+
+                                                            MouseArea {
+                                                                anchors.fill: parent
+                                                                onClicked: {
+                                                                    ListView.view.currentIndex = index
+                                                                    incidentsBridge.selectAssignment(index)
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Item {
+                        anchors.fill: parent
+                        anchors.margins: 18
+                        visible: root.currentScreen === 2
+
+                        RowLayout {
+                            anchors.fill: parent
+                            spacing: 18
+
+                            Rectangle {
+                                Layout.preferredWidth: 428
+                                Layout.fillHeight: true
+                                radius: 22
+                                color: "#edf4fb"
+                                border.width: 1
+                                border.color: root.line
+
+                                Column {
+                                    anchors.fill: parent
+                                    anchors.margins: 18
+                                    spacing: 12
+
+                                    Text {
+                                        text: "Registros historicos"
+                                        color: root.ink
+                                        font.family: root.displayFamily()
+                                        font.pixelSize: 29
+                                        font.weight: Font.Bold
+                                    }
+
+                                    Text {
+                                        text: "Seguimiento real del historial con resumen ejecutivo y acceso directo a reportes en Excel."
+                                        color: root.subInk
+                                        width: parent.width
+                                        wrapMode: Text.WordWrap
+                                        font.family: root.bodyFamily()
+                                        font.pixelSize: 13
+                                    }
+
+                                    Row {
+                                        width: parent.width
+                                        spacing: 10
+
+                                        Repeater {
+                                            model: [
+                                                [historyBridge.totalRecordsMetric, "Registros"],
+                                                [historyBridge.successRateMetric, "Exito"],
+                                                [historyBridge.failedMetric, "Fallidas"],
+                                                [historyBridge.selectedMonthMetric, "Mes"]
+                                            ]
+
+                                            delegate: Rectangle {
+                                                required property var modelData
+                                                width: 88
+                                                height: 72
+                                                radius: 18
+                                                color: "#f7fbff"
+                                                border.width: 1
+                                                border.color: root.line
+
+                                                Column {
+                                                    anchors.centerIn: parent
+                                                    spacing: 2
+
+                                                    Text {
+                                                        anchors.horizontalCenter: parent.horizontalCenter
+                                                        text: modelData[0]
+                                                        color: root.ink
+                                                        font.family: root.displayFamily()
+                                                        font.pixelSize: 26
+                                                        font.weight: Font.Bold
+                                                    }
+
+                                                    Text {
+                                                        anchors.horizontalCenter: parent.horizontalCenter
+                                                        text: modelData[1]
+                                                        color: root.subInk
+                                                        font.family: root.bodyFamily()
+                                                        font.pixelSize: 12
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Row {
+                                        width: parent.width
+                                        spacing: 8
+
+                                        Repeater {
+                                            model: [historyBridge.currentLimit, historyBridge.currentMonth, historyBridge.currentYear]
+
+                                            delegate: Rectangle {
+                                                required property int index
+                                                required property string modelData
+                                                width: index === 1 ? 124 : 110
+                                                height: 42
+                                                radius: 14
+                                                color: "#f7fbff"
+                                                border.width: 1
+                                                border.color: root.line
+
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: modelData
+                                                    color: root.ink
+                                                    font.family: root.bodyFamily()
+                                                    font.pixelSize: 13
+                                                    font.weight: Font.DemiBold
+                                                }
+
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        if (index === 0) {
+                                                            var limits = historyBridge.limitOptions
+                                                            var currentLimitIndex = limits.indexOf(historyBridge.currentLimit)
+                                                            historyBridge.setLimitFilter(limits[(currentLimitIndex + 1) % limits.length])
+                                                        } else if (index === 1) {
+                                                            var months = historyBridge.monthOptions
+                                                            var currentMonthIndex = months.indexOf(historyBridge.currentMonth)
+                                                            historyBridge.setMonthFilter(months[(currentMonthIndex + 1) % months.length])
+                                                        } else {
+                                                            var years = historyBridge.yearOptions
+                                                            var currentYearIndex = years.indexOf(historyBridge.currentYear)
+                                                            historyBridge.setYearFilter(years[(currentYearIndex + 1) % years.length])
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: parent.width
+                                        height: 42
+                                        radius: 14
+                                        color: "#f7fbff"
+                                        border.width: 1
+                                        border.color: root.line
+
+                                        Row {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 14
+                                            anchors.rightMargin: 14
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            spacing: 10
+
+                                            Rectangle {
+                                                width: 10
+                                                height: 10
+                                                radius: 5
+                                                color: historyBridge.busy ? "#c0862d" : "#3a6a95"
+                                            }
+
+                                            Text {
+                                                text: historyBridge.statusMessage
+                                                color: root.subInk
+                                                font.family: root.bodyFamily()
+                                                font.pixelSize: 13
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: parent.width
+                                        height: 46
+                                        radius: 15
+                                        color: "#102033"
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: historyBridge.busy ? "Actualizando..." : "Actualizar historial"
+                                            color: "#f4f8fd"
+                                            font.family: root.bodyFamily()
+                                            font.pixelSize: 14
+                                            font.weight: Font.Bold
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            enabled: !historyBridge.busy
+                                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                            onClicked: historyBridge.refreshHistory()
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: parent.width
+                                        height: parent.height - 260
+                                        radius: 18
+                                        color: "#f7fbff"
+                                        border.width: 1
+                                        border.color: root.line
+
+                                        ListView {
+                                            id: historyRecordsListView
+                                            anchors.fill: parent
+                                            anchors.margins: 8
+                                            clip: true
+                                            spacing: 8
+                                            model: historyBridge.recordsListModel
+                                            currentIndex: historyBridge.currentRecordIndex
+
+                                            delegate: Rectangle {
+                                                required property int index
+                                                required property string title
+                                                required property string meta
+                                                required property string tag
+                                                width: ListView.view.width
+                                                height: 84
+                                                radius: 16
+                                                color: ListView.isCurrentItem ? "#d5e4f3" : "#ffffff"
+                                                border.width: 1
+                                                border.color: ListView.isCurrentItem ? "#3a6a95" : root.line
+
+                                                Column {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 14
+                                                    spacing: 4
+
+                                                    Text {
+                                                        text: title
+                                                        color: root.ink
+                                                        font.family: root.displayFamily()
+                                                        font.pixelSize: 18
+                                                        font.weight: Font.Bold
+                                                        elide: Text.ElideRight
+                                                    }
+
+                                                    Text {
+                                                        text: meta
+                                                        color: root.subInk
+                                                        font.family: root.bodyFamily()
+                                                        font.pixelSize: 12
+                                                        elide: Text.ElideRight
+                                                    }
+
+                                                    Text {
+                                                        text: tag
+                                                        color: "#3a6a95"
+                                                        font.family: root.bodyFamily()
+                                                        font.pixelSize: 12
+                                                        font.weight: Font.DemiBold
+                                                    }
+                                                }
+
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        historyRecordsListView.currentIndex = index
+                                                        historyBridge.selectRecord(index)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                radius: 22
+                                color: "#102033"
+
+                                Flickable {
+                                    anchors.fill: parent
+                                    anchors.margins: 22
+                                    clip: true
+                                    contentWidth: width
+                                    contentHeight: historyPanelContent.implicitHeight
+
+                                    Column {
+                                        id: historyPanelContent
+                                        width: parent.width
+                                        spacing: 16
+
+                                        Text {
+                                            text: "Centro de reportes"
+                                            color: "#f3f8fd"
+                                            font.family: root.displayFamily()
+                                            font.pixelSize: 34
+                                            font.weight: Font.Bold
+                                        }
+
+                                        Text {
+                                            text: "Genera reportes diarios, mensuales y anuales sin volver a la app legacy, manteniendo una lectura ejecutiva del historial."
+                                            color: "#9ab8d5"
+                                            width: parent.width - 8
+                                            wrapMode: Text.WordWrap
+                                            font.family: root.bodyFamily()
+                                            font.pixelSize: 14
+                                        }
+
+                                        Rectangle {
+                                            width: parent.width
+                                            radius: 22
+                                            color: "#183049"
+                                            border.width: 1
+                                            border.color: "#2a4765"
+                                            implicitHeight: previewColumn.implicitHeight + 28
+
+                                            Column {
+                                                id: previewColumn
+                                                anchors.fill: parent
+                                                anchors.margins: 14
+                                                spacing: 10
+
+                                                Text {
+                                                    text: "Resumen ejecutivo"
+                                                    color: "#eef5fb"
+                                                    font.family: root.displayFamily()
+                                                    font.pixelSize: 22
+                                                    font.weight: Font.Bold
+                                                }
+
+                                                Text {
+                                                    text: historyBridge.reportPreview
+                                                    color: "#d8e4f0"
+                                                    width: parent.width
+                                                    wrapMode: Text.WordWrap
+                                                    font.family: root.monoFamily()
+                                                    font.pixelSize: 13
+                                                    lineHeight: 1.28
+                                                }
+                                            }
+                                        }
+
+                                        Row {
+                                            spacing: 10
+
+                                            Rectangle {
+                                                width: 156
+                                                height: 46
+                                                radius: 15
+                                                color: historyBridge.busy ? "#8b7a61" : "#d0ad72"
+                                                Text { anchors.centerIn: parent; text: "Reporte diario"; color: "#102033"; font.family: root.bodyFamily(); font.pixelSize: 14; font.weight: Font.Bold }
+                                                MouseArea { anchors.fill: parent; enabled: !historyBridge.busy; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: historyBridge.generateDailyReport() }
+                                            }
+
+                                            Rectangle {
+                                                width: 170
+                                                height: 46
+                                                radius: 15
+                                                color: historyBridge.busy ? "#94a8bb" : "#f4f8fd"
+                                                Text { anchors.centerIn: parent; text: "Reporte mensual"; color: "#102033"; font.family: root.bodyFamily(); font.pixelSize: 14; font.weight: Font.Bold }
+                                                MouseArea { anchors.fill: parent; enabled: !historyBridge.busy; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: historyBridge.generateMonthlyReport() }
+                                            }
+
+                                            Rectangle {
+                                                width: 150
+                                                height: 46
+                                                radius: 15
+                                                color: historyBridge.busy ? "#94a8bb" : "#f4f8fd"
+                                                Text { anchors.centerIn: parent; text: "Reporte anual"; color: "#102033"; font.family: root.bodyFamily(); font.pixelSize: 14; font.weight: Font.Bold }
+                                                MouseArea { anchors.fill: parent; enabled: !historyBridge.busy; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: historyBridge.generateYearlyReport() }
+                                            }
+                                        }
+
+                                        Row {
+                                            spacing: 10
+
+                                            Rectangle {
+                                                width: 164
+                                                height: 42
+                                                radius: 14
+                                                color: historyBridge.hasLastReport ? "#f4f8fd" : "#7f91a3"
+                                                Text { anchors.centerIn: parent; text: "Abrir ultimo reporte"; color: "#102033"; font.family: root.bodyFamily(); font.pixelSize: 13; font.weight: Font.Bold }
+                                                MouseArea { anchors.fill: parent; enabled: historyBridge.hasLastReport; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: historyBridge.openLastReport() }
+                                            }
+
+                                            Rectangle {
+                                                width: 172
+                                                height: 42
+                                                radius: 14
+                                                color: "#14283e"
+                                                border.width: 1
+                                                border.color: "#35516d"
+                                                Text { anchors.centerIn: parent; text: "Abrir Descargas"; color: "#eef5fb"; font.family: root.bodyFamily(); font.pixelSize: 13; font.weight: Font.DemiBold }
+                                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: historyBridge.openDownloadsFolder() }
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            width: parent.width
+                                            spacing: 14
+
+                                            Rectangle {
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: 278
+                                                radius: 18
+                                                color: "#183049"
+                                                border.width: 1
+                                                border.color: "#2a4765"
+
+                                                Column {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 14
+                                                    spacing: 10
+
+                                                    Text {
+                                                        text: "Registro seleccionado"
+                                                        color: "#eef5fb"
+                                                        font.family: root.displayFamily()
+                                                        font.pixelSize: 20
+                                                        font.weight: Font.Bold
+                                                    }
+
+                                                    Text {
+                                                        text: historyBridge.selectedRecordTitle
+                                                        color: "#f4f8fd"
+                                                        font.family: root.displayFamily()
+                                                        font.pixelSize: 24
+                                                        font.weight: Font.Bold
+                                                        width: parent.width
+                                                        wrapMode: Text.WordWrap
+                                                    }
+
+                                                    Text {
+                                                        text: historyBridge.selectedRecordMeta
+                                                        color: "#9ab8d5"
+                                                        width: parent.width
+                                                        wrapMode: Text.WordWrap
+                                                        font.family: root.bodyFamily()
+                                                        font.pixelSize: 13
+                                                    }
+
+                                                    Text {
+                                                        text: historyBridge.selectedRecordDetails
+                                                        color: "#d8e4f0"
+                                                        width: parent.width
+                                                        wrapMode: Text.WordWrap
+                                                        font.family: root.bodyFamily()
+                                                        font.pixelSize: 13
+                                                        lineHeight: 1.3
+                                                    }
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: 278
+                                                radius: 18
+                                                color: "#14283e"
+                                                border.width: 1
+                                                border.color: "#2a4765"
+
+                                                Column {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 14
+                                                    spacing: 10
+
+                                                    Text {
+                                                        text: "Uso sugerido"
+                                                        color: "#eef5fb"
+                                                        font.family: root.displayFamily()
+                                                        font.pixelSize: 20
+                                                        font.weight: Font.Bold
+                                                    }
+
+                                                    Repeater {
+                                                        model: [
+                                                            "Cambia mes y ano desde los filtros del rail izquierdo para recalcular el resumen ejecutivo.",
+                                                            "Genera el reporte diario cuando quieras un corte rapido operativo del turno o de la jornada.",
+                                                            "Usa el reporte mensual como salida principal para administracion y seguimiento por cliente.",
+                                                            "Abre el ultimo reporte o Descargas sin salir de esta pantalla."
+                                                        ]
+
+                                                        delegate: Text {
+                                                            required property string modelData
+                                                            text: "• " + modelData
+                                                            color: "#9ab8d5"
+                                                            width: parent.width
+                                                            wrapMode: Text.WordWrap
+                                                            font.family: root.bodyFamily()
+                                                            font.pixelSize: 13
+                                                            lineHeight: 1.3
                                                         }
                                                     }
                                                 }
@@ -1460,43 +2044,892 @@ Rectangle {
                     Item {
                         anchors.fill: parent
                         anchors.margins: 18
-                        visible: root.currentScreen === 2
-
-                        Column {
-                            anchors.fill: parent
-                            spacing: 18
-
-                            Text {
-                                text: "Historial / reportes"
-                                color: root.ink
-                                font.family: root.displayFamily()
-                                font.pixelSize: 36
-                                font.weight: Font.Bold
-                            }
-
-                            RowLayout {
-                                width: parent.width
-                                spacing: 18
-
-                                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 220; radius: 22; color: root.card; border.width: 1; border.color: root.line }
-                                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 220; radius: 22; color: root.cardSoft; border.width: 1; border.color: root.line }
-                            }
-
-                            Rectangle { width: parent.width; height: 260; radius: 24; color: root.card; border.width: 1; border.color: root.line }
-                        }
-                    }
-
-                    Item {
-                        anchors.fill: parent
-                        anchors.margins: 18
                         visible: root.currentScreen === 3
 
                         RowLayout {
                             anchors.fill: parent
                             spacing: 18
 
-                            Rectangle { Layout.preferredWidth: 420; Layout.fillHeight: true; radius: 22; color: root.cardSoft; border.width: 1; border.color: root.line }
-                            Rectangle { Layout.fillWidth: true; Layout.fillHeight: true; radius: 22; color: root.card; border.width: 1; border.color: root.line }
+                            Rectangle {
+                                Layout.preferredWidth: 420
+                                Layout.fillHeight: true
+                                radius: 22
+                                color: "#edf4fb"
+                                border.width: 1
+                                border.color: root.line
+
+                                Column {
+                                    anchors.fill: parent
+                                    anchors.margins: 18
+                                    spacing: 12
+
+                                    Text {
+                                        text: "Gobierno y sesion"
+                                        color: root.ink
+                                        font.family: root.displayFamily()
+                                        font.pixelSize: 29
+                                        font.weight: Font.Bold
+                                    }
+
+                                    Text {
+                                        text: "Primera capa funcional de administracion v2, enfocada en accesos reales y lectura del estado actual."
+                                        color: root.subInk
+                                        width: parent.width
+                                        wrapMode: Text.WordWrap
+                                        font.family: root.bodyFamily()
+                                        font.pixelSize: 13
+                                    }
+
+                                    Rectangle {
+                                        width: parent.width
+                                        height: 128
+                                        radius: 18
+                                        color: "#f7fbff"
+                                        border.width: 1
+                                        border.color: root.line
+
+                                        Column {
+                                            anchors.fill: parent
+                                            anchors.margins: 14
+                                            spacing: 6
+
+                                            Text {
+                                                text: adminBridge.currentUsername
+                                                color: root.ink
+                                                font.family: root.displayFamily()
+                                                font.pixelSize: 28
+                                                font.weight: Font.Bold
+                                            }
+
+                                            Text {
+                                                text: adminBridge.currentRole + " · " + adminBridge.currentTenant
+                                                color: root.subInk
+                                                font.family: root.monoFamily()
+                                                font.pixelSize: 12
+                                            }
+
+                                            Text {
+                                                text: adminBridge.authSummary
+                                                color: root.subInk
+                                                width: parent.width
+                                                wrapMode: Text.WordWrap
+                                                font.family: root.bodyFamily()
+                                                font.pixelSize: 13
+                                            }
+                                        }
+                                    }
+
+                                    Repeater {
+                                        model: [
+                                            ["Usuarios", adminBridge.canManageUsers ? "Alta, roles y permisos disponibles." : "Visible pero restringido para la sesion actual."],
+                                            ["Activos", adminBridge.canManageAssets ? "Inventario, relaciones e historial tecnico." : "Sesion sin permisos de gestion sobre activos."],
+                                            ["Plataforma", adminBridge.canManagePlatform ? "Slice inicial listo para seguir migrando config y hardening." : "Vista de solo lectura para esta sesion."]
+                                        ]
+
+                                        delegate: Rectangle {
+                                            required property var modelData
+                                            width: parent.width
+                                            height: 92
+                                            radius: 18
+                                            color: "#f7fbff"
+                                            border.width: 1
+                                            border.color: root.line
+
+                                            Column {
+                                                anchors.fill: parent
+                                                anchors.margins: 14
+                                                spacing: 4
+
+                                                Text {
+                                                    text: modelData[0]
+                                                    color: root.ink
+                                                    font.family: root.displayFamily()
+                                                    font.pixelSize: 20
+                                                    font.weight: Font.Bold
+                                                }
+
+                                                Text {
+                                                    text: modelData[1]
+                                                    color: root.subInk
+                                                    width: parent.width
+                                                    wrapMode: Text.WordWrap
+                                                    font.family: root.bodyFamily()
+                                                    font.pixelSize: 12
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: parent.width
+                                        height: 42
+                                        radius: 14
+                                        color: "#f7fbff"
+                                        border.width: 1
+                                        border.color: root.line
+
+                                        Row {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 14
+                                            anchors.rightMargin: 14
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            spacing: 10
+
+                                            Rectangle {
+                                                width: 10
+                                                height: 10
+                                                radius: 5
+                                                color: "#3a6a95"
+                                            }
+
+                                            Text {
+                                                text: adminBridge.statusMessage
+                                                color: root.subInk
+                                                font.family: root.bodyFamily()
+                                                font.pixelSize: 13
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                radius: 22
+                                color: "#102033"
+
+                                Flickable {
+                                    anchors.fill: parent
+                                    anchors.margins: 22
+                                    clip: true
+                                    contentWidth: width
+                                    contentHeight: adminPanelContent.implicitHeight
+
+                                    Column {
+                                        id: adminPanelContent
+                                        width: parent.width
+                                        spacing: 16
+
+                                        Text {
+                                            text: "Centro administrativo"
+                                            color: "#f3f8fd"
+                                            font.family: root.displayFamily()
+                                            font.pixelSize: 34
+                                            font.weight: Font.Bold
+                                        }
+
+                                        Text {
+                                            text: "Accesos rapidos a los modulos que ya existen, mientras seguimos migrando configuracion sensible y gobierno de plataforma a esta base nueva."
+                                            color: "#9ab8d5"
+                                            width: parent.width
+                                            wrapMode: Text.WordWrap
+                                            font.family: root.bodyFamily()
+                                            font.pixelSize: 14
+                                        }
+
+                                        RowLayout {
+                                            width: parent.width
+                                            spacing: 14
+
+                                            Repeater {
+                                                model: [
+                                                    ["Gestionar usuarios", "Administra altas, roles y permisos desde el dialogo actual.", adminBridge.canManageUsers, "users"],
+                                                    ["Gestion de equipos", "Abre inventario y relaciones sin volver a la UI legacy.", adminBridge.canManageAssets, "assets"],
+                                                    ["QR operativo", "Genera codigos locales para activos o instalaciones.", true, "qr"]
+                                                ]
+
+                                                delegate: Rectangle {
+                                                    required property var modelData
+                                                    Layout.fillWidth: true
+                                                    Layout.preferredHeight: 156
+                                                    radius: 20
+                                                    color: "#183049"
+                                                    border.width: 1
+                                                    border.color: "#2a4765"
+
+                                                    Column {
+                                                        anchors.fill: parent
+                                                        anchors.margins: 16
+                                                        spacing: 8
+
+                                                        Text {
+                                                            text: modelData[0]
+                                                            color: "#eef5fb"
+                                                            font.family: root.displayFamily()
+                                                            font.pixelSize: 23
+                                                            font.weight: Font.Bold
+                                                            width: parent.width
+                                                            wrapMode: Text.WordWrap
+                                                        }
+
+                                                        Text {
+                                                            text: modelData[1]
+                                                            color: "#9ab8d5"
+                                                            width: parent.width
+                                                            wrapMode: Text.WordWrap
+                                                            font.family: root.bodyFamily()
+                                                            font.pixelSize: 13
+                                                        }
+
+                                                        Rectangle {
+                                                            width: 150
+                                                            height: 42
+                                                            radius: 14
+                                                            color: modelData[2] ? "#f4f8fd" : "#7f91a3"
+
+                                                            Text {
+                                                                anchors.centerIn: parent
+                                                                text: modelData[2] ? "Abrir modulo" : "Sin acceso"
+                                                                color: "#102033"
+                                                                font.family: root.bodyFamily()
+                                                                font.pixelSize: 13
+                                                                font.weight: Font.Bold
+                                                            }
+
+                                                            MouseArea {
+                                                                anchors.fill: parent
+                                                                enabled: modelData[2]
+                                                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                                                onClicked: {
+                                                                    if (modelData[3] === "users") adminBridge.openUserManagement()
+                                                                    else if (modelData[3] === "assets") adminBridge.openAssetManagement()
+                                                                    else if (modelData[3] === "qr") adminBridge.openQrGenerator()
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: parent.width
+                                            radius: 22
+                                            color: "#183049"
+                                            border.width: 1
+                                            border.color: "#2a4765"
+                                            implicitHeight: adminOpsColumn.implicitHeight + 28
+
+                                            Column {
+                                                id: adminOpsColumn
+                                                anchors.fill: parent
+                                                anchors.margins: 14
+                                                spacing: 12
+
+                                                Text {
+                                                    text: "Utilidades del entorno"
+                                                    color: "#eef5fb"
+                                                    font.family: root.displayFamily()
+                                                    font.pixelSize: 22
+                                                    font.weight: Font.Bold
+                                                }
+
+                                                Text {
+                                                    text: "Atajos para verificar salida generada y estado local mientras la migracion sigue avanzando."
+                                                    color: "#9ab8d5"
+                                                    width: parent.width
+                                                    wrapMode: Text.WordWrap
+                                                    font.family: root.bodyFamily()
+                                                    font.pixelSize: 13
+                                                }
+
+                                                Row {
+                                                    spacing: 10
+
+                                                    Rectangle {
+                                                        width: 164
+                                                        height: 42
+                                                        radius: 14
+                                                        color: "#f4f8fd"
+                                                        Text { anchors.centerIn: parent; text: "Abrir Descargas"; color: "#102033"; font.family: root.bodyFamily(); font.pixelSize: 13; font.weight: Font.Bold }
+                                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: adminBridge.openDownloadsFolder() }
+                                                    }
+
+                                                    Rectangle {
+                                                        width: 150
+                                                        height: 42
+                                                        radius: 14
+                                                        color: "#14283e"
+                                                        border.width: 1
+                                                        border.color: "#35516d"
+                                                        Text { anchors.centerIn: parent; text: "Abrir cache"; color: "#eef5fb"; font.family: root.bodyFamily(); font.pixelSize: 13; font.weight: Font.DemiBold }
+                                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: adminBridge.openCacheFolder() }
+                                                    }
+
+                                                    Rectangle {
+                                                        width: 172
+                                                        height: 42
+                                                        radius: 14
+                                                        color: "#14283e"
+                                                        border.width: 1
+                                                        border.color: "#35516d"
+                                                        Text { anchors.centerIn: parent; text: "Sincronizar estado"; color: "#eef5fb"; font.family: root.bodyFamily(); font.pixelSize: 13; font.weight: Font.DemiBold }
+                                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: adminBridge.refreshState() }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: parent.width
+                                            radius: 22
+                                            color: "#183049"
+                                            border.width: 1
+                                            border.color: "#2a4765"
+                                            implicitHeight: platformConfigColumn.implicitHeight + 28
+
+                                            Column {
+                                                id: platformConfigColumn
+                                                anchors.fill: parent
+                                                anchors.margins: 14
+                                                spacing: 12
+
+                                                Text {
+                                                    text: "Configuracion de plataforma"
+                                                    color: "#eef5fb"
+                                                    font.family: root.displayFamily()
+                                                    font.pixelSize: 22
+                                                    font.weight: Font.Bold
+                                                }
+
+                                                Text {
+                                                    text: "Slice inicial para R2, API de historial y claves de acceso. Guardado disponible para super admin."
+                                                    color: "#9ab8d5"
+                                                    width: parent.width
+                                                    wrapMode: Text.WordWrap
+                                                    font.family: root.bodyFamily()
+                                                    font.pixelSize: 13
+                                                }
+
+                                                RowLayout {
+                                                    width: parent.width
+                                                    spacing: 12
+
+                                                    ColumnLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 8
+
+                                                        Text { text: "Account ID"; color: "#9ab8d5"; font.family: root.bodyFamily(); font.pixelSize: 12 }
+                                                        QQC2.TextField {
+                                                            id: accountIdField
+                                                            Layout.fillWidth: true
+                                                            text: adminBridge.accountId
+                                                            placeholderText: "Cloudflare account id"
+                                                        }
+                                                    }
+
+                                                    ColumnLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 8
+
+                                                        Text { text: "Access Key ID"; color: "#9ab8d5"; font.family: root.bodyFamily(); font.pixelSize: 12 }
+                                                        QQC2.TextField {
+                                                            id: accessKeyField
+                                                            Layout.fillWidth: true
+                                                            text: adminBridge.accessKeyId
+                                                            placeholderText: "Access key id"
+                                                        }
+                                                    }
+                                                }
+
+                                                RowLayout {
+                                                    width: parent.width
+                                                    spacing: 12
+
+                                                    ColumnLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 8
+
+                                                        Text { text: "Secret Access Key"; color: "#9ab8d5"; font.family: root.bodyFamily(); font.pixelSize: 12 }
+                                                        QQC2.TextField {
+                                                            id: secretKeyField
+                                                            Layout.fillWidth: true
+                                                            text: adminBridge.secretAccessKey
+                                                            echoMode: TextInput.Password
+                                                            placeholderText: "Secret access key"
+                                                        }
+                                                    }
+
+                                                    ColumnLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 8
+
+                                                        Text { text: "Bucket"; color: "#9ab8d5"; font.family: root.bodyFamily(); font.pixelSize: 12 }
+                                                        QQC2.TextField {
+                                                            id: bucketField
+                                                            Layout.fillWidth: true
+                                                            text: adminBridge.bucketName
+                                                            placeholderText: "Bucket name"
+                                                        }
+                                                    }
+                                                }
+
+                                                ColumnLayout {
+                                                    width: parent.width
+                                                    spacing: 8
+
+                                                    Text { text: "History API URL"; color: "#9ab8d5"; font.family: root.bodyFamily(); font.pixelSize: 12 }
+                                                    QQC2.TextField {
+                                                        id: historyApiField
+                                                        Layout.fillWidth: true
+                                                        text: adminBridge.historyApiUrl
+                                                        placeholderText: "https://.../api"
+                                                    }
+                                                }
+
+                                                RowLayout {
+                                                    width: parent.width
+                                                    spacing: 12
+
+                                                    ColumnLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 8
+
+                                                        Text { text: "API Token"; color: "#9ab8d5"; font.family: root.bodyFamily(); font.pixelSize: 12 }
+                                                        QQC2.TextField {
+                                                            id: apiTokenField
+                                                            Layout.fillWidth: true
+                                                            text: adminBridge.apiToken
+                                                            echoMode: TextInput.Password
+                                                            placeholderText: "Token de API"
+                                                        }
+                                                    }
+
+                                                    ColumnLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 8
+
+                                                        Text { text: "API Secret"; color: "#9ab8d5"; font.family: root.bodyFamily(); font.pixelSize: 12 }
+                                                        QQC2.TextField {
+                                                            id: apiSecretField
+                                                            Layout.fillWidth: true
+                                                            text: adminBridge.apiSecret
+                                                            echoMode: TextInput.Password
+                                                            placeholderText: "Secret de API"
+                                                        }
+                                                    }
+                                                }
+
+                                                Row {
+                                                    spacing: 10
+
+                                                    Rectangle {
+                                                        width: 150
+                                                        height: 42
+                                                        radius: 14
+                                                        color: adminBridge.canManageUsers ? "#d0ad72" : "#8b7a61"
+                                                        Text { anchors.centerIn: parent; text: "Guardar config"; color: "#102033"; font.family: root.bodyFamily(); font.pixelSize: 13; font.weight: Font.Bold }
+                                                        MouseArea {
+                                                            anchors.fill: parent
+                                                            enabled: adminBridge.canManageUsers
+                                                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                                            onClicked: adminBridge.savePlatformConfig(
+                                                                accountIdField.text,
+                                                                accessKeyField.text,
+                                                                secretKeyField.text,
+                                                                bucketField.text,
+                                                                historyApiField.text,
+                                                                apiTokenField.text,
+                                                                apiSecretField.text
+                                                            )
+                                                        }
+                                                    }
+
+                                                    Rectangle {
+                                                        width: 150
+                                                        height: 42
+                                                        radius: 14
+                                                        color: "#f4f8fd"
+                                                        Text { anchors.centerIn: parent; text: "Probar conexion"; color: "#102033"; font.family: root.bodyFamily(); font.pixelSize: 13; font.weight: Font.Bold }
+                                                        MouseArea {
+                                                            anchors.fill: parent
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onClicked: adminBridge.testPlatformConnection(
+                                                                accountIdField.text,
+                                                                accessKeyField.text,
+                                                                secretKeyField.text,
+                                                                bucketField.text
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: parent.width
+                                            radius: 22
+                                            color: "#14283e"
+                                            border.width: 1
+                                            border.color: "#2a4765"
+                                            implicitHeight: maintenanceColumn.implicitHeight + 28
+
+                                            Column {
+                                                id: maintenanceColumn
+                                                anchors.fill: parent
+                                                anchors.margins: 14
+                                                spacing: 12
+
+                                                Text {
+                                                    text: "Mantenimiento"
+                                                    color: "#eef5fb"
+                                                    font.family: root.displayFamily()
+                                                    font.pixelSize: 22
+                                                    font.weight: Font.Bold
+                                                }
+
+                                                Row {
+                                                    spacing: 10
+
+                                                    Text {
+                                                        text: "Tema"
+                                                        color: "#9ab8d5"
+                                                        font.family: root.bodyFamily()
+                                                        font.pixelSize: 12
+                                                        anchors.verticalCenter: parent.verticalCenter
+                                                    }
+
+                                                    QQC2.ComboBox {
+                                                        id: themeCombo
+                                                        model: ["Claro", "Oscuro"]
+                                                        currentIndex: adminBridge.currentThemeLabel === "Oscuro" ? 1 : 0
+                                                        onActivated: adminBridge.changeTheme(currentText)
+                                                    }
+                                                }
+
+                                                Row {
+                                                    spacing: 10
+
+                                                    Rectangle {
+                                                        width: 168
+                                                        height: 42
+                                                        radius: 14
+                                                        color: "#f4f8fd"
+                                                        Text { anchors.centerIn: parent; text: "Cambiar contrasena"; color: "#102033"; font.family: root.bodyFamily(); font.pixelSize: 13; font.weight: Font.Bold }
+                                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: adminBridge.changePassword() }
+                                                    }
+
+                                                    Rectangle {
+                                                        width: 132
+                                                        height: 42
+                                                        radius: 14
+                                                        color: "#d0ad72"
+                                                        Text { anchors.centerIn: parent; text: "Limpiar cache"; color: "#102033"; font.family: root.bodyFamily(); font.pixelSize: 13; font.weight: Font.Bold }
+                                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: adminBridge.clearCache() }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            width: parent.width
+                                            spacing: 14
+
+                                            Rectangle {
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: 338
+                                                radius: 18
+                                                color: "#183049"
+                                                border.width: 1
+                                                border.color: "#2a4765"
+
+                                                Column {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 14
+                                                    spacing: 10
+
+                                                    Row {
+                                                        spacing: 10
+
+                                                        Text {
+                                                            text: "Catalogo administrativo"
+                                                            color: "#eef5fb"
+                                                            font.family: root.displayFamily()
+                                                            font.pixelSize: 22
+                                                            font.weight: Font.Bold
+                                                        }
+
+                                                        Rectangle {
+                                                            width: 118
+                                                            height: 34
+                                                            radius: 12
+                                                            color: "#f4f8fd"
+
+                                                            Text {
+                                                                anchors.centerIn: parent
+                                                                text: "Actualizar"
+                                                                color: "#102033"
+                                                                font.family: root.bodyFamily()
+                                                                font.pixelSize: 12
+                                                                font.weight: Font.Bold
+                                                            }
+
+                                                            MouseArea {
+                                                                anchors.fill: parent
+                                                                cursorShape: Qt.PointingHandCursor
+                                                                onClicked: adminBridge.refreshDriverCatalog()
+                                                            }
+                                                        }
+                                                    }
+
+                                                    ListView {
+                                                        id: adminDriversListView
+                                                        anchors.left: parent.left
+                                                        anchors.right: parent.right
+                                                        height: 250
+                                                        clip: true
+                                                        spacing: 8
+                                                        model: adminBridge.driversListModel
+                                                        currentIndex: adminBridge.currentDriverIndex
+
+                                                        delegate: Rectangle {
+                                                            required property int index
+                                                            required property string title
+                                                            required property string meta
+                                                            required property string tag
+                                                            width: ListView.view.width
+                                                            height: 74
+                                                            radius: 14
+                                                            color: ListView.isCurrentItem ? "#2b4763" : "#14283e"
+                                                            border.width: 1
+                                                            border.color: ListView.isCurrentItem ? "#d0ad72" : "#2a4765"
+
+                                                            Column {
+                                                                anchors.fill: parent
+                                                                anchors.margins: 12
+                                                                spacing: 3
+
+                                                                Text {
+                                                                    text: title
+                                                                    color: "#eef5fb"
+                                                                    font.family: root.displayFamily()
+                                                                    font.pixelSize: 18
+                                                                    font.weight: Font.Bold
+                                                                    elide: Text.ElideRight
+                                                                }
+
+                                                                Text {
+                                                                    text: meta
+                                                                    color: "#9ab8d5"
+                                                                    font.family: root.bodyFamily()
+                                                                    font.pixelSize: 12
+                                                                    elide: Text.ElideRight
+                                                                }
+
+                                                                Text {
+                                                                    text: tag
+                                                                    color: "#d0ad72"
+                                                                    font.family: root.bodyFamily()
+                                                                    font.pixelSize: 11
+                                                                    elide: Text.ElideRight
+                                                                }
+                                                            }
+
+                                                            MouseArea {
+                                                                anchors.fill: parent
+                                                                cursorShape: Qt.PointingHandCursor
+                                                                onClicked: {
+                                                                    adminDriversListView.currentIndex = index
+                                                                    adminBridge.selectDriver(index)
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: 338
+                                                radius: 18
+                                                color: "#183049"
+                                                border.width: 1
+                                                border.color: "#2a4765"
+
+                                                Column {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 14
+                                                    spacing: 10
+
+                                                    Text {
+                                                        text: "Driver seleccionado"
+                                                        color: "#eef5fb"
+                                                        font.family: root.displayFamily()
+                                                        font.pixelSize: 22
+                                                        font.weight: Font.Bold
+                                                    }
+
+                                                    Text {
+                                                        text: adminBridge.selectedDriverTitle
+                                                        color: "#f4f8fd"
+                                                        font.family: root.displayFamily()
+                                                        font.pixelSize: 26
+                                                        font.weight: Font.Bold
+                                                        width: parent.width
+                                                        wrapMode: Text.WordWrap
+                                                    }
+
+                                                    Text {
+                                                        text: adminBridge.selectedDriverMeta
+                                                        color: "#9ab8d5"
+                                                        width: parent.width
+                                                        wrapMode: Text.WordWrap
+                                                        font.family: root.bodyFamily()
+                                                        font.pixelSize: 13
+                                                    }
+
+                                                    Text {
+                                                        text: adminBridge.selectedDriverDetails
+                                                        color: "#d8e4f0"
+                                                        width: parent.width
+                                                        wrapMode: Text.WordWrap
+                                                        font.family: root.bodyFamily()
+                                                        font.pixelSize: 13
+                                                        lineHeight: 1.3
+                                                    }
+
+                                                    Rectangle {
+                                                        width: 170
+                                                        height: 42
+                                                        radius: 14
+                                                        color: adminBridge.canDeleteDrivers ? "#d0ad72" : "#8b7a61"
+
+                                                        Text {
+                                                            anchors.centerIn: parent
+                                                            text: "Eliminar driver"
+                                                            color: "#102033"
+                                                            font.family: root.bodyFamily()
+                                                            font.pixelSize: 13
+                                                            font.weight: Font.Bold
+                                                        }
+
+                                                        MouseArea {
+                                                            anchors.fill: parent
+                                                            enabled: adminBridge.canDeleteDrivers
+                                                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                                            onClicked: adminBridge.deleteSelectedDriver()
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: parent.width
+                                            radius: 22
+                                            color: "#183049"
+                                            border.width: 1
+                                            border.color: "#2a4765"
+                                            implicitHeight: auditColumn.implicitHeight + 28
+
+                                            Column {
+                                                id: auditColumn
+                                                anchors.fill: parent
+                                                anchors.margins: 14
+                                                spacing: 12
+
+                                                Row {
+                                                    spacing: 10
+
+                                                    Text {
+                                                        text: "Auditoria y export"
+                                                        color: "#eef5fb"
+                                                        font.family: root.displayFamily()
+                                                        font.pixelSize: 22
+                                                        font.weight: Font.Bold
+                                                    }
+
+                                                    Rectangle {
+                                                        width: 112
+                                                        height: 34
+                                                        radius: 12
+                                                        color: "#f4f8fd"
+                                                        Text { anchors.centerIn: parent; text: "Actualizar"; color: "#102033"; font.family: root.bodyFamily(); font.pixelSize: 12; font.weight: Font.Bold }
+                                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: adminBridge.refreshAuditLogs() }
+                                                    }
+
+                                                    Rectangle {
+                                                        width: 128
+                                                        height: 34
+                                                        radius: 12
+                                                        color: "#14283e"
+                                                        border.width: 1
+                                                        border.color: "#35516d"
+                                                        Text { anchors.centerIn: parent; text: "Exportar log"; color: "#eef5fb"; font.family: root.bodyFamily(); font.pixelSize: 12; font.weight: Font.DemiBold }
+                                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: adminBridge.exportAuditLog() }
+                                                    }
+
+                                                    Rectangle {
+                                                        width: 154
+                                                        height: 34
+                                                        radius: 12
+                                                        color: "#14283e"
+                                                        border.width: 1
+                                                        border.color: "#35516d"
+                                                        Text { anchors.centerIn: parent; text: "Exportar historial"; color: "#eef5fb"; font.family: root.bodyFamily(); font.pixelSize: 12; font.weight: Font.DemiBold }
+                                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: adminBridge.exportHistoryJson() }
+                                                    }
+                                                }
+
+                                                Text {
+                                                    text: adminBridge.auditSummary
+                                                    color: "#9ab8d5"
+                                                    width: parent.width
+                                                    wrapMode: Text.WordWrap
+                                                    font.family: root.bodyFamily()
+                                                    font.pixelSize: 13
+                                                }
+
+                                                ListView {
+                                                    anchors.left: parent.left
+                                                    anchors.right: parent.right
+                                                    height: 220
+                                                    clip: true
+                                                    spacing: 8
+                                                    model: adminBridge.auditLogsModel
+
+                                                    delegate: Rectangle {
+                                                        required property string title
+                                                        required property string meta
+                                                        required property string tag
+                                                        width: ListView.view.width
+                                                        height: 62
+                                                        radius: 14
+                                                        color: "#14283e"
+                                                        border.width: 1
+                                                        border.color: "#2a4765"
+
+                                                        Column {
+                                                            anchors.fill: parent
+                                                            anchors.margins: 12
+                                                            spacing: 2
+
+                                                            Text {
+                                                                text: title
+                                                                color: "#eef5fb"
+                                                                font.family: root.bodyFamily()
+                                                                font.pixelSize: 13
+                                                                font.weight: Font.DemiBold
+                                                                elide: Text.ElideRight
+                                                            }
+
+                                                            Text {
+                                                                text: meta + " - " + tag
+                                                                color: "#9ab8d5"
+                                                                font.family: root.bodyFamily()
+                                                                font.pixelSize: 11
+                                                                elide: Text.ElideRight
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

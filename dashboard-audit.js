@@ -7,9 +7,6 @@
 
             const preferredKeys = [
                 'reason',
-                'geofence_result',
-                'geofence_distance_m',
-                'geofence_radius_m',
                 'gps_capture_status',
                 'gps_accuracy_m',
                 'incident_id',

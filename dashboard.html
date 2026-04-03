@@ -51,6 +51,7 @@
                     <ul class="nav-group-list">
                         <li><a href="#" class="active" data-section="dashboard"><span class="material-symbols-outlined">today</span> Hoy</a></li>
                         <li><a href="#" data-section="incidents"><span class="material-symbols-outlined">warning</span> Incidencias</a></li>
+                        <li><a href="#" data-section="incidentMap"><span class="material-symbols-outlined">map</span> Mapa</a></li>
                         <li><a href="#" data-section="installations"><span class="material-symbols-outlined">dns</span> Registros</a></li>
                     </ul>
                 </div>
@@ -101,6 +102,10 @@
                     </button>
                 </div>
                 <div class="mobile-nav-panel-links">
+                    <button type="button" class="mobile-nav-menu-item" data-mobile-section="incidentMap">
+                        <span class="material-symbols-outlined">map</span>
+                        <span>Mapa</span>
+                    </button>
                     <button type="button" class="mobile-nav-menu-item" data-mobile-section="drivers">
                         <span class="material-symbols-outlined">upload_file</span>
                         <span>Drivers</span>
@@ -240,15 +245,10 @@
                                 <p id="gpsOpsFailuresValue" class="gps-ops-value">-</p>
                                 <p id="gpsOpsFailuresMeta" class="gps-ops-meta">Sin incidencias de captura</p>
                             </article>
-                            <article class="gps-ops-card gps-ops-card-outside">
-                                <p class="gps-ops-label">Registros fuera de referencia</p>
-                                <p id="gpsOpsOutsideValue" class="gps-ops-value">-</p>
-                                <p id="gpsOpsOutsideMeta" class="gps-ops-meta">Capturas alejadas de la referencia</p>
-                            </article>
                             <article class="gps-ops-card gps-ops-card-override">
-                                <p class="gps-ops-label">Overrides auditados</p>
+                                <p class="gps-ops-label">Overrides GPS</p>
                                 <p id="gpsOpsOverridesValue" class="gps-ops-value">-</p>
-                                <p id="gpsOpsOverridesMeta" class="gps-ops-meta">Justificaciones operativas</p>
+                                <p id="gpsOpsOverridesMeta" class="gps-ops-meta">Excepciones registradas por falta de captura usable</p>
                             </article>
                         </div>
                         <div class="gps-ops-foot">
@@ -363,7 +363,7 @@
                 </div>
             </div>
             
-            <div id="incidentsSection" class="section">
+            <div id="incidentMapSection" class="section">
                 <section class="incident-map-shell" aria-labelledby="incidentMapTitle">
                     <div class="incident-map-shell-head">
                         <div>
@@ -417,7 +417,9 @@
                         </aside>
                     </div>
                 </section>
+            </div>
 
+            <div id="incidentsSection" class="section">
                 <div class="filters incidents-toolbar">
                     <div class="incidents-focus-copy">
                         <strong>Atiende primero el evento.</strong>

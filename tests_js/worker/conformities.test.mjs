@@ -7,7 +7,6 @@ import {
   buildGpsMetadataSnapshot,
   normalizeGpsPayload,
 } from "../../worker/lib/gps.js";
-import { evaluateGeofence } from "../../worker/lib/geofence.js";
 import {
   loadStaticMapAssetForPdf as loadStaticMapAssetForPdfFromService,
   sendConformityEmail,
@@ -238,7 +237,6 @@ test("conformity route persists emailed status when delivery succeeds", async ()
   const { handleInstallationConformityRoute } = createConformitiesRouteHandlers({
     buildGpsMapsUrl,
     buildGpsMetadataSnapshot,
-    evaluateGeofence,
     jsonResponse,
     corsHeaders() {
       return {};
@@ -416,7 +414,6 @@ test("conformity route persists captured gps snapshot in metadata", async () => 
   const { handleInstallationConformityRoute } = createConformitiesRouteHandlers({
     buildGpsMapsUrl,
     buildGpsMetadataSnapshot,
-    evaluateGeofence,
     jsonResponse,
     corsHeaders() {
       return {};
@@ -540,7 +537,6 @@ test("conformity route logs gps override with mandatory reason", async () => {
   const { handleInstallationConformityRoute } = createConformitiesRouteHandlers({
     buildGpsMapsUrl,
     buildGpsMetadataSnapshot,
-    evaluateGeofence,
     jsonResponse,
     corsHeaders() {
       return {};
@@ -648,133 +644,13 @@ test("conformity route logs gps override with mandatory reason", async () => {
   assert.equal(auditPayloads[1]?.details?.reason, "Sin senal en sala tecnica del subsuelo");
 });
 
-test("conformity route blocks outside geofence without override when hard policy is enabled", async () => {
-  const { handleInstallationConformityRoute } = createConformitiesRouteHandlers({
-    buildGpsMapsUrl,
-    buildGpsMetadataSnapshot,
-    evaluateGeofence,
-    jsonResponse,
-    corsHeaders() {
-      return {};
-    },
-    parsePositiveInt(value, field = "id") {
-      const parsed = Number.parseInt(String(value), 10);
-      if (!Number.isInteger(parsed) || parsed <= 0) {
-        throw new Error(`invalid_${field}`);
-      }
-      return parsed;
-    },
-    normalizeOptionalString(value, fallback = "") {
-      if (value === null || value === undefined) return fallback;
-      return String(value).trim();
-    },
-    normalizeGpsPayload,
-    normalizeRealtimeTenantId(value) {
-      return String(value || "").trim().toLowerCase() || "default";
-    },
-    requireWebWriteRole() {},
-    async readJsonOrThrowBadRequest(request) {
-      return request.json();
-    },
-    async logAuditEvent() {},
-    getClientIpForRateLimit() {
-      return "127.0.0.1";
-    },
-    nowIso() {
-      return "2026-03-26T10:00:00.000Z";
-    },
-    async loadInstallationConformityContext() {
-      return {
-        installation: {
-          id: 42,
-          client_name: "Acme",
-          status: "done",
-          notes: "",
-          driver_brand: "Intel",
-          driver_version: "1.0.0",
-          site_lat: -34.9011,
-          site_lng: -56.1645,
-          site_radius_m: 50,
-        },
-        asset: null,
-        incidents: [],
-        photos: [],
-      };
-    },
-    async loadLatestInstallationConformity() {
-      return null;
-    },
-    async loadInstallationConformityPdfById() {
-      return null;
-    },
-    async persistInstallationConformity() {
-      throw new Error("should_not_persist");
-    },
-    async storeSignatureAsset() {
-      return { r2Key: "signature.png", bytes: new Uint8Array([137, 80, 78, 71]) };
-    },
-    async generateConformityPdf() {
-      throw new Error("should_not_generate_pdf");
-    },
-    async storeConformityPdf() {
-      throw new Error("should_not_store_pdf");
-    },
-    async sendConformityEmail() {
-      return { delivered: false, skipped: true, error: null };
-    },
-    async syncPublicTrackingSnapshotForInstallation() {},
-  });
-
-  await assert.rejects(
-    () => handleInstallationConformityRoute(
-      new Request("https://worker.example/web/installations/42/conformity", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          signed_by_name: "Juan Perez",
-          email_to: "cliente@example.com",
-          signature_data_url: "data:image/png;base64,iVBORw0KGgo=",
-          send_email: false,
-          gps: {
-            lat: -34.89,
-            lng: -56.15,
-            accuracy_m: 10,
-            captured_at: "2026-03-26T09:59:00.000Z",
-            source: "browser",
-            status: "captured",
-            note: "",
-          },
-        }),
-      }),
-      {
-        GEOFENCE_HARD_ENABLED: "true",
-        GEOFENCE_HARD_FLOWS: "conformity",
-      },
-      {},
-      ["installations", "42", "conformity"],
-      true,
-      {
-        tenant_id: "default",
-        role: "admin",
-        sub: "tech1",
-        user_id: 7,
-        session_version: 3,
-      },
-    ),
-    /override/i,
-  );
-});
-
-test("conformity route persists geofence override when hard policy is enabled", async () => {
+test("conformity route ignores deprecated geofence policy inputs and persists GPS metadata only", async () => {
   let persistedInput = null;
   const auditPayloads = [];
 
   const { handleInstallationConformityRoute } = createConformitiesRouteHandlers({
     buildGpsMapsUrl,
     buildGpsMetadataSnapshot,
-    evaluateGeofence,
     jsonResponse,
     corsHeaders() {
       return {};
@@ -891,10 +767,7 @@ test("conformity route persists geofence override when hard policy is enabled", 
 
   assert.equal(response.status, 201);
   const metadata = JSON.parse(persistedInput?.metadataJson || "{}");
-  assert.equal(metadata.geofence?.result, "outside");
-  assert.equal(
-    metadata.geofence?.override_note,
-    "Acceso limitado por seguridad, se firmo desde perimetro autorizado.",
-  );
-  assert.equal(auditPayloads.some((payload) => payload.action === "override_installation_conformity_geofence"), true);
+  assert.equal(metadata.geofence, undefined);
+  assert.equal(metadata.gps?.status, "captured");
+  assert.equal(auditPayloads.some((payload) => payload.action === "override_installation_conformity_geofence"), false);
 });

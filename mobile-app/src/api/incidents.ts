@@ -13,6 +13,7 @@ import {
   type UpdateIncidentEvidenceInput,
   type UpdateIncidentStatusInput,
 } from "../types/api";
+import { incidentsRepository } from "../db/repositories/incidents-repository";
 import { normalizeIncidentStatus } from "../utils/incidents";
 import { ensurePositiveInt } from "../utils/validation";
 import { signedJsonRequest } from "./client";
@@ -20,6 +21,8 @@ import { signedJsonRequest } from "./client";
 const INSTALLATIONS_CACHE_TTL_MS = 60_000;
 let installationsCache: InstallationRecord[] | null = null;
 let installationsCacheExpiresAt = 0;
+let lastIncidentListSource: "network" | "cache" = "network";
+let lastIncidentDetailSource: "network" | "cache" = "network";
 
 type RawInstallationRecord = Omit<InstallationRecord, "id"> & {
   id: number | string;
@@ -70,12 +73,6 @@ function normalizeInstallationRecord(record: RawInstallationRecord): Installatio
     if (!Number.isFinite(parsed) || parsed < 0) return 0;
     return Math.trunc(parsed);
   };
-  const asOptionalFiniteNumber = (value: unknown): number | null | undefined => {
-    if (value === null || value === undefined || value === "") return undefined;
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return null;
-    return parsed;
-  };
 
   return {
     ...record,
@@ -86,9 +83,6 @@ function normalizeInstallationRecord(record: RawInstallationRecord): Installatio
     incident_resolved_count: asOptionalNonNegativeInt(record.incident_resolved_count),
     incident_active_count: asOptionalNonNegativeInt(record.incident_active_count),
     incident_critical_active_count: asOptionalNonNegativeInt(record.incident_critical_active_count),
-    site_lat: asOptionalFiniteNumber(record.site_lat),
-    site_lng: asOptionalFiniteNumber(record.site_lng),
-    site_radius_m: asOptionalFiniteNumber(record.site_radius_m),
   };
 }
 
@@ -108,6 +102,58 @@ function normalizeIncidentRecord(record: RawIncidentRecord): Incident {
       record.estimated_duration_seconds === null || record.estimated_duration_seconds === undefined
         ? null
         : Math.max(0, Number(record.estimated_duration_seconds) || 0),
+    target_lat:
+      record.target_lat === null || record.target_lat === undefined
+        ? null
+        : Number(record.target_lat),
+    target_lng:
+      record.target_lng === null || record.target_lng === undefined
+        ? null
+        : Number(record.target_lng),
+    target_label:
+      typeof record.target_label === "string" && record.target_label.trim()
+        ? record.target_label.trim()
+        : null,
+    target_source:
+      typeof record.target_source === "string" && record.target_source.trim()
+        ? record.target_source.trim().toLowerCase()
+        : null,
+    target_updated_at:
+      typeof record.target_updated_at === "string" && record.target_updated_at.trim()
+        ? record.target_updated_at.trim()
+        : null,
+    target_updated_by:
+      typeof record.target_updated_by === "string" && record.target_updated_by.trim()
+        ? record.target_updated_by.trim()
+        : null,
+    dispatch_required:
+      record.dispatch_required === null || record.dispatch_required === undefined
+        ? true
+        : Boolean(record.dispatch_required),
+    dispatch_place_name:
+      typeof record.dispatch_place_name === "string" && record.dispatch_place_name.trim()
+        ? record.dispatch_place_name.trim()
+        : null,
+    dispatch_address:
+      typeof record.dispatch_address === "string" && record.dispatch_address.trim()
+        ? record.dispatch_address.trim()
+        : null,
+    dispatch_reference:
+      typeof record.dispatch_reference === "string" && record.dispatch_reference.trim()
+        ? record.dispatch_reference.trim()
+        : null,
+    dispatch_contact_name:
+      typeof record.dispatch_contact_name === "string" && record.dispatch_contact_name.trim()
+        ? record.dispatch_contact_name.trim()
+        : null,
+    dispatch_contact_phone:
+      typeof record.dispatch_contact_phone === "string" && record.dispatch_contact_phone.trim()
+        ? record.dispatch_contact_phone.trim()
+        : null,
+    dispatch_notes:
+      typeof record.dispatch_notes === "string" && record.dispatch_notes.trim()
+        ? record.dispatch_notes.trim()
+        : null,
     actual_duration_seconds:
       record.actual_duration_seconds === null || record.actual_duration_seconds === undefined
         ? null
@@ -139,28 +185,64 @@ export async function listIncidentsByInstallation(
   installationId: number,
 ): Promise<ListIncidentsResponse> {
   ensurePositiveInt(installationId, "installationId");
-  const response = await signedJsonRequest<RawListIncidentsResponse>({
-    method: "GET",
-    path: `/installations/${installationId}/incidents`,
-  });
-  return {
-    ...response,
-    incidents: Array.isArray(response.incidents)
+  try {
+    const response = await signedJsonRequest<RawListIncidentsResponse>({
+      method: "GET",
+      path: `/installations/${installationId}/incidents`,
+    });
+    const incidents = Array.isArray(response.incidents)
       ? response.incidents.map(normalizeIncidentRecord)
-      : [],
-  };
+      : [];
+    await incidentsRepository.replaceRemoteInstallationSnapshots(installationId, incidents);
+    lastIncidentListSource = "network";
+    return {
+      ...response,
+      incidents,
+    };
+  } catch (error) {
+    const cachedIncidents = await incidentsRepository.listCachedIncidentsByInstallation(installationId);
+    if (cachedIncidents.length > 0) {
+      lastIncidentListSource = "cache";
+      return {
+        success: true,
+        installation_id: installationId,
+        incidents: cachedIncidents.map(normalizeIncidentRecord),
+      };
+    }
+    throw error;
+  }
 }
 
 export async function getIncidentById(incidentId: number): Promise<Incident> {
   ensurePositiveInt(incidentId, "incidentId");
-  const response = await signedJsonRequest<{ success: boolean; incident: RawIncidentRecord }>({
-    method: "GET",
-    path: `/incidents/${incidentId}`,
-  });
-  if (!response?.incident) {
-    throw new Error("La incidencia solicitada no existe.");
+  try {
+    const response = await signedJsonRequest<{ success: boolean; incident: RawIncidentRecord }>({
+      method: "GET",
+      path: `/incidents/${incidentId}`,
+    });
+    if (!response?.incident) {
+      throw new Error("La incidencia solicitada no existe.");
+    }
+    const incident = normalizeIncidentRecord(response.incident);
+    await incidentsRepository.upsertRemoteIncidentSnapshot(incident);
+    lastIncidentDetailSource = "network";
+    return incident;
+  } catch (error) {
+    const cachedIncident = await incidentsRepository.getCachedIncidentByRemoteId(incidentId);
+    if (cachedIncident) {
+      lastIncidentDetailSource = "cache";
+      return normalizeIncidentRecord(cachedIncident as RawIncidentRecord);
+    }
+    throw error;
   }
-  return normalizeIncidentRecord(response.incident);
+}
+
+export function getLastIncidentListSource(): "network" | "cache" {
+  return lastIncidentListSource;
+}
+
+export function getLastIncidentDetailSource(): "network" | "cache" {
+  return lastIncidentDetailSource;
 }
 
 export async function updateIncidentStatus(

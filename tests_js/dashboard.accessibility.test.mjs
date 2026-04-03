@@ -106,7 +106,7 @@ test("gps observability copy renders without mojibake", () => {
   const dom = new JSDOM(html);
   const { document } = dom.window;
 
-  assert.match(document.getElementById("gpsOpsTitle")?.textContent || "", /Salud de captura y geofence/);
+  assert.match(document.getElementById("gpsOpsTitle")?.textContent || "", /Salud de captura y contexto GPS/);
   assert.match(document.body.textContent || "", /auditoría operativa/);
   assert.match(document.body.textContent || "", /Capturas útiles/);
   assert.match(document.body.textContent || "", /Sin datos todavía/);

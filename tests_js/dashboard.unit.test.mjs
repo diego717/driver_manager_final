@@ -189,7 +189,7 @@ test("excel export builds a styled xlsx workbook with extra sheets and date-awar
   window.document.getElementById("startDate").value = "2026-03-01";
   window.document.getElementById("endDate").value = "2026-03-27";
 
-  window.exportToExcel([
+  await window.exportToExcel([
     {
       id: 15,
       client_name: "Cliente QA",
@@ -365,8 +365,8 @@ test("dashboard overview renders gps observability metrics from statistics", asy
   assert.equal(document.getElementById("gpsOpsCapturedValue").textContent, "4");
   assert.match(document.getElementById("gpsOpsCapturedMeta").textContent, /4\/6 capturas/i);
   assert.equal(document.getElementById("gpsOpsFailuresValue").textContent, "2");
-  assert.match(document.getElementById("gpsOpsOutsideMeta").textContent, /Incidencias 2 \| Conformidad 1/);
-  assert.match(document.getElementById("gpsOpsOverridesMeta").textContent, /Incidencias 1 \| Conformidad 0 \+ GPS 1/);
+  assert.equal(document.getElementById("gpsOpsOutsideMeta"), null);
+  assert.match(document.getElementById("gpsOpsOverridesMeta").textContent, /Conformidades 1/);
   assert.match(document.getElementById("gpsOpsInstallationsMeta").textContent, /Registros: 4 intentos, 75% util, prom. 11 m, p95 18 m\./);
 });
 
@@ -1904,7 +1904,7 @@ test("clicking a record row opens its incidents view", async () => {
   assert.ok(router.calls.some((call) => call.pathname === "/web/installations/36/incidents"));
 });
 
-test("installations filters can narrow records by geofence and gps health", async () => {
+test("installations filters can narrow records by gps health", async () => {
   const router = createFetchRouter([
     {
       method: "POST",
@@ -1918,7 +1918,7 @@ test("installations filters can narrow records by geofence and gps health", asyn
         createJsonResponse([
           {
             id: 36,
-            client_name: "Con geofence y gps util",
+            client_name: "Con gps util",
             driver_brand: "Marca A",
             attention_state: "normal",
             installation_time_seconds: 0,
@@ -1932,7 +1932,7 @@ test("installations filters can narrow records by geofence and gps health", asyn
           },
           {
             id: 37,
-            client_name: "Sin geofence y gps fallido",
+            client_name: "Con gps fallido",
             driver_brand: "Marca B",
             attention_state: "clear",
             installation_time_seconds: 0,
@@ -1955,18 +1955,11 @@ test("installations filters can narrow records by geofence and gps health", asyn
   await dom.window.loadInstallations();
   await flushDashboardTasks();
 
-  document.getElementById("geofenceFilter").value = "configured";
-  document.getElementById("applyFilters").click();
-  await flushDashboardTasks(420);
-  assert.match(document.getElementById("installationsTable").textContent, /Con geofence y gps util/);
-  assert.doesNotMatch(document.getElementById("installationsTable").textContent, /Sin geofence y gps fallido/);
-
-  document.getElementById("geofenceFilter").value = "";
   document.getElementById("gpsFilter").value = "failed";
   document.getElementById("applyFilters").click();
   await flushDashboardTasks(420);
-  assert.match(document.getElementById("installationsTable").textContent, /Sin geofence y gps fallido/);
-  assert.doesNotMatch(document.getElementById("installationsTable").textContent, /Con geofence y gps util/);
+  assert.match(document.getElementById("installationsTable").textContent, /Con gps fallido/);
+  assert.doesNotMatch(document.getElementById("installationsTable").textContent, /Con gps util/);
 });
 
 test("opening incidents without a selected record shows a contextual landing state", async () => {
@@ -2434,7 +2427,7 @@ test("manual record submission stores denied geolocation status without blocking
   assert.equal(recordPayloads[0].gps.source, "browser");
 });
 
-test("manual record can seed site geofence from the captured gps snapshot", async () => {
+test("manual record keeps captured gps without creating site reference metadata", async () => {
   const recordPayloads = [];
   const router = createFetchRouter([
     {
@@ -2470,8 +2463,6 @@ test("manual record can seed site geofence from the captured gps snapshot", asyn
 
   window.createManualRecordFromWeb();
   await flushDashboardTasks();
-  document.getElementById("actionRecordUseGpsAsSite").checked = true;
-  document.getElementById("actionRecordSiteRadius").value = "60";
   document.getElementById("actionModalForm").dispatchEvent(
     new Event("submit", { bubbles: true, cancelable: true }),
   );
@@ -2480,9 +2471,9 @@ test("manual record can seed site geofence from the captured gps snapshot", asyn
 
   assert.equal(recordPayloads.length, 1);
   assert.equal(recordPayloads[0].gps.status, "captured");
-  assert.equal(recordPayloads[0].site_lat, -34.9011);
-  assert.equal(recordPayloads[0].site_lng, -56.1645);
-  assert.equal(recordPayloads[0].site_radius_m, 60);
+  assert.equal(recordPayloads[0].site_lat, undefined);
+  assert.equal(recordPayloads[0].site_lng, undefined);
+  assert.equal(recordPayloads[0].site_radius_m, undefined);
 });
 
 test("manual record submission preserves timeout geolocation status", async () => {
@@ -2766,7 +2757,7 @@ test("incident modal preselects the assigned technician for the installation", a
   assert.equal(technicianSelect.value, "Luis Rivera");
 });
 
-test("incident creation includes geofence override note when capture is outside the site radius", async () => {
+test("incident creation includes captured gps payload without geofence override fields", async () => {
   const incidentPayloads = [];
   const router = createFetchRouter([
     {
@@ -2782,9 +2773,6 @@ test("incident creation includes geofence override note when capture is outside 
           id: 45,
           client_name: "Acme",
           driver_brand: "Intel",
-          site_lat: -34.9011,
-          site_lng: -56.1645,
-          site_radius_m: 50,
         },
       ]),
     },
@@ -2801,10 +2789,6 @@ test("incident creation includes geofence override note when capture is outside 
             note: "Fuera del radio",
             severity: "medium",
             incident_status: "open",
-            geofence_result: "outside",
-            geofence_distance_m: 180,
-            geofence_radius_m: 50,
-            geofence_override_note: "Se opero desde el acceso perimetral autorizado.",
             created_at: "2026-03-20T12:20:00.000Z",
             reporter_username: "ops-admin",
             photos: [],
@@ -2834,11 +2818,7 @@ test("incident creation includes geofence override note when capture is outside 
   await flushDashboardTasks();
   await flushDashboardTasks();
 
-  const overrideWrap = document.getElementById("actionIncidentGeofenceOverrideWrap");
-  assert.equal(overrideWrap.hidden, false);
-
   document.getElementById("actionIncidentNote").value = "Fuera del radio";
-  document.getElementById("actionIncidentGeofenceOverrideNote").value = "Se opero desde el acceso perimetral autorizado.";
   document.getElementById("actionModalForm").dispatchEvent(
     new Event("submit", { bubbles: true, cancelable: true }),
   );
@@ -2847,10 +2827,7 @@ test("incident creation includes geofence override note when capture is outside 
 
   assert.equal(incidentPayloads.length, 1);
   assert.equal(incidentPayloads[0].gps.status, "captured");
-  assert.equal(
-    incidentPayloads[0].geofence_override_note,
-    "Se opero desde el acceso perimetral autorizado.",
-  );
+  assert.equal(incidentPayloads[0].geofence_override_note, undefined);
 });
 
 test("incidents view shows assigned technician and can filter cards by technician", async () => {
@@ -3020,7 +2997,7 @@ test("conformity creation includes captured geolocation payload", async () => {
   assert.equal(conformityPayloads[0].gps.lat, -34.9011);
 });
 
-test("conformity creation includes geofence override note when capture is outside the site radius", async () => {
+test("conformity creation includes captured gps payload without geofence override note", async () => {
   const conformityPayloads = [];
   const router = createFetchRouter([
     {
@@ -3036,9 +3013,6 @@ test("conformity creation includes geofence override note when capture is outsid
           id: 45,
           client_name: "Acme",
           driver_brand: "Intel",
-          site_lat: -34.9011,
-          site_lng: -56.1645,
-          site_radius_m: 50,
         },
       ]),
     },
@@ -3057,14 +3031,7 @@ test("conformity creation includes geofence override note when capture is outsid
           conformity: {
             id: 92,
             status: "generated",
-            metadata_json: JSON.stringify({
-              geofence: {
-                result: "outside",
-                distance_m: 180,
-                radius_m: 50,
-                override_note: "Cliente restringio el acceso interno y se firmo en perimetro.",
-              },
-            }),
+            metadata_json: JSON.stringify({}),
           },
         }, { status: 201 });
       },
@@ -3091,9 +3058,6 @@ test("conformity creation includes geofence override note when capture is outsid
   await flushDashboardTasks();
   await flushDashboardTasks();
 
-  const overrideWrap = document.getElementById("actionConformityGpsOverrideWrap");
-  assert.equal(overrideWrap.hidden, false);
-
   const canvas = document.getElementById("actionConformitySignatureCanvas");
   canvas.onpointerdown?.({
     preventDefault() {},
@@ -3109,7 +3073,6 @@ test("conformity creation includes geofence override note when capture is outsid
   canvas.onpointerup?.({});
 
   document.getElementById("actionConformityEmailTo").value = "cliente@example.com";
-  document.getElementById("actionConformityGpsOverrideNote").value = "Cliente restringio el acceso interno y se firmo en perimetro.";
   document.getElementById("actionModalForm").dispatchEvent(
     new Event("submit", { bubbles: true, cancelable: true }),
   );
@@ -3118,10 +3081,7 @@ test("conformity creation includes geofence override note when capture is outsid
 
   assert.equal(conformityPayloads.length, 1);
   assert.equal(conformityPayloads[0].gps.status, "captured");
-  assert.equal(
-    conformityPayloads[0].geofence_override_note,
-    "Cliente restringio el acceso interno y se firmo en perimetro.",
-  );
+  assert.equal(conformityPayloads[0].geofence_override_note, undefined);
 });
 
 test("conformity creation requires override note when geolocation is not usable", async () => {
@@ -3196,77 +3156,7 @@ test("conformity creation requires override note when geolocation is not usable"
   });
 });
 
-test("installation site configuration sends site geofence payload", async () => {
-  const installationPayloads = [];
-  const router = createFetchRouter([
-    {
-      method: "POST",
-      match: "/web/auth/login",
-      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
-    },
-    {
-      method: "PUT",
-      match: "/web/installations/45",
-      resolver: async ({ request }) => {
-        installationPayloads.push(JSON.parse(await request.text()));
-        return createJsonResponse({
-          success: true,
-          updated: "45",
-          installation: {
-            id: 45,
-            site_lat: -34.9,
-            site_lng: -56.16,
-            site_radius_m: 60,
-          },
-        });
-      },
-    },
-  ]);
-
-  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
-  const { window } = dom;
-  const { document, Event } = window;
-
-  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
-
-  window.renderInstallationsTable([
-    {
-      id: 45,
-      client_name: "Acme",
-      driver_brand: "Intel",
-      installation_time_seconds: 0,
-      notes: "",
-      timestamp: "2026-03-26T10:00:00.000Z",
-      attention_state: "clear",
-      site_lat: null,
-      site_lng: null,
-      site_radius_m: null,
-    },
-  ]);
-
-  const siteButton = Array.from(document.querySelectorAll(".table-action-btn"))
-    .find((button) => button.textContent.includes("Sitio"));
-  siteButton.click();
-  await flushDashboardTasks();
-
-  document.getElementById("actionInstallationSiteLat").value = "-34.9";
-  document.getElementById("actionInstallationSiteLng").value = "-56.16";
-  document.getElementById("actionInstallationSiteRadius").value = "60";
-  document.getElementById("actionModalForm").dispatchEvent(
-    new Event("submit", { bubbles: true, cancelable: true }),
-  );
-  await flushDashboardTasks();
-  await flushDashboardTasks();
-
-  assert.equal(installationPayloads.length, 1);
-  assert.deepEqual(installationPayloads[0], {
-    site_lat: -34.9,
-    site_lng: -56.16,
-    site_radius_m: 60,
-  });
-});
-
-test("installations table shows whether the site geofence is configured", async () => {
+test("installations table surfaces gps state without geofence badges or site actions", async () => {
   const { dom } = await setupDashboardApp();
   const { window } = dom;
 
@@ -3302,10 +3192,13 @@ test("installations table shows whether the site geofence is configured", async 
   ]);
 
   const tableText = window.document.getElementById("installationsTable").textContent;
-  assert.match(tableText, /Sin geofence/);
-  assert.match(tableText, /Geofence 60 m/);
   assert.match(tableText, /GPS denegado/);
   assert.match(tableText, /GPS \+\- 14 m/);
+  assert.doesNotMatch(tableText, /Sin geofence|Geofence 60 m|Referencia 60 m|Sin referencia/);
+  assert.equal(
+    Array.from(window.document.querySelectorAll(".table-action-btn")).some((button) => button.textContent.includes("Sitio")),
+    false,
+  );
 });
 
 test("installations table shows estimated and actual time summary and aligned actions group", async () => {
@@ -3340,7 +3233,7 @@ test("installations table shows estimated and actual time summary and aligned ac
 
   const actionsGroup = document.querySelector("#installationsTable .table-actions-group");
   assert.ok(actionsGroup, "actions group should exist");
-  assert.equal(actionsGroup.children.length, 2);
+  assert.equal(actionsGroup.children.length, 1);
 });
 
 test("public tracking modal loads, regenerates, copies and revokes the shared link", async () => {
@@ -3597,6 +3490,190 @@ test("incident photo upload rejects batches over 20MB before sending requests", 
 
   assert.deepEqual(uploadedFileNames, []);
   assert.match(document.body.textContent, /supera el maximo de 20\.0MB por tanda/i);
+});
+
+test("incident map lets admin set operational target directly from the map", async () => {
+  const patchPayloads = [];
+  const baseIncident = {
+    id: 19,
+    installation_id: 45,
+    asset_id: 6,
+    note: "Visita de coordinacion",
+    severity: "high",
+    incident_status: "open",
+    created_at: "2026-03-20T12:20:00.000Z",
+    reporter_username: "ops-admin",
+    gps_lat: -34.9011,
+    gps_lng: -56.1645,
+    gps_accuracy_m: 8,
+    target_lat: null,
+    target_lng: null,
+    target_label: null,
+    target_source: null,
+    dispatch_place_name: null,
+    asset_code: "ATM-009",
+    installation_client_name: "Cliente QA",
+    photos: [],
+  };
+
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+    {
+      method: "GET",
+      match: "/web/incidents/map",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          incidents: [baseIncident],
+        }),
+    },
+    {
+      method: "PATCH",
+      match: "/web/incidents/19/dispatch-target",
+      resolver: async ({ request }) => {
+        const body = JSON.parse(await request.text());
+        patchPayloads.push(body);
+        return createJsonResponse({
+          success: true,
+          incident: {
+            ...baseIncident,
+            ...body,
+            dispatch_place_name: "Punto manual",
+          },
+        });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+
+  class MockLngLatBounds {
+    constructor() {
+      this.points = [];
+    }
+
+    extend(coordinates) {
+      this.points.push(coordinates);
+      return this;
+    }
+  }
+
+  class MockMap {
+    constructor() {
+      this.handlers = new Map();
+      this.sources = new Map();
+      this.layers = new Set();
+      this.canvas = document.createElement("div");
+      window.__lastIncidentMap = this;
+      window.setTimeout(() => this.trigger("load"), 0);
+    }
+
+    addControl() {}
+
+    addSource(id, config) {
+      this.sources.set(id, {
+        ...config,
+        setData: (data) => {
+          const current = this.sources.get(id) || {};
+          this.sources.set(id, { ...current, data });
+        },
+      });
+    }
+
+    getSource(id) {
+      return this.sources.get(id) || null;
+    }
+
+    addLayer(layer) {
+      this.layers.add(layer.id);
+    }
+
+    getLayer(id) {
+      return this.layers.has(id) ? { id } : null;
+    }
+
+    on(eventName, layerOrHandler, maybeHandler) {
+      const layerId = typeof layerOrHandler === "string" ? layerOrHandler : "__base__";
+      const handler = typeof layerOrHandler === "function" ? layerOrHandler : maybeHandler;
+      if (typeof handler !== "function") return;
+      this.handlers.set(`${eventName}:${layerId}`, handler);
+    }
+
+    getCanvas() {
+      return this.canvas;
+    }
+
+    easeTo(options) {
+      this.lastEaseTo = options;
+    }
+
+    fitBounds(bounds, options) {
+      this.lastFitBounds = { bounds, options };
+    }
+
+    remove() {}
+
+    trigger(eventName, payload = {}, layerId = "__base__") {
+      const handler = this.handlers.get(`${eventName}:${layerId}`);
+      if (handler) {
+        handler(payload);
+      }
+    }
+  }
+
+  window.mapboxgl = {
+    Map: MockMap,
+    NavigationControl: class NavigationControl {},
+    LngLatBounds: MockLngLatBounds,
+  };
+  window.localStorage.setItem("dm_mapbox_access_token", "token-qa");
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  await window.activateSection("incidentMap");
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const adjustButton = Array.from(document.querySelectorAll("#incidentMapDetail button")).find((button) =>
+    /Elegir destino/i.test(button.textContent || ""),
+  );
+  assert.ok(adjustButton);
+
+  adjustButton.click();
+  await flushDashboardTasks();
+
+  assert.match(document.getElementById("incidentMapDetail").textContent || "", /Modo ajuste activo/i);
+
+  window.__lastIncidentMap.trigger("click", {
+    lngLat: { lat: -34.907654, lng: -56.198765 },
+  });
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(patchPayloads.length, 1);
+  assert.equal(patchPayloads[0].target_source, "manual_map");
+  assert.equal(patchPayloads[0].target_lat, -34.907654);
+  assert.equal(patchPayloads[0].target_lng, -56.198765);
+  assert.match(document.getElementById("incidentMapDetail").textContent || "", /Punto manual/i);
+  assert.match(document.getElementById("incidentMapDetail").textContent || "", /-34\.90765/i);
+  assert.match(document.getElementById("incidentMapDetail").textContent || "", /-56\.19877/i);
 });
 
 test("paused incidents show paused runtime and offer resume action", async () => {
@@ -3976,10 +4053,9 @@ test("incident cards avoid repeating low-priority metadata already shown in chip
   assert.match(card.querySelector(".incident-context-meta")?.textContent || "", /Registro #34/);
   assert.equal(card.textContent.includes("Cliente:"), false);
   assert.equal(card.textContent.includes("Estado:"), false);
-  assert.equal(
-    card.querySelectorAll(".incident-meta-line").length,
-    0,
-  );
+  assert.equal(card.querySelectorAll(".incident-dispatch-block").length, 1);
+  assert.match(card.textContent, /Sin destino operativo definido/i);
+  assert.equal(card.querySelectorAll(".incident-meta-line").length, 1);
 });
 
 test("qr preview builds payload and image url for installation codes", async () => {

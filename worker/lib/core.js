@@ -94,35 +94,32 @@ export function isMissingIncidentTimingColumnsError(error) {
   );
 }
 
-export function isMissingIncidentGeofenceOverrideColumnsError(error) {
-  const message = normalizeOptionalString(error?.message, "").toLowerCase();
-  if (!(message.includes("no such column") || message.includes("has no column named"))) {
-    return false;
-  }
-  return (
-    message.includes("geofence_override_note") ||
-    message.includes("geofence_override_by") ||
-    message.includes("geofence_override_at")
-  );
-}
-
 export function isMissingIncidentReadModelColumnsError(error) {
   const message = normalizeOptionalString(error?.message, "").toLowerCase();
   if (!(message.includes("no such column") || message.includes("has no column named"))) {
     return false;
   }
   return (
-    message.includes("geofence_distance_m") ||
-    message.includes("geofence_radius_m") ||
-    message.includes("geofence_result") ||
-    message.includes("geofence_checked_at") ||
     message.includes("gps_lat") ||
     message.includes("gps_lng") ||
     message.includes("gps_accuracy_m") ||
     message.includes("gps_captured_at") ||
     message.includes("gps_capture_source") ||
     message.includes("gps_capture_status") ||
-    message.includes("gps_capture_note")
+    message.includes("gps_capture_note") ||
+    message.includes("target_lat") ||
+    message.includes("target_lng") ||
+    message.includes("target_label") ||
+    message.includes("target_source") ||
+    message.includes("target_updated_at") ||
+    message.includes("target_updated_by") ||
+    message.includes("dispatch_required") ||
+    message.includes("dispatch_place_name") ||
+    message.includes("dispatch_address") ||
+    message.includes("dispatch_reference") ||
+    message.includes("dispatch_contact_name") ||
+    message.includes("dispatch_contact_phone") ||
+    message.includes("dispatch_notes")
   );
 }
 

@@ -18,11 +18,12 @@ import {
   View,
 } from "react-native";
 
-import { uploadIncidentPhoto } from "@/src/api/photos";
-import { updateIncidentEvidence } from "@/src/api/incidents";
 import { extractApiError } from "@/src/api/client";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
+import { enqueueUpdateIncidentEvidence } from "@/src/services/sync/incident-evidence-outbox-service";
+import { enqueueUploadIncidentPhoto } from "@/src/services/sync/photo-outbox-service";
+import { runSync } from "@/src/services/sync/sync-runner";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
 
@@ -469,45 +470,48 @@ export default function UploadIncidentPhotoScreen() {
 
     const failed: ConfirmedEvidence[] = [];
     let successCount = 0;
-    let metadataSaved = false;
+    let metadataQueued = false;
     let metadataError = "";
 
     try {
       try {
         const appliedChecklistItems = CHECKLIST_ITEMS.filter((label) => Boolean(selectedChecklist[label]));
-        await updateIncidentEvidence(parsedIncidentId, {
-          checklist_items: appliedChecklistItems,
-          evidence_note: note.trim() || null,
+        await enqueueUpdateIncidentEvidence({
+          remoteIncidentId: parsedIncidentId,
+          checklistItems: appliedChecklistItems,
+          evidenceNote: note.trim() || null,
         });
-        metadataSaved = true;
+        metadataQueued = true;
       } catch (error) {
         metadataError = extractApiError(error);
       }
 
       for (const evidence of confirmedEvidence) {
         try {
-          await uploadIncidentPhoto({
-            incidentId: parsedIncidentId,
-            fileUri: evidence.uri,
+          await enqueueUploadIncidentPhoto({
+            remoteIncidentId: parsedIncidentId,
+            localPath: evidence.uri,
             fileName: evidence.fileName,
             contentType: evidence.contentType,
+            sizeBytes: evidence.sizeBytes,
           });
           successCount += 1;
-          if (evidence.isTemporary) {
-            await deleteFileIfExists(evidence.uri);
-          }
         } catch {
           failed.push(evidence);
         }
       }
 
+      if (successCount > 0 || metadataQueued) {
+        runSync();
+      }
+
       if (failed.length === 0) {
         publishFeedback({
-          title: metadataSaved ? "Evidencias guardadas" : "Evidencias parciales",
-          message: metadataSaved
-            ? `Se subieron ${successCount} fotos y se guardo checklist/nota para la incidencia #${parsedIncidentId}.`
-            : `Se subieron ${successCount} fotos, pero no se pudo guardar checklist/nota (${metadataError || "error desconocido"}).`,
-          tone: metadataSaved ? "success" : "info",
+          title: metadataQueued ? "Evidencias en cola" : "Evidencias en cola con metadata pendiente",
+          message: metadataQueued
+            ? `Se guardaron ${successCount} fotos y la metadata de evidencia para sincronizar con la incidencia #${parsedIncidentId}.`
+            : `Se guardaron ${successCount} fotos para sincronizar, pero no se pudo guardar checklist/nota (${metadataError || "error desconocido"}).`,
+          tone: metadataQueued ? "success" : "info",
         });
         setConfirmedEvidence([]);
         setSelectedImage(null);
@@ -520,9 +524,9 @@ export default function UploadIncidentPhotoScreen() {
       setConfirmedEvidence(failed);
       publishFeedback({
         title: "Sincronizacion pendiente",
-        message: metadataSaved
-          ? `Se subieron ${successCount}. Pendientes: ${failed.length}. Checklist/nota guardados. Revisa conexion/permisos y vuelve a intentar confirmar.`
-          : `Se subieron ${successCount}. Pendientes: ${failed.length}. Checklist/nota pendientes (${metadataError || "error desconocido"}).`,
+        message: metadataQueued
+          ? `Se encolaron ${successCount}. Pendientes de guardar localmente: ${failed.length}. Checklist/nota tambien quedaron en cola.`
+          : `Se encolaron ${successCount}. Pendientes de guardar localmente: ${failed.length}. Checklist/nota pendientes (${metadataError || "error desconocido"}).`,
         tone: "error",
       });
     } catch (error) {

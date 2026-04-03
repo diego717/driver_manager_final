@@ -1676,6 +1676,51 @@ function createMockDB({
 
           if (
             normalized.startsWith(
+              "UPDATE incidents SET target_lat = ?, target_lng = ?, target_label = ?, target_source = ?, target_updated_at = ?, target_updated_by = ?, dispatch_required = ?, dispatch_place_name = ?, dispatch_address = ?, dispatch_reference = ?, dispatch_contact_name = ?, dispatch_contact_phone = ?, dispatch_notes = ? WHERE id = ? AND tenant_id = ?",
+            )
+          ) {
+            const [
+              targetLat,
+              targetLng,
+              targetLabel,
+              targetSource,
+              targetUpdatedAt,
+              targetUpdatedBy,
+              dispatchRequired,
+              dispatchPlaceName,
+              dispatchAddress,
+              dispatchReference,
+              dispatchContactName,
+              dispatchContactPhone,
+              dispatchNotes,
+              incidentId,
+              tenantId,
+            ] = call.bound;
+            const row = state.incidents.find(
+              (item) =>
+                String(item.id) === String(incidentId) &&
+                String(item.tenant_id ?? "default") === String(tenantId ?? "default"),
+            );
+            if (row) {
+              row.target_lat = targetLat;
+              row.target_lng = targetLng;
+              row.target_label = targetLabel;
+              row.target_source = targetSource;
+              row.target_updated_at = targetUpdatedAt;
+              row.target_updated_by = targetUpdatedBy;
+              row.dispatch_required = dispatchRequired;
+              row.dispatch_place_name = dispatchPlaceName;
+              row.dispatch_address = dispatchAddress;
+              row.dispatch_reference = dispatchReference;
+              row.dispatch_contact_name = dispatchContactName;
+              row.dispatch_contact_phone = dispatchContactPhone;
+              row.dispatch_notes = dispatchNotes;
+            }
+            return { success: true, meta: { changes: row ? 1 : 0 } };
+          }
+
+          if (
+            normalized.startsWith(
               "UPDATE incidents SET deleted_at = ?, deleted_by = ?, deletion_reason = ?, status_updated_at = ?, status_updated_by = ? WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL",
             )
           ) {
@@ -2103,16 +2148,16 @@ function createMockDB({
                 reporterUsername,
                 note,
                 timeAdjustmentSeconds,
+                estimatedDurationSeconds,
                 severity,
                 source,
                 createdAt,
                 incidentStatus,
                 statusUpdatedAt,
                 statusUpdatedBy,
-                geofenceDistanceM,
-                geofenceRadiusM,
-                geofenceResult,
-                geofenceCheckedAt,
+                workStartedAt,
+                workEndedAt,
+                actualDurationSeconds,
                 gpsLat,
                 gpsLng,
                 gpsAccuracy,
@@ -2129,16 +2174,16 @@ function createMockDB({
                 reporter_username: reporterUsername,
                 note,
                 time_adjustment_seconds: timeAdjustmentSeconds,
+                estimated_duration_seconds: estimatedDurationSeconds,
                 severity,
                 source,
                 created_at: createdAt,
                 incident_status: incidentStatus,
                 status_updated_at: statusUpdatedAt,
                 status_updated_by: statusUpdatedBy,
-                geofence_distance_m: geofenceDistanceM,
-                geofence_radius_m: geofenceRadiusM,
-                geofence_result: geofenceResult,
-                geofence_checked_at: geofenceCheckedAt,
+                work_started_at: workStartedAt,
+                work_ended_at: workEndedAt,
+                actual_duration_seconds: actualDurationSeconds,
                 gps_lat: gpsLat,
                 gps_lng: gpsLng,
                 gps_accuracy_m: gpsAccuracy,
@@ -3168,7 +3213,7 @@ test("POST /records accepts captured gps payload and returns gps fields", async 
   assert.equal(db.state.installations[0].gps_capture_status, "captured");
 });
 
-test("POST /records can create initial site geofence from the captured gps snapshot", async () => {
+test("POST /records ignores deprecated site reference payload fields", async () => {
   const db = createMockDB();
   const request = new Request("https://worker.example/records", {
     method: "POST",
@@ -3194,12 +3239,12 @@ test("POST /records can create initial site geofence from the captured gps snaps
   const body = await response.json();
 
   assert.equal(response.status, 201);
-  assert.equal(body.record.site_lat, -34.9011);
-  assert.equal(body.record.site_lng, -56.1645);
-  assert.equal(body.record.site_radius_m, 60);
-  assert.equal(db.state.installations[0].site_lat, -34.9011);
-  assert.equal(db.state.installations[0].site_lng, -56.1645);
-  assert.equal(db.state.installations[0].site_radius_m, 60);
+  assert.equal(body.record.site_lat, undefined);
+  assert.equal(body.record.site_lng, undefined);
+  assert.equal(body.record.site_radius_m, undefined);
+  assert.equal(db.state.installations[0].site_lat, null);
+  assert.equal(db.state.installations[0].site_lng, null);
+  assert.equal(db.state.installations[0].site_radius_m, null);
 });
 
 test("POST /records rejects gps payload with invalid latitude", async () => {
@@ -3580,7 +3625,7 @@ test("POST /installations/:id/incidents creates incident and can apply installat
   assert.equal(installationUpdate.bound[2], 45);
 });
 
-test("POST /installations/:id/incidents blocks outside geofence without override when hard policy is enabled", async () => {
+test("POST /installations/:id/incidents ignores deprecated geofence hard policy flags", async () => {
   const db = createMockDB({
     installations: [{
       id: 45,
@@ -3618,12 +3663,12 @@ test("POST /installations/:id/incidents blocks outside geofence without override
   });
   const body = await response.json();
 
-  assert.equal(response.status, 409);
-  assert.match(String(body?.error?.message || ""), /override/i);
-  assert.equal(db.state.incidents.length, 0);
+  assert.equal(response.status, 201);
+  assert.equal(body.incident.geofence_result, undefined);
+  assert.equal(db.state.incidents.length, 1);
 });
 
-test("POST /installations/:id/incidents accepts outside geofence with override when hard policy is enabled", async () => {
+test("POST /installations/:id/incidents ignores deprecated geofence override notes", async () => {
   const db = createMockDB({
     installations: [{
       id: 45,
@@ -3663,18 +3708,12 @@ test("POST /installations/:id/incidents accepts outside geofence with override w
   const body = await response.json();
 
   assert.equal(response.status, 201);
-  assert.equal(body.incident.geofence_result, "outside");
-  assert.equal(
-    body.incident.geofence_override_note,
-    "Acceso temporal desde la vereda por restriccion del cliente.",
-  );
-  assert.equal(
-    db.state.incidents[0].geofence_override_note,
-    "Acceso temporal desde la vereda por restriccion del cliente.",
-  );
+  assert.equal(body.incident.geofence_result, undefined);
+  assert.equal(body.incident.geofence_override_note, undefined);
+  assert.equal(db.state.incidents[0].geofence_override_note, "");
   assert.equal(
     db.state.auditLogs.some((entry) => entry.action === "override_incident_geofence"),
-    true,
+    false,
   );
 });
 
@@ -3896,7 +3935,7 @@ test("GET /installations/:id/incidents returns incidents with nested photos", as
   assert.equal(body.incidents[0].photos[0].file_name, "photo1.jpg");
 });
 
-test("GET /installations/:id/incidents returns actionable error when GPS/geofence migrations are missing", async () => {
+test("GET /installations/:id/incidents returns actionable error when GPS migrations are missing", async () => {
   const db = {
     prepare(sql) {
       const normalized = normalizeSql(sql);
@@ -3905,8 +3944,8 @@ test("GET /installations/:id/incidents returns actionable error when GPS/geofenc
           return this;
         },
         async all() {
-          if (normalized.includes("geofence_distance_m") || normalized.includes("gps_lat")) {
-            throw new Error("no such column: geofence_distance_m");
+          if (normalized.includes("gps_lat")) {
+            throw new Error("no such column: gps_lat");
           }
           return { results: [] };
         },
@@ -3924,7 +3963,6 @@ test("GET /installations/:id/incidents returns actionable error when GPS/geofenc
 
   assert.equal(response.status, 500);
   assert.match(String(body?.error?.message || ""), /0017_geolocation_capture\.sql/i);
-  assert.match(String(body?.error?.message || ""), /0019_geofence_hard_overrides\.sql/i);
 });
 
 test("PATCH /incidents/:id/evidence updates checklist_items and evidence_note", async () => {
@@ -4198,6 +4236,195 @@ test("DELETE /web/incidents/:id rejects admin role", async () => {
   assert.equal(deleteResponse.status, 403);
   assert.match(deleteBody.error.message, /super_admin/i);
   assert.equal(db.state.incidents.find((row) => Number(row.id) === 11)?.deleted_at, null);
+});
+
+test("PATCH /web/incidents/:id/dispatch-target updates operational destination fields", async () => {
+  const db = createMockDB({
+    installations: [{ id: 45 }],
+    incidents: [
+      {
+        id: 11,
+        installation_id: 45,
+        reporter_username: "admin_user",
+        note: "Incidencia A",
+        time_adjustment_seconds: 10,
+        severity: "high",
+        source: "web",
+        created_at: "2026-02-15T10:00:00Z",
+        incident_status: "open",
+      },
+    ],
+  });
+  const env = {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_user",
+        password: "StrongPass#2026",
+        role: "admin",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const patchResponse = await workerFetch(
+    new Request("https://worker.example/web/incidents/11/dispatch-target", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...webSessionHeadersFromResponse(bootstrapResponse),
+      },
+      body: JSON.stringify({
+        target_lat: -34.9011,
+        target_lng: -56.1645,
+        target_label: "ATM-009 acceso principal",
+        target_source: "manual_map",
+        dispatch_place_name: "ATM-009",
+        dispatch_address: "Av. Italia 2456",
+        dispatch_reference: "Hall principal, acceso lateral",
+        dispatch_contact_name: "Marta Perez",
+        dispatch_contact_phone: "+59899111222",
+        dispatch_notes: "Coordinar ingreso antes de manipular el equipo",
+      }),
+    }),
+    env,
+  );
+  const patchBody = await patchResponse.json();
+
+  assert.equal(patchResponse.status, 200);
+  assert.equal(patchBody.success, true);
+  assert.equal(patchBody.incident.dispatch_required, true);
+  assert.equal(patchBody.incident.target_lat, -34.9011);
+  assert.equal(patchBody.incident.target_lng, -56.1645);
+  assert.equal(patchBody.incident.target_label, "ATM-009 acceso principal");
+  assert.equal(patchBody.incident.target_source, "manual_map");
+  assert.equal(patchBody.incident.dispatch_place_name, "ATM-009");
+  assert.equal(patchBody.incident.dispatch_address, "Av. Italia 2456");
+  assert.equal(patchBody.incident.dispatch_reference, "Hall principal, acceso lateral");
+  assert.equal(patchBody.incident.dispatch_contact_name, "Marta Perez");
+  assert.equal(patchBody.incident.dispatch_contact_phone, "+59899111222");
+  assert.equal(
+    patchBody.incident.dispatch_notes,
+    "Coordinar ingreso antes de manipular el equipo",
+  );
+  assert.equal(patchBody.incident.target_updated_by, "admin_user");
+  assert.equal(typeof patchBody.incident.target_updated_at, "string");
+
+  const updatedIncident = db.state.incidents.find((row) => Number(row.id) === 11);
+  assert.equal(updatedIncident?.dispatch_required, 1);
+  assert.equal(updatedIncident?.dispatch_place_name, "ATM-009");
+  assert.equal(updatedIncident?.dispatch_address, "Av. Italia 2456");
+  assert.equal(updatedIncident?.target_source, "manual_map");
+
+  const auditEvent = db.state.auditLogs.find(
+    (row) => row.action === "update_incident_dispatch_target",
+  );
+  assert.ok(auditEvent);
+});
+
+test("PATCH /web/incidents/:id/dispatch-target can disable visit data and clears dispatch fields", async () => {
+  const db = createMockDB({
+    installations: [{ id: 45 }],
+    incidents: [
+      {
+        id: 11,
+        installation_id: 45,
+        reporter_username: "admin_user",
+        note: "Incidencia A",
+        time_adjustment_seconds: 10,
+        severity: "high",
+        source: "web",
+        created_at: "2026-02-15T10:00:00Z",
+        incident_status: "open",
+        dispatch_required: 1,
+        target_lat: -34.9011,
+        target_lng: -56.1645,
+        target_label: "ATM-009 acceso principal",
+        target_source: "manual_map",
+        dispatch_place_name: "ATM-009",
+        dispatch_address: "Av. Italia 2456",
+        dispatch_reference: "Hall principal, acceso lateral",
+        dispatch_contact_name: "Marta Perez",
+        dispatch_contact_phone: "+59899111222",
+        dispatch_notes: "Coordinar ingreso antes de manipular el equipo",
+      },
+    ],
+  });
+  const env = {
+    DB: db,
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_user",
+        password: "StrongPass#2026",
+        role: "admin",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const patchResponse = await workerFetch(
+    new Request("https://worker.example/web/incidents/11/dispatch-target", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...webSessionHeadersFromResponse(bootstrapResponse),
+      },
+      body: JSON.stringify({
+        dispatch_required: false,
+      }),
+    }),
+    env,
+  );
+  const patchBody = await patchResponse.json();
+
+  assert.equal(patchResponse.status, 200);
+  assert.equal(patchBody.success, true);
+  assert.equal(patchBody.incident.dispatch_required, false);
+  assert.equal(patchBody.incident.target_lat, null);
+  assert.equal(patchBody.incident.target_lng, null);
+  assert.equal(patchBody.incident.target_label, null);
+  assert.equal(patchBody.incident.target_source, null);
+  assert.equal(patchBody.incident.dispatch_place_name, null);
+  assert.equal(patchBody.incident.dispatch_address, null);
+  assert.equal(patchBody.incident.dispatch_reference, null);
+  assert.equal(patchBody.incident.dispatch_contact_name, null);
+  assert.equal(patchBody.incident.dispatch_contact_phone, null);
+  assert.equal(patchBody.incident.dispatch_notes, null);
+
+  const updatedIncident = db.state.incidents.find((row) => Number(row.id) === 11);
+  assert.equal(updatedIncident?.dispatch_required, 0);
+  assert.equal(updatedIncident?.target_lat, null);
+  assert.equal(updatedIncident?.target_lng, null);
+  assert.equal(updatedIncident?.dispatch_address, null);
+
+  const auditEvent = db.state.auditLogs.find(
+    (row) => row.action === "update_incident_dispatch_target",
+  );
+  assert.ok(auditEvent);
+  const auditDetails =
+    typeof auditEvent?.details === "string"
+      ? JSON.parse(auditEvent.details)
+      : auditEvent?.details ?? {};
+  assert.equal(auditDetails.dispatch_required, false);
+  assert.equal(auditDetails.has_target_coordinates, false);
 });
 
 test("PATCH /incidents/:id/status returns clear error when DB schema still rejects paused", async () => {
@@ -4850,8 +5077,8 @@ test("GET /statistics returns full stats with brand grouping", async () => {
   assert.equal(body.gps_observability.installations.p95_accuracy_m, 8);
   assert.equal(body.gps_observability.incidents.captured_count, 1);
   assert.equal(body.gps_observability.incidents.timeout_count, 1);
-  assert.equal(body.gps_observability.warnings.total_outside_count, 1);
-  assert.equal(body.gps_observability.overrides.total_override_count, 2);
+  assert.equal(body.gps_observability.warnings, undefined);
+  assert.equal(body.gps_observability.overrides.total_override_count, 1);
 });
 
 test("GET /statistics/trend returns daily buckets with zero-filled gaps", async () => {

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const secureStoreState = vi.hoisted(() => new Map<string, string>());
 const secureStoreMocks = vi.hoisted(() => ({
+  AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: "after_first_unlock_this_device_only",
   setItemAsync: vi.fn(async (key: string, value: string) => {
     secureStoreState.set(key, value);
   }),
@@ -27,6 +28,13 @@ describe("app-preferences", () => {
   it("persists and reads enabled=true", async () => {
     await setBiometricEnabled(true);
     await expect(getBiometricEnabled()).resolves.toBe(true);
+    expect(secureStoreMocks.setItemAsync).toHaveBeenCalledWith(
+      "dm_pref_biometric_enabled",
+      "1",
+      expect.objectContaining({
+        keychainAccessible: "after_first_unlock_this_device_only",
+      }),
+    );
   });
 
   it("persists and reads enabled=false", async () => {

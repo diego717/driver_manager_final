@@ -16,6 +16,7 @@
             if (section === 'dashboard') options.loadDashboard({ followupDelayMs: 1200 });
             if (section === 'installations') options.loadInstallations();
             if (section === 'incidents') options.loadIncidentsWorkspace?.();
+            if (section === 'incidentMap') options.loadIncidentMapWorkspace?.();
             if (section === 'assets') options.loadAssets();
             if (section === 'drivers') options.loadDrivers();
             if (section === 'tenants') options.loadTenants?.();

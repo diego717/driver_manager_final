@@ -11,9 +11,11 @@ from managers.cloud_manager import CloudflareR2Manager
 from managers.user_manager_v2 import UserManagerV2
 from ui.dialogs.asset_management_dialog import AssetManagementDialog
 from ui.dialogs.qr_generator_dialog import QrGeneratorDialog
-from ui.dialogs.user_management_ui import LoginDialog
+from ui.dialogs.user_management_ui import LoginDialog, UserManagementDialog
 from ui.main_window_bootstrap import initialize_manager_state
+from ui.v2_admin_bridge import AdminBridge
 from ui.v2_drivers_bridge import DriversBridge
+from ui.v2_history_bridge import HistoryBridge
 from ui.v2_incidents_bridge import IncidentsBridge
 
 
@@ -39,8 +41,12 @@ class MainWindowV2(QMainWindow):
 
         self.drivers_bridge = DriversBridge(self, quick)
         self.incidents_bridge = IncidentsBridge(self, quick)
+        self.history_bridge = HistoryBridge(self, quick)
+        self.admin_bridge = AdminBridge(self, quick)
         quick.rootContext().setContextProperty("driversBridge", self.drivers_bridge)
         quick.rootContext().setContextProperty("incidentsBridge", self.incidents_bridge)
+        quick.rootContext().setContextProperty("historyBridge", self.history_bridge)
+        quick.rootContext().setContextProperty("adminBridge", self.admin_bridge)
 
         qml_path = Path(__file__).resolve().parent / "qml" / "App.qml"
         quick.setSource(QUrl.fromLocalFile(str(qml_path)))
@@ -59,6 +65,8 @@ class MainWindowV2(QMainWindow):
             return
         self.drivers_bridge.refreshDrivers()
         self.incidents_bridge.refreshData()
+        self.history_bridge.refreshHistory()
+        self.admin_bridge.refreshState()
 
     def load_config_data(self):
         return self.config_manager.load_config_data()
@@ -289,5 +297,17 @@ class MainWindowV2(QMainWindow):
             parent=self,
             can_edit=self.is_admin,
             can_delete=can_delete,
+        )
+        dialog.exec()
+
+    def show_user_management(self):
+        if not self.user_manager or not self.user_manager.current_user:
+            QMessageBox.warning(self, "Error", "Debes iniciar sesion primero")
+            return
+
+        dialog = UserManagementDialog(
+            self.user_manager,
+            history_manager=self.history,
+            parent=self,
         )
         dialog.exec()

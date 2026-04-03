@@ -1541,11 +1541,25 @@ tr[data-asset-id]:focus-visible {
 }
 
 .incident-map-controls {
-    display: flex;
+    display: grid;
+    grid-template-columns: auto repeat(2, minmax(180px, 1fr));
     gap: 0.7rem;
-    flex-wrap: wrap;
     justify-content: flex-end;
     align-items: center;
+    width: min(100%, 720px);
+    margin-left: auto;
+    padding: 0.5rem;
+    border-radius: 18px;
+    border: 1px solid color-mix(in oklab, var(--border) 76%, var(--accent-primary) 24%);
+    background:
+        linear-gradient(
+            180deg,
+            color-mix(in oklab, var(--bg-secondary) 86%, var(--accent-primary) 14%),
+            color-mix(in oklab, var(--bg-card) 94%, var(--accent-primary) 6%)
+        );
+    box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.22) inset,
+        0 18px 32px rgba(3, 12, 16, 0.12);
 }
 
 .incident-map-segment {
@@ -1581,7 +1595,50 @@ tr[data-asset-id]:focus-visible {
 }
 
 .incident-map-select {
+    width: 100%;
     min-width: 170px;
+    min-height: 44px;
+    padding: 0.625rem 2.6rem 0.625rem 0.9rem;
+    border: 1px solid color-mix(in oklab, var(--border) 76%, var(--accent-primary) 24%);
+    border-radius: 12px;
+    background:
+        linear-gradient(180deg, color-mix(in oklab, var(--bg-card) 94%, white 6%), var(--bg-card))
+        padding-box,
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14' fill='none'%3E%3Cpath d='M3 5.25L7 9.25L11 5.25' stroke='%2383c9c3' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+        no-repeat right 0.9rem center / 0.9rem;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.2;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.32) inset;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    cursor: pointer;
+    transition:
+        border-color 0.2s ease,
+        box-shadow 0.2s ease,
+        background-color 0.2s ease,
+        transform 0.2s ease;
+}
+
+.incident-map-select:hover {
+    border-color: color-mix(in oklab, var(--accent-primary) 36%, var(--border) 64%);
+    background-color: color-mix(in oklab, var(--bg-card) 88%, var(--accent-primary) 12%);
+}
+
+.incident-map-select:focus,
+.incident-map-select:focus-visible {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow:
+        0 0 0 3px rgba(15, 117, 109, 0.14),
+        0 1px 0 rgba(255, 255, 255, 0.32) inset;
+}
+
+.incident-map-select option {
+    color: var(--text-primary);
+    background: var(--bg-card);
 }
 
 .incident-map-summary {
@@ -5995,6 +6052,13 @@ tr[data-asset-id]:focus-visible {
         align-items: stretch;
     }
 
+    .incident-map-controls {
+        display: grid;
+        grid-template-columns: 1fr;
+        width: 100%;
+        margin-left: 0;
+    }
+
     .incident-map-canvas {
         min-height: 360px;
     }
@@ -6017,6 +6081,12 @@ tr[data-asset-id]:focus-visible {
     .incident-map-segment {
         width: 100%;
         justify-content: space-between;
+    }
+
+    .incident-map-controls {
+        padding: 0.45rem;
+        border-radius: 16px;
+        gap: 0.55rem;
     }
 
     .incident-map-range-btn {

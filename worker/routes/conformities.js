@@ -1,15 +1,10 @@
 import { HttpError } from "../lib/core.js";
-import {
-  GEOFENCE_FLOW_CONFORMITY,
-  resolveHardGeofenceOverride,
-} from "../lib/geofence.js";
 
 const CONFORMITY_CREATE_MAX_JSON_BYTES = 512 * 1024;
 
 export function createConformitiesRouteHandlers({
   buildGpsMapsUrl,
   buildGpsMetadataSnapshot,
-  evaluateGeofence,
   jsonResponse,
   corsHeaders,
   parsePositiveInt,
@@ -43,7 +38,6 @@ export function createConformitiesRouteHandlers({
     const summaryNote = normalizeOptionalString(body?.summary_note, "").trim();
     const technicianName = normalizeOptionalString(body?.technician_name, "").trim();
     const technicianNote = normalizeOptionalString(body?.technician_note, "").trim();
-    const geofenceOverrideNote = normalizeOptionalString(body?.geofence_override_note, "").trim();
     const requestedPhotoIds = Array.isArray(body?.photo_ids) ? body.photo_ids : [];
     const photoIds = [...new Set(
       requestedPhotoIds
@@ -75,7 +69,6 @@ export function createConformitiesRouteHandlers({
       summaryNote,
       technicianName,
       technicianNote,
-      geofenceOverrideNote,
       includeAllIncidentPhotos,
       photoIds,
       sendEmail,
@@ -183,21 +176,6 @@ export function createConformitiesRouteHandlers({
         throw new HttpError(404, "Instalacion no encontrada.");
       }
 
-      const geofence = evaluateGeofence({
-        gps: payload.gps,
-        installation: context.installation,
-        checkedAt: signedAt,
-      });
-      const geofenceOverride = resolveHardGeofenceOverride({
-        env,
-        tenantId,
-        flow: GEOFENCE_FLOW_CONFORMITY,
-        geofence,
-        overrideNote: payload.geofenceOverrideNote,
-        actorUsername: actorUsername,
-        appliedAt: generatedAt,
-      });
-
       const signatureAsset = await storeSignatureAsset(env, {
         tenantId,
         installationId,
@@ -218,8 +196,6 @@ export function createConformitiesRouteHandlers({
         generatedByUsername: actorUsername,
         signatureR2Key: signatureAsset.r2Key,
         signatureBytes: signatureAsset.bytes,
-        geofence,
-        geofenceOverride,
       });
       const pdfAsset = await storeConformityPdf(env, {
         tenantId,
@@ -293,18 +269,6 @@ export function createConformitiesRouteHandlers({
             ...gpsMetadata,
             maps_url: mapsUrl || "",
           },
-          geofence: {
-            distance_m: geofence.geofence_distance_m,
-            radius_m: geofence.geofence_radius_m,
-            result: geofence.geofence_result,
-            checked_at: geofence.geofence_checked_at,
-            site_lat: context.installation?.site_lat ?? null,
-            site_lng: context.installation?.site_lng ?? null,
-            override_note: geofenceOverride.override_note,
-            override_by: geofenceOverride.override_by,
-            override_at: geofenceOverride.override_at,
-            hard_policy_enabled: geofenceOverride.policy_enabled,
-          },
         }),
       });
 
@@ -327,12 +291,6 @@ export function createConformitiesRouteHandlers({
           gps_override_note: gpsMetadata.status === "override"
             ? gpsMetadata.note
             : "",
-          geofence_result: geofence.geofence_result,
-          geofence_distance_m: geofence.geofence_distance_m,
-          geofence_radius_m: geofence.geofence_radius_m,
-          geofence_override_note: geofenceOverride.override_note,
-          geofence_override_by: geofenceOverride.override_by,
-          geofence_override_at: geofenceOverride.override_at,
           gps_accuracy_m: gpsMetadata.accuracy_m,
           tenant_id: tenantId,
         },
@@ -353,45 +311,6 @@ export function createConformitiesRouteHandlers({
             source: gpsMetadata.source,
             status: gpsMetadata.status,
             email_to: payload.emailTo,
-          },
-          ipAddress: requestIp,
-          platform: "web",
-        });
-      }
-
-      if (geofenceOverride.override_applied) {
-        await logAuditEvent(env, {
-          action: "override_installation_conformity_geofence",
-          username: actorUsername,
-          success: true,
-          tenantId,
-          details: {
-            conformity_id: conformity?.id,
-            installation_id: installationId,
-            geofence_distance_m: geofence.geofence_distance_m,
-            geofence_radius_m: geofence.geofence_radius_m,
-            gps_accuracy_m: gpsMetadata.accuracy_m,
-            reason: geofenceOverride.override_note,
-            override_by: geofenceOverride.override_by,
-            override_at: geofenceOverride.override_at,
-          },
-          ipAddress: requestIp,
-          platform: "web",
-        });
-      }
-
-      if (geofence.geofence_result === "outside") {
-        await logAuditEvent(env, {
-          action: "installation_conformity_geofence_warning",
-          username: actorUsername,
-          success: true,
-          tenantId,
-          details: {
-            conformity_id: conformity?.id,
-            installation_id: installationId,
-            geofence_result: geofence.geofence_result,
-            geofence_distance_m: geofence.geofence_distance_m,
-            geofence_radius_m: geofence.geofence_radius_m,
           },
           ipAddress: requestIp,
           platform: "web",

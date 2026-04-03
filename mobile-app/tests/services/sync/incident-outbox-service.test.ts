@@ -30,7 +30,6 @@ const mockCreatedIncident = vi.hoisted(() => ({
   gpsAccuracyM: 12,
   gpsCapturedAt: '2026-03-26T12:00:00.000Z',
   gpsCaptureNote: '',
-  geofenceOverrideNote: '',
 }))
 
 const mockCreatedJob = vi.hoisted(() => ({
@@ -163,10 +162,10 @@ describe('incident-outbox-service', () => {
       expect(firstCallArgs.clientRequestId).not.toBe(secondCallArgs.clientRequestId)
     })
 
-    it('persists gps and geofence override data in the local incident payload', async () => {
+    it('persists gps capture data in the local incident payload', async () => {
       await enqueueCreateIncident({
         installationId: 42,
-        note: 'Outside geofence',
+        note: 'Offline incident with GPS',
         reporterUsername: 'ops',
         gps: {
           status: 'captured',
@@ -176,7 +175,6 @@ describe('incident-outbox-service', () => {
           accuracy_m: 18,
           captured_at: '2026-03-26T13:00:00.000Z',
         },
-        geofenceOverrideNote: 'Cliente pidio continuar fuera del sitio.',
       })
 
       expect(mockIncidentsRepo.createLocalIncident).toHaveBeenCalledWith(
@@ -186,7 +184,6 @@ describe('incident-outbox-service', () => {
             source: 'browser',
             lat: -34.89,
           }),
-          geofenceOverrideNote: 'Cliente pidio continuar fuera del sitio.',
         }),
       )
     })

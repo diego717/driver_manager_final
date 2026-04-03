@@ -6,7 +6,7 @@ Monorepo operativo para gestionar instalaciones, incidencias, conformidades y se
 - Backend/API en Cloudflare Workers con D1, R2, KV y Durable Objects.
 - App movil en Expo/React Native para trabajo en terreno.
 
-Actualizado segun el estado del repositorio al 2026-03-27.
+Actualizado segun el estado del repositorio al 2026-04-03.
 
 ## Estado actual
 
@@ -14,12 +14,13 @@ El proyecto ya no es solo un gestor de drivers. Hoy concentra un flujo operativo
 
 - Dashboard web con autenticacion web, metricas, auditoria, incidentes, assets, scanning, realtime y PWA.
 - API multi-tenant con rutas para instalaciones, incidencias, estadisticas, dispositivos, auditoria, conformidades y tracking publico.
+- Flujo operativo de incidencias con destino operativo, asignacion de tecnicos, push y mapa web/mobile.
 - Almacenamiento mixto:
   - D1 para datos operativos y sesiones.
   - R2 para fotos/evidencia y archivos asociados.
   - KV para rate limiting, sesiones web y tracking publico.
   - Durable Object para broker de eventos realtime.
-- App movil con login web, captura de incidencias, fotos, QR, sync local, biometria y utilidades de geolocalizacion.
+- App movil con login web, captura de incidencias, fotos, QR, sync local/offline-first, biometria, notificaciones y utilidades de geolocalizacion.
 - Cliente desktop que sigue cubriendo flujos legacy y web segun configuracion.
 
 ## Componentes
@@ -49,11 +50,14 @@ Capacidades visibles en el codigo actual:
 - Auth web: bootstrap, login, logout, sesion actual y administracion de usuarios web.
 - Instalaciones y records operativos.
 - Incidencias con evidencia, estados, fotos y metricas.
+- Destino operativo por incidencia con `target_*`, `dispatch_*` y toggle `dispatch_required`.
+- Edicion de destino operativo desde cards y desde el mapa web.
+- Asignaciones de tecnicos con push al tecnico vinculado y deep link al detalle mobile.
 - Conformidades de instalacion con generacion de PDF y almacenamiento asociado.
 - Assets y prestamos.
 - Estadisticas y tendencias.
 - Tracking publico con tokens/enlaces dedicados.
-- Geolocalizacion y soporte de geofencing en librerias/migraciones recientes.
+- Geolocalizacion activa y mapa operativo de incidencias.
 - SSE/realtime mediante `RealtimeEventsBroker`.
 - Dashboard/PWA publicado desde `public/`.
 
@@ -66,9 +70,30 @@ Capacidades visibles en el codigo actual:
 - Expo Router con pantallas para trabajo, drivers, incidencias, casos y QR.
 - APIs tipadas para auth, incidents, devices, assets, conformities, statistics y tracking publico.
 - SQLite/WatermelonDB como base local.
-- Servicios de sync, cola de salida para incidencias y manejo de fotos.
+- Servicios de sync, cola de salida para incidencias, evidencia y manejo de fotos.
+- Cola de trabajo offline, detalle offline y cache de asignaciones / mapa para continuidad sin red.
+- Pestaña `Mapa` con incidencias asignadas, distancia y CTA de navegacion externa.
 - Biometria (`expo-local-authentication`) y notificaciones (`expo-notifications`).
-- Soporte de geolocalizacion (`expo-location`).
+- Soporte de geolocalizacion (`expo-location`) y mapas (`react-native-maps`).
+
+## Incidencias y despacho operativo
+
+Estado del repo al 2026-04-03:
+
+- destino operativo implementado en `incidents` con `target_*` y `dispatch_*`
+- toggle `dispatch_required` para incidencias que no requieren visita en sitio
+- `PATCH /web/incidents/:id/dispatch-target` implementado
+- mapa web con edicion directa de `target_lat` y `target_lng`
+- push por asignacion de incidencia a tecnico vinculado
+- mobile con detalle operativo, apertura desde push y pestaña `Mapa`
+- fallback offline para `Trabajo`, `Mapa` y `Detalle incidencia`
+
+Documentacion relacionada:
+
+- `docs/mobile-incident-map-dispatch-design.md`
+- `docs/mobile-incident-map-dispatch-checklist.md`
+- `docs/mobile-offline-sync-qa-checklist.md`
+- `docs/changes/2026-04-03-mobile-incident-dispatch-map-offline-rollout.md`
 
 ## Arquitectura rapida
 
@@ -131,6 +156,13 @@ Deploy completo:
 npm run deploy:full
 ```
 
+Migraciones utiles:
+
+```powershell
+npm run d1:migrate
+npm run d1:migrate:remote
+```
+
 ### Mobile
 
 ```powershell
@@ -190,59 +222,19 @@ Checklist minimo de secretos antes de publicar:
 2. Confirmar que no existan credenciales reales en archivos locales del repo.
 3. Ejecutar `npm run security:verify-deploy` antes de `npm run deploy`.
 
-## Rollout GPS y geofence
+## Estado GPS
 
-Estado del repo al 2026-03-26:
+Estado del repo al 2026-04-03:
 
-- GPS tagging: implementado en dashboard, Worker, D1 y PDF de conformidad
-- geofence soft: implementado
-- geofence hard con override auditado: implementado a nivel tecnico, pendiente de activacion operativa segun tenant/flujo
+- GPS tagging: vigente en dashboard, Worker, mobile y PDF de conformidad
+- geofence: retirado del flujo activo por decision de producto
+- despacho operativo: vigente en dashboard, Worker y mobile
 
-Checklist minimo antes de activar en un entorno real:
+Notas operativas:
 
-1. Aplicar migraciones D1:
-   - `0017_geolocation_capture.sql`
-   - `0018_geofencing_soft.sql`
-   - `0019_geofence_hard_overrides.sql`
-2. Confirmar que el dashboard publicado tenga assets sincronizados:
-   - `npm run dashboard:sync-assets`
-3. Cargar coordenadas de referencia en instalaciones donde aplique:
-   - `site_lat`
-   - `site_lng`
-   - `site_radius_m`
-4. Definir politica por tenant:
-   - solo observacion
-   - hard geofence con override obligatorio
-5. Ejecutar smoke manual en navegador real antes de endurecer politica.
-
-Variables de entorno relevantes para hard geofence:
-
-- `GEOFENCE_HARD_ENABLED`
-- `GEOFENCE_HARD_FLOWS`
-- `GEOFENCE_HARD_TENANTS`
-
-Ejemplo operativo:
-
-```powershell
-$env:GEOFENCE_HARD_ENABLED="true"
-$env:GEOFENCE_HARD_FLOWS="incidents,conformity"
-$env:GEOFENCE_HARD_TENANTS="tenant-a,tenant-b"
-```
-
-Smoke checks recomendados:
-
-- registro manual con GPS capturado
-- incidencia con GPS capturado
-- incidencia fuera de radio con override auditado
-- conformidad con GPS capturado
-- conformidad sin GPS usable con override GPS
-- conformidad fuera de radio con override geofence
-- PDF final mostrando GPS/geofence
-- permiso denegado y timeout sin romper el flujo
-
-Referencia detallada:
-
-- `docs/gps-tagging-geofencing-implementation-plan.md`
+1. Mantener migraciones historicas ya aplicadas; no hace falta activar nada nuevo de geofence.
+2. Los campos `site_lat`, `site_lng`, `site_radius_m` y columnas `geofence_*` pueden seguir existiendo por compatibilidad de datos.
+3. Cualquier documentacion vieja que describa activacion de hard geofence debe considerarse historica.
 
 ## Rollout Public Tracking
 
@@ -314,6 +306,17 @@ Cobertura actual por tipo:
 - `tests_js/`: dashboard, contract tests y rutas/servicios del Worker.
 - `mobile-app/tests/` y `mobile-app/src/**/*.test.*`: UI, servicios y utilidades de mobile.
 
+Suites utiles para incidencias, despacho y mapa:
+
+```powershell
+node --test tests_js/worker.contract.test.mjs
+node --test tests_js/dashboard.unit.test.mjs
+node --test tests_js/worker/routes.test.mjs
+Set-Location mobile-app
+node .\node_modules\vitest\vitest.mjs run src\api\incidents.test.ts src\api\technicians.test.ts
+node .\node_modules\typescript\bin\tsc -p tsconfig.json --noEmit
+```
+
 ### Mobile
 
 ```powershell
@@ -356,13 +359,17 @@ npm exec tsc -- --noEmit
 - `docs/tenant-request-flow.md`
 - `docs/public-tracking-magic-link-implementation-plan.md`
 - `docs/gps-tagging-geofencing-implementation-plan.md`
+- `docs/mobile-incident-map-dispatch-design.md`
+- `docs/mobile-incident-map-dispatch-checklist.md`
+- `docs/mobile-offline-sync-qa-checklist.md`
 
 ## Notas operativas
 
 - Si cambias `dashboard*.js/html/css`, ejecuta `npm run dashboard:sync-assets`.
 - `npm run deploy` valida configuracion de seguridad antes de publicar.
 - No distribuyas mobile con secretos HMAC legacy en cliente.
-- Hay trabajo activo en geolocalizacion, geofencing, public tracking y conformidades; revisar migraciones recientes y tests asociados antes de tocar contrato.
+- Antes de tocar `incidents`, revisar migraciones recientes `0017`, `0023` y `0024` y los tests asociados.
+- Hay trabajo activo en geolocalizacion, despacho operativo, public tracking, offline mobile y conformidades; revisar docs y cambios recientes antes de tocar contrato.
 
 ## Regla de cambios
 

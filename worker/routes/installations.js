@@ -238,11 +238,6 @@ export function createInstallationsRouteHandlers({
           updateAssignments.push("installation_time_seconds = ?");
           bindings.push(payload.installation_time_seconds);
         }
-        if (payload.has_site_config === true) {
-          updateAssignments.push("site_lat = ?", "site_lng = ?", "site_radius_m = ?");
-          bindings.push(payload.site_lat, payload.site_lng, payload.site_radius_m);
-        }
-
         if (!updateAssignments.length) {
           throw new HttpError(400, "No hay campos validos para actualizar.");
         }
@@ -282,9 +277,6 @@ export function createInstallationsRouteHandlers({
               id: installationId,
               notes: payload.notes,
               installation_time_seconds: payload.installation_time_seconds,
-              site_lat: payload.site_lat,
-              site_lng: payload.site_lng,
-              site_radius_m: payload.site_radius_m,
             };
 
         await publishRealtimeEvent(env, {

@@ -1,6 +1,7 @@
 import { Model } from '@nozbe/watermelondb'
 import { field, text, readonly, date, writer } from '@nozbe/watermelondb/decorators'
 import type { LocalSyncStatus } from './Incident'
+import { sanitizeStoredSyncMessage } from '../../services/sync/sync-errors'
 
 export type SyncJobOperation =
   | 'create_incident'
@@ -45,7 +46,7 @@ export default class SyncJob extends Model {
     await this.update(job => {
       job.jobStatus = 'failed'
       job.attemptCount = job.attemptCount + 1
-      job.lastError = error
+      job.lastError = sanitizeStoredSyncMessage(error)
       job.updatedAt = Date.now()
     })
   }

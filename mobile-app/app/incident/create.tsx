@@ -41,7 +41,6 @@ import {
 import {
   formatGpsStatusLabel,
   formatGpsSummary,
-  hasInstallationSiteConfig,
 } from "@/src/utils/gps";
 
 // Register sync executor once
@@ -149,7 +148,6 @@ export default function CreateIncidentScreen() {
       }
     );
   }, [installationId, installations]);
-  const hasSiteConfig = useMemo(() => hasInstallationSiteConfig(selectedCase), [selectedCase]);
   const requiresGpsOverride = gpsSnapshot.status !== "captured";
   const showGpsOverrideField = requiresGpsOverride;
 
@@ -533,12 +531,6 @@ export default function CreateIncidentScreen() {
           <Text style={[styles.gpsBody, { color: palette.textSecondary }]}>
             {formatGpsSummary(gpsSnapshot)}
           </Text>
-          {hasSiteConfig ? (
-            <Text style={[styles.gpsFootnote, { color: palette.textMuted }]}>
-              Referencia del caso: {Number(selectedCase?.site_lat).toFixed(5)}, {Number(selectedCase?.site_lng).toFixed(5)} · radio{" "}
-              {Math.round(Number(selectedCase?.site_radius_m) || 0)} m
-            </Text>
-          ) : null}
         </View>
 
         {showGpsOverrideField ? (

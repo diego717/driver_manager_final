@@ -2,6 +2,9 @@ import * as SecureStore from "expo-secure-store";
 import { getWebSessionStorage } from "./runtime";
 
 const BIOMETRIC_ENABLED_KEY = "dm_pref_biometric_enabled";
+const SECURE_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
+  keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY,
+};
 
 async function setItem(key: string, value: string): Promise<void> {
   const webStorage = getWebSessionStorage();
@@ -9,7 +12,7 @@ async function setItem(key: string, value: string): Promise<void> {
     webStorage.setItem(key, value);
     return;
   }
-  await SecureStore.setItemAsync(key, value);
+  await SecureStore.setItemAsync(key, value, SECURE_STORE_OPTIONS);
 }
 
 async function getItem(key: string): Promise<string | null> {

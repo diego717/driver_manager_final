@@ -71,6 +71,7 @@ class IncidentsBridge(QObject):
     selectedChanged = pyqtSignal()
     metricsChanged = pyqtSignal()
     photoChanged = pyqtSignal()
+    currentAssignmentIndexChanged = pyqtSignal()
 
     def __init__(self, window, parent=None):
         super().__init__(parent)
@@ -89,6 +90,8 @@ class IncidentsBridge(QObject):
         self._filtered_records = []
         self._incidents = []
         self._filtered_incidents = []
+        self._incidents_by_record_id = {}
+        self._incident_errors_by_record_id = {}
         self._selected_record = None
         self._selected_incident = None
         self._current_record_index = -1
@@ -101,6 +104,8 @@ class IncidentsBridge(QObject):
         self._current_photo_index = -1
         self._current_photo_data_url = ""
         self._current_photo_caption = "Sin fotos asociadas."
+        self._assignments = []
+        self._current_assignment_index = -1
 
     @pyqtProperty(QObject, constant=True)
     def recordsListModel(self):
@@ -169,6 +174,10 @@ class IncidentsBridge(QObject):
     @pyqtProperty(str, notify=metricsChanged)
     def assignmentsMetric(self):
         return str(self._active_assignments)
+
+    @pyqtProperty(int, notify=currentAssignmentIndexChanged)
+    def currentAssignmentIndex(self):
+        return self._current_assignment_index
 
     @pyqtProperty(str, notify=photoChanged)
     def currentPhotoDataUrl(self):
@@ -244,6 +253,38 @@ class IncidentsBridge(QObject):
     def canViewSelectedPhoto(self):
         incident = self._selected_incident or {}
         return bool(incident.get("photos"))
+
+    @pyqtProperty(bool, notify=selectedChanged)
+    def canManageAssignments(self):
+        return bool(
+            self._selected_incident
+            and getattr(self.window, "can_manage_operational_records", getattr(self.window, "is_admin", False))
+        )
+
+    @pyqtProperty(bool, notify=selectedChanged)
+    def canRemoveAssignment(self):
+        return self.canManageAssignments and 0 <= self._current_assignment_index < len(self._assignments)
+
+    @pyqtProperty(str, notify=selectedChanged)
+    def assignmentPanelTitle(self):
+        if self._current_assignment_index < 0 or self._current_assignment_index >= len(self._assignments):
+            return "Sin responsable seleccionado"
+        assignment = self._assignments[self._current_assignment_index]
+        return str(
+            assignment.get("technician_display_name")
+            or f"Tecnico #{assignment.get('technician_id')}"
+        )
+
+    @pyqtProperty(str, notify=selectedChanged)
+    def assignmentPanelMeta(self):
+        if self._current_assignment_index < 0 or self._current_assignment_index >= len(self._assignments):
+            return "Selecciona una asignacion para ver rol y contexto."
+        assignment = self._assignments[self._current_assignment_index]
+        employee_code = str(assignment.get("technician_employee_code") or "").strip()
+        role = self._assignment_role_label(assignment.get("assignment_role"))
+        if employee_code:
+            return f"{role} - {employee_code}"
+        return role
 
     def _emit_photo_changed(self):
         self.photoChanged.emit()
@@ -325,6 +366,15 @@ class IncidentsBridge(QObject):
         }
         return labels.get(value, "Media")
 
+    def _assignment_role_label(self, raw_value):
+        value = str(raw_value or "assistant").strip().lower()
+        labels = {
+            "owner": "Responsable",
+            "assistant": "Apoyo",
+            "reviewer": "Revision",
+        }
+        return labels.get(value, value.title() or "Apoyo")
+
     def _record_attention_label(self, record):
         count = int(float(record.get("incident_active_count") or 0))
         state = str(record.get("attention_state") or "").strip().lower()
@@ -343,10 +393,15 @@ class IncidentsBridge(QObject):
         version = str(record.get("driver_version") or "N/A")
         client = str(record.get("client_name") or "Sin cliente")
         record_id = record.get("id") or "-"
+        incident_error = str(self._incident_errors_by_record_id.get(record_id) or "").strip()
+        if incident_error:
+            tag = "Incidencias no disponibles"
+        else:
+            tag = self._record_attention_label(record)
         return {
             "title": f"#{record_id} {brand} v{version}",
             "meta": f"{client} - {self._format_datetime(record.get('timestamp'))}",
-            "tag": self._record_attention_label(record),
+            "tag": tag,
         }
 
     def _serialize_incident(self, incident):
@@ -371,16 +426,26 @@ class IncidentsBridge(QObject):
 
     def _serialize_assignment(self, assignment):
         tech_name = assignment.get("technician_display_name") or f"Tecnico #{assignment.get('technician_id')}"
-        role = str(assignment.get("assignment_role") or "assistant").strip().lower()
+        role = self._assignment_role_label(assignment.get("assignment_role"))
         return {
             "title": tech_name,
             "meta": str(assignment.get("technician_employee_code") or "").strip(),
             "tag": role,
         }
 
+    def _selected_record_id(self):
+        return (self._selected_record or {}).get("id")
+
+    def _selected_incident_id(self):
+        return (self._selected_incident or {}).get("id")
+
+    def _selected_assignment_id(self):
+        if self._current_assignment_index < 0 or self._current_assignment_index >= len(self._assignments):
+            return None
+        return self._assignments[self._current_assignment_index].get("id")
+
     def _apply_record_filters(self):
         days = self._period_days()
-        severity = str(self._current_severity or "Todas").strip().lower()
         min_date = None
         if days:
             min_date = datetime.now() - timedelta(days=days)
@@ -393,21 +458,12 @@ class IncidentsBridge(QObject):
                 record_dt = self._parse_datetime(record.get("timestamp"))
                 if record_dt and record_dt < min_date:
                     continue
-            if severity != "todas":
-                severities = {
-                    str(item.get("severity") or "medium").strip().lower()
-                    for item in (record.get("incidents") or [])
-                }
-                if severity not in severities:
-                    continue
 
             filtered.append(record)
-            for incident in record.get("incidents") or []:
-                status = str(incident.get("incident_status") or "open").strip().lower()
-                if status == "resolved":
-                    resolved_count += 1
-                else:
-                    open_count += 1
+            active_count = int(float(record.get("incident_active_count") or 0))
+            open_count += max(0, active_count)
+            if active_count <= 0 and str(record.get("attention_state") or "").strip().lower() == "resolved":
+                resolved_count += 1
 
         self._filtered_records = filtered
         self._open_count = open_count
@@ -424,8 +480,10 @@ class IncidentsBridge(QObject):
             self._set_selected_incident(None, -1)
 
     def _apply_incident_filters(self):
+        preferred_incident_id = self._selected_incident_id()
         severity = str(self._current_severity or "Todas").strip().lower()
-        incidents = list((self._selected_record or {}).get("incidents") or [])
+        record_id = (self._selected_record or {}).get("id")
+        incidents = list(self._incidents_by_record_id.get(record_id) or [])
         filtered = []
         for incident in incidents:
             if severity != "todas" and str(incident.get("severity") or "medium").strip().lower() != severity:
@@ -435,18 +493,18 @@ class IncidentsBridge(QObject):
         self._filtered_incidents = filtered
         self.incidentsModel.set_items([self._serialize_incident(item) for item in filtered])
         if filtered:
-            self._set_selected_incident(filtered[0], 0)
+            selected_index = 0
+            if preferred_incident_id is not None:
+                for index, item in enumerate(filtered):
+                    if item.get("id") == preferred_incident_id:
+                        selected_index = index
+                        break
+            self._set_selected_incident(filtered[selected_index], selected_index)
         else:
             self._set_selected_incident(None, -1)
 
-    def _set_selected_incident(self, incident, index):
-        self._selected_incident = incident
-        self._current_incident_index = index
-        self.currentIncidentIndexChanged.emit()
-
-        photos = (incident or {}).get("photos") or []
-        self.photosModel.set_items([self._serialize_photo(item) for item in photos])
-
+    def _reload_assignments(self, preferred_assignment_id=None):
+        incident = self._selected_incident or {}
         assignments = []
         self._active_assignments = 0
         if incident and incident.get("id") is not None:
@@ -458,8 +516,32 @@ class IncidentsBridge(QObject):
                 )
             except Exception:
                 assignments = []
-        self._active_assignments = len(assignments)
-        self.assignmentsModel.set_items([self._serialize_assignment(item) for item in assignments])
+
+        self._assignments = list(assignments or [])
+        self._active_assignments = len(self._assignments)
+        self.assignmentsModel.set_items([self._serialize_assignment(item) for item in self._assignments])
+
+        self._current_assignment_index = -1
+        if self._assignments:
+            if preferred_assignment_id is not None:
+                for index, assignment in enumerate(self._assignments):
+                    if assignment.get("id") == preferred_assignment_id:
+                        self._current_assignment_index = index
+                        break
+            if self._current_assignment_index < 0:
+                self._current_assignment_index = 0
+        self.currentAssignmentIndexChanged.emit()
+        self.metricsChanged.emit()
+        self.selectedChanged.emit()
+
+    def _set_selected_incident(self, incident, index):
+        self._selected_incident = incident
+        self._current_incident_index = index
+        self.currentIncidentIndexChanged.emit()
+
+        photos = (incident or {}).get("photos") or []
+        self.photosModel.set_items([self._serialize_photo(item) for item in photos])
+        self._reload_assignments()
         if photos:
             self._set_current_photo(0)
         else:
@@ -467,8 +549,33 @@ class IncidentsBridge(QObject):
             self._current_photo_data_url = ""
             self._current_photo_caption = "Sin fotos asociadas."
             self.photoChanged.emit()
-        self.metricsChanged.emit()
         self.selectedChanged.emit()
+
+    def _ensure_record_incidents_loaded(self, record, force=False):
+        record_id = (record or {}).get("id")
+        if record_id is None:
+            return []
+        if not force and record_id in self._incidents_by_record_id:
+            return list(self._incidents_by_record_id.get(record_id) or [])
+
+        try:
+            incidents = self.window.history.get_incidents_for_installation(record_id) or []
+            self._incidents_by_record_id[record_id] = list(incidents)
+            self._incident_errors_by_record_id.pop(record_id, None)
+            return list(incidents)
+        except Exception as error:
+            error_text = str(error or "").strip()
+            self._incidents_by_record_id[record_id] = []
+            self._incident_errors_by_record_id[record_id] = error_text or "No disponible"
+            logger.warning(
+                "No se pudieron cargar incidencias de un registro",
+                details=f"record_id={record_id} error={error_text}",
+            )
+            if self._selected_record and self._selected_record.get("id") == record_id:
+                self._set_status(
+                    f"Registro #{record_id} sin incidencias cargadas por timeout o error de API."
+                )
+            return []
 
     def _set_current_photo(self, index):
         photos = (self._selected_incident or {}).get("photos") or []
@@ -503,22 +610,28 @@ class IncidentsBridge(QObject):
     def refreshData(self):
         self._set_busy(True)
         try:
+            preferred_record_id = self._selected_record_id()
+            preferred_incident_id = self._selected_incident_id()
             installations = self.window.history.get_installations(limit=self._parse_limit()) or []
             records = []
             for installation in installations:
                 record_id = installation.get("id")
                 if record_id is None:
                     continue
-                try:
-                    incidents = self.window.history.get_incidents_for_installation(record_id) or []
-                except Exception as error:
-                    logger.warning("No se pudieron cargar incidencias de un registro", details=str(error))
-                    incidents = []
                 enriched = dict(installation)
-                enriched["incidents"] = incidents
                 records.append(enriched)
             self._records = records
             self._apply_record_filters()
+            if preferred_record_id is not None and self._filtered_records:
+                for index, record in enumerate(self._filtered_records):
+                    if record.get("id") == preferred_record_id:
+                        self.selectRecord(index)
+                        break
+            if preferred_incident_id is not None and self._filtered_incidents:
+                for index, incident in enumerate(self._filtered_incidents):
+                    if incident.get("id") == preferred_incident_id:
+                        self.selectIncident(index)
+                        break
             self._set_status(f"{len(self._filtered_records)} registros operativos cargados.")
         except Exception as error:
             logger.error("Error cargando incidencias v2", details=str(error), exc_info=True)
@@ -549,6 +662,8 @@ class IncidentsBridge(QObject):
             return
         self._current_severity = value
         self.severityChanged.emit()
+        if self._selected_record:
+            self._ensure_record_incidents_loaded(self._selected_record)
         self._apply_record_filters()
 
     @pyqtSlot(str)
@@ -571,6 +686,8 @@ class IncidentsBridge(QObject):
         self._selected_record = self._filtered_records[row]
         self._current_record_index = row
         self.currentRecordIndexChanged.emit()
+        self._ensure_record_incidents_loaded(self._selected_record)
+        self.recordsModel.set_items([self._serialize_record(item) for item in self._filtered_records])
         self._apply_incident_filters()
 
     @pyqtSlot(int)
@@ -579,6 +696,26 @@ class IncidentsBridge(QObject):
             self._set_selected_incident(None, -1)
             return
         self._set_selected_incident(self._filtered_incidents[row], row)
+
+    @pyqtSlot(int)
+    def selectAssignment(self, row):
+        if row < 0 or row >= len(self._assignments):
+            self._current_assignment_index = -1
+            self.currentAssignmentIndexChanged.emit()
+            self.selectedChanged.emit()
+            return
+        self._current_assignment_index = row
+        self.currentAssignmentIndexChanged.emit()
+        self.selectedChanged.emit()
+
+    @pyqtSlot()
+    def refreshAssignments(self):
+        if not self._selected_incident:
+            self._set_status("Selecciona una incidencia para actualizar asignaciones.")
+            return
+        preferred_assignment_id = self._selected_assignment_id()
+        self._reload_assignments(preferred_assignment_id=preferred_assignment_id)
+        self._set_status("Asignaciones actualizadas.")
 
     @pyqtSlot()
     def createIncident(self):
@@ -636,6 +773,7 @@ class IncidentsBridge(QObject):
                 apply_to_installation=(apply_label == "Si"),
                 source="desktop",
             )
+            self._ensure_record_incidents_loaded(self._selected_record, force=True)
             self.refreshData()
             self._set_status(f"Incidencia creada para registro #{record_id}.")
         except Exception as error:
@@ -668,6 +806,8 @@ class IncidentsBridge(QObject):
                 resolution_note=resolution_note,
                 reporter_username=reporter,
             )
+            if self._selected_record:
+                self._ensure_record_incidents_loaded(self._selected_record, force=True)
             self.refreshData()
             self._set_status(f"Incidencia #{incident_id} actualizada.")
         except Exception as error:
@@ -701,6 +841,8 @@ class IncidentsBridge(QObject):
             return
         try:
             self.window.history.upload_incident_photo(incident_id, file_path)
+            if self._selected_record:
+                self._ensure_record_incidents_loaded(self._selected_record, force=True)
             self.refreshData()
             self._set_status(f"Foto subida a incidencia #{incident_id}.")
         except Exception as error:
@@ -734,3 +876,103 @@ class IncidentsBridge(QObject):
     def nextPhoto(self):
         if self.canGoNextPhoto:
             self._set_current_photo(self._current_photo_index + 1)
+
+    @pyqtSlot()
+    def assignTechnician(self):
+        if not self.canManageAssignments:
+            self._set_status("Tu sesion no tiene permisos para gestionar asignaciones.")
+            return
+
+        incident = self._selected_incident or {}
+        incident_id = incident.get("id")
+        if incident_id is None:
+            return
+
+        try:
+            technicians = self.window.history.list_technicians(include_inactive=False)
+        except Exception as error:
+            QMessageBox.warning(self.window, "Error", f"No se pudo cargar el directorio de tecnicos:\n{error}")
+            return
+
+        if not technicians:
+            QMessageBox.information(self.window, "Sin tecnicos", "No hay tecnicos activos para asignar.")
+            return
+
+        choices = []
+        technician_map = {}
+        for technician in technicians:
+            technician_id = technician.get("id")
+            display_name = str(technician.get("display_name") or f"Tecnico #{technician_id}")
+            employee_code = str(technician.get("employee_code") or "").strip()
+            label = f"#{technician_id} - {display_name}"
+            if employee_code:
+                label += f" ({employee_code})"
+            choices.append(label)
+            technician_map[label] = technician
+
+        selected_label, ok = QInputDialog.getItem(
+            self.window,
+            f"Asignar tecnico a incidencia #{incident_id}",
+            "Tecnico:",
+            choices,
+            0,
+            False,
+        )
+        if not ok:
+            return
+
+        selected_role, ok = QInputDialog.getItem(
+            self.window,
+            "Rol de asignacion",
+            "Selecciona rol:",
+            ["owner", "assistant", "reviewer"],
+            0,
+            False,
+        )
+        if not ok:
+            return
+
+        selected_technician = technician_map.get(selected_label) or {}
+        technician_id = selected_technician.get("id")
+        if technician_id is None:
+            QMessageBox.warning(self.window, "Error", "No se pudo resolver el tecnico seleccionado.")
+            return
+
+        try:
+            self.window.history.create_technician_assignment(
+                technician_id=technician_id,
+                entity_type="incident",
+                entity_id=incident_id,
+                assignment_role=selected_role,
+            )
+            self.refreshAssignments()
+            self._set_status(f"Tecnico asignado a incidencia #{incident_id}.")
+        except Exception as error:
+            QMessageBox.warning(self.window, "Error", f"No se pudo crear la asignacion:\n{error}")
+
+    @pyqtSlot()
+    def removeAssignment(self):
+        if not self.canRemoveAssignment:
+            self._set_status("Selecciona una asignacion activa para quitar.")
+            return
+
+        assignment = self._assignments[self._current_assignment_index]
+        assignment_id = assignment.get("id")
+        if assignment_id is None:
+            return
+
+        reply = QMessageBox.question(
+            self.window,
+            "Confirmar",
+            f"¿Quitar asignacion #{assignment_id}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            self.window.history.remove_technician_assignment(assignment_id)
+            self.refreshAssignments()
+            self._set_status(f"Asignacion #{assignment_id} quitada.")
+        except Exception as error:
+            QMessageBox.warning(self.window, "Error", f"No se pudo quitar la asignacion:\n{error}")

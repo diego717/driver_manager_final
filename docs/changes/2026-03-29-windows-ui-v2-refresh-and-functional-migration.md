@@ -57,6 +57,29 @@ Por eso se tomo la decision de abrir una `UI v2` paralela, con shell nuevo, comp
   - sin ruido tecnico como nombre de archivo o mime type
 - se ajustan multiples puntos de layout para evitar cortes verticales en paneles de `Drivers` e `Incidencias`
 
+## Actualizacion 2026-04-01
+
+- `Historial / reportes v2` deja de ser placeholder:
+  - rail izquierdo con metricas y lista real de registros historicos
+  - centro de reportes con resumen ejecutivo
+  - generacion directa de reportes diario, mensual y anual
+  - acceso a ultimo reporte generado y carpeta Descargas
+  - detalle del registro seleccionado dentro de la nueva composicion
+- `Administracion v2` deja de ser placeholder:
+  - lectura de sesion actual, rol y tenant
+  - accesos directos a gestion de usuarios, activos y QR
+  - utilidades rapidas para abrir Descargas y cache local
+  - base lista para migrar configuracion sensible y gobierno de plataforma sin volver al layout legacy
+  - configuracion inicial de plataforma dentro de la `v2`
+  - mantenimiento del catalogo con listado administrativo y eliminacion de drivers
+  - acciones nativas de mantenimiento para cache, contrasena y export
+  - panel de auditoria con refresh y export de logs / historial
+- `Incidencias v2` recibe una pasada de layout adicional:
+  - tarjetas con altura por contenido en registros e incidencias
+  - barra de acciones flexible con wrap
+  - paneles de fotos y asignaciones adaptables en una grilla mas estable
+  - carga diferida de incidencias por registro para reducir timeouts y evitar N+1 en cada refresh
+
 ## Impacto
 
 - Windows deja de depender exclusivamente de la UI legacy para evolucionar
@@ -72,6 +95,8 @@ Por eso se tomo la decision de abrir una `UI v2` paralela, con shell nuevo, comp
 - `ui/qml/App.qml`
 - `ui/v2_drivers_bridge.py`
 - `ui/v2_incidents_bridge.py`
+- `ui/v2_history_bridge.py`
+- `ui/v2_admin_bridge.py`
 - `docs/windows-ui-v2-migration.md`
 - `ui/dialogs/quick_upload_dialog.py`
 - `ui/dialogs/qr_generator_dialog.py`
@@ -80,15 +105,15 @@ Por eso se tomo la decision de abrir una `UI v2` paralela, con shell nuevo, comp
 
 ## Validacion
 
-- `python -m py_compile main.py ui/main_window_v2.py ui/v2_drivers_bridge.py ui/v2_incidents_bridge.py`
+- `python -m py_compile main.py ui/main_window_v2.py ui/v2_drivers_bridge.py ui/v2_incidents_bridge.py ui/v2_history_bridge.py ui/v2_admin_bridge.py`
 - carga offscreen de `MainWindowV2`
 - verificacion de catalogo real de drivers cargado en `v2`
-- verificacion estructural de `Incidencias v2` y de sus bindings QML
+- verificacion estructural de `Incidencias v2`, `Historial v2` y `Administracion v2` con sus bindings QML
 
 ## Pendientes
 
 - completar el flujo real de `Incidencias v2` con asignaciones editables desde la nueva UI
-- migrar `Historial / reportes` a la misma base visual y funcional
-- migrar `Administracion` a la `v2`
+- seguir puliendo ajustes visuales finos en `Incidencias v2`
+- ampliar `Administracion v2` con configuracion sensible, R2 y hardening de plataforma
 - limpiar el warning de logging Unicode en consola Windows por mensajes con `✅`
 - validar de punta a punta con sesion real cada flujo de incidencias y fotos, no solo con bootstrap tecnico

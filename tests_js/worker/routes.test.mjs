@@ -52,6 +52,10 @@ function createTechniciansRouteDeps(overrides = {}) {
     nowIso() {
       return "2026-03-28T18:00:00.000Z";
     },
+    async listDeviceTokensForUserIds() {
+      return [];
+    },
+    async sendPushNotification() {},
     ...overrides,
   };
 }
@@ -1100,14 +1104,6 @@ function createIncidentRouteDeps(overrides = {}) {
         resolutionNote: null,
       };
     },
-    evaluateGeofence() {
-      return {
-        geofence_distance_m: null,
-        geofence_radius_m: null,
-        geofence_result: "not_applicable",
-        geofence_checked_at: null,
-      };
-    },
     async loadIncidentForTenant() {
       return null;
     },
@@ -1606,6 +1602,17 @@ test("technicians route creates assignments for existing tenant entities", async
           },
         };
       }
+      if (sql.includes("FROM technician_assignments") && sql.includes("assignment_role = ?")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, ["tenant-a", 12, "installation", "45", "owner"]);
+            return this;
+          },
+          async all() {
+            return { results: [] };
+          },
+        };
+      }
       if (sql.includes("FROM installations")) {
         return {
           bind(...args) {
@@ -1760,6 +1767,355 @@ test("technician assignments route soft-unassigns active assignments", async () 
   assert.equal(updateCalled, true);
   assert.equal(body.assignment.unassigned_at, "2026-03-28T18:00:00.000Z");
   assert.equal(auditEvents[0].action, "technician_assignment_removed");
+});
+
+test("technicians route avoids creating duplicate active assignments", async () => {
+  let insertCalled = false;
+  let pushCalled = false;
+  const { handleTechniciansRoute } = createTechniciansRouteHandlers(createTechniciansRouteDeps({
+    async readJsonOrThrowBadRequest() {
+      return {
+        entity_type: "incident",
+        entity_id: 99,
+        assignment_role: "owner",
+      };
+    },
+    async listDeviceTokensForUserIds() {
+      pushCalled = true;
+      return ["token-a"];
+    },
+    async sendPushNotification() {
+      pushCalled = true;
+    },
+  }));
+
+  const db = {
+    prepare(sql) {
+      if (sql.includes("FROM technicians")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [12, "tenant-a"]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [{
+                id: 12,
+                tenant_id: "tenant-a",
+                display_name: "Luis Rivera",
+                web_user_id: 25,
+                is_active: 1,
+              }],
+            };
+          },
+        };
+      }
+      if (sql.includes("FROM incidents")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [99, "tenant-a"]);
+            return this;
+          },
+          async all() {
+            return { results: [{ id: 99 }] };
+          },
+        };
+      }
+      if (sql.includes("FROM technician_assignments") && sql.includes("assignment_role = ?")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, ["tenant-a", 12, "incident", "99", "owner"]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [{
+                id: 44,
+                tenant_id: "tenant-a",
+                technician_id: 12,
+                entity_type: "incident",
+                entity_id: "99",
+                assignment_role: "owner",
+                assigned_by_user_id: 7,
+                assigned_by_username: "ops-supervisor",
+                assigned_at: "2026-03-28T17:00:00.000Z",
+                unassigned_at: null,
+                metadata_json: null,
+              }],
+            };
+          },
+        };
+      }
+      if (sql.includes("INSERT INTO technician_assignments")) {
+        insertCalled = true;
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+
+  const response = await handleTechniciansRoute(
+    new Request("https://worker.example/web/technicians/12/assignments", { method: "POST" }),
+    { DB: db },
+    new URL("https://worker.example/web/technicians/12/assignments"),
+    {},
+    ["technicians", "12", "assignments"],
+    true,
+    {
+      sub: "ops-supervisor",
+      tenant_id: "tenant-a",
+      role: "supervisor",
+      user_id: 7,
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.already_exists, true);
+  assert.equal(body.assignment.id, 44);
+  assert.equal(insertCalled, false);
+  assert.equal(pushCalled, false);
+});
+
+test("technicians route sends push for new incident assignments", async () => {
+  const pushCalls = [];
+  const { handleTechniciansRoute } = createTechniciansRouteHandlers(createTechniciansRouteDeps({
+    async readJsonOrThrowBadRequest() {
+      return {
+        entity_type: "incident",
+        entity_id: 99,
+        assignment_role: "owner",
+      };
+    },
+    async listDeviceTokensForUserIds(_env, userIds, tenantId) {
+      assert.deepEqual(userIds, [25]);
+      assert.equal(tenantId, "tenant-a");
+      return ["token-a", "token-b"];
+    },
+    async sendPushNotification(_env, tokens, payload) {
+      pushCalls.push({ tokens, payload });
+    },
+  }));
+
+  const db = {
+    prepare(sql) {
+      if (sql.includes("FROM technicians")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [12, "tenant-a"]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [{
+                id: 12,
+                tenant_id: "tenant-a",
+                display_name: "Luis Rivera",
+                web_user_id: 25,
+                is_active: 1,
+              }],
+            };
+          },
+        };
+      }
+      if (sql.includes("FROM technician_assignments") && sql.includes("assignment_role = ?")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, ["tenant-a", 12, "incident", "99", "owner"]);
+            return this;
+          },
+          async all() {
+            return { results: [] };
+          },
+        };
+      }
+      if (sql.includes("FROM incidents") && sql.includes("deleted_at IS NULL")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [99, "tenant-a"]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [{
+                id: 99,
+                tenant_id: "tenant-a",
+                installation_id: 45,
+                severity: "high",
+                target_lat: "-34.123",
+                target_lng: "-56.234",
+                target_label: "Acceso norte",
+                dispatch_place_name: "Planta Centro",
+                dispatch_address: "Av. Siempre Viva 123",
+                dispatch_reference: "Porton azul",
+              }],
+            };
+          },
+        };
+      }
+      if (sql.includes("INSERT INTO technician_assignments")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [
+              "tenant-a",
+              12,
+              "incident",
+              "99",
+              "owner",
+              7,
+              "ops-supervisor",
+              "2026-03-28T18:00:00.000Z",
+              null,
+            ]);
+            return this;
+          },
+          async run() {
+            return { meta: { last_row_id: 31 } };
+          },
+        };
+      }
+      if (sql.includes("FROM technician_assignments")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [31, "tenant-a"]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [{
+                id: 31,
+                tenant_id: "tenant-a",
+                technician_id: 12,
+                entity_type: "incident",
+                entity_id: "99",
+                assignment_role: "owner",
+                assigned_by_user_id: 7,
+                assigned_by_username: "ops-supervisor",
+                assigned_at: "2026-03-28T18:00:00.000Z",
+                unassigned_at: null,
+                metadata_json: null,
+              }],
+            };
+          },
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+
+  const response = await handleTechniciansRoute(
+    new Request("https://worker.example/web/technicians/12/assignments", { method: "POST" }),
+    { DB: db },
+    new URL("https://worker.example/web/technicians/12/assignments"),
+    {},
+    ["technicians", "12", "assignments"],
+    true,
+    {
+      sub: "ops-supervisor",
+      tenant_id: "tenant-a",
+      role: "supervisor",
+      user_id: 7,
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 201);
+  assert.equal(body.assignment.entity_type, "incident");
+  assert.equal(pushCalls.length, 1);
+  assert.deepEqual(pushCalls[0].tokens, ["token-a", "token-b"]);
+  assert.equal(pushCalls[0].payload.title, "Incidencia asignada");
+  assert.equal(pushCalls[0].payload.data.path, "/incident/detail?incidentId=99&installationId=45");
+  assert.equal(pushCalls[0].payload.data.incident_id, "99");
+  assert.equal(pushCalls[0].payload.data.installation_id, "45");
+  assert.equal(pushCalls[0].payload.data.dispatch_place_name, "Planta Centro");
+});
+
+test("technicians route lists assigned incidents map for the linked technician", async () => {
+  const { handleTechniciansRoute } = createTechniciansRouteHandlers(createTechniciansRouteDeps());
+
+  const db = {
+    prepare(sql) {
+      if (sql.includes("FROM technicians") && sql.includes("web_user_id = ?")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [9, "tenant-a"]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [{
+                id: 12,
+                tenant_id: "tenant-a",
+                web_user_id: 9,
+                display_name: "Luis Rivera",
+                is_active: 1,
+              }],
+            };
+          },
+        };
+      }
+      if (sql.includes("FROM technician_assignments ta") && sql.includes("assigned-incidents-map") === false) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, ["tenant-a", 12]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [{
+                id: 99,
+                installation_id: 45,
+                asset_id: 88,
+                note: "Visita urgente",
+                severity: "critical",
+                incident_status: "open",
+                created_at: "2026-03-28T18:00:00.000Z",
+                target_lat: "-34.9011",
+                target_lng: "-56.1645",
+                target_label: "Acceso principal",
+                dispatch_place_name: "ATM-009",
+                dispatch_address: "Av. Italia 2456",
+                dispatch_reference: "Puerta lateral",
+                dispatch_contact_name: "Marta Perez",
+                dispatch_contact_phone: "+59899111222",
+                dispatch_notes: "Coordinar ingreso",
+                installation_client_name: "Cliente GPS",
+                installation_label: "Cliente GPS · Router X",
+                asset_code: "ATM-009",
+                assignment_role: "owner",
+                assignment_source: "incident",
+                assigned_at: "2026-03-28T18:00:00.000Z",
+              }],
+            };
+          },
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+
+  const response = await handleTechniciansRoute(
+    new Request("https://worker.example/web/me/assigned-incidents-map", { method: "GET" }),
+    { DB: db },
+    new URL("https://worker.example/web/me/assigned-incidents-map"),
+    {},
+    ["me", "assigned-incidents-map"],
+    true,
+    {
+      sub: "luis",
+      tenant_id: "tenant-a",
+      role: "viewer",
+      user_id: 9,
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.technician.id, 12);
+  assert.equal(body.incidents.length, 1);
+  assert.equal(body.incidents[0].id, 99);
+  assert.equal(body.incidents[0].assignment_source, "incident");
+  assert.equal(body.incidents[0].dispatch_place_name, "ATM-009");
+  assert.equal(body.incidents[0].target_lat, -34.9011);
 });
 
 test("technician assignments route lists active assignments for an entity", async () => {
@@ -1982,10 +2338,6 @@ test("records handler applies manual defaults and publishes updates", async () =
         installation_time_seconds: 0,
         os_info: "",
         notes: data.notes,
-        has_site_config: false,
-        site_lat: null,
-        site_lng: null,
-        site_radius_m: null,
       };
     },
     buildDefaultInstallationOperationalSummary() {
@@ -2026,9 +2378,6 @@ test("records handler applies manual defaults and publishes updates", async () =
           "none",
           "pending",
           "",
-          null,
-          null,
-          null,
           "tenant-z",
         ]);
           return this;
@@ -2288,9 +2637,6 @@ test("installation by id handler updates notes and emits realtime event", async 
               id: 55,
               notes: "updated",
               installation_time_seconds: 180,
-              site_lat: null,
-              site_lng: null,
-              site_radius_m: null,
             }],
           };
         },
@@ -2317,9 +2663,6 @@ test("installation by id handler updates notes and emits realtime event", async 
       id: 55,
       notes: "updated",
       installation_time_seconds: 180,
-      site_lat: null,
-      site_lng: null,
-      site_radius_m: null,
     },
   });
   assert.deepEqual(publishedEvents, [
@@ -2330,9 +2673,6 @@ test("installation by id handler updates notes and emits realtime event", async 
           id: 55,
           notes: "updated",
           installation_time_seconds: 180,
-          site_lat: null,
-          site_lng: null,
-          site_radius_m: null,
         },
       },
       tenantId: "tenant-b",

@@ -11,7 +11,6 @@ export type GpsCaptureStatus =
   | "unsupported"
   | "override";
 export type GpsCaptureSource = "browser" | "none" | "override";
-export type GeofenceResult = "not_applicable" | "inside" | "outside";
 
 export interface GpsCapturePayload {
   status: GpsCaptureStatus;
@@ -31,7 +30,6 @@ export interface CreateIncidentInput {
   apply_to_installation?: boolean;
   reporter_username?: string;
   gps?: GpsCapturePayload;
-  geofence_override_note?: string;
 }
 
 export interface IncidentPhoto {
@@ -65,6 +63,19 @@ export interface Incident {
   resolved_at?: string | null;
   resolved_by?: string | null;
   resolution_note?: string | null;
+  target_lat?: number | null;
+  target_lng?: number | null;
+  target_label?: string | null;
+  target_source?: string | null;
+  target_updated_at?: string | null;
+  target_updated_by?: string | null;
+  dispatch_required?: boolean | null;
+  dispatch_place_name?: string | null;
+  dispatch_address?: string | null;
+  dispatch_reference?: string | null;
+  dispatch_contact_name?: string | null;
+  dispatch_contact_phone?: string | null;
+  dispatch_notes?: string | null;
   checklist_items?: string[];
   evidence_note?: string | null;
   photos: IncidentPhoto[];
@@ -102,6 +113,31 @@ export interface TechnicianAssignment {
   technician_is_active?: boolean | null;
 }
 
+export interface AssignedIncidentMapItem {
+  id: number;
+  installation_id: number;
+  asset_id?: number | null;
+  note: string;
+  severity: IncidentSeverity | string;
+  incident_status: IncidentStatus | string;
+  created_at: string;
+  target_lat?: number | null;
+  target_lng?: number | null;
+  target_label?: string | null;
+  dispatch_place_name?: string | null;
+  dispatch_address?: string | null;
+  dispatch_reference?: string | null;
+  dispatch_contact_name?: string | null;
+  dispatch_contact_phone?: string | null;
+  dispatch_notes?: string | null;
+  installation_client_name?: string | null;
+  installation_label?: string | null;
+  asset_code?: string | null;
+  assignment_role?: "owner" | "assistant" | "reviewer" | string;
+  assignment_source?: "incident" | "installation" | "asset" | string | null;
+  assigned_at?: string | null;
+}
+
 export interface InstallationRecord {
   id: number;
   timestamp?: string;
@@ -119,9 +155,6 @@ export interface InstallationRecord {
   incident_resolved_count?: number;
   incident_active_count?: number;
   incident_critical_active_count?: number;
-  site_lat?: number | null;
-  site_lng?: number | null;
-  site_radius_m?: number | null;
   attention_state?:
     | "clear"
     | "open"
@@ -170,7 +203,6 @@ export interface CreateInstallationConformityInput {
   photo_ids?: number[];
   send_email?: boolean;
   gps?: GpsCapturePayload;
-  geofence_override_note?: string;
 }
 
 export interface ApiErrorResponse {
@@ -218,9 +250,6 @@ export interface CreateRecordResponse {
 export interface UpdateInstallationInput {
   notes?: string;
   installation_time_seconds?: number;
-  site_lat?: number | null;
-  site_lng?: number | null;
-  site_radius_m?: number | null;
 }
 
 export interface UpdateInstallationResponse {

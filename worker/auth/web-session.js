@@ -188,8 +188,18 @@ export function createWebSessionHelpers({
       throw new HttpError(401, "Falta token Bearer o cookie de sesion web.");
     }
 
-    const [encodedPayload, signature] = token.split(".", 2);
-    if (!encodedPayload || !signature) {
+    const tokenParts = token.split(".");
+    if (tokenParts.length !== 2) {
+      throw new HttpError(401, "Token web invalido.");
+    }
+
+    const [encodedPayload, signature] = tokenParts;
+    if (
+      !encodedPayload ||
+      !signature ||
+      !/^[A-Za-z0-9_-]+$/.test(encodedPayload) ||
+      !/^[a-f0-9]{64}$/i.test(signature)
+    ) {
       throw new HttpError(401, "Token web invalido.");
     }
 
@@ -209,34 +219,52 @@ export function createWebSessionHelpers({
       throw new HttpError(401, "Token web invalido.");
     }
 
+    const issuedAt = Number(payload.iat);
     const exp = Number(payload.exp);
-    if (!Number.isInteger(exp) || exp <= nowUnixSeconds()) {
+    if (
+      !Number.isInteger(issuedAt) ||
+      issuedAt <= 0 ||
+      !Number.isInteger(exp) ||
+      exp <= issuedAt ||
+      exp <= nowUnixSeconds()
+    ) {
       throw new HttpError(401, "Sesion web expirada.");
     }
 
-    const userId = Number.isInteger(payload.user_id) ? payload.user_id : null;
+    const subject = normalizeWebUsername(payload.sub || payload.username || "");
+    const userId = Number(payload.user_id);
     const tokenSessionVersion = Number(payload.sv || 0);
-    const sessionStore = requireWebSessionStoreForWebAuth(env, "validar sesiones web");
+    if (!subject || !Number.isInteger(userId) || userId <= 0) {
+      throw new HttpError(401, "Token web invalido.");
+    }
+    if (!Number.isInteger(tokenSessionVersion) || tokenSessionVersion <= 0) {
+      throw new HttpError(401, "Sesion web invalida o cerrada.");
+    }
+
+    const activeSessionVersion = await resolveActiveWebSessionVersion(env, userId);
+    if (!activeSessionVersion || activeSessionVersion !== tokenSessionVersion) {
+      throw new HttpError(401, "Sesion web invalida o cerrada.");
+    }
+
+    const currentUser = await resolveCurrentWebSessionUser(env, {
+      sub: subject,
+      user_id: userId,
+    });
     if (
-      sessionStore &&
-      userId &&
-      Number.isInteger(tokenSessionVersion) &&
-      tokenSessionVersion > 0
+      normalizeWebUsername(currentUser?.username || "") !== subject ||
+      Number(currentUser?.id || 0) !== userId
     ) {
-      const activeSessionVersion = await resolveActiveWebSessionVersion(env, userId);
-      if (!activeSessionVersion || activeSessionVersion !== tokenSessionVersion) {
-        throw new HttpError(401, "Sesion web invalida o cerrada.");
-      }
+      throw new HttpError(401, "Sesion web invalida o usuario no encontrado.");
     }
 
     return {
       scope: "web",
-      sub: normalizeWebUsername(payload.sub || payload.username || "web-user") || "web-user",
-      role: normalizeOptionalString(payload.role, WEB_DEFAULT_ROLE) || WEB_DEFAULT_ROLE,
-      tenant_id: normalizeRealtimeTenantId(payload.tenant_id),
+      sub: subject,
+      role: normalizeOptionalString(currentUser?.role, WEB_DEFAULT_ROLE) || WEB_DEFAULT_ROLE,
+      tenant_id: normalizeRealtimeTenantId(currentUser?.tenant_id || payload.tenant_id),
       user_id: userId,
-      session_version: Number.isInteger(tokenSessionVersion) ? tokenSessionVersion : null,
-      iat: Number(payload.iat || 0),
+      session_version: tokenSessionVersion,
+      iat: issuedAt,
       exp,
     };
   }

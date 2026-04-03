@@ -16,9 +16,11 @@ export function createPublicTrackingRouteHandlers({
 }) {
   const PUBLIC_TRACKING_SSE_POLL_INTERVAL_MS = 10000;
   const PUBLIC_TRACKING_SSE_KEEP_ALIVE_MS = 30000;
-  const PUBLIC_TRACKING_VIEW_RATE_LIMIT_MAX_ATTEMPTS = 120;
+  const PUBLIC_TRACKING_VIEW_RATE_LIMIT_MAX_ATTEMPTS = 60;
   const PUBLIC_TRACKING_VIEW_RATE_LIMIT_WINDOW_SECONDS = 5 * 60;
-  const PUBLIC_TRACKING_EVENTS_RATE_LIMIT_MAX_ATTEMPTS = 12;
+  const PUBLIC_TRACKING_STATE_RATE_LIMIT_MAX_ATTEMPTS = 30;
+  const PUBLIC_TRACKING_STATE_RATE_LIMIT_WINDOW_SECONDS = 5 * 60;
+  const PUBLIC_TRACKING_EVENTS_RATE_LIMIT_MAX_ATTEMPTS = 6;
   const PUBLIC_TRACKING_EVENTS_RATE_LIMIT_WINDOW_SECONDS = 5 * 60;
   const encoder = new TextEncoder();
 
@@ -49,20 +51,35 @@ export function createPublicTrackingRouteHandlers({
 
   async function enforcePublicTrackingRateLimit(env, ipAddress, bucket = "view") {
     const store = getPublicTrackingRateLimitStore(env);
-    if (!store) return;
+    if (!store) {
+      throw new HttpError(
+        503,
+        "Seguridad publica no configurada: falta RATE_LIMIT_KV para proteger seguimiento publico.",
+      );
+    }
 
-    const normalizedBucket = bucket === "events" ? "events" : "view";
+    const normalizedBucket = bucket === "events"
+      ? "events"
+      : bucket === "state"
+        ? "state"
+        : "view";
     const maxAttempts = normalizedBucket === "events"
       ? PUBLIC_TRACKING_EVENTS_RATE_LIMIT_MAX_ATTEMPTS
-      : PUBLIC_TRACKING_VIEW_RATE_LIMIT_MAX_ATTEMPTS;
+      : normalizedBucket === "state"
+        ? PUBLIC_TRACKING_STATE_RATE_LIMIT_MAX_ATTEMPTS
+        : PUBLIC_TRACKING_VIEW_RATE_LIMIT_MAX_ATTEMPTS;
     const windowSeconds = normalizedBucket === "events"
       ? PUBLIC_TRACKING_EVENTS_RATE_LIMIT_WINDOW_SECONDS
-      : PUBLIC_TRACKING_VIEW_RATE_LIMIT_WINDOW_SECONDS;
+      : normalizedBucket === "state"
+        ? PUBLIC_TRACKING_STATE_RATE_LIMIT_WINDOW_SECONDS
+        : PUBLIC_TRACKING_VIEW_RATE_LIMIT_WINDOW_SECONDS;
     const key = buildPublicTrackingRateLimitKey({ ipAddress, bucket: normalizedBucket });
     const currentAttempts = normalizeRateLimitCounter(await store.get(key));
 
     if (currentAttempts >= maxAttempts) {
-      throw new HttpError(429, "Demasiadas solicitudes publicas. Intenta nuevamente en unos minutos.");
+      const error = new HttpError(429, "Demasiadas solicitudes publicas. Intenta nuevamente en unos minutos.");
+      error.retryAfterSeconds = windowSeconds;
+      throw error;
     }
 
     await store.put(key, String(currentAttempts + 1), {
@@ -279,7 +296,7 @@ export function createPublicTrackingRouteHandlers({
       routeParts[2] === "state" &&
       request.method === "GET"
     ) {
-      await enforcePublicTrackingRateLimit(env, requestIp, "view");
+      await enforcePublicTrackingRateLimit(env, requestIp, "state");
       const trackingRequest = await resolvePublicTrackingRequest(env, token);
       if (!trackingRequest.entry?.snapshot || typeof trackingRequest.entry.snapshot !== "object") {
         return jsonResponse(request, env, corsPolicy, {

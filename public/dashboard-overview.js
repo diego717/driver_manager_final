@@ -399,21 +399,18 @@
             const gpsObservability = stats?.gps_observability || {};
             const installationGps = gpsObservability.installations || {};
             const incidentGps = gpsObservability.incidents || {};
-            const warnings = gpsObservability.warnings || {};
             const overrides = gpsObservability.overrides || {};
             const usefulCaptures = (Number(installationGps.captured_count) || 0) + (Number(incidentGps.captured_count) || 0);
             const captureAttempts = (Number(installationGps.attempted_count) || 0) + (Number(incidentGps.attempted_count) || 0);
             const gpsFailures = (Number(installationGps.failure_count) || 0) + (Number(incidentGps.failure_count) || 0);
-            const outsideCount = Number(warnings.total_outside_count) || 0;
-            const overrideCount = Number(overrides.total_override_count) || 0;
+            const gpsOverrideCount = Number(overrides.conformity_gps_count) || 0;
 
             animateNumber('kpiCriticalIncidentsValue', criticalCount);
             animateNumber('kpiInProgressIncidentsValue', inProgressCount);
             animateNumber('kpiOutsideSlaIncidentsValue', outsideSlaCount);
             animateNumber('gpsOpsCapturedValue', usefulCaptures);
             animateNumber('gpsOpsFailuresValue', gpsFailures);
-            animateNumber('gpsOpsOutsideValue', outsideCount);
-            animateNumber('gpsOpsOverridesValue', overrideCount);
+            animateNumber('gpsOpsOverridesValue', gpsOverrideCount);
 
             const syncClockEl = document.getElementById('kpiLastSyncTimeValue');
             if (syncClockEl) {
@@ -474,18 +471,11 @@
                     : 'Sin incidencias de captura';
             }
 
-            const gpsOutsideMetaEl = document.getElementById('gpsOpsOutsideMeta');
-            if (gpsOutsideMetaEl) {
-                gpsOutsideMetaEl.textContent = outsideCount > 0
-                    ? `Incidencias ${Number(warnings.incident_outside_count) || 0} | Conformidad ${Number(warnings.conformity_outside_count) || 0}`
-                    : 'Capturas alejadas de la referencia';
-            }
-
             const gpsOverridesMetaEl = document.getElementById('gpsOpsOverridesMeta');
             if (gpsOverridesMetaEl) {
-                gpsOverridesMetaEl.textContent = overrideCount > 0
-                    ? `Ubicacion ${Number(overrides.incident_geofence_count) || 0} | Conformidad ${Number(overrides.conformity_geofence_count) || 0} + GPS ${Number(overrides.conformity_gps_count) || 0}`
-                    : 'Justificaciones operativas';
+                gpsOverridesMetaEl.textContent = gpsOverrideCount > 0
+                    ? `Conformidades ${gpsOverrideCount}`
+                    : 'Excepciones registradas por falta de captura usable';
             }
 
             const gpsInstallationsMetaEl = document.getElementById('gpsOpsInstallationsMeta');

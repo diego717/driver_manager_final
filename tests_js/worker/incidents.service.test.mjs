@@ -49,7 +49,9 @@ test("incident service loads incidents scoped by tenant and installation", async
   const db = {
     prepare(sql) {
       assert.match(sql, /AND i\.installation_id = \?/);
-      assert.match(sql, /geofence_result/);
+      assert.match(sql, /gps_capture_status/);
+      assert.match(sql, /target_lat/);
+      assert.match(sql, /dispatch_address/);
       return {
         bind(...args) {
           assert.deepEqual(args, [77, "tenant-a", "tenant-a", 55]);

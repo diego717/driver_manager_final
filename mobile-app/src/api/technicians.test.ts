@@ -8,14 +8,37 @@ const webAuthMocks = vi.hoisted(() => ({
   getCurrentWebSession: vi.fn(),
 }));
 
+const assignedIncidentsMapRepoMocks = vi.hoisted(() => ({
+  replaceAll: vi.fn(),
+  listAll: vi.fn(),
+}));
+
+const technicianAssignmentsCacheRepoMocks = vi.hoisted(() => ({
+  replaceForTechnician: vi.fn(),
+  listByTechnicianId: vi.fn(),
+}));
+
+const secureStoreMocks = vi.hoisted(() => ({
+  getStoredLinkedTechnician: vi.fn(),
+  setStoredLinkedTechnician: vi.fn(),
+}));
+
 vi.mock("./client", () => clientMocks);
 vi.mock("./webAuth", () => webAuthMocks);
+vi.mock("../db/repositories/assigned-incidents-map-repository", () => ({
+  assignedIncidentsMapRepository: assignedIncidentsMapRepoMocks,
+}));
+vi.mock("../db/repositories/technician-assignments-cache-repository", () => ({
+  technicianAssignmentsCacheRepository: technicianAssignmentsCacheRepoMocks,
+}));
+vi.mock("../storage/secure", () => secureStoreMocks);
 
 import {
   createTechnician,
   createTechnicianAssignment,
   deleteTechnicianAssignment,
   getCurrentLinkedTechnicianContext,
+  listAssignedIncidentsMap,
   getTechnicianAssignments,
   getTechnicianAssignmentsByEntity,
   listTechnicians,
@@ -25,6 +48,12 @@ import {
 describe("technicians api", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    assignedIncidentsMapRepoMocks.replaceAll.mockResolvedValue(undefined);
+    assignedIncidentsMapRepoMocks.listAll.mockResolvedValue([]);
+    technicianAssignmentsCacheRepoMocks.replaceForTechnician.mockResolvedValue(undefined);
+    technicianAssignmentsCacheRepoMocks.listByTechnicianId.mockResolvedValue([]);
+    secureStoreMocks.getStoredLinkedTechnician.mockResolvedValue(null);
+    secureStoreMocks.setStoredLinkedTechnician.mockResolvedValue(undefined);
   });
 
   it("lists technicians using the web route and normalizes ids", async () => {
@@ -254,5 +283,110 @@ describe("technicians api", () => {
 
     expect(context.user.username).toBe("ana");
     expect(context.technician?.display_name).toBe("Ana Campo");
+  });
+
+  it("loads assigned incidents map for the linked technician", async () => {
+    clientMocks.signedJsonRequest.mockResolvedValueOnce({
+      success: true,
+      technician: {
+        id: 7,
+        tenant_id: "tenant-a",
+        web_user_id: 9,
+        display_name: "Ana Campo",
+        is_active: true,
+      },
+      incidents: [
+        {
+          id: "99",
+          installation_id: "45",
+          asset_id: "88",
+          note: " Revisar ATM ",
+          severity: "CRITICAL",
+          incident_status: "OPEN",
+          created_at: "2026-03-28T18:00:00.000Z",
+          target_lat: "-34.9011",
+          target_lng: "-56.1645",
+          dispatch_place_name: " ATM-009 ",
+          assignment_role: "OWNER",
+          assignment_source: "incident",
+        },
+      ],
+    });
+
+    const response = await listAssignedIncidentsMap();
+
+    expect(clientMocks.signedJsonRequest).toHaveBeenCalledWith({
+      method: "GET",
+      path: "/me/assigned-incidents-map",
+    });
+    expect(response.technician?.id).toBe(7);
+    expect(response.incidents[0]).toEqual(
+      expect.objectContaining({
+        id: 99,
+        installation_id: 45,
+        asset_id: 88,
+        note: "Revisar ATM",
+        severity: "critical",
+        incident_status: "open",
+        target_lat: -34.9011,
+        target_lng: -56.1645,
+        dispatch_place_name: "ATM-009",
+        assignment_role: "owner",
+        assignment_source: "incident",
+      }),
+    );
+  });
+
+  it("falls back to cached assignments when the network request fails", async () => {
+    clientMocks.signedJsonRequest.mockRejectedValueOnce(new Error("offline"));
+    technicianAssignmentsCacheRepoMocks.listByTechnicianId.mockResolvedValueOnce([
+      {
+        id: -1,
+        tenant_id: "tenant-a",
+        technician_id: 7,
+        entity_type: "incident",
+        entity_id: "55",
+        assignment_role: "owner",
+      },
+    ]);
+
+    const assignments = await getTechnicianAssignments(7);
+
+    expect(assignments[0]).toEqual(
+      expect.objectContaining({
+        technician_id: 7,
+        entity_type: "incident",
+        entity_id: "55",
+      }),
+    );
+  });
+
+  it("falls back to cached linked technician when listing technicians fails", async () => {
+    webAuthMocks.getCurrentWebSession.mockResolvedValueOnce({
+      success: true,
+      authenticated: true,
+      token_type: "Bearer",
+      expires_in: 3600,
+      expires_at: "2026-03-28T20:00:00.000Z",
+      user: {
+        id: 9,
+        username: "ana",
+        role: "viewer",
+      },
+    });
+    clientMocks.signedJsonRequest.mockRejectedValueOnce(new Error("offline"));
+    secureStoreMocks.getStoredLinkedTechnician.mockResolvedValueOnce({
+      id: 7,
+      tenantId: "tenant-a",
+      webUserId: 9,
+      displayName: "Ana Campo",
+      employeeCode: "TEC-11",
+      isActive: true,
+    });
+
+    const context = await getCurrentLinkedTechnicianContext();
+
+    expect(context.technician?.display_name).toBe("Ana Campo");
+    expect(context.technician?.id).toBe(7);
   });
 });

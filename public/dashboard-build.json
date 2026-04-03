@@ -1,28 +1,28 @@
 {
   "versions": {
-    "css": "36d9077f3f",
+    "css": "557c136ded",
     "chart": "74401d738d",
     "jsqr": "bc40c8a151",
     "xlsx": "1c7abf2993",
     "qr": "961179b0a2",
-    "api": "39e169ead6",
+    "api": "4349b34891",
     "geolocation": "a99f19d896",
     "scan": "6884e82f3e",
     "modals": "d4f7406f9c",
-    "incidents": "dc8795a53e",
+    "incidents": "5669edc033",
     "assets": "2816dd0245",
     "drivers": "107284fd17",
-    "audit": "3d16d3d132",
-    "overview": "cdddfbd365",
+    "audit": "cb0cf05086",
+    "overview": "3125fa9fe7",
     "realtime": "d763a18c75",
     "auth": "bf2af5df34",
-    "navigation": "b7102ebe67",
+    "navigation": "848b5ca093",
     "bootstrap": "65dba6e7cf",
-    "js": "9549203ad7",
+    "js": "427efc41e4",
     "pwa": "55b84aa40e",
     "manifest": "9130a5f920",
     "sw": "4c87568cf6",
     "materialSymbolsFont": "ee7248184b",
-    "build": "3d757ee1c8"
+    "build": "5fd5cb4947"
   }
 }

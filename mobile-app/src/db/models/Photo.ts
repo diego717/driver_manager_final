@@ -1,13 +1,12 @@
 import { Model } from '@nozbe/watermelondb'
-import { field, text, readonly, date, relation, writer } from '@nozbe/watermelondb/decorators'
-import Relation from '@nozbe/watermelondb/Relation'
-import Incident from './Incident'
+import { field, text, readonly, date, writer } from '@nozbe/watermelondb/decorators'
 import type { LocalSyncStatus } from './Incident'
+import { sanitizeStoredSyncMessage } from '../../services/sync/sync-errors'
 
 export default class Photo extends Model {
   static table = 'photos'
 
-  @relation('incidents', 'incident_id') incident!: Relation<Incident>
+  @text('incident_id') incidentRecordId!: string
 
   // Core fields
   @text('r2_key') r2Key!: string | null
@@ -25,6 +24,8 @@ export default class Photo extends Model {
   // Offline sync v2 — prefixed to avoid WMDb base class clash
   @text('local_id') localId!: string
   @field('remote_photo_id') remotePhotoId!: number | null
+  @field('remote_incident_id') remoteIncidentId!: number | null
+  @text('local_incident_local_id') localIncidentLocalId!: string | null
   @text('sync_status') localSyncStatus!: LocalSyncStatus
   @field('sync_attempts') syncAttempts!: number
   @text('last_sync_error') lastSyncError!: string | null
@@ -46,7 +47,7 @@ export default class Photo extends Model {
       photo.localSyncStatus = status
       if (status === 'failed') {
         photo.syncAttempts = photo.syncAttempts + 1
-        photo.lastSyncError = error ?? null
+        photo.lastSyncError = sanitizeStoredSyncMessage(error)
       } else if (status === 'synced') {
         photo.isSynced = true
         photo.lastSyncError = null

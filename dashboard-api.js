@@ -393,6 +393,12 @@
                     body: JSON.stringify(payload || {}),
                 });
             },
+            updateIncidentDispatchTarget(incidentId, payload) {
+                return request(`/web/incidents/${incidentId}/dispatch-target`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
             getInstallationConformity(installationId) {
                 return request(`/web/installations/${installationId}/conformity`);
             },

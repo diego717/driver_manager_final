@@ -54,11 +54,17 @@ async function bootstrapSyncInfrastructure(): Promise<null | (() => void)> {
   }
 
   try {
-    const [{ registerIncidentExecutors }, { runSync }] = await Promise.all([
+    const [{ registerIncidentExecutors }, { registerPhotoExecutors }, { registerIncidentEvidenceExecutors }, { registerCaseExecutors }, { runSync }] = await Promise.all([
       import("@/src/services/sync/incident-outbox-service"),
+      import("@/src/services/sync/photo-outbox-service"),
+      import("@/src/services/sync/incident-evidence-outbox-service"),
+      import("@/src/services/sync/case-outbox-service"),
       import("@/src/services/sync/sync-runner"),
     ]);
     registerIncidentExecutors();
+    registerPhotoExecutors();
+    registerIncidentEvidenceExecutors();
+    registerCaseExecutors();
     syncBootstrapAttempted = true;
     return runSync;
   } catch (error) {

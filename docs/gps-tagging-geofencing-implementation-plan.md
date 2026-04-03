@@ -1,5 +1,7 @@
 # Plan de implementacion: GPS tagging y geofencing
 
+> Nota historica: al 2 de abril de 2026, geofence fue retirado del flujo activo del producto. Este documento se conserva solo como contexto tecnico e historico.
+
 Este documento aterriza una implementacion incremental de captura GPS en el dashboard web/PWA y su evolucion posterior hacia geofencing.
 
 Estado del documento: actualizado contra el repo al 2026-03-26.
@@ -107,7 +109,7 @@ Piezas ya disponibles:
 - R2 para fotos y PDF de conformidad.
 - `installation_conformities.metadata_json` ya existe y sirve para guardar metadata adicional de cierre.
 - Audit logs ya existen y pueden registrar overrides o fallos operativos.
-- El repo ya incluye helpers de GPS/geofence en `worker/lib/gps.js`, `worker/lib/geofence.js` y observabilidad en `worker/lib/gps-observability.js`.
+- El repo mantiene helpers de GPS y observabilidad en `worker/lib/gps.js` y `worker/lib/gps-observability.js`.
 - El dashboard ya incluye captura puntual y UI asociada en `dashboard-geolocation.js`, `dashboard.js` y `dashboard-incidents.js`.
 - El PDF de conformidad ya renderiza GPS y geofence en `worker/services/conformities.js`.
 

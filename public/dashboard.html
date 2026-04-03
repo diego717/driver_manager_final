@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0f756d">
     <meta name="description" content="Dashboard de gestión de registros de drivers">
     <title>SiteOps Dashboard</title>
-    <link rel="stylesheet" href="/dashboard.css?v=36d9077f3f">
+    <link rel="stylesheet" href="/dashboard.css?v=557c136ded">
     <link rel="manifest" href="/manifest.json?v=9130a5f920">
     <link rel="icon" href="/icons/icon-192x192.png">
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
@@ -51,6 +51,7 @@
                     <ul class="nav-group-list">
                         <li><a href="#" class="active" data-section="dashboard"><span class="material-symbols-outlined">today</span> Hoy</a></li>
                         <li><a href="#" data-section="incidents"><span class="material-symbols-outlined">warning</span> Incidencias</a></li>
+                        <li><a href="#" data-section="incidentMap"><span class="material-symbols-outlined">map</span> Mapa</a></li>
                         <li><a href="#" data-section="installations"><span class="material-symbols-outlined">dns</span> Registros</a></li>
                     </ul>
                 </div>
@@ -101,6 +102,10 @@
                     </button>
                 </div>
                 <div class="mobile-nav-panel-links">
+                    <button type="button" class="mobile-nav-menu-item" data-mobile-section="incidentMap">
+                        <span class="material-symbols-outlined">map</span>
+                        <span>Mapa</span>
+                    </button>
                     <button type="button" class="mobile-nav-menu-item" data-mobile-section="drivers">
                         <span class="material-symbols-outlined">upload_file</span>
                         <span>Drivers</span>
@@ -240,15 +245,10 @@
                                 <p id="gpsOpsFailuresValue" class="gps-ops-value">-</p>
                                 <p id="gpsOpsFailuresMeta" class="gps-ops-meta">Sin incidencias de captura</p>
                             </article>
-                            <article class="gps-ops-card gps-ops-card-outside">
-                                <p class="gps-ops-label">Registros fuera de referencia</p>
-                                <p id="gpsOpsOutsideValue" class="gps-ops-value">-</p>
-                                <p id="gpsOpsOutsideMeta" class="gps-ops-meta">Capturas alejadas de la referencia</p>
-                            </article>
                             <article class="gps-ops-card gps-ops-card-override">
-                                <p class="gps-ops-label">Overrides auditados</p>
+                                <p class="gps-ops-label">Overrides GPS</p>
                                 <p id="gpsOpsOverridesValue" class="gps-ops-value">-</p>
-                                <p id="gpsOpsOverridesMeta" class="gps-ops-meta">Justificaciones operativas</p>
+                                <p id="gpsOpsOverridesMeta" class="gps-ops-meta">Excepciones registradas por falta de captura usable</p>
                             </article>
                         </div>
                         <div class="gps-ops-foot">
@@ -363,7 +363,7 @@
                 </div>
             </div>
             
-            <div id="incidentsSection" class="section">
+            <div id="incidentMapSection" class="section">
                 <section class="incident-map-shell" aria-labelledby="incidentMapTitle">
                     <div class="incident-map-shell-head">
                         <div>
@@ -417,7 +417,9 @@
                         </aside>
                     </div>
                 </section>
+            </div>
 
+            <div id="incidentsSection" class="section">
                 <div class="filters incidents-toolbar">
                     <div class="incidents-focus-copy">
                         <strong>Atiende primero el evento.</strong>
@@ -865,20 +867,20 @@
     <script src="https://api.mapbox.com/mapbox-gl-js/v3.19.1/mapbox-gl.js" defer></script>
     <script src="/dashboard-runtime.js" defer></script>
     <script src="/dashboard-qr.js?v=961179b0a2" defer></script>
-    <script src="/dashboard-api.js?v=39e169ead6" defer></script>
+    <script src="/dashboard-api.js?v=4349b34891" defer></script>
     <script src="/dashboard-geolocation.js?v=a99f19d896" defer></script>
     <script src="/dashboard-scan.js?v=6884e82f3e" defer></script>
     <script src="/dashboard-modals.js?v=d4f7406f9c" defer></script>
-    <script src="/dashboard-incidents.js?v=dc8795a53e" defer></script>
+    <script src="/dashboard-incidents.js?v=5669edc033" defer></script>
     <script src="/dashboard-assets.js?v=2816dd0245" defer></script>
     <script src="/dashboard-drivers.js?v=107284fd17" defer></script>
-    <script src="/dashboard-audit.js?v=3d16d3d132" defer></script>
-    <script src="/dashboard-overview.js?v=cdddfbd365" defer></script>
+    <script src="/dashboard-audit.js?v=cb0cf05086" defer></script>
+    <script src="/dashboard-overview.js?v=3125fa9fe7" defer></script>
     <script src="/dashboard-realtime.js?v=d763a18c75" defer></script>
     <script src="/dashboard-auth.js?v=bf2af5df34" defer></script>
-    <script src="/dashboard-navigation.js?v=b7102ebe67" defer></script>
+    <script src="/dashboard-navigation.js?v=848b5ca093" defer></script>
     <script src="/dashboard-bootstrap.js?v=65dba6e7cf" defer></script>
-    <script src="/dashboard.js?v=9549203ad7" defer></script>
+    <script src="/dashboard.js?v=427efc41e4" defer></script>
     <script src="/dashboard-pwa.js?v=55b84aa40e" defer></script>
 </body>
 </html>

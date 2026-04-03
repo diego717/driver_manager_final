@@ -1,0 +1,2 @@
+ALTER TABLE incidents
+ADD COLUMN dispatch_required INTEGER NOT NULL DEFAULT 1;

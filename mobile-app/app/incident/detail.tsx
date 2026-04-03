@@ -8,6 +8,7 @@ import {
   Easing,
   FlatList,
   Image,
+  Linking,
   StyleSheet,
   Text,
   TextInput,
@@ -17,7 +18,12 @@ import {
 } from "react-native";
 
 import { extractApiError } from "@/src/api/client";
-import { deleteIncident, getIncidentById, updateIncidentStatus } from "@/src/api/incidents";
+import {
+  deleteIncident,
+  getIncidentById,
+  getLastIncidentDetailSource,
+  updateIncidentStatus,
+} from "@/src/api/incidents";
 import {
   type IncidentPhotoPreviewTarget,
   resolveIncidentPhotoPreviewTarget,
@@ -35,6 +41,7 @@ import { useReducedMotion } from "@/src/hooks/useReducedMotion";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
 import { type Incident, type TechnicianAssignment, type TechnicianRecord } from "@/src/types/api";
+import { buildIncidentNavigationTargets } from "@/src/utils/incident-dispatch";
 import {
   formatDateTime,
   formatDuration,
@@ -91,6 +98,7 @@ export default function IncidentDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [incident, setIncident] = useState<Incident | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const [usingOfflineSnapshot, setUsingOfflineSnapshot] = useState(false);
   const [photoPreviews, setPhotoPreviews] = useState<Record<number, IncidentPhotoPreviewTarget>>(
     {},
   );
@@ -125,6 +133,7 @@ export default function IncidentDetailScreen() {
       setLoading(true);
       setErrorMessage("");
       const found = await getIncidentById(incidentId);
+      setUsingOfflineSnapshot(getLastIncidentDetailSource() === "cache");
       if (Number(found.installation_id) !== installationId) {
         setIncident(null);
         setErrorMessage("La incidencia no existe para esta instalacion.");
@@ -346,6 +355,25 @@ export default function IncidentDetailScreen() {
   const photoCardWidth = Math.max(260, windowWidth - 72);
   const photoSnapInterval = photoCardWidth + 12;
   const activePhoto = incident?.photos?.[activePhotoIndex] ?? null;
+  const navigationTargets = useMemo(() => buildIncidentNavigationTargets(incident), [incident]);
+
+  const openExternalUrl = useCallback(async (targetUrl: string | null, label: string) => {
+    if (!targetUrl) {
+      Alert.alert("Sin destino", `No hay datos suficientes para abrir ${label}.`);
+      return;
+    }
+
+    try {
+      const supported = await Linking.canOpenURL(targetUrl);
+      if (!supported) {
+        Alert.alert("No disponible", `No se pudo abrir ${label} en este dispositivo.`);
+        return;
+      }
+      await Linking.openURL(targetUrl);
+    } catch (error) {
+      Alert.alert("Error", extractApiError(error));
+    }
+  }, []);
 
   const renderPhotoItem = useCallback(
     ({
@@ -450,6 +478,19 @@ export default function IncidentDetailScreen() {
         description="Estado operativo, tiempo acumulado, evidencia y fotos desde una sola pantalla."
         aside={incident ? <StatusChip value={incident.incident_status} /> : null}
       />
+
+      {usingOfflineSnapshot ? (
+        <View
+          style={[
+            styles.feedbackBox,
+            { backgroundColor: palette.warningBg, borderColor: palette.warningText },
+          ]}
+        >
+          <Text style={[styles.feedbackText, { color: palette.warningText }]}>
+            Mostrando el ultimo snapshot local disponible para esta incidencia.
+          </Text>
+        </View>
+      ) : null}
 
       <View style={styles.topRow}>
         <TouchableOpacity
@@ -640,6 +681,91 @@ export default function IncidentDetailScreen() {
             </Text>
           </SectionCard>
 
+          <SectionCard
+            title="Destino operativo"
+            description="Prioriza lugar, direccion y referencia para la visita antes que la coordenada sola."
+          >
+            {incident.dispatch_required === false ? (
+              <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                Esta incidencia no requiere visita en sitio ni datos de despacho operativo.
+              </Text>
+            ) : (
+              <>
+                <Text style={[styles.dispatchPrimary, { color: palette.textPrimary }]}>
+                  {incident.dispatch_place_name?.trim() ||
+                    incident.target_label?.trim() ||
+                    "Sin destino operativo definido"}
+                </Text>
+                <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                  Direccion: {incident.dispatch_address?.trim() || "Falta direccion legible"}
+                </Text>
+                <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                  Referencia: {incident.dispatch_reference?.trim() || "Falta referencia de acceso"}
+                </Text>
+                {(incident.dispatch_contact_name || incident.dispatch_contact_phone) ? (
+                  <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                    Contacto: {[incident.dispatch_contact_name, incident.dispatch_contact_phone]
+                      .map((value) => String(value || "").trim())
+                      .filter(Boolean)
+                      .join(" | ")}
+                  </Text>
+                ) : null}
+                {incident.dispatch_notes?.trim() ? (
+                  <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                    Notas: {incident.dispatch_notes.trim()}
+                  </Text>
+                ) : null}
+                {incident.target_source?.trim() ? (
+                  <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                    Origen: {incident.target_source.trim()}
+                  </Text>
+                ) : null}
+                {(incident.target_lat !== null && incident.target_lat !== undefined && incident.target_lng !== null && incident.target_lng !== undefined) ? (
+                  <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                    Coordenadas: {incident.target_lat}, {incident.target_lng}
+                  </Text>
+                ) : null}
+
+                <View style={styles.navigationButtonsRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.statusButton,
+                      {
+                        backgroundColor: palette.primaryButtonBg,
+                        borderColor: palette.primaryButtonBg,
+                      },
+                    ]}
+                    onPress={() => {
+                      void openExternalUrl(navigationTargets.google, "Google Maps");
+                    }}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.statusButtonText, { color: palette.primaryButtonText }]}>
+                      Abrir en Google Maps
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.statusButton,
+                      {
+                        backgroundColor: palette.refreshBg,
+                        borderColor: palette.inputBorder,
+                      },
+                    ]}
+                    onPress={() => {
+                      void openExternalUrl(navigationTargets.waze, "Waze");
+                    }}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.statusButtonText, { color: palette.refreshText }]}>
+                      Abrir en Waze
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </SectionCard>
+
           <SectionCard title="Checklist y evidencia" description="Resumen rapido del trabajo realizado.">
             {incident.checklist_items?.length ? (
               incident.checklist_items.map((item, index) => (
@@ -818,10 +944,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: fontFamilies.regular,
   },
+  dispatchPrimary: {
+    fontSize: 18,
+    lineHeight: 24,
+    fontFamily: fontFamilies.bold,
+  },
   runtimeGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
+  },
+  navigationButtonsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 8,
   },
   statusButtonsRow: {
     flexDirection: "row",

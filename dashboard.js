@@ -298,6 +298,7 @@ const SECTION_TITLES = {
     assets: 'Equipos',
     drivers: 'Drivers',
     incidents: 'Incidencias',
+    incidentMap: 'Mapa operativo',
     tenants: 'Tenants',
     audit: 'Auditoría',
     settings: 'Configuración',
@@ -308,6 +309,7 @@ const SECTION_SUBTITLES = {
     assets: 'Equipos con acceso directo a incidencias y contexto',
     drivers: 'Versionado centralizado de controladores',
     incidents: 'Atiende eventos sin perder el contexto operativo',
+    incidentMap: 'Vista geolocalizada para explorar incidencias sin sobrecargar la bandeja',
     tenants: 'Administra empresas, admins y estado de plataforma',
     audit: 'Trazas críticas y cumplimiento',
     settings: 'Preferencias operativas y atajos de gestión',
@@ -347,9 +349,12 @@ const SECTION_REQUIRED_BINDINGS = Object.freeze({
         'installationsTable',
     ],
     incidents: [
+        'incidentsList',
+    ],
+    incidentMap: [
         'incidentMapCanvas',
         'incidentMapDetail',
-        'incidentsList',
+        'incidentMapSummary',
     ],
     assets: [
         'assetsSearchInput',
@@ -396,6 +401,7 @@ const HEADER_PRIMARY_ACTIONS = {
     assets: { icon: 'qr_code_2', label: 'Nuevo equipo + QR', action: 'createAsset' },
     drivers: { icon: 'cloud_upload', label: 'Subir driver', action: 'pickDriverFile' },
     incidents: { icon: 'warning', label: 'Nueva incidencia', action: 'createIncident' },
+    incidentMap: { icon: 'warning', label: 'Nueva incidencia', action: 'createIncident' },
     tenants: { icon: 'add_business', label: 'Nuevo tenant', action: 'createTenant', hidden: true },
     audit: { icon: 'refresh', label: 'Actualizar auditoría', action: 'refreshAudit' },
     settings: { icon: 'description', label: 'Abrir auditoría', action: 'openAudit' },
@@ -3030,32 +3036,6 @@ function buildManualRecordFields(defaultClient) {
         className: 'full-width',
     }));
 
-    const siteToggleWrap = document.createElement('div');
-    siteToggleWrap.className = 'input-group full-width';
-    const siteToggleRow = document.createElement('label');
-    siteToggleRow.className = 'checkbox-label';
-    const siteToggleInput = document.createElement('input');
-    siteToggleInput.type = 'checkbox';
-    siteToggleInput.id = 'actionRecordUseGpsAsSite';
-    const siteToggleText = document.createElement('span');
-    siteToggleText.textContent = 'Usar esta captura como referencia del sitio';
-    siteToggleRow.append(siteToggleInput, siteToggleText);
-    const siteToggleHelp = document.createElement('p');
-    siteToggleHelp.className = 'asset-muted';
-    siteToggleHelp.textContent = 'Si la captura es valida, el registro nacera con una referencia operativa para futuras incidencias y cierres.';
-    siteToggleWrap.append(siteToggleRow, siteToggleHelp);
-    grid.appendChild(siteToggleWrap);
-
-    const siteRadiusInput = document.createElement('input');
-    siteRadiusInput.type = 'number';
-    siteRadiusInput.step = '1';
-    siteRadiusInput.min = '1';
-    siteRadiusInput.id = 'actionRecordSiteRadius';
-    siteRadiusInput.placeholder = 'Ej: 60';
-    grid.appendChild(createModalInputGroup('Radio inicial del sitio (m)', siteRadiusInput, {
-        htmlFor: 'actionRecordSiteRadius',
-    }));
-
     fragment.appendChild(grid);
     fragment.appendChild(createGpsCapturePanel({
         panelId: 'actionRecordGpsPanel',
@@ -3142,30 +3122,6 @@ function createManualRecordFromWeb() {
             const version = String(document.getElementById('actionRecordVersion')?.value || '').trim();
             const notes = String(document.getElementById('actionRecordNotes')?.value || '').trim();
             const gpsSnapshot = gpsController?.getSnapshotForSubmit?.() || null;
-            const useGpsAsSite = document.getElementById('actionRecordUseGpsAsSite')?.checked === true;
-            const rawSiteRadius = String(document.getElementById('actionRecordSiteRadius')?.value || '').trim();
-            let sitePayload = {};
-
-            if (useGpsAsSite || rawSiteRadius) {
-                const parsedRadius = Number.parseInt(rawSiteRadius, 10);
-                if (!Number.isInteger(parsedRadius) || parsedRadius <= 0) {
-                    setActionModalError('Debes indicar un radio inicial valido para configurar el sitio.');
-                    return;
-                }
-
-                const gpsStatus = String(gpsSnapshot?.status || 'pending').trim().toLowerCase();
-                if (gpsStatus !== 'captured') {
-                    setActionModalError('Para usar la captura como referencia del sitio, primero necesitas una ubicacion valida.');
-                    return;
-                }
-
-                sitePayload = {
-                    site_lat: Number(gpsSnapshot.lat),
-                    site_lng: Number(gpsSnapshot.lng),
-                    site_radius_m: parsedRadius,
-                };
-            }
-
             const result = await api.createRecord({
                 client_name: clientName || 'Sin cliente',
                 driver_brand: brand || 'N/A',
@@ -3176,7 +3132,6 @@ function createManualRecordFromWeb() {
                 os_info: 'web',
                 installation_time_seconds: 0,
                 gps: gpsSnapshot,
-                ...sitePayload,
             });
 
             const createdRecord = result?.record && typeof result.record === 'object'
@@ -3209,107 +3164,6 @@ function createManualRecordFromWeb() {
         });
         void gpsController.capture();
     }
-}
-
-function buildInstallationSiteConfigFields(installation = {}) {
-    const fragment = document.createDocumentFragment();
-    const grid = document.createElement('div');
-    grid.className = 'action-modal-grid';
-
-    const siteLatInput = document.createElement('input');
-    siteLatInput.type = 'number';
-    siteLatInput.step = 'any';
-    siteLatInput.id = 'actionInstallationSiteLat';
-    siteLatInput.value = installation?.site_lat ?? '';
-    grid.appendChild(createModalInputGroup('Latitud sitio', siteLatInput, { htmlFor: siteLatInput.id }));
-
-    const siteLngInput = document.createElement('input');
-    siteLngInput.type = 'number';
-    siteLngInput.step = 'any';
-    siteLngInput.id = 'actionInstallationSiteLng';
-    siteLngInput.value = installation?.site_lng ?? '';
-    grid.appendChild(createModalInputGroup('Longitud sitio', siteLngInput, { htmlFor: siteLngInput.id }));
-
-    const siteRadiusInput = document.createElement('input');
-    siteRadiusInput.type = 'number';
-    siteRadiusInput.step = '1';
-    siteRadiusInput.min = '1';
-    siteRadiusInput.id = 'actionInstallationSiteRadius';
-    siteRadiusInput.value = installation?.site_radius_m ?? '';
-    grid.appendChild(createModalInputGroup('Radio permitido (m)', siteRadiusInput, { htmlFor: siteRadiusInput.id }));
-
-    const help = document.createElement('p');
-    help.className = 'asset-muted';
-    help.textContent = 'Si dejas los tres campos vacios, el registro quedara sin referencia operativa guardada.';
-    const helpWrap = document.createElement('div');
-    helpWrap.className = 'input-group full-width';
-    helpWrap.appendChild(help);
-    grid.appendChild(helpWrap);
-
-    fragment.appendChild(grid);
-    return fragment;
-}
-
-async function openInstallationSiteConfigModal(installation) {
-    const installationId = Number.parseInt(String(installation?.id || ''), 10);
-    if (!Number.isInteger(installationId) || installationId <= 0) {
-        showNotification('No se pudo abrir la configuracion del sitio.', 'error');
-        return;
-    }
-
-    openActionModal({
-        title: `Configurar sitio #${installationId}`,
-        subtitle: 'Define la referencia geografica del registro para futuras consultas operativas.',
-        submitLabel: 'Guardar sitio',
-        focusId: 'actionInstallationSiteLat',
-        fields: buildInstallationSiteConfigFields(installation),
-        onSubmit: async () => {
-            const rawLat = String(document.getElementById('actionInstallationSiteLat')?.value || '').trim();
-            const rawLng = String(document.getElementById('actionInstallationSiteLng')?.value || '').trim();
-            const rawRadius = String(document.getElementById('actionInstallationSiteRadius')?.value || '').trim();
-            const allEmpty = !rawLat && !rawLng && !rawRadius;
-
-            if (!allEmpty && (!rawLat || !rawLng || !rawRadius)) {
-                setActionModalError('Debes completar latitud, longitud y radio juntos, o dejar los tres vacios.');
-                return;
-            }
-
-            const payload = allEmpty
-                ? {
-                    site_lat: null,
-                    site_lng: null,
-                    site_radius_m: null,
-                }
-                : {
-                    site_lat: Number(rawLat),
-                    site_lng: Number(rawLng),
-                    site_radius_m: Number(rawRadius),
-                };
-
-            const result = await api.updateInstallation(installationId, payload);
-            closeActionModal(true);
-
-            const updatedInstallation = result?.installation && typeof result.installation === 'object'
-                ? result.installation
-                : { ...installation, ...payload };
-            currentInstallationsData = (currentInstallationsData || []).map((item) =>
-                Number(item?.id) === installationId ? { ...item, ...updatedInstallation } : item,
-            );
-            upsertInstallationCacheEntries([{ id: installationId, ...updatedInstallation }]);
-
-            showNotification(
-                payload.site_lat === null
-                    ? `Referencia operativa removida del registro #${installationId}.`
-                    : `Sitio actualizado para registro #${installationId}.`,
-                payload.site_lat === null ? 'info' : 'success',
-            );
-
-            void loadInstallations();
-            if (Number.isInteger(currentSelectedInstallationId) && currentSelectedInstallationId === installationId) {
-                void showIncidentsForInstallation(installationId);
-            }
-        },
-    });
 }
 
 function openIncidentModal(options = {}) {
@@ -3530,14 +3384,12 @@ function getActiveFilters() {
 
     const searchValue = document.getElementById('searchInput')?.value?.trim();
     const brandValue = document.getElementById('brandFilter')?.value;
-    const geofenceValue = document.getElementById('geofenceFilter')?.value;
     const gpsValue = document.getElementById('gpsFilter')?.value;
     const startDate = document.getElementById('startDate')?.value;
     const endDate = document.getElementById('endDate')?.value;
 
     if (searchValue) filters.search = searchValue;
     if (brandValue) filters.brand = brandValue;
-    if (geofenceValue) filters.geofence = geofenceValue;
     if (gpsValue) filters.gps = gpsValue;
     if (startDate) filters.startDate = startDate;
     if (endDate) filters.endDate = endDate;
@@ -3620,11 +3472,6 @@ function removeFilter(filterType) {
         case 'brand':
             document.getElementById('brandFilter').value = '';
             break;
-        case 'geofence':
-            if (document.getElementById('geofenceFilter')) {
-                document.getElementById('geofenceFilter').value = '';
-            }
-            break;
         case 'gps':
             document.getElementById('gpsFilter').value = '';
             break;
@@ -3643,9 +3490,6 @@ function removeFilter(filterType) {
 function clearAllFilters() {
     document.getElementById('searchInput').value = '';
     document.getElementById('brandFilter').value = '';
-    if (document.getElementById('geofenceFilter')) {
-        document.getElementById('geofenceFilter').value = '';
-    }
     document.getElementById('gpsFilter').value = '';
     document.getElementById('startDate').value = '';
     document.getElementById('endDate').value = '';
@@ -3654,25 +3498,12 @@ function clearAllFilters() {
     debouncedSearch();
 }
 
-function hasInstallationSiteConfig(installation) {
-    return Number.isFinite(Number(installation?.site_lat))
-        && Number.isFinite(Number(installation?.site_lng))
-        && Number(installation?.site_radius_m) > 0;
-}
-
 function isGpsFailureStatus(status) {
     return ['denied', 'timeout', 'unavailable', 'unsupported', 'override'].includes(status);
 }
 
 function applyInstallationClientSideFilters(installations, filters) {
     return (installations || []).filter((installation) => {
-        if (filters.geofence === 'configured' && !hasInstallationSiteConfig(installation)) {
-            return false;
-        }
-        if (filters.geofence === 'missing' && hasInstallationSiteConfig(installation)) {
-            return false;
-        }
-
         const gpsStatus = String(installation?.gps_capture_status || 'pending').trim().toLowerCase() || 'pending';
         if (filters.gps === 'captured' && gpsStatus !== 'captured') {
             return false;
@@ -4094,7 +3925,6 @@ async function exportToExcel(data, filename = 'registros.xls') {
         else if (filters.startDate) parts.push(`Periodo: desde ${filters.startDate}`);
         else if (filters.endDate) parts.push(`Periodo: hasta ${filters.endDate}`);
         if (filters.brand) parts.push(`Marca: ${filters.brand}`);
-        if (filters.geofence) parts.push(`Geofence: ${filters.geofence}`);
         if (filters.gps) parts.push(`GPS: ${filters.gps}`);
         if (filters.search) parts.push(`Busqueda: ${filters.search}`);
         return parts.length ? parts.join(' | ') : 'Filtros: sin filtros activos';
@@ -4135,8 +3965,6 @@ async function exportToExcel(data, filename = 'registros.xls') {
         'Tiempo visible',
         'GPS',
         'Precision GPS (m)',
-        'Geofence',
-        'Radio geofence (m)',
         'Notas',
         'Fecha/Hora',
     ];
@@ -4145,7 +3973,6 @@ async function exportToExcel(data, filename = 'registros.xls') {
         const gpsStatusRaw = String(inst?.gps_capture_status || 'pending').trim().toLowerCase() || 'pending';
         const gpsAccuracy = Number(inst?.gps_accuracy_m);
         const attention = buildRecordAttentionBadge(inst);
-        const hasGeofence = hasInstallationSiteConfig(inst);
         return {
             id: Number(inst?.id) || inst?.id || '',
             clientName: sanitizeSpreadsheetCell(inst?.client_name || 'N/A'),
@@ -4161,8 +3988,6 @@ async function exportToExcel(data, filename = 'registros.xls') {
             gpsStatus: sanitizeSpreadsheetCell(gpsStatusRaw),
             gpsStatusRaw,
             gpsAccuracy: Number.isFinite(gpsAccuracy) ? Math.max(0, gpsAccuracy) : null,
-            geofenceLabel: hasGeofence ? 'Configurado' : 'Sin geofence',
-            geofenceRadius: hasGeofence ? Math.max(0, Number(inst?.site_radius_m) || 0) : null,
         };
     });
 
@@ -4178,7 +4003,6 @@ async function exportToExcel(data, filename = 'registros.xls') {
         ['Tiempo promedio (s)', details.length ? Math.round(details.reduce((sum, item) => sum + item.durationSeconds, 0) / details.length) : 0],
         ['GPS capturado', details.filter(item => item.gpsStatusRaw === 'captured').length],
         ['GPS con falla', details.filter(item => isGpsFailureStatus(item.gpsStatusRaw)).length],
-        ['Registros con geofence', details.filter(item => item.geofenceLabel === 'Configurado').length],
         [],
         ['Atencion', 'Cantidad'],
         ...Array.from(details.reduce((accumulator, item) => {
@@ -4213,8 +4037,6 @@ async function exportToExcel(data, filename = 'registros.xls') {
             formatDuration(item.durationSeconds),
             item.gpsStatus,
             item.gpsAccuracy,
-            item.geofenceLabel,
-            item.geofenceRadius,
             item.notes,
             item.timestamp,
         ]),
@@ -4232,8 +4054,6 @@ async function exportToExcel(data, filename = 'registros.xls') {
         { wch: 14 },
         { wch: 16 },
         { wch: 16 },
-        { wch: 16 },
-        { wch: 18 },
         { wch: 48 },
         { wch: 20 },
     ];
@@ -4251,7 +4071,6 @@ async function exportToExcel(data, filename = 'registros.xls') {
         'Marcas',
         'Tiempo promedio (s)',
         'GPS capturado',
-        'Con geofence',
         'Ultima fecha',
         'Tecnicos',
     ];
@@ -4261,7 +4080,6 @@ async function exportToExcel(data, filename = 'registros.xls') {
             total: 0,
             durationSeconds: 0,
             gpsCaptured: 0,
-            withGeofence: 0,
             brands: new Set(),
             technicians: new Set(),
             lastTimestamp: null,
@@ -4269,7 +4087,6 @@ async function exportToExcel(data, filename = 'registros.xls') {
         bucket.total += 1;
         bucket.durationSeconds += item.durationSeconds;
         if (item.gpsStatusRaw === 'captured') bucket.gpsCaptured += 1;
-        if (item.geofenceLabel === 'Configurado') bucket.withGeofence += 1;
         if (item.brand && item.brand !== 'N/A') bucket.brands.add(item.brand);
         if (item.technician && item.technician !== 'N/A') bucket.technicians.add(item.technician);
         if (item.timestamp && (!bucket.lastTimestamp || item.timestamp > bucket.lastTimestamp)) bucket.lastTimestamp = item.timestamp;
@@ -4288,7 +4105,6 @@ async function exportToExcel(data, filename = 'registros.xls') {
             Array.from(item.brands).join(', ') || 'N/A',
             item.total ? Math.round(item.durationSeconds / item.total) : 0,
             item.gpsCaptured,
-            item.withGeofence,
             item.lastTimestamp,
             Array.from(item.technicians).join(', ') || 'N/A',
         ]),
@@ -4299,7 +4115,6 @@ async function exportToExcel(data, filename = 'registros.xls') {
         { wch: 10 },
         { wch: 28 },
         { wch: 18 },
-        { wch: 14 },
         { wch: 14 },
         { wch: 20 },
         { wch: 24 },
@@ -4344,8 +4159,8 @@ async function exportToExcel(data, filename = 'registros.xls') {
         applyCellStyle(detailSheet, `H${rowIndex}`, centeredStyle);
         applyCellStyle(detailSheet, `J${rowIndex}`, centeredStyle);
         applyCellStyle(detailSheet, `K${rowIndex}`, centeredStyle);
-        applyCellStyle(detailSheet, `L${rowIndex}`, centeredStyle);
-        applyCellStyle(detailSheet, `M${rowIndex}`, centeredStyle);
+        applyCellStyle(detailSheet, `L${rowIndex}`, noteStyle);
+        applyCellStyle(detailSheet, `M${rowIndex}`, dateStyle);
 
         const attentionCell = detailSheet[`G${rowIndex}`];
         if (attentionCell) {
@@ -4374,20 +4189,12 @@ async function exportToExcel(data, filename = 'registros.xls') {
             else gpsCell.s = buildStatusStyle('FECACA', '991B1B');
         }
 
-        const geofenceCell = detailSheet[`L${rowIndex}`];
-        if (geofenceCell) {
-            const geofenceValue = String(geofenceCell.v || '').toLowerCase();
-            geofenceCell.s = geofenceValue.includes('config')
-                ? buildStatusStyle('BBF7D0', '166534')
-                : buildStatusStyle('FEF3C7', '92400E');
-        }
     }
 
     for (let rowIndex = clientsHeaderRowNumber + 1; rowIndex <= clientsRows.length; rowIndex += 1) {
         applyCellStyle(clientsSheet, `D${rowIndex}`, centeredStyle);
         applyCellStyle(clientsSheet, `E${rowIndex}`, centeredStyle);
-        applyCellStyle(clientsSheet, `F${rowIndex}`, centeredStyle);
-        applyCellStyle(clientsSheet, `G${rowIndex}`, dateStyle);
+        applyCellStyle(clientsSheet, `F${rowIndex}`, dateStyle);
     }
 
     XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumen');
@@ -4526,20 +4333,12 @@ function setupAdvancedFilters() {
 
     // Filter change handlers
     const brandFilter = document.getElementById('brandFilter');
-    const geofenceFilter = document.getElementById('geofenceFilter');
     const gpsFilter = document.getElementById('gpsFilter');
     const startDate = document.getElementById('startDate');
     const endDate = document.getElementById('endDate');
 
     if (brandFilter) {
         brandFilter.addEventListener('change', () => {
-            updateFilterChips();
-            debouncedSearch();
-        });
-    }
-
-    if (geofenceFilter) {
-        geofenceFilter.addEventListener('change', () => {
             updateFilterChips();
             debouncedSearch();
         });
@@ -4746,22 +4545,6 @@ function makeTableRowKeyboardAccessible(row, ariaLabel) {
     });
 }
 
-function buildInstallationSiteBadge(installation) {
-    const hasSiteConfig =
-        Number.isFinite(Number(installation?.site_lat))
-        && Number.isFinite(Number(installation?.site_lng))
-        && Number(installation?.site_radius_m) > 0;
-
-    const badge = document.createElement('span');
-    badge.className = `installation-site-badge ${hasSiteConfig ? 'is-configured' : 'is-missing'}`;
-    if (hasSiteConfig) {
-        badge.textContent = `Referencia ${Math.round(Number(installation.site_radius_m))} m`;
-    } else {
-        badge.textContent = 'Sin referencia';
-    }
-    return badge;
-}
-
 function buildInstallationGpsBadge(installation) {
     const status = String(installation?.gps_capture_status || 'pending').trim().toLowerCase() || 'pending';
     const accuracy = Number(installation?.gps_accuracy_m);
@@ -4919,9 +4702,8 @@ function renderInstallationsTable(installations) {
         clientPrimary.textContent = inst.client_name || 'N/A';
         const badgesWrap = document.createElement('div');
         badgesWrap.className = 'installation-meta-badges';
-        const siteBadge = buildInstallationSiteBadge(inst);
         const gpsBadge = buildInstallationGpsBadge(inst);
-        badgesWrap.append(siteBadge, gpsBadge);
+        badgesWrap.append(gpsBadge);
         clientCell.append(clientPrimary, badgesWrap);
 
         const brandCell = document.createElement('td');
@@ -4973,22 +4755,7 @@ function renderInstallationsTable(installations) {
             event.stopPropagation();
             showQrModal({ type: 'installation', value: String(inst.id ?? '') });
         });
-        const siteButton = document.createElement('button');
-        siteButton.type = 'button';
-        siteButton.className = 'btn-secondary table-action-btn';
-        setElementTextWithMaterialIcon(
-            siteButton,
-            Number.isFinite(Number(inst.site_lat)) && Number.isFinite(Number(inst.site_lng)) && Number(inst.site_radius_m) > 0
-                ? 'place'
-                : 'add_location_alt',
-            'Sitio',
-        );
-        siteButton.addEventListener('click', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            openInstallationSiteConfigModal(inst);
-        });
-        actionsGroup.append(qrButton, siteButton);
+        actionsGroup.append(qrButton);
         qrCell.appendChild(actionsGroup);
 
         row.append(idCell, clientCell, brandCell, attentionCell, timeCell, notesCell, dateCell, qrCell);
@@ -5967,6 +5734,7 @@ const dashboardNavigation = window.createDashboardNavigation({
     loadAssets,
     loadAuditLogs,
     loadDrivers,
+    loadIncidentMapWorkspace: (...args) => dashboardIncidents.showIncidentMapWorkspace(...args),
     loadIncidentsWorkspace: (...args) => dashboardIncidents.showIncidentsWorkspace(...args),
     loadInstallations,
     loadTenants: loadTenantsSection,

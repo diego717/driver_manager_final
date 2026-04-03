@@ -11,6 +11,30 @@ export interface SyncError {
   statusCode?: number
 }
 
+const MAX_STORED_SYNC_MESSAGE_LENGTH = 180
+
+export function sanitizeStoredSyncMessage(message: unknown): string | null {
+  const normalized = typeof message === 'string'
+    ? message
+    : message instanceof Error
+      ? message.message
+      : String(message ?? '')
+
+  const collapsed = normalized.replace(/\s+/g, ' ').trim()
+  if (!collapsed) return null
+
+  const withoutFileUris = collapsed
+    .replace(/file:\/\/\S+/gi, '[redacted-file]')
+    .replace(/[A-Za-z]:\\[^\s)]+/g, '[redacted-path]')
+    .replace(/\/(?:data|storage|var|private|users|home)\/[^\s)]+/gi, '[redacted-path]')
+
+  if (withoutFileUris.length <= MAX_STORED_SYNC_MESSAGE_LENGTH) {
+    return withoutFileUris
+  }
+
+  return `${withoutFileUris.slice(0, MAX_STORED_SYNC_MESSAGE_LENGTH - 3)}...`
+}
+
 /**
  * Classify an error thrown by an API call into a sync error kind.
  *

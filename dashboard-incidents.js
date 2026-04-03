@@ -20,9 +20,6 @@
         const CONFORMITY_GPS_OVERRIDE_WRAP_ID = 'actionConformityGpsOverrideWrap';
         const CONFORMITY_GPS_OVERRIDE_INPUT_ID = 'actionConformityGpsOverrideNote';
         const CONFORMITY_GPS_OVERRIDE_HELP_ID = 'actionConformityGpsOverrideHelp';
-        const INCIDENT_GEOFENCE_OVERRIDE_WRAP_ID = 'actionIncidentGeofenceOverrideWrap';
-        const INCIDENT_GEOFENCE_OVERRIDE_INPUT_ID = 'actionIncidentGeofenceOverrideNote';
-        const INCIDENT_GEOFENCE_OVERRIDE_HELP_ID = 'actionIncidentGeofenceOverrideHelp';
         const PUBLIC_TRACKING_URL_INPUT_ID = 'actionPublicTrackingUrl';
         const PUBLIC_TRACKING_STATUS_ID = 'actionPublicTrackingStatus';
         const PUBLIC_TRACKING_EXPIRES_ID = 'actionPublicTrackingExpires';
@@ -45,6 +42,8 @@
             severity: '',
             incidents: [],
             selectedIncidentId: null,
+            targetSelectionIncidentId: null,
+            savingTargetIncidentId: null,
             loading: false,
             map: null,
             mapLoaded: false,
@@ -292,6 +291,235 @@
             return result;
         }
 
+        function hasIncidentDispatchTargetData(incident) {
+            if (!incident || typeof incident !== 'object') return false;
+            if (incident.dispatch_required === false) {
+                return true;
+            }
+            const textFields = [
+                incident.dispatch_place_name,
+                incident.dispatch_address,
+                incident.dispatch_reference,
+                incident.dispatch_contact_name,
+                incident.dispatch_contact_phone,
+                incident.dispatch_notes,
+                incident.target_label,
+                incident.target_source,
+            ];
+            if (textFields.some((value) => String(value || '').trim().length > 0)) {
+                return true;
+            }
+            const targetLat = incident.target_lat;
+            const targetLng = incident.target_lng;
+            const hasTargetLat = targetLat !== null && targetLat !== undefined && targetLat !== '';
+            const hasTargetLng = targetLng !== null && targetLng !== undefined && targetLng !== '';
+            return (
+                hasTargetLat &&
+                hasTargetLng &&
+                Number.isFinite(Number(targetLat)) &&
+                Number.isFinite(Number(targetLng))
+            );
+        }
+
+        function parseDispatchCoordinate(value, fieldLabel) {
+            const normalized = String(value || '').trim();
+            if (!normalized) return null;
+            const parsed = Number(normalized.replace(',', '.'));
+            if (!Number.isFinite(parsed)) {
+                throw new Error(`Campo "${fieldLabel}" invalido.`);
+            }
+            return parsed;
+        }
+
+        function readIncidentDispatchTargetFromModal() {
+            const dispatchRequired = document.getElementById('actionIncidentDispatchRequired')?.value !== '0';
+            if (!dispatchRequired) {
+                return {
+                    payload: {
+                        dispatch_required: false,
+                        target_lat: null,
+                        target_lng: null,
+                        target_label: null,
+                        target_source: null,
+                        dispatch_place_name: null,
+                        dispatch_address: null,
+                        dispatch_reference: null,
+                        dispatch_contact_name: null,
+                        dispatch_contact_phone: null,
+                        dispatch_notes: null,
+                    },
+                };
+            }
+
+            const targetLat = parseDispatchCoordinate(
+                document.getElementById('actionIncidentTargetLat')?.value,
+                'Latitud',
+            );
+            const targetLng = parseDispatchCoordinate(
+                document.getElementById('actionIncidentTargetLng')?.value,
+                'Longitud',
+            );
+
+            if ((targetLat === null) !== (targetLng === null)) {
+                return {
+                    error: 'Latitud y longitud deben completarse juntas o dejarse vacias.',
+                };
+            }
+
+            return {
+                payload: {
+                    dispatch_required: true,
+                    target_lat: targetLat,
+                    target_lng: targetLng,
+                    target_label: String(document.getElementById('actionIncidentTargetLabel')?.value || '').trim() || null,
+                    target_source: String(document.getElementById('actionIncidentTargetSource')?.value || '').trim() || null,
+                    dispatch_place_name: String(document.getElementById('actionIncidentDispatchPlace')?.value || '').trim() || null,
+                    dispatch_address: String(document.getElementById('actionIncidentDispatchAddress')?.value || '').trim() || null,
+                    dispatch_reference: String(document.getElementById('actionIncidentDispatchReference')?.value || '').trim() || null,
+                    dispatch_contact_name: String(document.getElementById('actionIncidentDispatchContactName')?.value || '').trim() || null,
+                    dispatch_contact_phone: String(document.getElementById('actionIncidentDispatchContactPhone')?.value || '').trim() || null,
+                    dispatch_notes: String(document.getElementById('actionIncidentDispatchNotes')?.value || '').trim() || null,
+                },
+            };
+        }
+
+        function buildIncidentDispatchTargetFields(incident = {}) {
+            const fragment = document.createDocumentFragment();
+            const grid = document.createElement('div');
+            grid.className = 'action-modal-grid';
+            const dispatchRequired = incident?.dispatch_required !== false;
+
+            const dispatchRequiredSelect = document.createElement('select');
+            dispatchRequiredSelect.id = 'actionIncidentDispatchRequired';
+            dispatchRequiredSelect.appendChild(new Option('Si', '1', dispatchRequired, dispatchRequired));
+            dispatchRequiredSelect.appendChild(new Option('No', '0', !dispatchRequired, !dispatchRequired));
+            grid.appendChild(createInputGroup('Requiere datos de visita', dispatchRequiredSelect, { htmlFor: dispatchRequiredSelect.id }));
+
+            const dispatchHelp = document.createElement('p');
+            dispatchHelp.className = 'gps-capture-panel-summary full-width';
+            dispatchHelp.id = 'actionIncidentDispatchRequiredHelp';
+            dispatchHelp.textContent = dispatchRequired
+                ? 'Carga direccion, referencia y coordenadas solo cuando realmente haga falta despacho en sitio.'
+                : 'La incidencia queda marcada sin visita en sitio requerida y se limpian los datos de destino operativo.';
+            grid.appendChild(dispatchHelp);
+
+            const dispatchFields = document.createElement('div');
+            dispatchFields.id = 'actionIncidentDispatchFields';
+            dispatchFields.className = 'action-modal-grid full-width';
+
+            const sourceSelect = document.createElement('select');
+            sourceSelect.id = 'actionIncidentTargetSource';
+            [
+                { value: '', label: 'Sin definir' },
+                { value: 'manual_map', label: 'Punto manual' },
+                { value: 'reporter_gps', label: 'GPS del reporte' },
+                { value: 'installation_gps', label: 'GPS del registro' },
+                { value: 'asset_context', label: 'Contexto del equipo' },
+                { value: 'mobile_adjustment', label: 'Ajuste mobile' },
+            ].forEach((option) => {
+                sourceSelect.appendChild(
+                    new Option(
+                        option.label,
+                        option.value,
+                        option.value === String(incident?.target_source || '').trim(),
+                        option.value === String(incident?.target_source || '').trim(),
+                    ),
+                );
+            });
+            dispatchFields.appendChild(createInputGroup('Origen del destino', sourceSelect, { htmlFor: sourceSelect.id }));
+
+            const targetLabelInput = document.createElement('input');
+            targetLabelInput.type = 'text';
+            targetLabelInput.id = 'actionIncidentTargetLabel';
+            targetLabelInput.autocomplete = 'off';
+            targetLabelInput.placeholder = 'Ej: ATM-009 acceso principal';
+            targetLabelInput.value = String(incident?.target_label || '').trim();
+            dispatchFields.appendChild(createInputGroup('Etiqueta visible', targetLabelInput, { htmlFor: targetLabelInput.id }));
+
+            const targetLatInput = document.createElement('input');
+            targetLatInput.type = 'text';
+            targetLatInput.id = 'actionIncidentTargetLat';
+            targetLatInput.autocomplete = 'off';
+            targetLatInput.placeholder = '-34.9011';
+            targetLatInput.value = incident?.target_lat === null || incident?.target_lat === undefined
+                ? ''
+                : String(incident.target_lat);
+            dispatchFields.appendChild(createInputGroup('Latitud', targetLatInput, { htmlFor: targetLatInput.id }));
+
+            const targetLngInput = document.createElement('input');
+            targetLngInput.type = 'text';
+            targetLngInput.id = 'actionIncidentTargetLng';
+            targetLngInput.autocomplete = 'off';
+            targetLngInput.placeholder = '-56.1645';
+            targetLngInput.value = incident?.target_lng === null || incident?.target_lng === undefined
+                ? ''
+                : String(incident.target_lng);
+            dispatchFields.appendChild(createInputGroup('Longitud', targetLngInput, { htmlFor: targetLngInput.id }));
+
+            const dispatchPlaceInput = document.createElement('input');
+            dispatchPlaceInput.type = 'text';
+            dispatchPlaceInput.id = 'actionIncidentDispatchPlace';
+            dispatchPlaceInput.autocomplete = 'off';
+            dispatchPlaceInput.placeholder = 'Ej: ATM-009';
+            dispatchPlaceInput.value = String(incident?.dispatch_place_name || '').trim();
+            dispatchFields.appendChild(createInputGroup('Nombre del lugar', dispatchPlaceInput, { htmlFor: dispatchPlaceInput.id }));
+
+            const dispatchAddressInput = document.createElement('input');
+            dispatchAddressInput.type = 'text';
+            dispatchAddressInput.id = 'actionIncidentDispatchAddress';
+            dispatchAddressInput.autocomplete = 'street-address';
+            dispatchAddressInput.placeholder = 'Ej: Av. Italia 2456';
+            dispatchAddressInput.value = String(incident?.dispatch_address || '').trim();
+            dispatchFields.appendChild(createInputGroup('Direccion', dispatchAddressInput, { htmlFor: dispatchAddressInput.id, className: 'full-width' }));
+
+            const dispatchReferenceInput = document.createElement('textarea');
+            dispatchReferenceInput.id = 'actionIncidentDispatchReference';
+            dispatchReferenceInput.rows = 3;
+            dispatchReferenceInput.placeholder = 'Referencia de acceso o ubicacion interna';
+            dispatchReferenceInput.value = String(incident?.dispatch_reference || '').trim();
+            dispatchFields.appendChild(createInputGroup('Referencia', dispatchReferenceInput, { htmlFor: dispatchReferenceInput.id, className: 'full-width' }));
+
+            const dispatchContactNameInput = document.createElement('input');
+            dispatchContactNameInput.type = 'text';
+            dispatchContactNameInput.id = 'actionIncidentDispatchContactName';
+            dispatchContactNameInput.autocomplete = 'name';
+            dispatchContactNameInput.placeholder = 'Persona de contacto';
+            dispatchContactNameInput.value = String(incident?.dispatch_contact_name || '').trim();
+            dispatchFields.appendChild(createInputGroup('Contacto', dispatchContactNameInput, { htmlFor: dispatchContactNameInput.id }));
+
+            const dispatchContactPhoneInput = document.createElement('input');
+            dispatchContactPhoneInput.type = 'text';
+            dispatchContactPhoneInput.id = 'actionIncidentDispatchContactPhone';
+            dispatchContactPhoneInput.autocomplete = 'tel';
+            dispatchContactPhoneInput.placeholder = '+598...';
+            dispatchContactPhoneInput.value = String(incident?.dispatch_contact_phone || '').trim();
+            dispatchFields.appendChild(createInputGroup('Telefono', dispatchContactPhoneInput, { htmlFor: dispatchContactPhoneInput.id }));
+
+            const dispatchNotesInput = document.createElement('textarea');
+            dispatchNotesInput.id = 'actionIncidentDispatchNotes';
+            dispatchNotesInput.rows = 3;
+            dispatchNotesInput.placeholder = 'Notas operativas breves para la visita';
+            dispatchNotesInput.value = String(incident?.dispatch_notes || '').trim();
+            dispatchFields.appendChild(createInputGroup('Notas para la visita', dispatchNotesInput, { htmlFor: dispatchNotesInput.id, className: 'full-width' }));
+
+            grid.appendChild(dispatchFields);
+            const syncDispatchRequiredVisibility = () => {
+                const currentRequired = dispatchRequiredSelect.value !== '0';
+                dispatchFields.hidden = !currentRequired;
+                Array.from(dispatchFields.querySelectorAll('input, textarea, select')).forEach((field) => {
+                    field.disabled = !currentRequired;
+                });
+                dispatchHelp.textContent = currentRequired
+                    ? 'Carga direccion, referencia y coordenadas solo cuando realmente haga falta despacho en sitio.'
+                    : 'La incidencia queda marcada sin visita en sitio requerida y se limpian los datos de destino operativo.';
+            };
+            dispatchRequiredSelect.addEventListener('change', syncDispatchRequiredVisibility);
+            syncDispatchRequiredVisibility();
+
+            fragment.appendChild(grid);
+            return fragment;
+        }
+
         function getSeverityIconName(severity) {
             const normalized = options.normalizeSeverity(severity);
             if (normalized === 'critical') return 'emergency_home';
@@ -423,69 +651,38 @@
             parent.appendChild(highlights);
         }
 
-        function notifyGeofenceWarning() {}
-
-        function hasValidSiteConfig(installation) {
-            return Number.isFinite(Number(installation?.site_lat))
-                && Number.isFinite(Number(installation?.site_lng))
-                && Number(installation?.site_radius_m) > 0;
+        function parseIncidentCoordinateValue(value) {
+            if (value === null || value === undefined || value === '') return null;
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : null;
         }
 
-        function haversineDistanceMeters(fromLat, fromLng, toLat, toLng) {
-            const earthRadiusM = 6371000;
-            const toRadians = (value) => (Number(value) * Math.PI) / 180;
-            const lat1 = toRadians(fromLat);
-            const lat2 = toRadians(toLat);
-            const deltaLat = toRadians(Number(toLat) - Number(fromLat));
-            const deltaLng = toRadians(Number(toLng) - Number(fromLng));
-            const sinLat = Math.sin(deltaLat / 2);
-            const sinLng = Math.sin(deltaLng / 2);
-            const a = sinLat * sinLat
-                + Math.cos(lat1) * Math.cos(lat2) * sinLng * sinLng;
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            return earthRadiusM * c;
+        function resolveIncidentOperationalCoordinates(incident) {
+            const targetLat = parseIncidentCoordinateValue(incident?.target_lat);
+            const targetLng = parseIncidentCoordinateValue(incident?.target_lng);
+            if (Number.isFinite(targetLat) && Number.isFinite(targetLng)) {
+                return { lat: targetLat, lng: targetLng, source: 'target' };
+            }
+
+            const gpsLat = parseIncidentCoordinateValue(incident?.gps_lat);
+            const gpsLng = parseIncidentCoordinateValue(incident?.gps_lng);
+            if (Number.isFinite(gpsLat) && Number.isFinite(gpsLng)) {
+                return { lat: gpsLat, lng: gpsLng, source: 'gps' };
+            }
+
+            return null;
         }
 
-        function evaluateClientGeofence(snapshot, installation) {
-            if (!hasValidSiteConfig(installation)) return null;
-            const status = String(snapshot?.status || '').trim().toLowerCase();
-            if (status !== 'captured') {
-                return {
-                    result: 'not_applicable',
-                    distance_m: null,
-                    radius_m: Number(installation.site_radius_m),
-                };
-            }
-
-            const lat = Number(snapshot?.lat);
-            const lng = Number(snapshot?.lng);
-            if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-                return {
-                    result: 'not_applicable',
-                    distance_m: null,
-                    radius_m: Number(installation.site_radius_m),
-                };
-            }
-
-            const radius = Number(installation.site_radius_m);
-            const distance = haversineDistanceMeters(
-                Number(installation.site_lat),
-                Number(installation.site_lng),
-                lat,
-                lng,
-            );
-            return {
-                result: distance <= radius ? 'inside' : 'outside',
-                distance_m: distance,
-                radius_m: radius,
-            };
+        function formatIncidentCoordinateLine(incident) {
+            const coordinates = resolveIncidentOperationalCoordinates(incident);
+            if (!coordinates) return 'Sin coordenadas disponibles.';
+            return `Lat ${coordinates.lat.toFixed(5)} Â· Lng ${coordinates.lng.toFixed(5)} Â· ${coordinates.source === 'target' ? 'Destino operativo' : 'GPS del reporte'}`;
         }
 
         function buildIncidentMapsUrl(incident) {
-            const lat = Number(incident?.gps_lat);
-            const lng = Number(incident?.gps_lng);
-            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return '';
-            return `https://www.google.com/maps?q=${lat},${lng}`;
+            const coordinates = resolveIncidentOperationalCoordinates(incident);
+            if (!coordinates) return '';
+            return `https://www.google.com/maps?q=${coordinates.lat},${coordinates.lng}`;
         }
 
         function resolveIncidentMapboxToken() {
@@ -555,20 +752,132 @@
             incidentMapState.currentToken = '';
         }
 
+        function syncIncidentMapCursor() {
+            const canvas = incidentMapState.map && typeof incidentMapState.map.getCanvas === 'function'
+                ? incidentMapState.map.getCanvas()
+                : null;
+            if (!canvas || !canvas.style) return;
+            canvas.style.cursor = incidentMapState.targetSelectionIncidentId ? 'crosshair' : '';
+        }
+
+        function upsertIncidentInMapState(incident) {
+            const incidentId = options.parseStrictInteger(incident?.id);
+            if (!Number.isInteger(incidentId) || incidentId <= 0) return;
+            const existingIndex = incidentMapState.incidents.findIndex((entry) => (
+                options.parseStrictInteger(entry?.id) === incidentId
+            ));
+            if (existingIndex >= 0) {
+                incidentMapState.incidents[existingIndex] = {
+                    ...incidentMapState.incidents[existingIndex],
+                    ...incident,
+                };
+            }
+        }
+
+        function cancelIncidentMapTargetSelection({ silent = false } = {}) {
+            if (!incidentMapState.targetSelectionIncidentId && !incidentMapState.savingTargetIncidentId) {
+                return;
+            }
+            incidentMapState.targetSelectionIncidentId = null;
+            incidentMapState.savingTargetIncidentId = null;
+            syncIncidentMapCursor();
+            renderIncidentMap();
+            if (!silent) {
+                options.showNotification('Ajuste manual del destino cancelado.', 'info');
+            }
+        }
+
+        function beginIncidentMapTargetSelection(incident) {
+            const incidentId = options.parseStrictInteger(incident?.id);
+            if (!Number.isInteger(incidentId) || incidentId <= 0) {
+                options.showNotification('Incidencia invalida para ajustar destino.', 'error');
+                return;
+            }
+            if (!incidentMapState.mapLoaded) {
+                options.showNotification('El mapa aun no esta listo para fijar el destino.', 'warning');
+                return;
+            }
+            incidentMapState.selectedIncidentId = incidentId;
+            incidentMapState.targetSelectionIncidentId = incidentId;
+            incidentMapState.savingTargetIncidentId = null;
+            syncIncidentMapCursor();
+            renderIncidentMap();
+            options.showNotification(
+                `Haz click en el mapa para fijar el destino operativo de la incidencia #${incidentId}.`,
+                'info',
+            );
+        }
+
+        async function persistIncidentMapTargetSelection(incident, lngLat) {
+            const incidentId = options.parseStrictInteger(incident?.id);
+            const installationId = options.parseStrictInteger(incident?.installation_id);
+            const assetId = options.parseStrictInteger(incident?.asset_id);
+            const lat = Number(Number(lngLat?.lat).toFixed(6));
+            const lng = Number(Number(lngLat?.lng).toFixed(6));
+            if (!Number.isInteger(incidentId) || incidentId <= 0 || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+                options.showNotification('No se pudo leer la coordenada seleccionada.', 'error');
+                return;
+            }
+
+            incidentMapState.savingTargetIncidentId = incidentId;
+            renderIncidentMapDetail();
+
+            try {
+                const result = await options.api.updateIncidentDispatchTarget(incidentId, {
+                    dispatch_required: true,
+                    target_lat: lat,
+                    target_lng: lng,
+                    target_source: 'manual_map',
+                });
+                const nextIncident = result?.incident && typeof result.incident === 'object'
+                    ? result.incident
+                    : {
+                        ...incident,
+                        target_lat: lat,
+                        target_lng: lng,
+                        target_source: 'manual_map',
+                    };
+
+                applyVisibleIncidentUpdate(nextIncident);
+                upsertIncidentInMapState(nextIncident);
+                incidentMapState.selectedIncidentId = incidentId;
+                incidentMapState.targetSelectionIncidentId = null;
+                incidentMapState.savingTargetIncidentId = null;
+                syncIncidentMapCursor();
+                renderIncidentMap();
+                options.showNotification(`Destino operativo actualizado en incidencia #${incidentId}.`, 'success');
+                runIncidentRefreshInBackground(
+                    { installationId, assetId },
+                    'Guardamos el destino operativo, pero no pudimos refrescar el contexto completo.',
+                );
+                void options.loadDashboard();
+            } catch (error) {
+                incidentMapState.savingTargetIncidentId = null;
+                syncIncidentMapCursor();
+                renderIncidentMapDetail();
+                options.showNotification(
+                    `No se pudo guardar el destino operativo: ${error?.message || error}`,
+                    'error',
+                );
+            }
+        }
+
         function buildIncidentMapGeoJson(incidents) {
             return {
                 type: 'FeatureCollection',
                 features: (Array.isArray(incidents) ? incidents : [])
-                    .filter((incident) => (
-                        Number.isFinite(Number(incident?.gps_lat)) && Number.isFinite(Number(incident?.gps_lng))
-                    ))
-                    .map((incident) => {
+                    .map((incident) => ({
+                        incident,
+                        coordinates: resolveIncidentOperationalCoordinates(incident),
+                    }))
+                    .filter((entry) => entry.coordinates)
+                    .map(({ incident, coordinates }) => {
                         const incidentId = options.parseStrictInteger(incident?.id) || 0;
                         return {
                             type: 'Feature',
                             geometry: {
                                 type: 'Point',
-                                coordinates: [Number(incident.gps_lng), Number(incident.gps_lat)],
+                                coordinates: [coordinates.lng, coordinates.lat],
                             },
                             properties: {
                                 id: incidentId,
@@ -576,6 +885,7 @@
                                 asset_code: String(incident?.asset_code || '').trim(),
                                 severity: getIncidentMapSeverityTone(incident?.severity),
                                 status: getIncidentMapStatusTone(incident?.incident_status),
+                                coordinate_source: coordinates.source,
                                 selected: incidentId === incidentMapState.selectedIncidentId ? 1 : 0,
                             },
                         };
@@ -702,11 +1012,10 @@
                 options.parseStrictInteger(incident?.id) === incidentMapState.selectedIncidentId
             ));
             if (!selectedIncident) return;
-            const lng = Number(selectedIncident?.gps_lng);
-            const lat = Number(selectedIncident?.gps_lat);
-            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+            const coordinates = resolveIncidentOperationalCoordinates(selectedIncident);
+            if (!coordinates) return;
             incidentMapState.map.easeTo({
-                center: [lng, lat],
+                center: [coordinates.lng, coordinates.lat],
                 duration: 550,
                 offset: [0, -40],
             });
@@ -796,6 +1105,9 @@
                 button.append(title, meta);
                 button.addEventListener('click', () => {
                     incidentMapState.selectedIncidentId = options.parseStrictInteger(incident?.id);
+                    if (incidentMapState.targetSelectionIncidentId) {
+                        incidentMapState.targetSelectionIncidentId = incidentMapState.selectedIncidentId;
+                    }
                     renderIncidentMap();
                 });
                 list.appendChild(button);
@@ -829,6 +1141,12 @@
             )) || incidentMapState.incidents[0];
             const selectedIncidentId = options.parseStrictInteger(selectedIncident?.id);
             incidentMapState.selectedIncidentId = selectedIncidentId;
+            const operationalCoordinates = resolveIncidentOperationalCoordinates(selectedIncident);
+            const hasTargetCoordinates =
+                parseIncidentCoordinateValue(selectedIncident?.target_lat) !== null &&
+                parseIncidentCoordinateValue(selectedIncident?.target_lng) !== null;
+            const selectionActive = incidentMapState.targetSelectionIncidentId === selectedIncidentId;
+            const savingSelection = incidentMapState.savingTargetIncidentId === selectedIncidentId;
 
             const header = document.createElement('div');
             header.className = 'incident-map-detail-head';
@@ -848,7 +1166,11 @@
             [
                 ['Severidad', getIncidentMapSeverityLabel(selectedIncident?.severity)],
                 ['Tecnico', String(selectedIncident?.reporter_username || 'Sin dato').trim() || 'Sin dato'],
-                ['Precision', Number.isFinite(Number(selectedIncident?.gps_accuracy_m)) ? `${Math.round(Number(selectedIncident.gps_accuracy_m))} m` : 'Sin dato'],
+                ['Coordenada', operationalCoordinates?.source === 'target'
+                    ? 'Destino operativo'
+                    : Number.isFinite(Number(selectedIncident?.gps_accuracy_m))
+                        ? `${Math.round(Number(selectedIncident.gps_accuracy_m))} m`
+                        : 'Sin dato'],
                 ['Registro', `#${options.parseStrictInteger(selectedIncident?.installation_id) || '-'}`],
             ].forEach(([label, value]) => {
                 const metric = document.createElement('div');
@@ -871,9 +1193,59 @@
             coordinate.className = 'incident-map-detail-coordinate';
             coordinate.textContent = `Lat ${Number(selectedIncident?.gps_lat).toFixed(5)} · Lng ${Number(selectedIncident?.gps_lng).toFixed(5)}`;
             container.appendChild(coordinate);
+            coordinate.textContent = formatIncidentCoordinateLine(selectedIncident);
+
+            const dispatchSummary = document.createElement('p');
+            dispatchSummary.className = 'incident-map-detail-note';
+            dispatchSummary.textContent = selectedIncident?.dispatch_required === false
+                ? 'Incidencia sin visita en sitio requerida.'
+                : hasTargetCoordinates
+                ? `Destino actual: ${String(selectedIncident?.dispatch_place_name || selectedIncident?.target_label || 'Punto operativo').trim()}`
+                : 'Aun no definiste un destino operativo manual para esta incidencia.';
+            container.appendChild(dispatchSummary);
+
+            if (selectionActive || savingSelection) {
+                const selectionHelp = document.createElement('p');
+                selectionHelp.className = 'incident-map-detail-note';
+                selectionHelp.textContent = savingSelection
+                    ? 'Guardando coordenada operativa seleccionada...'
+                    : 'Modo ajuste activo. Haz click en el mapa para fijar el nuevo destino operativo.';
+                container.appendChild(selectionHelp);
+            }
 
             const actions = document.createElement('div');
             actions.className = 'incident-map-detail-actions';
+
+            if (options.canCurrentUserEditAssets()) {
+                const adjustTargetBtn = document.createElement('button');
+                adjustTargetBtn.type = 'button';
+                adjustTargetBtn.className = selectionActive ? 'btn-primary' : 'btn-secondary';
+                adjustTargetBtn.innerHTML = selectionActive
+                    ? '<span class="material-symbols-outlined icon-inline-sm">close</span> Cancelar ajuste'
+                    : `<span class="material-symbols-outlined icon-inline-sm">${hasTargetCoordinates ? 'edit_location' : 'add_location_alt'}</span> ${hasTargetCoordinates ? 'Mover destino' : 'Elegir destino'}`;
+                adjustTargetBtn.disabled = savingSelection || !incidentMapState.mapLoaded;
+                adjustTargetBtn.addEventListener('click', () => {
+                    if (selectionActive) {
+                        cancelIncidentMapTargetSelection();
+                        return;
+                    }
+                    beginIncidentMapTargetSelection(selectedIncident);
+                });
+                actions.appendChild(adjustTargetBtn);
+
+                const editDispatchBtn = document.createElement('button');
+                editDispatchBtn.type = 'button';
+                editDispatchBtn.className = 'btn-secondary';
+                editDispatchBtn.innerHTML = '<span class="material-symbols-outlined icon-inline-sm">edit_note</span> Editar destino';
+                editDispatchBtn.disabled = savingSelection;
+                editDispatchBtn.addEventListener('click', () => {
+                    void updateIncidentDispatchTargetFromWeb(selectedIncident, {
+                        installationId: selectedIncident?.installation_id,
+                        assetId: selectedIncident?.asset_id,
+                    });
+                });
+                actions.appendChild(editDispatchBtn);
+            }
 
             const openCaseBtn = document.createElement('button');
             openCaseBtn.type = 'button';
@@ -950,17 +1322,31 @@
                 renderIncidentMap();
             });
             map.on('mouseenter', INCIDENT_MAP_LAYER_ID, () => {
-                map.getCanvas().style.cursor = 'pointer';
+                map.getCanvas().style.cursor = incidentMapState.targetSelectionIncidentId ? 'crosshair' : 'pointer';
             });
             map.on('mouseleave', INCIDENT_MAP_LAYER_ID, () => {
-                map.getCanvas().style.cursor = '';
+                map.getCanvas().style.cursor = incidentMapState.targetSelectionIncidentId ? 'crosshair' : '';
             });
             map.on('click', INCIDENT_MAP_LAYER_ID, (event) => {
+                if (incidentMapState.targetSelectionIncidentId) return;
                 const feature = Array.isArray(event?.features) ? event.features[0] : null;
                 const incidentId = options.parseStrictInteger(feature?.properties?.id);
                 if (!Number.isInteger(incidentId) || incidentId <= 0) return;
                 incidentMapState.selectedIncidentId = incidentId;
                 renderIncidentMap();
+            });
+            map.on('click', (event) => {
+                const targetIncidentId = incidentMapState.targetSelectionIncidentId;
+                if (!Number.isInteger(targetIncidentId) || targetIncidentId <= 0) return;
+                if (incidentMapState.savingTargetIncidentId === targetIncidentId) return;
+                const targetIncident = incidentMapState.incidents.find((incident) => (
+                    options.parseStrictInteger(incident?.id) === targetIncidentId
+                ));
+                if (!targetIncident) return;
+                const lng = Number(event?.lngLat?.lng);
+                const lat = Number(event?.lngLat?.lat);
+                if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+                void persistIncidentMapTargetSelection(targetIncident, { lat, lng });
             });
             map.on('error', () => {
                 if (!incidentMapState.mapLoaded) {
@@ -971,6 +1357,7 @@
             incidentMapState.map = map;
             incidentMapState.currentStyleUrl = styleUrl;
             incidentMapState.currentToken = token;
+            syncIncidentMapCursor();
             return true;
         }
 
@@ -1009,6 +1396,7 @@
             incidentMapState.loading = true;
             if (config.resetSelection === true) {
                 incidentMapState.selectedIncidentId = null;
+                incidentMapState.targetSelectionIncidentId = null;
             }
             incidentMapState.pendingFitBounds = config.fitBounds !== false;
             renderIncidentMap();
@@ -2160,6 +2548,7 @@
             ));
 
             fragment.appendChild(grid);
+            fragment.appendChild(buildIncidentDispatchTargetFields());
             fragment.appendChild(createGpsCapturePanel({
                 panelId: 'actionIncidentGpsPanel',
                 statusId: 'actionIncidentGpsStatus',
@@ -2252,6 +2641,103 @@
                 resolutionNoteTextarea,
                 { htmlFor: 'actionIncidentResolutionNote' },
             );
+        }
+
+        function appendIncidentDispatchTargetSummary(parent, incident) {
+            const summary = document.createElement('div');
+            summary.className = 'incident-evidence-block incident-dispatch-block';
+
+            const title = document.createElement('small');
+            title.className = 'asset-muted';
+            title.textContent = 'Destino operativo';
+            summary.appendChild(title);
+
+            if (incident?.dispatch_required === false) {
+                const primary = document.createElement('strong');
+                primary.className = 'incident-context-primary';
+                primary.textContent = 'Sin despacho en sitio requerido';
+                summary.appendChild(primary);
+
+                const helpLine = document.createElement('small');
+                helpLine.className = 'asset-muted incident-meta-line';
+                helpLine.textContent = 'No se solicitaron direccion, referencia ni coordenadas operativas para esta incidencia.';
+                summary.appendChild(helpLine);
+
+                const chips = document.createElement('div');
+                chips.className = 'incident-checklist-list';
+                chips.appendChild(createIncidentHighlightChip('Sin visita en sitio', 'info'));
+                summary.appendChild(chips);
+
+                parent.appendChild(summary);
+                return;
+            }
+
+            const placeName = String(incident?.dispatch_place_name || incident?.target_label || '').trim();
+            const address = String(incident?.dispatch_address || '').trim();
+            const reference = String(incident?.dispatch_reference || '').trim();
+            const contactName = String(incident?.dispatch_contact_name || '').trim();
+            const contactPhone = String(incident?.dispatch_contact_phone || '').trim();
+            const notes = String(incident?.dispatch_notes || '').trim();
+            const targetSource = String(incident?.target_source || '').trim();
+            const hasCoordinates =
+                Number.isFinite(Number(incident?.target_lat)) &&
+                Number.isFinite(Number(incident?.target_lng));
+
+            const primary = document.createElement('strong');
+            primary.className = 'incident-context-primary';
+            primary.textContent = placeName || 'Sin destino operativo definido';
+            summary.appendChild(primary);
+
+            if (address) {
+                const addressLine = document.createElement('small');
+                addressLine.className = 'asset-muted incident-meta-line';
+                addressLine.textContent = address;
+                summary.appendChild(addressLine);
+            } else {
+                const missingAddress = document.createElement('small');
+                missingAddress.className = 'asset-muted incident-meta-line';
+                missingAddress.textContent = 'Falta direccion legible para la visita';
+                summary.appendChild(missingAddress);
+            }
+
+            if (reference) {
+                const referenceLine = document.createElement('small');
+                referenceLine.className = 'asset-muted incident-meta-line';
+                referenceLine.textContent = `Referencia: ${reference}`;
+                summary.appendChild(referenceLine);
+            }
+
+            if (contactName || contactPhone) {
+                const contactLine = document.createElement('small');
+                contactLine.className = 'asset-muted incident-meta-line';
+                contactLine.textContent = `Contacto: ${[contactName, contactPhone].filter(Boolean).join(' | ')}`;
+                summary.appendChild(contactLine);
+            }
+
+            if (notes) {
+                const notesLine = document.createElement('small');
+                notesLine.className = 'asset-muted incident-meta-line';
+                notesLine.textContent = `Notas: ${notes}`;
+                summary.appendChild(notesLine);
+            }
+
+            const chips = document.createElement('div');
+            chips.className = 'incident-checklist-list';
+            chips.appendChild(
+                createIncidentHighlightChip(
+                    hasCoordinates ? 'Con coordenadas operativas' : 'Sin coordenadas operativas',
+                    hasCoordinates ? 'resolved' : 'warning',
+                ),
+            );
+            if (targetSource) {
+                chips.appendChild(createIncidentHighlightChip(`Origen: ${targetSource}`, 'info'));
+            }
+            if (!address || !reference) {
+                chips.appendChild(createIncidentHighlightChip('Informacion de visita incompleta', 'warning'));
+            }
+            summary.appendChild(chips);
+
+            parent.appendChild(summary);
         }
 
         function appendIncidentResolutionSummary(parent, incident) {
@@ -2421,6 +2907,19 @@
                 void updateIncidentEvidenceFromWeb(liveIncident, updateOptions);
             });
 
+            const dispatchBtn = document.createElement('button');
+            dispatchBtn.type = 'button';
+            dispatchBtn.className = 'btn-secondary';
+            decorateIncidentActionButton(dispatchBtn, 'dispatch', 'Destino', 'place');
+            dispatchBtn.disabled = !canUpdateIncident;
+            if (!canUpdateIncident) {
+                dispatchBtn.title = 'Solo admin/super_admin puede editar destino operativo';
+            }
+            dispatchBtn.addEventListener('click', () => {
+                const liveIncident = dispatchBtn.closest('.incident-card')?.__incidentData || incident;
+                void updateIncidentDispatchTargetFromWeb(liveIncident, updateOptions);
+            });
+
             // USER SUPER ADMIN DELETE BUTTON INJECT
             const isSuperAdmin = String(options.getCurrentUser()?.role || '').trim().toLowerCase() === 'super_admin';
             let deleteBtn = null;
@@ -2440,6 +2939,7 @@
                 makeStatusBtn('in_progress'),
                 makeStatusBtn('paused'),
                 makeStatusBtn('resolved'),
+                dispatchBtn,
                 evidenceBtn,
             );
             if (deleteBtn) statusActions.append(deleteBtn);
@@ -2645,6 +3145,38 @@
             card.appendChild(evidenceBlock);
         }
 
+        function syncIncidentDispatchTargetSummary(card, incident) {
+            if (!(card instanceof HTMLElement)) return;
+            card.querySelectorAll('.incident-dispatch-block').forEach((block) => {
+                block.remove();
+            });
+
+            const fragmentHost = document.createElement('div');
+            appendIncidentDispatchTargetSummary(fragmentHost, incident);
+            const dispatchBlock = fragmentHost.firstElementChild;
+            if (!(dispatchBlock instanceof HTMLElement)) return;
+
+            const evidenceBlock = card.querySelector('.incident-evidence-block:not(.incident-dispatch-block)');
+            if (evidenceBlock instanceof HTMLElement) {
+                evidenceBlock.insertAdjacentElement('beforebegin', dispatchBlock);
+                return;
+            }
+
+            const highlights = card.querySelector('.incident-highlights');
+            if (highlights instanceof HTMLElement) {
+                highlights.insertAdjacentElement('afterend', dispatchBlock);
+                return;
+            }
+
+            const anchor = card.querySelector('.incident-resolution-panel[data-panel-role="resolution"], .incident-actions');
+            if (anchor instanceof HTMLElement) {
+                card.insertBefore(dispatchBlock, anchor);
+                return;
+            }
+
+            card.appendChild(dispatchBlock);
+        }
+
         function applyVisibleIncidentUpdate(incident) {
             const incidentId = options.parseStrictInteger(incident?.id);
             if (!Number.isInteger(incidentId) || incidentId <= 0) return;
@@ -2671,6 +3203,7 @@
                     installationId: options.parseStrictInteger(incident?.installation_id),
                     assetId: options.parseStrictInteger(incident?.asset_id),
                 });
+                syncIncidentDispatchTargetSummary(card, incident);
                 syncIncidentEvidenceSummary(card, incident);
                 syncIncidentResolutionPanel(card, incident);
                 syncVisibleIncidentsHeaderState();
@@ -2721,6 +3254,11 @@
                     }
                 });
             });
+
+            upsertIncidentInMapState(incident);
+            if (options.isSectionActive?.('incidentMap')) {
+                renderIncidentMap();
+            }
         }
 
         function setIncidentCardsUpdating(incidentId, isUpdating) {
@@ -2924,6 +3462,7 @@
                     : null,
                 assetTone: config.assetTone || 'neutral',
             });
+            appendIncidentDispatchTargetSummary(incidentCard, incident);
 
             if (typeof options.renderEntityTechnicianAssignmentsPanel === 'function') {
                 const incidentTechniciansPanel = await options.renderEntityTechnicianAssignmentsPanel({
@@ -3346,6 +3885,12 @@
             showIncidentsWorkspaceLanding();
         }
 
+        function showIncidentMapWorkspace() {
+            if (!options.requireActiveSession()) return;
+            bindIncidentMapControls();
+            void loadIncidentMap();
+        }
+
         function openIncidentModal(config = {}) {
             const parsedInstallationId = options.parseStrictInteger(config.installationId);
             const defaultInstallationId = Number.isInteger(parsedInstallationId) && parsedInstallationId > 0
@@ -3374,32 +3919,10 @@
             let gpsController = null;
             let latestIncidentGpsSnapshot = null;
 
-            function resolveTargetInstallationForGeofence() {
-                const installationInput = document.getElementById('actionIncidentInstallationId');
-                const rawValue = String(installationInput?.value || '').trim();
-                const parsedValue = rawValue ? options.parseStrictInteger(rawValue) : null;
-                if (Number.isInteger(parsedValue) && parsedValue > 0) {
-                    return options.getInstallationById?.(parsedValue) || null;
-                }
-                if (Number.isInteger(activeInstallationId) && activeInstallationId > 0) {
-                    return options.getInstallationById?.(activeInstallationId) || null;
-                }
-                return null;
-            }
-
-            function syncIncidentGeofenceOverrideUi(snapshot) {
+            function syncIncidentGpsSnapshot(snapshot) {
                 latestIncidentGpsSnapshot = snapshot && typeof snapshot === 'object'
                     ? { ...snapshot }
                     : null;
-                const overrideWrap = document.getElementById(INCIDENT_GEOFENCE_OVERRIDE_WRAP_ID);
-                const overrideInput = document.getElementById(INCIDENT_GEOFENCE_OVERRIDE_INPUT_ID);
-                const overrideHelp = document.getElementById(INCIDENT_GEOFENCE_OVERRIDE_HELP_ID);
-                if (!(overrideWrap instanceof HTMLElement) || !(overrideInput instanceof HTMLTextAreaElement)) {
-                    return;
-                }
-
-                overrideWrap.hidden = true;
-                overrideInput.required = false;
             }
 
             const modalOpened = options.openActionModal({
@@ -3457,6 +3980,11 @@
                         apply_to_installation: applyToInstallation,
                         gps: gpsController?.getSnapshotForSubmit?.(),
                     };
+                    const dispatchTargetResult = readIncidentDispatchTargetFromModal();
+                    if (dispatchTargetResult.error) {
+                        options.setActionModalError(dispatchTargetResult.error);
+                        return;
+                    }
                     let result;
                     let resolvedInstallationId = Number.isInteger(targetInstallationId) ? targetInstallationId : null;
 
@@ -3482,6 +4010,24 @@
                     } else {
                         result = await options.api.createIncident(targetInstallationId, payload);
                         resolvedInstallationId = targetInstallationId;
+                    }
+
+                    const createdIncidentId = options.parseStrictInteger(result?.incident?.id);
+                    if (
+                        Number.isInteger(createdIncidentId)
+                        && createdIncidentId > 0
+                        && (
+                            dispatchTargetResult.payload?.dispatch_required === false
+                            || hasIncidentDispatchTargetData(dispatchTargetResult.payload)
+                        )
+                    ) {
+                        const dispatchResult = await options.api.updateIncidentDispatchTarget(
+                            createdIncidentId,
+                            dispatchTargetResult.payload,
+                        );
+                        if (dispatchResult?.incident && typeof dispatchResult.incident === 'object') {
+                            result.incident = dispatchResult.incident;
+                        }
                     }
 
                     options.closeActionModal(true);
@@ -3512,7 +4058,7 @@
             if (modalOpened) {
                 options.bindIncidentEstimatedDurationFields(defaultEstimatedDurationSeconds);
                 document.getElementById('actionIncidentInstallationId')?.addEventListener('input', () => {
-                    syncIncidentGeofenceOverrideUi(
+                    syncIncidentGpsSnapshot(
                         gpsController?.getSnapshotForSubmit?.() || latestIncidentGpsSnapshot,
                     );
                     void hydrateTechnicianSelectFromContext('actionIncidentTechnicianName', {
@@ -3530,11 +4076,11 @@
                         statusElement: document.getElementById('actionIncidentGpsStatus'),
                         summaryElement: document.getElementById('actionIncidentGpsSummary'),
                         captureButton: document.getElementById('actionIncidentGpsRetryBtn'),
-                        onSnapshotChange: syncIncidentGeofenceOverrideUi,
+                        onSnapshotChange: syncIncidentGpsSnapshot,
                     });
                     void gpsController.capture();
                 } else {
-                    syncIncidentGeofenceOverrideUi({
+                    syncIncidentGpsSnapshot({
                         status: 'unsupported',
                         source: 'browser',
                         note: '',
@@ -3767,6 +4313,50 @@
             });
         }
 
+        async function updateIncidentDispatchTargetFromWeb(incident, config = {}) {
+            if (!options.requireActiveSession()) return;
+            const incidentId = options.parseStrictInteger(incident?.id);
+            if (!Number.isInteger(incidentId) || incidentId <= 0) {
+                options.showNotification('Incidencia invalida para actualizar destino operativo.', 'error');
+                return;
+            }
+            if (!options.canCurrentUserEditAssets()) {
+                options.showNotification('Solo admin/super_admin puede editar destino operativo.', 'warning');
+                return;
+            }
+
+            options.openActionModal({
+                title: `Destino operativo #${incidentId}`,
+                subtitle: 'Define direccion, referencia y coordenadas operativas para el despacho.',
+                submitLabel: 'Guardar destino',
+                modalWidth: 'wide',
+                focusId: 'actionIncidentDispatchRequired',
+                fields: buildIncidentDispatchTargetFields(incident),
+                onSubmit: async () => {
+                    const dispatchTargetResult = readIncidentDispatchTargetFromModal();
+                    if (dispatchTargetResult.error) {
+                        options.setActionModalError(dispatchTargetResult.error);
+                        return;
+                    }
+
+                    const result = await options.api.updateIncidentDispatchTarget(
+                        incidentId,
+                        dispatchTargetResult.payload,
+                    );
+                    if (result?.incident && typeof result.incident === 'object') {
+                        applyVisibleIncidentUpdate(result.incident);
+                    }
+                    options.closeActionModal(true);
+                    options.showNotification(`Destino operativo actualizado en incidencia #${incidentId}`, 'success');
+                    runIncidentRefreshInBackground(
+                        config,
+                        'El destino operativo se guardo, pero no pudimos refrescar la vista.',
+                    );
+                    void options.loadDashboard();
+                },
+            });
+        }
+
         async function updateIncidentStatusFromWeb(incident, targetStatus, config = {}) {
             if (!options.requireActiveSession()) return;
             const incidentId = Number.parseInt(String(incident?.id), 10);
@@ -3980,9 +4570,11 @@
             openInstallationConformityModal,
             renderIncidents,
             selectAndUploadIncidentPhoto,
+            showIncidentMapWorkspace,
             showIncidentsForInstallation,
             showIncidentsWorkspace,
             sortAssetIncidentsByPriority,
+            updateIncidentDispatchTargetFromWeb,
             updateIncidentEvidenceFromWeb,
             updateIncidentStatusFromWeb,
         };

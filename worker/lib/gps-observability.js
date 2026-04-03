@@ -1,10 +1,6 @@
 import { GPS_CAPTURE_STATUSES, GPS_OVERRIDE_STATUS } from "./gps.js";
 
 export const GPS_OBSERVABILITY_AUDIT_ACTIONS = Object.freeze([
-  "incident_geofence_warning",
-  "override_incident_geofence",
-  "installation_conformity_geofence_warning",
-  "override_installation_conformity_geofence",
   "override_installation_conformity_gps",
 ]);
 
@@ -104,14 +100,7 @@ export function createEmptyGpsObservabilitySummary() {
   return {
     installations: createEmptyGpsFlowObservability(),
     incidents: createEmptyGpsFlowObservability(),
-    warnings: {
-      incident_outside_count: 0,
-      conformity_outside_count: 0,
-      total_outside_count: 0,
-    },
     overrides: {
-      incident_geofence_count: 0,
-      conformity_geofence_count: 0,
       conformity_gps_count: 0,
       total_override_count: 0,
     },
@@ -135,19 +124,8 @@ export function summarizeGpsObservability({
     countsByAction.set(action, count);
   }
 
-  summary.warnings.incident_outside_count = countsByAction.get("incident_geofence_warning") || 0;
-  summary.warnings.conformity_outside_count = countsByAction.get("installation_conformity_geofence_warning") || 0;
-  summary.warnings.total_outside_count =
-    summary.warnings.incident_outside_count +
-    summary.warnings.conformity_outside_count;
-
-  summary.overrides.incident_geofence_count = countsByAction.get("override_incident_geofence") || 0;
-  summary.overrides.conformity_geofence_count = countsByAction.get("override_installation_conformity_geofence") || 0;
   summary.overrides.conformity_gps_count = countsByAction.get("override_installation_conformity_gps") || 0;
-  summary.overrides.total_override_count =
-    summary.overrides.incident_geofence_count +
-    summary.overrides.conformity_geofence_count +
-    summary.overrides.conformity_gps_count;
+  summary.overrides.total_override_count = summary.overrides.conformity_gps_count;
 
   return summary;
 }

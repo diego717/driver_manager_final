@@ -10,6 +10,7 @@
  */
 
 import { incidentsRepository, type CreateLocalIncidentParams } from '../../db/repositories/incidents-repository'
+import { casesRepository } from '../../db/repositories/cases-repository'
 import { syncJobsRepository } from '../../db/repositories/sync-jobs-repository'
 import { registerExecutor } from './sync-engine'
 import { incidentToApiPayload } from './sync-mappers'
@@ -20,13 +21,15 @@ import type { GpsCapturePayload } from '../../types/api'
 
 type IncidentInput = {
   installationId: number
+  remoteInstallationId?: number | null
+  localCaseLocalId?: string | null
+  dependsOnJobId?: string | null
   note: string
   reporterUsername: string
   timeAdjustmentSeconds?: number
   severity?: string
   source?: string
   gps: GpsCapturePayload
-  geofenceOverrideNote?: string
 }
 
 export type EnqueueResult = {
@@ -57,7 +60,8 @@ export async function enqueueCreateIncident(input: IncidentInput): Promise<Enque
   const params: CreateLocalIncidentParams = {
     localId,
     installationId: input.installationId,
-    remoteInstallationId: input.installationId, // known remote ID at this phase
+    remoteInstallationId: input.remoteInstallationId ?? input.installationId,
+    localCaseLocalId: input.localCaseLocalId ?? null,
     reporterUsername: input.reporterUsername,
     note: input.note,
     timeAdjustmentSeconds: input.timeAdjustmentSeconds ?? 0,
@@ -65,7 +69,6 @@ export async function enqueueCreateIncident(input: IncidentInput): Promise<Enque
     source: input.source ?? 'mobile',
     clientRequestId,
     gps: input.gps,
-    geofenceOverrideNote: input.geofenceOverrideNote ?? '',
   }
 
   // 1. Persist locally
@@ -76,6 +79,7 @@ export async function enqueueCreateIncident(input: IncidentInput): Promise<Enque
     entityType: 'incident',
     entityLocalId: localId,
     operation: 'create_incident',
+    dependsOnJobId: input.dependsOnJobId ?? undefined,
     priority: 10,
   })
 
@@ -86,7 +90,7 @@ export async function enqueueCreateIncident(input: IncidentInput): Promise<Enque
  * Executor: called by the sync engine when processing a create_incident job.
  * Reads the local incident, calls the API, persists the remote ID.
  */
-async function executeCreateIncident(job: SyncJob): Promise<void> {
+export async function executeCreateIncident(job: SyncJob): Promise<void> {
   const incident = await incidentsRepository.getByLocalId(job.entityLocalId)
 
   if (!incident) {
@@ -99,10 +103,22 @@ async function executeCreateIncident(job: SyncJob): Promise<void> {
   // Skip if already synced (double-run guard)
   if (incident.localSyncStatus === 'synced' && incident.remoteId) return
 
+  let remoteInstallationId = incident.remoteInstallationId ?? incident.installationId
+  if ((!Number.isInteger(remoteInstallationId) || remoteInstallationId <= 0) && incident.localCaseLocalId) {
+    const localCase = await casesRepository.getByLocalId(incident.localCaseLocalId)
+    remoteInstallationId = Number(localCase?.remoteId || 0)
+  }
+  if (!Number.isInteger(remoteInstallationId) || remoteInstallationId <= 0) {
+    throw new SyncEngineError(
+      `Remote installation missing for queued incident ${job.entityLocalId}.`,
+      'transient',
+    )
+  }
+
   await incidentsRepository.updateSyncStatus(job.entityLocalId, 'syncing')
 
-  const payload = incidentToApiPayload(incident)
-  const response = await createIncident(incident.remoteInstallationId ?? incident.installationId, payload)
+  const payload = await incidentToApiPayload(incident)
+  const response = await createIncident(remoteInstallationId, payload)
 
   const remoteId = response.incident.id
   if (!remoteId) {

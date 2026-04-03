@@ -1,7 +1,6 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 import { HttpError, normalizeOptionalString } from "../lib/core.js";
-import { evaluateGeofence } from "../lib/geofence.js";
 import { buildGpsMapsUrl, buildGpsMetadataSnapshot } from "../lib/gps.js";
 
 const CONFORMITY_PLATFORM = "web";
@@ -209,13 +208,6 @@ function formatGpsStatusLabel(value) {
   if (normalized === "unavailable") return "Ubicacion no disponible";
   if (normalized === "unsupported") return "Geolocalizacion no soportada";
   return "Captura pendiente";
-}
-
-function formatGeofenceResultLabel(value) {
-  const normalized = normalizeOptionalString(value, "not_applicable").toLowerCase();
-  if (normalized === "inside") return "Dentro del radio";
-  if (normalized === "outside") return "Fuera del radio";
-  return "No aplicable";
 }
 
 function pushWrappedPdfLines(lines, label, value, maxLength = 92) {
@@ -717,10 +709,7 @@ export async function loadInstallationConformityContext(
       driver_description,
       installation_time_seconds,
       os_info,
-      notes,
-      site_lat,
-      site_lng,
-      site_radius_m
+      notes
     FROM installations
     WHERE id = ?
       AND tenant_id = ?
@@ -915,8 +904,6 @@ export async function generateConformityPdf({
   env,
   context,
   gps,
-  geofence: providedGeofence,
-  geofenceOverride = null,
   signedAt,
   generatedAt,
   signedByName,
@@ -1138,11 +1125,6 @@ export async function generateConformityPdf({
 
   const gpsSnapshot = buildGpsMetadataSnapshot(gps);
   const gpsMapsUrl = buildGpsMapsUrl(gps);
-  const geofence = providedGeofence || evaluateGeofence({
-    gps,
-    installation: context.installation,
-    checkedAt: signedAt,
-  });
   state.y -= 8;
   drawSectionTitle(state, titleFont, "Evidencia GPS");
   const gpsLines = [
@@ -1214,45 +1196,6 @@ export async function generateConformityPdf({
       { maxChars: 82, size: 9, color: rgb(0.38, 0.41, 0.46) },
     );
   }
-
-  state.y -= 8;
-  drawSectionTitle(state, titleFont, "Geofence");
-  const geofenceLines = [
-    `Resultado: ${formatGeofenceResultLabel(geofence.geofence_result)}`,
-  ];
-  if (Number.isFinite(Number(geofence.geofence_distance_m))) {
-    geofenceLines.push(`Distancia medida: ${Math.round(Number(geofence.geofence_distance_m))} m`);
-  }
-  if (Number.isFinite(Number(geofence.geofence_radius_m))) {
-    geofenceLines.push(`Radio permitido: ${Math.round(Number(geofence.geofence_radius_m))} m`);
-  }
-  if (
-    Number.isFinite(Number(context.installation?.site_lat)) &&
-    Number.isFinite(Number(context.installation?.site_lng))
-  ) {
-    geofenceLines.push(
-      `Referencia sitio: ${formatGpsCoordinate(context.installation.site_lat)}, ${formatGpsCoordinate(context.installation.site_lng)}`,
-    );
-  }
-  if (geofence.geofence_result === "outside") {
-    geofenceLines.push("Advertencia: la captura GPS quedo fuera del radio configurado.");
-  }
-  if (geofenceOverride?.override_applied && geofenceOverride?.override_note) {
-    geofenceLines.push("Excepcion: override geofence aplicado.");
-    geofenceLines.push(`Motivo: ${geofenceOverride.override_note}`);
-    if (geofenceOverride.override_by) {
-      geofenceLines.push(`Registrado por: ${geofenceOverride.override_by}`);
-    }
-    if (geofenceOverride.override_at) {
-      geofenceLines.push(`Registrado el: ${formatEmailDate(geofenceOverride.override_at)}`);
-    }
-  }
-  state = drawPdfTextPanel(pdfDoc, state, bodyFont, geofenceLines, {
-    fillColor: rgb(0.99, 0.97, 0.92),
-    borderColor: PDF_COLORS.border,
-    textColor: PDF_COLORS.ink,
-    maxChars: 84,
-  });
 
   if (summaryNote) {
     state.y -= 8;

@@ -15,18 +15,24 @@ import {
 
 import { extractApiError } from "@/src/api/client";
 import {
-  getIncidentById,
+  getLastIncidentListSource,
   listIncidentsByInstallation,
   listInstallations,
   updateIncidentStatus,
 } from "@/src/api/incidents";
-import { getAssetIncidents } from "@/src/api/assets";
 import {
   createInstallationPublicTrackingLink,
   deleteInstallationPublicTrackingLink,
   getInstallationPublicTrackingLink,
 } from "@/src/api/public-tracking";
-import { getCurrentLinkedTechnicianContext, getTechnicianAssignments } from "@/src/api/technicians";
+import {
+  getCurrentLinkedTechnicianContext,
+  getLastAssignedIncidentsMapSource,
+  getLastLinkedTechnicianContextSource,
+  getLastTechnicianAssignmentsSource,
+  getTechnicianAssignments,
+  listAssignedIncidentsMap,
+} from "@/src/api/technicians";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import RuntimeChip from "@/src/components/RuntimeChip";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -102,6 +108,8 @@ export default function WorkTabScreen() {
   const [technicianAssignments, setTechnicianAssignments] = useState<TechnicianAssignment[]>([]);
   const [queueIncidents, setQueueIncidents] = useState<QueueIncident[]>([]);
   const [loadingQueue, setLoadingQueue] = useState(false);
+  const [usingOfflineIncidentSnapshot, setUsingOfflineIncidentSnapshot] = useState(false);
+  const [usingOfflineQueueSnapshot, setUsingOfflineQueueSnapshot] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const { checkingSession, hasActiveSession } = useSharedWebSessionState();
 
@@ -117,6 +125,7 @@ export default function WorkTabScreen() {
         setLoading(true);
         const response = await listIncidentsByInstallation(targetInstallationId);
         setIncidents(response.incidents);
+        setUsingOfflineIncidentSnapshot(getLastIncidentListSource() === "cache");
       } catch (error) {
         Alert.alert("Error", extractApiError(error));
       } finally {
@@ -153,7 +162,11 @@ export default function WorkTabScreen() {
 
     try {
       setLoadingQueue(true);
-      const { technician } = await getCurrentLinkedTechnicianContext();
+      const [queueResponse, technicianContext] = await Promise.all([
+        listAssignedIncidentsMap(),
+        getCurrentLinkedTechnicianContext().catch(() => ({ user: null as never, technician: null })),
+      ]);
+      const technician = queueResponse.technician || technicianContext.technician || null;
       setLinkedTechnician(technician);
 
       if (!technician?.id) {
@@ -166,20 +179,16 @@ export default function WorkTabScreen() {
         (assignment) => !assignment.unassigned_at,
       );
       setTechnicianAssignments(assignments);
+      setUsingOfflineQueueSnapshot(
+        getLastAssignedIncidentsMapSource() === "cache" ||
+        getLastTechnicianAssignmentsSource() === "cache" ||
+        getLastLinkedTechnicianContextSource() === "cache",
+      );
 
-      const directIncidentIds = new Set<number>();
-      const installationIds = new Set<number>();
-      const assetIds = new Set<number>();
       const assignmentByKey = new Map<string, TechnicianAssignment>();
-
       assignments.forEach((assignment) => {
-        const entityType = String(assignment.entity_type || "").trim();
-        const entityId = Number.parseInt(String(assignment.entity_id || "").trim(), 10);
+        const entityType = String(assignment.entity_type || "").trim().toLowerCase();
         assignmentByKey.set(`${entityType}:${assignment.entity_id}`, assignment);
-        if (!Number.isInteger(entityId) || entityId <= 0) return;
-        if (entityType === "incident") directIncidentIds.add(entityId);
-        if (entityType === "installation") installationIds.add(entityId);
-        if (entityType === "asset") assetIds.add(entityId);
       });
 
       const queueMap = new Map<number, QueueIncident>();
@@ -202,52 +211,40 @@ export default function WorkTabScreen() {
         }
       };
 
-      await Promise.all([
-        ...Array.from(directIncidentIds).map(async (incidentId) => {
-          try {
-            const incident = await getIncidentById(incidentId);
-            const assignment = assignmentByKey.get(`incident:${incidentId}`);
-            rememberIncident(
-              incident,
-              "incident",
-              `Asignada directo · ${assignment?.assignment_role || "owner"}`,
-              String(assignment?.assignment_role || "owner"),
-            );
-          } catch {
-            // Best effort: ignore stale direct assignments.
-          }
-        }),
-        ...Array.from(installationIds).map(async (targetInstallationId) => {
-          try {
-            const response = await listIncidentsByInstallation(targetInstallationId);
-            const assignment = assignmentByKey.get(`installation:${targetInstallationId}`);
-            response.incidents.forEach((incident) =>
-              rememberIncident(
-                incident,
-                "installation",
-                `Caso #${targetInstallationId} · ${assignment?.assignment_role || "owner"}`,
-                String(assignment?.assignment_role || "owner"),
-              ));
-          } catch {
-            // Best effort: ignore stale installation assignments.
-          }
-        }),
-        ...Array.from(assetIds).map(async (assetId) => {
-          try {
-            const response = await getAssetIncidents(assetId, { limit: 80 });
-            const assignment = assignmentByKey.get(`asset:${assetId}`);
-            response.incidents.forEach((incident) =>
-              rememberIncident(
-                incident as Incident,
-                "asset",
-                `${response.asset?.external_code || `Activo #${assetId}`} · ${assignment?.assignment_role || "owner"}`,
-                String(assignment?.assignment_role || "owner"),
-              ));
-          } catch {
-            // Best effort: ignore stale asset assignments.
-          }
-        }),
-      ]);
+      queueResponse.incidents.forEach((queuedIncident) => {
+        const assignment =
+          assignmentByKey.get(`incident:${queuedIncident.id}`) ||
+          assignmentByKey.get(`installation:${queuedIncident.installation_id}`) ||
+          (queuedIncident.asset_id ? assignmentByKey.get(`asset:${queuedIncident.asset_id}`) : null);
+
+        const queueSource = (
+          queuedIncident.assignment_source === "installation" ||
+          queuedIncident.assignment_source === "asset"
+            ? queuedIncident.assignment_source
+            : "incident"
+        ) as QueueIncident["queue_source"];
+
+        const sourceLabel =
+          queueSource === "installation"
+            ? `Caso #${queuedIncident.installation_id} · ${assignment?.assignment_role || "owner"}`
+            : queueSource === "asset"
+              ? `${queuedIncident.asset_code || `Activo #${queuedIncident.asset_id || "-"}`} · ${assignment?.assignment_role || "owner"}`
+              : `Asignada directo · ${assignment?.assignment_role || "owner"}`;
+
+        rememberIncident(
+          {
+            ...queuedIncident,
+            reporter_username: "",
+            time_adjustment_seconds: 0,
+            source: "mobile",
+            photos: [],
+            checklist_items: [],
+          } as Incident,
+          queueSource,
+          sourceLabel,
+          String(assignment?.assignment_role || queuedIncident.assignment_role || "owner"),
+        );
+      });
 
       const nextQueue = sortQueueIncidents(Array.from(queueMap.values()));
       setQueueIncidents(nextQueue);
@@ -760,6 +757,18 @@ export default function WorkTabScreen() {
               </Text>
             </View>
           ) : null}
+          {(usingOfflineQueueSnapshot || usingOfflineIncidentSnapshot) ? (
+            <View
+              style={[
+                styles.heroMetaChip,
+                { backgroundColor: palette.warningBg, borderColor: palette.warningText },
+              ]}
+            >
+              <Text style={[styles.heroMetaText, { color: palette.warningText }]}>
+                Snapshot local
+              </Text>
+            </View>
+          ) : null}
         </View>
       </ScreenHero>
 
@@ -787,6 +796,11 @@ export default function WorkTabScreen() {
                 ? `${technicianAssignments.length} asignaciones activas entre incidencias, casos y activos.`
                 : "Sin asignaciones activas por ahora."}
             </Text>
+            {usingOfflineQueueSnapshot ? (
+              <Text style={[styles.supportingText, { color: palette.warningText }]}>
+                Mostrando la ultima cola sincronizada disponible en el dispositivo.
+              </Text>
+            ) : null}
             <Text style={[styles.supportingText, { color: palette.textMuted }]}>
               {linkedTechnician.employee_code
                 ? `Legajo ${linkedTechnician.employee_code} · `
