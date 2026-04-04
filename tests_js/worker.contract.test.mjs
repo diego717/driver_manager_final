@@ -7400,7 +7400,7 @@ test("POST /web/auth/users creates additional users when caller is admin", async
   assert.equal(createUserResponse.status, 201);
   assert.equal(createUserBody.success, true);
   assert.equal(createUserBody.user.username, "viewer_1");
-  assert.equal(createUserBody.user.role, "viewer");
+  assert.equal(createUserBody.user.role, "solo_lectura");
   assert.equal(db.state.webUsers.length, 2);
 });
 
