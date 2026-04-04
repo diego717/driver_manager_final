@@ -1,25 +1,25 @@
 // Service Worker for SiteOps Dashboard PWA
-const CACHE_NAME = 'driver-manager-5fd5cb4947';
+const CACHE_NAME = 'driver-manager-15c3a5c0d9';
 const STATIC_ASSETS = [
   '/web/dashboard',
-  '/dashboard.css?v=557c136ded',
+  '/dashboard.css?v=ad8e49d767',
   '/chart.umd.js?v=74401d738d',
   '/jsqr.js?v=bc40c8a151',
   '/dashboard-qr.js?v=961179b0a2',
   '/dashboard-api.js?v=4349b34891',
   '/dashboard-geolocation.js?v=a99f19d896',
   '/dashboard-scan.js?v=6884e82f3e',
-  '/dashboard-modals.js?v=d4f7406f9c',
-  '/dashboard-incidents.js?v=5669edc033',
-  '/dashboard-assets.js?v=2816dd0245',
+  '/dashboard-modals.js?v=6976cff499',
+  '/dashboard-incidents.js?v=a7a2297c5b',
+  '/dashboard-assets.js?v=d141d05bbe',
   '/dashboard-drivers.js?v=107284fd17',
   '/dashboard-audit.js?v=cb0cf05086',
-  '/dashboard-overview.js?v=3125fa9fe7',
+  '/dashboard-overview.js?v=c278d46315',
   '/dashboard-realtime.js?v=d763a18c75',
-  '/dashboard-auth.js?v=bf2af5df34',
+  '/dashboard-auth.js?v=24ec67b0e1',
   '/dashboard-navigation.js?v=848b5ca093',
   '/dashboard-bootstrap.js?v=65dba6e7cf',
-  '/dashboard.js?v=427efc41e4',
+  '/dashboard.js?v=652ff64544',
   '/dashboard-pwa.js?v=55b84aa40e',
   '/manifest.json?v=9130a5f920',
   '/assets/fonts/material-symbols-outlined.ttf'

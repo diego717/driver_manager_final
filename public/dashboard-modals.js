@@ -368,7 +368,7 @@
 
         function canCurrentUserEditAssets() {
             const role = String(options.getCurrentUser()?.role || '').toLowerCase();
-            return role === 'admin' || role === 'super_admin';
+            return role === 'admin' || role === 'super_admin' || role === 'platform_owner';
         }
 
         function isQrEditSessionActive() {
@@ -438,7 +438,7 @@
                 if (isReadOnlyAssetView && canEdit) {
                     helper.textContent = 'Modo solo lectura. Para editar, usa "Habilitar edicion" y confirma tu contrasena.';
                 } else if (isReadOnlyAssetView && !canEdit) {
-                    helper.textContent = 'Modo solo lectura. Solo admin/super_admin pueden editar este equipo.';
+                    helper.textContent = 'Modo solo lectura. Solo admin o plataforma pueden editar este equipo.';
                 } else if (options.getQrModalReadOnly() && options.getQrModalEditUnlocked() && hasTimedUnlock) {
                     const minutesLeft = Math.max(1, Math.ceil(getQrEditSessionRemainingMs() / 60000));
                     helper.textContent = `Edicion habilitada temporalmente (${minutesLeft} min restantes).`;

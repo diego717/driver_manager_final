@@ -124,7 +124,8 @@ function createWebAuthDeps(overrides = {}) {
       return String(value);
     },
     normalizeWebRole(value) {
-      return String(value || "viewer").toLowerCase();
+      const normalized = String(value || "solo_lectura").toLowerCase();
+      return normalized === "viewer" ? "solo_lectura" : normalized;
     },
     async createWebUser(_env, payload) {
       return {
@@ -253,7 +254,7 @@ test("web auth routes paginate users under the authenticated tenant", async () =
           {
             id: 10,
             username: "viewer_1",
-            role: "viewer",
+            role: "solo_lectura",
             tenant_id: "tenant-a",
           },
         ],
@@ -318,7 +319,7 @@ test("web auth routes preview tenant user delete impact", async () => {
       return {
         id: 9,
         username: "ops-user",
-        role: "viewer",
+        role: "solo_lectura",
         is_active: 1,
         tenant_id: "tenant-a",
       };
@@ -377,7 +378,7 @@ test("web auth routes delete a tenant user and invalidate its sessions", async (
       return {
         id: 9,
         username: "ops-user",
-        role: "viewer",
+        role: "solo_lectura",
         is_active: 1,
         tenant_id: "tenant-a",
       };

@@ -45,7 +45,4 @@ new_sqlite_classes = ["RealtimeEventsBroker"]
 [triggers]
 crons = ["0 * * * *"]
 
-[vars]
-# Set MAPBOX_PUBLIC_TOKEN in Cloudflare dashboard or local dev env, not in git-tracked files.
-MAPBOX_STYLE_URL_LIGHT = "mapbox://styles/mapbox/light-v11"
-MAPBOX_STYLE_URL_DARK = "mapbox://styles/mapbox/dark-v11"
+# Set GOOGLE_MAPS_API_KEY in Cloudflare dashboard or local `.dev.vars`, not in git-tracked files.

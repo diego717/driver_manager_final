@@ -42,6 +42,11 @@ describe('sync-errors: classifyError', () => {
     expect(classifyError(err).kind).toBe('transient')
   })
 
+  it('classifies missing web session messages as auth', () => {
+    const err = new Error('Sesion web requerida. Inicia sesion para continuar.')
+    expect(classifyError(err).kind).toBe('auth')
+  })
+
   it('classifies 408 as transient (timeout)', () => {
     const err = { response: { status: 408 }, message: 'Request Timeout' }
     expect(classifyError(err).kind).toBe('transient')

@@ -1,4 +1,4 @@
-import { HttpError } from "../lib/core.js";
+import { HttpError, canAssignTechnicians, canManageTechnicians } from "../lib/core.js";
 
 const TECHNICIAN_ASSIGNMENT_ENTITY_TYPES = new Set(["installation", "incident", "asset", "zone"]);
 const TECHNICIAN_ASSIGNMENT_ROLES = new Set(["owner", "assistant", "reviewer"]);
@@ -33,8 +33,7 @@ export function createTechniciansRouteHandlers({
   }
 
   function requireAssignmentManagerRole(role) {
-    const normalizedRole = normalizeOptionalString(role, "").toLowerCase();
-    if (!["admin", "super_admin", "supervisor"].includes(normalizedRole)) {
+    if (!canAssignTechnicians(role)) {
       throw new HttpError(403, "No tienes permisos para gestionar asignaciones de tecnicos.");
     }
   }
@@ -630,7 +629,9 @@ export function createTechniciansRouteHandlers({
     }
 
     if (routeParts.length === 1 && request.method === "POST") {
-      requireAdminRole(webSession?.role);
+      if (!canManageTechnicians(webSession?.role)) {
+        throw new HttpError(403, "No tienes permisos para gestionar tecnicos.");
+      }
       const payload = normalizeTechnicianPayload(await readJsonOrThrowBadRequest(request));
       if (payload.webUserId !== undefined && payload.webUserId !== null) {
         const linkedUser = await ensureTenantScopedWebUser(env, payload.webUserId, sessionTenantId);
@@ -700,7 +701,9 @@ export function createTechniciansRouteHandlers({
     }
 
     if (routeParts.length === 2 && request.method === "PATCH") {
-      requireAdminRole(webSession?.role);
+      if (!canManageTechnicians(webSession?.role)) {
+        throw new HttpError(403, "No tienes permisos para gestionar tecnicos.");
+      }
       const technicianId = parsePositiveInt(routeParts[1], "technician_id");
       const existing = await loadTechnicianById(env, technicianId, sessionTenantId);
       if (!existing) {

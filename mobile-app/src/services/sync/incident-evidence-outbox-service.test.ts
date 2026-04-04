@@ -18,9 +18,16 @@ const incidentApiMocks = vi.hoisted(() => ({
   updateIncidentEvidence: vi.fn(),
 }));
 
+const incidentsRepoMocks = vi.hoisted(() => ({
+  getByLocalId: vi.fn(),
+}));
+
 vi.mock("../../storage/secure", () => secureStoreMocks);
 vi.mock("../../db/repositories/sync-jobs-repository", () => ({
   syncJobsRepository: syncJobsRepoMocks,
+}));
+vi.mock("../../db/repositories/incidents-repository", () => ({
+  incidentsRepository: incidentsRepoMocks,
 }));
 vi.mock("./sync-engine", () => syncEngineMocks);
 vi.mock("../../api/incidents", () => incidentApiMocks);
@@ -71,6 +78,28 @@ describe("incident-evidence-outbox-service", () => {
       evidence_note: "Nota operativa inicial",
     });
     expect(secureStoreMocks.clearStoredIncidentEvidenceSecret).toHaveBeenCalledWith("evidence-local-1");
+  });
+
+  it("resolves the remote incident id from a synced local incident when needed", async () => {
+    secureStoreMocks.getStoredIncidentEvidenceSecret.mockResolvedValue({
+      checklistItems: ["Equipo identificado"],
+      evidenceNote: "Nota diferida",
+      remoteIncidentId: null,
+      localIncidentLocalId: "incident-local-1",
+    });
+    incidentsRepoMocks.getByLocalId.mockResolvedValue({
+      remoteId: 88,
+    });
+
+    await executeUpdateIncidentEvidence({
+      entityLocalId: "evidence-local-2",
+    } as never);
+
+    expect(incidentsRepoMocks.getByLocalId).toHaveBeenCalledWith("incident-local-1");
+    expect(incidentApiMocks.updateIncidentEvidence).toHaveBeenCalledWith(88, {
+      checklist_items: ["Equipo identificado"],
+      evidence_note: "Nota diferida",
+    });
   });
 
   it("registers the update_incident_evidence executor once", () => {

@@ -821,7 +821,7 @@
                 options.renderContextualEmptyState(container, {
                     title: 'A\u00fan no hay registros recientes',
                     description: 'Cuando se genere actividad operativa, aparecer\u00e1 aqu\u00ed.',
-                    actionLabel: currentUser && currentUser.role !== 'viewer' ? 'Crear registro manual' : '',
+                    actionLabel: currentUser && !['viewer', 'solo_lectura'].includes(String(currentUser.role || '').toLowerCase()) ? 'Crear registro manual' : '',
                     onAction: () => options.createManualRecord(),
                     tone: 'info',
                 });

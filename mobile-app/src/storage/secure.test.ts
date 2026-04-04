@@ -137,6 +137,19 @@ describe("secure storage hardening", () => {
     await expect(getStoredPhotoSecret("photo-local-1")).resolves.toBeNull();
   });
 
+  it("sanitizes dynamic SecureStore keys to Android-safe characters", async () => {
+    await setStoredPhotoSecret("photo:local/1 #retry", {
+      localPath: "file:///data/user/0/app/cache/customer-claim.jpg",
+      fileName: "customer-claim.jpg",
+    });
+
+    expect(secureStoreMocks.setItemAsync).toHaveBeenCalledWith(
+      "dm_photo_secret__photo_local_1_retry",
+      expect.any(String),
+      expect.any(Object),
+    );
+  });
+
   it("stores incident evidence payloads in secure storage for retryable offline sync", async () => {
     await setStoredIncidentEvidenceSecret("evidence-local-1", {
       checklistItems: ["Equipo identificado", "Diagnostico inicial registrado"],
@@ -217,7 +230,7 @@ describe("secure storage hardening", () => {
       accessToken: null,
       expiresAt: "2030-01-01T00:00:00.000Z",
       username: "admin",
-      role: "viewer",
+      role: "solo_lectura",
     });
     expect(sessionStorageMock.setItem).not.toHaveBeenCalledWith("dm_web_access_token", "token-123");
     expect(localStorageMock.setItem).not.toHaveBeenCalled();

@@ -1,4 +1,5 @@
 import { updateIncidentEvidence } from '../../api/incidents'
+import { incidentsRepository } from '../../db/repositories/incidents-repository'
 import { syncJobsRepository } from '../../db/repositories/sync-jobs-repository'
 import type SyncJob from '../../db/models/SyncJob'
 import {
@@ -65,7 +66,11 @@ export async function executeUpdateIncidentEvidence(job: SyncJob): Promise<void>
     )
   }
 
-  const remoteIncidentId = Number(payload.remoteIncidentId)
+  let remoteIncidentId = Number(payload.remoteIncidentId)
+  if ((!Number.isInteger(remoteIncidentId) || remoteIncidentId <= 0) && payload.localIncidentLocalId) {
+    const localIncident = await incidentsRepository.getByLocalId(payload.localIncidentLocalId)
+    remoteIncidentId = Number(localIncident?.remoteId || 0)
+  }
   if (!Number.isInteger(remoteIncidentId) || remoteIncidentId <= 0) {
     throw new SyncEngineError(
       `Remote incident missing for queued evidence ${job.entityLocalId}.`,

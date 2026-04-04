@@ -5,6 +5,7 @@ import {
   WEB_AUTH_TOKEN_TYPE,
 } from "./client";
 import {
+  clearStoredLinkedTechnician,
   clearStoredWebSession,
   getStoredWebSession,
   getStoredWebAccessExpiresAt,
@@ -14,6 +15,7 @@ import {
   setStoredWebSession,
 } from "../storage/secure";
 import { isWebBrowserRuntime } from "../storage/runtime";
+import { normalizeWebRole, type WebRole } from "../auth/roles";
 import { ensureNonEmpty } from "../utils/validation";
 import { resolveWebSession } from "./webSession";
 
@@ -57,7 +59,7 @@ export interface WebLogoutResponse {
 export interface WebManagedUser {
   id: number;
   username: string;
-  role: "admin" | "viewer" | "super_admin" | "platform_owner";
+  role: WebRole;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -74,10 +76,26 @@ interface WebUserMutationResponse {
   user: WebManagedUser;
 }
 
+function sanitizeManagedUser(user: Partial<WebManagedUser> | null | undefined): WebManagedUser {
+  return {
+    id: typeof user?.id === "number" ? user.id : Number(user?.id || 0),
+    username:
+      typeof user?.username === "string" && user.username.trim() ? user.username.trim() : "usuario",
+    role: normalizeWebRole(user?.role),
+    is_active: user?.is_active !== false,
+    created_at: typeof user?.created_at === "string" ? user.created_at : "",
+    updated_at: typeof user?.updated_at === "string" ? user.updated_at : "",
+    last_login_at:
+      typeof user?.last_login_at === "string" || user?.last_login_at === null
+        ? user.last_login_at
+        : null,
+  };
+}
+
 function sanitizeWebSessionUser(user: Partial<WebSessionUser> | null | undefined): WebSessionUser {
   const username =
     typeof user?.username === "string" && user.username.trim() ? user.username.trim() : "usuario";
-  const role = typeof user?.role === "string" && user.role.trim() ? user.role.trim() : "viewer";
+  const role = normalizeWebRole(user?.role);
   const tenantId =
     typeof user?.tenant_id === "string" && user.tenant_id.trim() ? user.tenant_id.trim() : undefined;
   const createdAt =
@@ -216,7 +234,7 @@ export async function bootstrapWebUser(params: {
   bootstrapPassword: string;
   username: string;
   password: string;
-  role?: "admin" | "viewer" | "super_admin" | "platform_owner";
+  role?: WebRole;
 }): Promise<WebBootstrapResponse> {
   const apiBaseUrl = await getResolvedApiBaseUrl();
   ensureNonEmpty(apiBaseUrl, "EXPO_PUBLIC_API_BASE_URL");
@@ -283,7 +301,10 @@ export async function readStoredWebSession(): Promise<{
 }> {
   const session = await getStoredWebSession();
   if (session) {
-    return session;
+    return {
+      ...session,
+      role: session.role ? normalizeWebRole(session.role) : null,
+    };
   }
 
   const [accessToken, expiresAt, username, role] = await Promise.all([
@@ -292,11 +313,17 @@ export async function readStoredWebSession(): Promise<{
     getStoredWebAccessUsername(),
     getStoredWebAccessRole(),
   ]);
-  return { accessToken, expiresAt, username, role };
+  return {
+    accessToken,
+    expiresAt,
+    username,
+    role: role ? normalizeWebRole(role) : null,
+  };
 }
 
 export async function clearWebSession(): Promise<void> {
   await clearStoredWebSession();
+  await clearStoredLinkedTechnician();
 }
 
 export async function logoutWebSession(): Promise<void> {
@@ -312,6 +339,7 @@ export async function logoutWebSession(): Promise<void> {
     // Best effort: local cleanup still required.
   } finally {
     await clearStoredWebSession();
+    await clearStoredLinkedTechnician();
   }
 }
 
@@ -326,7 +354,7 @@ export async function listWebUsers(): Promise<WebManagedUser[]> {
       throw new Error(extractErrorMessage(body, "No se pudieron listar usuarios web."));
     }
 
-    return (body as WebUsersListResponse).users;
+    return (body as WebUsersListResponse).users.map((user) => sanitizeManagedUser(user));
   } catch (error) {
     throw new Error(extractApiError(error));
   }
@@ -334,7 +362,7 @@ export async function listWebUsers(): Promise<WebManagedUser[]> {
 
 export async function updateWebUser(params: {
   userId: number;
-  role?: "admin" | "viewer" | "super_admin" | "platform_owner";
+  role?: WebRole;
   isActive?: boolean;
 }): Promise<WebManagedUser> {
   ensureNonEmpty(String(params.userId), "userId");
@@ -357,7 +385,7 @@ export async function updateWebUser(params: {
       throw new Error(extractErrorMessage(body, "No se pudo actualizar el usuario web."));
     }
 
-    return (body as WebUserMutationResponse).user;
+    return sanitizeManagedUser((body as WebUserMutationResponse).user);
   } catch (error) {
     throw new Error(extractApiError(error));
   }
@@ -383,7 +411,7 @@ export async function forceWebUserPassword(params: {
       throw new Error(extractErrorMessage(body, "No se pudo forzar cambio de contrasena."));
     }
 
-    return (body as WebUserMutationResponse).user;
+    return sanitizeManagedUser((body as WebUserMutationResponse).user);
   } catch (error) {
     throw new Error(extractApiError(error));
   }

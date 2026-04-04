@@ -13,6 +13,7 @@ const clientMocks = vi.hoisted(() => ({
 }));
 
 const secureMocks = vi.hoisted(() => ({
+  clearStoredLinkedTechnician: vi.fn(async (): Promise<void> => undefined),
   clearStoredWebSession: vi.fn(async (): Promise<void> => undefined),
   getStoredWebSession: vi.fn(async (): Promise<{
     accessToken: string | null;
@@ -42,6 +43,7 @@ describe("webAuth", () => {
     vi.restoreAllMocks();
     clientMocks.getResolvedApiBaseUrl.mockClear();
     clientMocks.extractApiError.mockClear();
+    secureMocks.clearStoredLinkedTechnician.mockClear();
     secureMocks.clearStoredWebSession.mockClear();
     secureMocks.getStoredWebSession.mockClear();
     secureMocks.getStoredWebAccessExpiresAt.mockClear();
@@ -187,5 +189,6 @@ describe("webAuth", () => {
   it("clears stored session via clearWebSession", async () => {
     await clearWebSession();
     expect(secureMocks.clearStoredWebSession).toHaveBeenCalledOnce();
+    expect(secureMocks.clearStoredLinkedTechnician).toHaveBeenCalledOnce();
   });
 });

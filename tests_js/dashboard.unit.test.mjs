@@ -688,7 +688,7 @@ test("super admin can create and update tenant web users from tenant detail", as
       match: "/web/auth/users/9",
       resolver: async ({ request }) => {
         const body = await request.clone().json();
-        assert.equal(body.role, "viewer");
+        assert.equal(body.role, "solo_lectura");
         assert.equal(body.is_active, false);
         tenantUsers[1] = {
           ...tenantUsers[1],
@@ -756,7 +756,7 @@ test("super admin can create and update tenant web users from tenant detail", as
   editBtn.click();
   await flushDashboardTasks();
 
-  document.getElementById("actionTenantUserRole").value = "viewer";
+  document.getElementById("actionTenantUserRole").value = "solo_lectura";
   document.getElementById("actionTenantUserIsActive").value = "0";
   document.getElementById("actionModalForm").dispatchEvent(
     new Event("submit", { bubbles: true, cancelable: true }),
@@ -767,7 +767,7 @@ test("super admin can create and update tenant web users from tenant detail", as
 
   const detailText = document.getElementById("tenantDetail").textContent || "";
   assert.match(detailText, /bruno/i);
-  assert.match(detailText, /viewer/i);
+  assert.match(detailText, /solo_lectura|solo lectura/i);
   assert.match(detailText, /inactivo/i);
 });
 
@@ -2386,6 +2386,110 @@ test("incident creation keeps the modal flow responsive without forcing an insta
   assert.ok(router.calls.some((call) => call.pathname === "/web/installations/45/incidents"));
 });
 
+test("incident create modal autocompletes dispatch target fields from Google Places", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+    {
+      method: "GET",
+      match: "/web/installations",
+      resolver: async () => createJsonResponse([]),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+  installGeolocationMock(window, (success) => {
+    success({
+      coords: {
+        latitude: -34.9011,
+        longitude: -56.1645,
+        accuracy: 12,
+      },
+      timestamp: Date.parse("2026-03-20T12:15:00.000Z"),
+    });
+  });
+
+  class MockPlacesAutocomplete {
+    constructor(input) {
+      this.input = input;
+      this.handlers = new Map();
+      this.place = null;
+      window.__lastIncidentPlacesAutocomplete = this;
+    }
+
+    addListener(eventName, handler) {
+      this.handlers.set(eventName, handler);
+      return {
+        remove: () => {
+          this.handlers.delete(eventName);
+        },
+      };
+    }
+
+    getPlace() {
+      return this.place;
+    }
+
+    setPlace(place) {
+      this.place = place;
+    }
+
+    trigger(eventName) {
+      this.handlers.get(eventName)?.();
+    }
+  }
+
+  window.google = {
+    maps: {
+      Map: class MockMap {},
+      places: {
+        Autocomplete: MockPlacesAutocomplete,
+      },
+    },
+  };
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  window.createIncidentFromWeb(45);
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const autocomplete = window.__lastIncidentPlacesAutocomplete;
+  assert.ok(autocomplete);
+
+  autocomplete.setPlace({
+    name: "Sucursal Centro",
+    formatted_address: "Av. Italia 2456, Montevideo",
+    geometry: {
+      location: {
+        lat: () => -34.9011,
+        lng: () => -56.1645,
+      },
+    },
+  });
+  autocomplete.trigger("place_changed");
+
+  assert.equal(document.getElementById("actionIncidentDispatchPlace").value, "Sucursal Centro");
+  assert.equal(document.getElementById("actionIncidentDispatchAddress").value, "Av. Italia 2456, Montevideo");
+  assert.equal(document.getElementById("actionIncidentTargetLat").value, "-34.901100");
+  assert.equal(document.getElementById("actionIncidentTargetLng").value, "-56.164500");
+  assert.equal(document.getElementById("actionIncidentTargetLabel").value, "Sucursal Centro");
+});
+
 test("manual record submission stores denied geolocation status without blocking the flow", async () => {
   const recordPayloads = [];
   const router = createFetchRouter([
@@ -3559,7 +3663,7 @@ test("incident map lets admin set operational target directly from the map", asy
   const { window } = dom;
   const { document } = window;
 
-  class MockLngLatBounds {
+  class MockLatLngBounds {
     constructor() {
       this.points = [];
     }
@@ -3571,74 +3675,79 @@ test("incident map lets admin set operational target directly from the map", asy
   }
 
   class MockMap {
-    constructor() {
+    constructor(element) {
       this.handlers = new Map();
-      this.sources = new Map();
-      this.layers = new Set();
-      this.canvas = document.createElement("div");
+      this.canvas = element || document.createElement("div");
       window.__lastIncidentMap = this;
-      window.setTimeout(() => this.trigger("load"), 0);
     }
 
-    addControl() {}
-
-    addSource(id, config) {
-      this.sources.set(id, {
-        ...config,
-        setData: (data) => {
-          const current = this.sources.get(id) || {};
-          this.sources.set(id, { ...current, data });
+    addListener(eventName, handler) {
+      if (typeof handler !== "function") {
+        return { remove() {} };
+      }
+      this.handlers.set(eventName, handler);
+      return {
+        remove: () => {
+          this.handlers.delete(eventName);
         },
-      });
+      };
     }
 
-    getSource(id) {
-      return this.sources.get(id) || null;
-    }
-
-    addLayer(layer) {
-      this.layers.add(layer.id);
-    }
-
-    getLayer(id) {
-      return this.layers.has(id) ? { id } : null;
-    }
-
-    on(eventName, layerOrHandler, maybeHandler) {
-      const layerId = typeof layerOrHandler === "string" ? layerOrHandler : "__base__";
-      const handler = typeof layerOrHandler === "function" ? layerOrHandler : maybeHandler;
-      if (typeof handler !== "function") return;
-      this.handlers.set(`${eventName}:${layerId}`, handler);
-    }
-
-    getCanvas() {
+    getDiv() {
       return this.canvas;
     }
 
-    easeTo(options) {
-      this.lastEaseTo = options;
+    panTo(position) {
+      this.lastPanTo = position;
     }
 
-    fitBounds(bounds, options) {
-      this.lastFitBounds = { bounds, options };
+    setZoom(value) {
+      this.lastSetZoom = value;
     }
 
-    remove() {}
+    fitBounds(bounds, padding) {
+      this.lastFitBounds = { bounds, padding };
+    }
 
-    trigger(eventName, payload = {}, layerId = "__base__") {
-      const handler = this.handlers.get(`${eventName}:${layerId}`);
+    trigger(eventName, payload = {}) {
+      const handler = this.handlers.get(eventName);
       if (handler) {
         handler(payload);
       }
     }
   }
 
-  window.mapboxgl = {
-    Map: MockMap,
-    NavigationControl: class NavigationControl {},
-    LngLatBounds: MockLngLatBounds,
+  class MockMarker {
+    constructor(config = {}) {
+      this.config = config;
+      this.map = config.map || null;
+      this.handlers = new Map();
+    }
+
+    addListener(eventName, handler) {
+      this.handlers.set(eventName, handler);
+      return {
+        remove: () => {
+          this.handlers.delete(eventName);
+        },
+      };
+    }
+
+    setMap(map) {
+      this.map = map;
+    }
+  }
+
+  window.google = {
+    maps: {
+      Map: MockMap,
+      Marker: MockMarker,
+      LatLngBounds: MockLatLngBounds,
+      SymbolPath: {
+        CIRCLE: "CIRCLE",
+      },
+    },
   };
-  window.localStorage.setItem("dm_mapbox_access_token", "token-qa");
 
   await loginThroughForm(dom, {
     username: "ops-admin",
@@ -3661,7 +3770,10 @@ test("incident map lets admin set operational target directly from the map", asy
   assert.match(document.getElementById("incidentMapDetail").textContent || "", /Modo ajuste activo/i);
 
   window.__lastIncidentMap.trigger("click", {
-    lngLat: { lat: -34.907654, lng: -56.198765 },
+    latLng: {
+      lat: () => -34.907654,
+      lng: () => -56.198765,
+    },
   });
   await flushDashboardTasks();
   await flushDashboardTasks();

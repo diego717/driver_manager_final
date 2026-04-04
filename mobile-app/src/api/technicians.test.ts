@@ -263,7 +263,7 @@ describe("technicians api", () => {
       user: {
         id: 9,
         username: "ana",
-        role: "viewer",
+        role: "solo_lectura",
       },
     });
     clientMocks.signedJsonRequest.mockResolvedValueOnce({
@@ -371,7 +371,7 @@ describe("technicians api", () => {
       user: {
         id: 9,
         username: "ana",
-        role: "viewer",
+        role: "solo_lectura",
       },
     });
     clientMocks.signedJsonRequest.mockRejectedValueOnce(new Error("offline"));

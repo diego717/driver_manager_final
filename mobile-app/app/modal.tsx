@@ -22,6 +22,7 @@ import {
 import { extractApiError, getApiBaseUrl, normalizeApiBaseUrl } from "@/src/api/client";
 import { listInstallations } from "@/src/api/incidents";
 import { loginWebSession, logoutWebSession, readStoredWebSession } from "@/src/api/webAuth";
+import { canManageTechnicians as canManageTechnicianDirectory } from "@/src/auth/roles";
 import {
   authenticateWithBiometrics,
   getBiometricAvailability,
@@ -34,6 +35,7 @@ import {
   type ThemeMode,
 } from "@/src/storage/secure";
 import ScreenHero from "@/src/components/ScreenHero";
+import { useNotificationsContext } from "@/src/notifications/notifications-context";
 import TechnicianDirectoryCard from "@/src/components/TechnicianDirectoryCard";
 import { clearSharedWebSessionState, refreshSharedWebSessionState, useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useReducedMotion } from "@/src/hooks/useReducedMotion";
@@ -100,12 +102,21 @@ function normalizeRouteParam(value: string | string[] | undefined): string {
   return value ?? "";
 }
 
+function formatNotificationPermissionStatus(value: string | null): string {
+  if (!value) return "sin validar";
+  if (value === "granted") return "permitidas";
+  if (value === "denied") return "denegadas";
+  if (value === "undetermined") return "pendientes";
+  return value;
+}
+
 export default function ApiSettingsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ focus?: string | string[] }>();
   const { mode, resolvedScheme, setMode } = useThemePreference();
   const palette = useAppPalette();
   const { hasActiveSession } = useSharedWebSessionState();
+  const notifications = useNotificationsContext();
   const scrollViewRef = useRef<ScrollView | null>(null);
   const reducedMotion = useReducedMotion();
   const contentOpacity = useRef(new Animated.Value(1)).current;
@@ -147,12 +158,61 @@ export default function ApiSettingsScreen() {
     if (!hasActiveSession) return false;
     return Boolean(webSessionExpiresAt && Date.parse(webSessionExpiresAt) > Date.now());
   }, [hasActiveSession, webSessionExpiresAt]);
-  const canManageTechnicians =
-    webSessionRole === "admin" || webSessionRole === "super_admin" || webSessionRole === "platform_owner";
+  const canManageTechnicians = canManageTechnicianDirectory(webSessionRole);
   const sessionStatusTitle = hasWebSession ? "Conectado" : "Sin sesion activa";
   const sessionStatusSubtitle = hasWebSession
     ? formatRelativeTimeUntil(webSessionExpiresAt)
     : "Inicia sesion para operar con la API";
+  const hasPushPermission = notifications.permissionStatus === "granted";
+  const hasFcmToken = Boolean(notifications.fcmPushToken);
+  const hasRegisteredPushToken = notifications.tokenRegisteredInApi === true;
+  const pushStatusTitle = notifications.loading
+    ? "Inicializando notificaciones"
+    : notifications.error
+      ? "Notificaciones con error"
+      : !hasPushPermission
+        ? "Permiso pendiente"
+        : !hasFcmToken
+          ? "Token push no disponible"
+          : !hasActiveSession
+            ? "Sesion requerida para registrar dispositivo"
+            : hasRegisteredPushToken
+              ? "Push listo en este telefono"
+              : notifications.tokenRegisteredInApi === false
+                ? "Registro de dispositivo fallido"
+                : "Registro de dispositivo pendiente";
+  const pushStatusBody = notifications.loading
+    ? "La app esta resolviendo permisos y tokens del dispositivo."
+    : notifications.error
+      ? notifications.error
+      : !hasPushPermission
+        ? "Acepta permisos de notificaciones para recibir asignaciones operativas."
+        : !hasFcmToken
+          ? "Esta build todavia no obtuvo un token FCM. Verifica que sea una build Android real y no Expo Go."
+          : !hasActiveSession
+            ? "Inicia sesion web para registrar este telefono contra tu usuario."
+            : hasRegisteredPushToken
+              ? "El telefono ya quedo registrado en la API y puede recibir pushes para este usuario."
+              : notifications.tokenRegisteredInApi === false
+                ? "La API rechazo o no pudo guardar el token de este telefono."
+                : "La app tiene token local y esta esperando completar el registro con la API.";
+  const pushStatusTone = notifications.error
+    ? {
+        text: palette.errorText,
+        bg: palette.errorBg,
+        border: palette.errorBorder,
+      }
+    : hasRegisteredPushToken
+      ? {
+          text: palette.successText,
+          bg: palette.successBg,
+          border: palette.successBorder,
+        }
+      : {
+          text: palette.warningText,
+          bg: palette.warningBg,
+          border: palette.warningText,
+        };
   const isAutoTheme = mode === "system";
   const isDarkMode = resolvedScheme === "dark";
   const themeSummary = isAutoTheme
@@ -541,6 +601,36 @@ export default function ApiSettingsScreen() {
           <Text style={[styles.summaryMeta, { color: palette.textMuted }]}>
             Usuario:{" "}
             {webSessionUsername ? `${webSessionUsername} (${webSessionRole || "usuario"})` : "no autenticado"}
+          </Text>
+        </View>
+
+        <View
+          style={[
+            styles.summaryCard,
+            {
+              backgroundColor: pushStatusTone.bg,
+              borderColor: pushStatusTone.border,
+            },
+          ]}
+        >
+          <Text style={[styles.summaryTitle, { color: pushStatusTone.text }]}>{pushStatusTitle}</Text>
+          <Text style={[styles.summaryBody, { color: pushStatusTone.text }]}>{pushStatusBody}</Text>
+          <Text style={[styles.summaryMeta, { color: pushStatusTone.text }]}>
+            Permiso: {formatNotificationPermissionStatus(notifications.permissionStatus)}
+          </Text>
+          <Text style={[styles.summaryMeta, { color: pushStatusTone.text }]}>
+            Token FCM: {hasFcmToken ? "disponible" : "no disponible"}
+          </Text>
+          <Text style={[styles.summaryMeta, { color: pushStatusTone.text }]}>
+            Registro API:{" "}
+            {hasRegisteredPushToken
+              ? "confirmado"
+              : notifications.tokenRegisteredInApi === false
+                ? "fallido"
+                : "pendiente"}
+          </Text>
+          <Text style={[styles.summaryMeta, { color: pushStatusTone.text }]}>
+            Requisito extra: el tecnico debe estar vinculado al mismo usuario web que inicia sesion aqui.
           </Text>
         </View>
 

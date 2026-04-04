@@ -56,6 +56,16 @@ export function classifyError(err: unknown): SyncError {
   const status = axiosError?.response?.status
   const message =
     axiosError?.message ?? (err instanceof Error ? err.message : String(err))
+  const normalizedMessage = message.toLowerCase()
+
+  if (
+    normalizedMessage.includes('sesion web requerida') ||
+    normalizedMessage.includes('sesion web expirada') ||
+    normalizedMessage.includes('sesión web requerida') ||
+    normalizedMessage.includes('sesión web expirada')
+  ) {
+    return { kind: 'auth', message, statusCode: status }
+  }
 
   if (status === 401 || status === 403) {
     return { kind: 'auth', message, statusCode: status }

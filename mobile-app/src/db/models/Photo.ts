@@ -6,30 +6,30 @@ import { sanitizeStoredSyncMessage } from '../../services/sync/sync-errors'
 export default class Photo extends Model {
   static table = 'photos'
 
-  @text('incident_id') incidentRecordId!: string
+  @text('incident_id') incidentRecordId: string
 
   // Core fields
-  @text('r2_key') r2Key!: string | null
-  @text('file_name') fileName!: string
-  @text('content_type') contentType!: string
-  @field('size_bytes') sizeBytes!: number
-  @text('sha256') sha256!: string | null
-  @readonly @date('created_at') createdAt!: Date
+  @text('r2_key') r2Key: string | null
+  @text('file_name') fileName: string
+  @text('content_type') contentType: string
+  @field('size_bytes') sizeBytes: number
+  @text('sha256') sha256: string | null
+  @readonly @date('created_at') createdAt: Date
 
   // Legacy sync fields
-  @field('is_synced') isSynced!: boolean
-  @text('local_path') localPath!: string
-  @field('remote_id') remoteId!: number | null
+  @field('is_synced') isSynced: boolean
+  @text('local_path') localPath: string
+  @field('remote_id') remoteId: number | null
 
   // Offline sync v2 — prefixed to avoid WMDb base class clash
-  @text('local_id') localId!: string
-  @field('remote_photo_id') remotePhotoId!: number | null
-  @field('remote_incident_id') remoteIncidentId!: number | null
-  @text('local_incident_local_id') localIncidentLocalId!: string | null
-  @text('sync_status') localSyncStatus!: LocalSyncStatus
-  @field('sync_attempts') syncAttempts!: number
-  @text('last_sync_error') lastSyncError!: string | null
-  @text('client_request_id') clientRequestId!: string
+  @text('local_id') localId: string
+  @field('remote_photo_id') remotePhotoId: number | null
+  @field('remote_incident_id') remoteIncidentId: number | null
+  @text('local_incident_local_id') localIncidentLocalId: string | null
+  @text('sync_status') localSyncStatus: LocalSyncStatus
+  @field('sync_attempts') syncAttempts: number
+  @text('last_sync_error') lastSyncError: string | null
+  @text('client_request_id') clientRequestId: string
 
   @writer async markAsSynced(remoteId: number, r2Key: string, sha256: string) {
     await this.update(photo => {

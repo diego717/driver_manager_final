@@ -10,19 +10,16 @@ import {
 } from "react-native";
 
 import { extractApiError } from "@/src/api/client";
-import {
-  createIncident,
-  createInstallationRecord,
-} from "@/src/api/incidents";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import InlineFeedback from "@/src/components/InlineFeedback";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import SectionCard from "@/src/components/SectionCard";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
+import { canReachConfiguredApi } from "@/src/services/network/api-connectivity";
 import { enqueueCreateCase } from "@/src/services/sync/case-outbox-service";
 import { enqueueCreateIncident } from "@/src/services/sync/incident-outbox-service";
-import { runSync } from "@/src/services/sync/sync-runner";
+import { runSyncAsync } from "@/src/services/sync/sync-runner";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { getStoredWebAccessUsername } from "@/src/storage/secure";
 import { useAppPalette } from "@/src/theme/palette";
@@ -30,17 +27,6 @@ import { fontFamilies } from "@/src/theme/typography";
 import { type IncidentSeverity } from "@/src/types/api";
 
 const MIN_TOUCH_TARGET_SIZE = 44;
-
-async function isOnline(): Promise<boolean> {
-  try {
-    const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? "";
-    if (!apiBase) return true;
-    await fetch(`${apiBase}/health`, { method: "HEAD", signal: AbortSignal.timeout(3000) });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 const SEVERITY_OPTIONS: Array<{
   value: IncidentSeverity;
@@ -87,74 +73,85 @@ export default function ManualCaseScreen() {
     try {
       setSubmitting(true);
       setErrorMessage("");
-      const online = await isOnline();
-
-      if (!online) {
-        const queuedCase = await enqueueCreateCase({
-          clientName: clientName.trim() || "Sin cliente",
-          notes: caseNote.trim(),
-          status: "manual",
-          driverBrand: "Caso manual",
-          driverVersion: "Sin equipo",
-          driverDescription: "Caso iniciado desde mobile sin equipo asociado",
-          osInfo: "mobile",
-          installationTimeSeconds: 0,
-        });
-
-        if (incidentNote.trim()) {
-          await enqueueCreateIncident({
-            installationId: 0,
-            remoteInstallationId: null,
-            localCaseLocalId: queuedCase.localId,
-            dependsOnJobId: queuedCase.jobId,
-            note: incidentNote.trim(),
-            reporterUsername: reporterUsername.trim() || "mobile_user",
-            severity,
-            source: "mobile",
-            timeAdjustmentSeconds: 0,
-            gps: {
-              status: "pending",
-              source: "none",
-              note: "Pendiente de contexto remoto",
-            },
-          });
-        }
-
-        runSync();
-        router.replace("/(tabs)" as never);
-        return;
-      }
-
-      const createdCase = await createInstallationRecord({
-        client_name: clientName.trim() || "Sin cliente",
+      const online = await canReachConfiguredApi();
+      const queuedCase = await enqueueCreateCase({
+        clientName: clientName.trim() || "Sin cliente",
         notes: caseNote.trim(),
         status: "manual",
-        driver_brand: "Caso manual",
-        driver_version: "Sin equipo",
-        driver_description: "Caso iniciado desde mobile sin equipo asociado",
-        os_info: "mobile",
-        installation_time_seconds: 0,
+        driverBrand: "Caso manual",
+        driverVersion: "Sin equipo",
+        driverDescription: "Caso iniciado desde mobile sin equipo asociado",
+        osInfo: "mobile",
+        installationTimeSeconds: 0,
       });
 
-      setLastCreatedCaseId(createdCase.record.id);
+      let queuedIncident:
+        | {
+            localId: string;
+            jobId: string;
+          }
+        | null = null;
 
-      if (!incidentNote.trim()) {
-        router.replace(`/incident/create?installationId=${createdCase.record.id}` as never);
+      if (incidentNote.trim()) {
+        queuedIncident = await enqueueCreateIncident({
+          installationId: 0,
+          remoteInstallationId: null,
+          localCaseLocalId: queuedCase.localId,
+          dependsOnJobId: queuedCase.jobId,
+          note: incidentNote.trim(),
+          reporterUsername: reporterUsername.trim() || "mobile_user",
+          severity,
+          source: "mobile",
+          timeAdjustmentSeconds: 0,
+          gps: {
+            status: "pending",
+            source: "none",
+            note: "Pendiente de contexto remoto",
+          },
+        });
+      }
+
+      if (online) {
+        await runSyncAsync({ force: true });
+      }
+
+      const { casesRepository } = await import("@/src/db/repositories/cases-repository");
+      const queuedLocalCase = await casesRepository.getByLocalId(queuedCase.localId);
+      const remoteInstallationId = Number(queuedLocalCase?.remoteId || 0);
+      if (remoteInstallationId > 0) {
+        setLastCreatedCaseId(remoteInstallationId);
+      }
+
+      if (!queuedIncident) {
+        if (remoteInstallationId > 0) {
+          router.replace(`/incident/create?installationId=${remoteInstallationId}` as never);
+          return;
+        }
+
+        router.replace(`/incident/create?localCaseLocalId=${encodeURIComponent(queuedCase.localId)}` as never);
         return;
       }
 
-      const createdIncident = await createIncident(createdCase.record.id, {
-        note: incidentNote.trim(),
-        reporter_username: reporterUsername.trim() || "mobile_user",
-        severity,
-        source: "mobile",
-        time_adjustment_seconds: 0,
-        apply_to_installation: false,
-      });
+      const { incidentsRepository } = await import("@/src/db/repositories/incidents-repository");
+      const queuedLocalIncident = await incidentsRepository.getByLocalId(queuedIncident.localId);
+      const remoteIncidentId = Number(queuedLocalIncident?.remoteId || 0);
 
-      router.replace(
-        `/incident/upload?incidentId=${createdIncident.incident.id}&installationId=${createdCase.record.id}` as never,
-      );
+      if (remoteInstallationId > 0 && remoteIncidentId > 0) {
+        router.replace(
+          `/incident/upload?incidentId=${remoteIncidentId}&installationId=${remoteInstallationId}` as never,
+        );
+        return;
+      }
+
+      const uploadParams = new URLSearchParams({
+        localIncidentLocalId: queuedIncident.localId,
+        incidentJobId: queuedIncident.jobId,
+      });
+      if (remoteInstallationId > 0) {
+        uploadParams.set("installationId", String(remoteInstallationId));
+      }
+
+      router.replace(`/incident/upload?${uploadParams.toString()}` as never);
     } catch (error) {
       setLastCreatedCaseId(null);
       setErrorMessage(extractApiError(error));

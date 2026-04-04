@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import { normalizeWebRole } from "../auth/roles";
 import { getWebLocalStorage, getWebSessionStorage, isWebBrowserRuntime } from "./runtime";
 
 const API_BASE_URL_KEY = "dm_api_base_url";
@@ -14,6 +15,7 @@ const CASE_SECRET_PREFIX = "dm_case_secret";
 const PHOTO_SECRET_PREFIX = "dm_photo_secret";
 const LINKED_TECHNICIAN_KEY = "dm_linked_technician";
 const SECURE_REDACTED_VALUE = "__secure_store__";
+const SECURE_STORE_KEY_SAFE_PATTERN = /[^A-Za-z0-9._-]+/g;
 
 const SECURE_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY,
@@ -158,20 +160,30 @@ function clearLegacyWebTokenStorage(): void {
   }
 }
 
+function sanitizeSecureStoreKeySegment(value: string): string {
+  const cleaned = cleanValue(value).replace(SECURE_STORE_KEY_SAFE_PATTERN, "_");
+  const normalized = cleaned.replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized || "empty";
+}
+
+function buildDynamicSecureStoreKey(prefix: string, localId: string): string {
+  return `${prefix}__${sanitizeSecureStoreKeySegment(localId)}`;
+}
+
 function buildIncidentSecretKey(localId: string): string {
-  return `${INCIDENT_SECRET_PREFIX}:${cleanValue(localId)}`;
+  return buildDynamicSecureStoreKey(INCIDENT_SECRET_PREFIX, localId);
 }
 
 function buildCaseSecretKey(localId: string): string {
-  return `${CASE_SECRET_PREFIX}:${cleanValue(localId)}`;
+  return buildDynamicSecureStoreKey(CASE_SECRET_PREFIX, localId);
 }
 
 function buildIncidentEvidenceSecretKey(localId: string): string {
-  return `${INCIDENT_EVIDENCE_SECRET_PREFIX}:${cleanValue(localId)}`;
+  return buildDynamicSecureStoreKey(INCIDENT_EVIDENCE_SECRET_PREFIX, localId);
 }
 
 function buildPhotoSecretKey(localId: string): string {
-  return `${PHOTO_SECRET_PREFIX}:${cleanValue(localId)}`;
+  return buildDynamicSecureStoreKey(PHOTO_SECRET_PREFIX, localId);
 }
 
 function normalizeStoredIncidentSecret(
@@ -259,7 +271,7 @@ function normalizeStoredWebSession(
     accessToken: cleanValue(value?.accessToken) || null,
     expiresAt: cleanValue(value?.expiresAt) || null,
     username: cleanValue(value?.username) || null,
-    role: cleanValue(value?.role) || null,
+    role: cleanValue(value?.role) ? normalizeWebRole(value?.role) : null,
   };
 }
 

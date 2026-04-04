@@ -73,6 +73,10 @@ export const casesRepository = {
         if (status === 'failed') {
           item.syncAttempts = item.syncAttempts + 1
           item.lastSyncError = sanitizeStoredSyncMessage(error)
+        } else if (status === 'pending') {
+          item.lastSyncError = sanitizeStoredSyncMessage(error)
+        } else if (status === 'syncing') {
+          item.lastSyncError = null
         } else if (status === 'synced') {
           item.lastSyncError = null
         }

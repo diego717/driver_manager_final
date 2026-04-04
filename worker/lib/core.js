@@ -1,4 +1,13 @@
 export const DEFAULT_REALTIME_TENANT_ID = "default";
+export const WEB_CANONICAL_ROLES = [
+  "admin",
+  "supervisor",
+  "tecnico",
+  "solo_lectura",
+  "super_admin",
+  "platform_owner",
+];
+export const WEB_CANONICAL_ROLE_SET = new Set(WEB_CANONICAL_ROLES);
 
 export class HttpError extends Error {
   constructor(status, message) {
@@ -14,6 +23,62 @@ export function nowIso() {
 export function normalizeOptionalString(value, fallback = "") {
   if (value === null || value === undefined) return fallback;
   return String(value).trim();
+}
+
+export function canonicalizeWebRole(roleRaw, fallback = "admin") {
+  const normalized = normalizeOptionalString(roleRaw, fallback).toLowerCase();
+  if (!normalized) {
+    return normalizeOptionalString(fallback, "admin").toLowerCase() || "admin";
+  }
+  if (normalized === "viewer") return "solo_lectura";
+  return normalized;
+}
+
+export function isValidWebRole(roleRaw) {
+  return WEB_CANONICAL_ROLE_SET.has(canonicalizeWebRole(roleRaw, ""));
+}
+
+function resolveRoleFromActor(actorOrRole, fallback = "") {
+  return actorOrRole && typeof actorOrRole === "object"
+    ? canonicalizeWebRole(actorOrRole.role, fallback)
+    : canonicalizeWebRole(actorOrRole, fallback);
+}
+
+export function canManagePlatform(actorOrRole) {
+  const role = resolveRoleFromActor(actorOrRole, "");
+  return role === "platform_owner" || role === "super_admin";
+}
+
+export function canManageUsers(actorOrRole) {
+  const role = resolveRoleFromActor(actorOrRole, "");
+  return role === "admin" || canManagePlatform(role);
+}
+
+export function canManageTechnicians(actorOrRole) {
+  return canManageUsers(actorOrRole);
+}
+
+export function canAssignTechnicians(actorOrRole) {
+  const role = resolveRoleFromActor(actorOrRole, "");
+  return role === "admin" || role === "supervisor" || canManagePlatform(role);
+}
+
+export function canWriteOperationalData(actorOrRole) {
+  const role = resolveRoleFromActor(actorOrRole, "");
+  return (
+    role === "admin" ||
+    role === "supervisor" ||
+    role === "tecnico" ||
+    canManagePlatform(role)
+  );
+}
+
+export function canReadOperationalData(actorOrRole) {
+  return WEB_CANONICAL_ROLE_SET.has(resolveRoleFromActor(actorOrRole, ""));
+}
+
+export function canDeleteCriticalData(actorOrRole) {
+  return canManagePlatform(actorOrRole);
 }
 
 export function normalizeRealtimeTenantId(value) {
@@ -94,7 +159,7 @@ export function isMissingIncidentTimingColumnsError(error) {
   );
 }
 
-export function isMissingIncidentReadModelColumnsError(error) {
+export function isMissingIncidentGpsColumnsError(error) {
   const message = normalizeOptionalString(error?.message, "").toLowerCase();
   if (!(message.includes("no such column") || message.includes("has no column named"))) {
     return false;
@@ -106,7 +171,16 @@ export function isMissingIncidentReadModelColumnsError(error) {
     message.includes("gps_captured_at") ||
     message.includes("gps_capture_source") ||
     message.includes("gps_capture_status") ||
-    message.includes("gps_capture_note") ||
+    message.includes("gps_capture_note")
+  );
+}
+
+export function isMissingIncidentDispatchColumnsError(error) {
+  const message = normalizeOptionalString(error?.message, "").toLowerCase();
+  if (!(message.includes("no such column") || message.includes("has no column named"))) {
+    return false;
+  }
+  return (
     message.includes("target_lat") ||
     message.includes("target_lng") ||
     message.includes("target_label") ||
@@ -120,6 +194,13 @@ export function isMissingIncidentReadModelColumnsError(error) {
     message.includes("dispatch_contact_name") ||
     message.includes("dispatch_contact_phone") ||
     message.includes("dispatch_notes")
+  );
+}
+
+export function isMissingIncidentReadModelColumnsError(error) {
+  return (
+    isMissingIncidentGpsColumnsError(error) ||
+    isMissingIncidentDispatchColumnsError(error)
   );
 }
 

@@ -7,6 +7,7 @@ import { extractApiError } from "@/src/api/client";
 import { listInstallations } from "@/src/api/incidents";
 import { getDashboardStatistics } from "@/src/api/statistics";
 import { readStoredWebSession } from "@/src/api/webAuth";
+import { canManageTechnicians as canManageTechnicianDirectory } from "@/src/auth/roles";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -151,8 +152,7 @@ export default function TodayScreen() {
     () => sortRecordsForAction(installations),
     [installations],
   );
-  const canManageTechnicians =
-    webSessionRole === "admin" || webSessionRole === "super_admin" || webSessionRole === "platform_owner";
+  const canManageTechnicians = canManageTechnicianDirectory(webSessionRole);
   const focusRecord = prioritizedInstallations[0] || null;
   const focusSummary = useMemo(
     () => deriveRecordIncidentSummary(focusRecord),

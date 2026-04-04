@@ -82,8 +82,20 @@ function getIncidentSortWeight(incident: Pick<Incident, "incident_status" | "sev
   return statusWeight * 1_000_000_000 + severityWeight * 1_000_000 + createdAtWeight;
 }
 
-function sortQueueIncidents(incidents: QueueIncident[]): QueueIncident[] {
+function sortIncidentsByPriority<T extends Pick<Incident, "incident_status" | "severity" | "created_at">>(
+  incidents: T[],
+): T[] {
   return [...incidents].sort((left, right) => getIncidentSortWeight(left) - getIncidentSortWeight(right));
+}
+
+function formatIncidentAge(createdAt: string | null | undefined, nowMs: number): string {
+  const createdMs = new Date(createdAt || 0).getTime();
+  if (!Number.isFinite(createdMs) || createdMs <= 0) return "Sin hora";
+  const deltaSeconds = Math.max(0, Math.round((nowMs - createdMs) / 1000));
+  if (deltaSeconds < 60) return "Ahora";
+  if (deltaSeconds < 3600) return `Hace ${Math.floor(deltaSeconds / 60)} min`;
+  if (deltaSeconds < 86_400) return `Hace ${Math.floor(deltaSeconds / 3600)} h`;
+  return `Hace ${Math.floor(deltaSeconds / 86_400)} d`;
 }
 
 export default function WorkTabScreen() {
@@ -226,10 +238,10 @@ export default function WorkTabScreen() {
 
         const sourceLabel =
           queueSource === "installation"
-            ? `Caso #${queuedIncident.installation_id} · ${assignment?.assignment_role || "owner"}`
+            ? `Caso #${queuedIncident.installation_id} - ${assignment?.assignment_role || "owner"}`
             : queueSource === "asset"
-              ? `${queuedIncident.asset_code || `Activo #${queuedIncident.asset_id || "-"}`} · ${assignment?.assignment_role || "owner"}`
-              : `Asignada directo · ${assignment?.assignment_role || "owner"}`;
+              ? `${queuedIncident.asset_code || `Activo #${queuedIncident.asset_id || "-"}`} - ${assignment?.assignment_role || "owner"}`
+              : `Asignada directo - ${assignment?.assignment_role || "owner"}`;
 
         rememberIncident(
           {
@@ -246,7 +258,7 @@ export default function WorkTabScreen() {
         );
       });
 
-      const nextQueue = sortQueueIncidents(Array.from(queueMap.values()));
+      const nextQueue = sortIncidentsByPriority(Array.from(queueMap.values()));
       setQueueIncidents(nextQueue);
       if (!routeInstallationId && nextQueue.length > 0) {
         setInstallationId(String(nextQueue[0].installation_id));
@@ -400,6 +412,10 @@ export default function WorkTabScreen() {
     () => incidents.filter((incident) => normalizeIncidentStatus(incident.incident_status) !== "resolved"),
     [incidents],
   );
+  const sortedActiveIncidents = useMemo(
+    () => sortIncidentsByPriority(activeIncidents),
+    [activeIncidents],
+  );
   const queueBuckets = useMemo(() => summarizeIncidentBuckets(queueIncidents), [queueIncidents]);
   const queueInstallationIds = useMemo(
     () => Array.from(new Set(queueIncidents.map((incident) => incident.installation_id))).sort((left, right) => left - right),
@@ -418,24 +434,11 @@ export default function WorkTabScreen() {
     () => incidents.filter((incident) => normalizeIncidentStatus(incident.incident_status) === "resolved"),
     [incidents],
   );
-  const missionIncident = useMemo(() => {
-    const priority = new Map<IncidentStatus, number>([
-      ["in_progress", 0],
-      ["paused", 1],
-      ["open", 2],
-      ["resolved", 3],
-    ]);
-    return [...activeIncidents].sort((left, right) => {
-      const leftStatus = normalizeIncidentStatus(left.incident_status);
-      const rightStatus = normalizeIncidentStatus(right.incident_status);
-      const statusDelta = (priority.get(leftStatus) ?? 99) - (priority.get(rightStatus) ?? 99);
-      if (statusDelta !== 0) return statusDelta;
-      const leftSeverity = left.severity === "critical" ? 0 : left.severity === "high" ? 1 : 2;
-      const rightSeverity = right.severity === "critical" ? 0 : right.severity === "high" ? 1 : 2;
-      if (leftSeverity !== rightSeverity) return leftSeverity - rightSeverity;
-      return new Date(left.created_at || 0).getTime() - new Date(right.created_at || 0).getTime();
-    })[0] ?? null;
-  }, [activeIncidents]);
+  const missionIncident = useMemo(() => sortedActiveIncidents[0] ?? null, [sortedActiveIncidents]);
+  const remainingActiveIncidents = useMemo(
+    () => sortedActiveIncidents.filter((incident) => incident.id !== missionIncident?.id),
+    [missionIncident?.id, sortedActiveIncidents],
+  );
   const activeTrackingUrl = trackingLink?.active === true
     ? String(trackingLink?.tracking_url || "").trim()
     : "";
@@ -501,19 +504,69 @@ export default function WorkTabScreen() {
     showInstallationTag?: boolean;
     showQueueMeta?: boolean;
     detailButtonLabel?: string;
+    priorityIndex?: number;
   }) => {
     const status = normalizeIncidentStatus(incident.incident_status);
     const busy = updatingIncidentId === incident.id;
     const estimated = resolveIncidentEstimatedDurationSeconds(incident);
     const runtime = resolveIncidentRealDurationSeconds(incident, nowMs);
     const queueIncident = incident as QueueIncident;
-
-    const actionButtons: Array<{ key: IncidentStatus; label: string; primary?: boolean }> = [
-      { key: "open", label: "Abrir" },
-      { key: "in_progress", label: status === "paused" ? "Reanudar" : "En curso" },
-      { key: "paused", label: "Pausar" },
-      { key: "resolved", label: "Resolver", primary: true },
-    ];
+    const priorityText =
+      options?.priorityIndex === undefined
+        ? "Incidencia"
+        : options.priorityIndex === 0
+          ? "Prioridad 1"
+          : `Cola ${options.priorityIndex + 1}`;
+    const ageLabel = formatIncidentAge(incident.created_at, nowMs);
+    const priorityTone =
+      incident.severity === "critical"
+        ? {
+            backgroundColor: palette.warningBg,
+            borderColor: palette.warningText,
+            textColor: palette.warningText,
+          }
+        : status === "in_progress"
+          ? {
+              backgroundColor: palette.infoBg,
+              borderColor: palette.infoBorder,
+              textColor: palette.infoText,
+            }
+          : {
+              backgroundColor: palette.heroEyebrowBg,
+              borderColor: palette.heroBorder,
+              textColor: palette.heroEyebrowText,
+            };
+    const primaryAction =
+      status === "in_progress"
+        ? {
+            label: "Abrir seguimiento",
+            onPress: () =>
+              router.push(
+                `/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
+              ),
+          }
+        : {
+            label: status === "paused" ? "Reanudar ahora" : "Empezar ahora",
+            onPress: () => {
+              void onChangeStatus(incident, "in_progress");
+            },
+          };
+    const secondaryStatusAction =
+      status === "in_progress"
+        ? {
+            label: "Pausar",
+            onPress: () => {
+              void onChangeStatus(incident, "paused");
+            },
+          }
+        : status === "paused"
+          ? {
+              label: "Resolver",
+              onPress: () => {
+                void onChangeStatus(incident, "resolved");
+              },
+            }
+          : null;
 
     return (
       <View
@@ -523,7 +576,34 @@ export default function WorkTabScreen() {
           { backgroundColor: palette.cardBg, borderColor: palette.cardBorder },
         ]}
       >
+        <View style={styles.cardSignalRow}>
+          <View
+            style={[
+              styles.priorityPill,
+              {
+                backgroundColor: priorityTone.backgroundColor,
+                borderColor: priorityTone.borderColor,
+              },
+            ]}
+          >
+            <Text style={[styles.priorityPillText, { color: priorityTone.textColor }]}>
+              {priorityText}
+            </Text>
+          </View>
+          <Text style={[styles.metaText, { color: palette.textMuted }]}>
+            {ageLabel}  -  {formatDateTime(incident.created_at)}
+          </Text>
+        </View>
+
         <View style={styles.cardHeader}>
+          <View style={styles.cardHeaderText}>
+            <Text style={[styles.noteText, { color: palette.textPrimary }]}>
+              {incident.note || "Sin detalle operativo."}
+            </Text>
+            <Text style={[styles.cardSummaryText, { color: palette.textSecondary }]}>
+              #{incident.id}  -  {getSeverityLabel(incident.severity)}  -  {incident.photos?.length ?? 0} fotos
+            </Text>
+          </View>
           <View style={styles.badgesRow}>
             <StatusChip value={status} />
             <StatusChip
@@ -531,23 +611,20 @@ export default function WorkTabScreen() {
               value={incident.severity === "critical" ? "critical" : "open"}
             />
           </View>
-          <Text style={[styles.metaText, { color: palette.textMuted }]}>
-            #{incident.id} · {formatDateTime(incident.created_at)}
-          </Text>
         </View>
 
-        <Text style={[styles.noteText, { color: palette.textPrimary }]}>
-          {incident.note || "Sin detalle operativo."}
-        </Text>
-        <Text style={[styles.supportingText, { color: palette.textSecondary }]}>
-          Usuario: {incident.reporter_username || "-"} · Fotos: {incident.photos?.length ?? 0} ·
-          Severidad: {getSeverityLabel(incident.severity)}
-        </Text>
-        {options?.showInstallationTag ? (
-          <Text style={[styles.supportingText, { color: palette.textMuted }]}>
-            Caso #{incident.installation_id}
-          </Text>
-        ) : null}
+        <View style={styles.infoPillsRow}>
+          <View style={[styles.infoPill, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+            <Text style={[styles.infoPillText, { color: palette.textSecondary }]}>
+              Usuario {incident.reporter_username || "-"}
+            </Text>
+          </View>
+          <View style={[styles.infoPill, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+            <Text style={[styles.infoPillText, { color: palette.textSecondary }]}>
+              {options?.showInstallationTag ? `Caso #${incident.installation_id}` : ageLabel}
+            </Text>
+          </View>
+        </View>
         {options?.showQueueMeta && queueIncident.queue_source_label ? (
           <Text style={[styles.supportingText, { color: palette.textMuted }]}>
             Cola: {queueIncident.queue_source_label}
@@ -560,7 +637,7 @@ export default function WorkTabScreen() {
         ) : null}
         {incident.checklist_items?.length ? (
           <Text style={[styles.supportingText, { color: palette.textSecondary }]}>
-            Checklist: {incident.checklist_items.slice(0, 3).join(" · ")}
+            Checklist: {incident.checklist_items.slice(0, 3).join("  -  ")}
           </Text>
         ) : null}
 
@@ -570,49 +647,37 @@ export default function WorkTabScreen() {
           <RuntimeChip label="Real" value={formatDuration(runtime)} />
         </View>
 
-        <View style={styles.statusRow}>
-          {actionButtons.map((action) => {
-            const selected = status === action.key;
-            return (
-              <TouchableOpacity
-                key={`${incident.id}-${action.key}`}
-                style={[
-                  styles.statusButton,
-                  {
-                    backgroundColor:
-                      selected || action.primary
-                        ? palette.primaryButtonBg
-                        : palette.refreshBg,
-                    borderColor: action.primary
-                      ? palette.primaryButtonBg
-                      : palette.inputBorder,
-                  },
-                ]}
-                onPress={() => {
-                  void onChangeStatus(incident, action.key);
-                }}
-                disabled={busy}
-              >
-                {busy && action.primary ? (
-                  <ActivityIndicator size="small" color={palette.primaryButtonText} />
-                ) : (
-                  <Text
-                    style={[
-                      styles.statusButtonText,
-                      {
-                        color:
-                          selected || action.primary
-                            ? palette.primaryButtonText
-                            : palette.refreshText,
-                      },
-                    ]}
-                  >
-                    {action.label}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            );
-          })}
+        <View style={styles.priorityActionsRow}>
+          <TouchableOpacity
+            style={[
+              styles.priorityPrimaryAction,
+              { backgroundColor: palette.primaryButtonBg, borderColor: palette.primaryButtonBg },
+            ]}
+            onPress={primaryAction.onPress}
+            disabled={busy}
+          >
+            {busy ? (
+              <ActivityIndicator size="small" color={palette.primaryButtonText} />
+            ) : (
+              <Text style={[styles.priorityPrimaryText, { color: palette.primaryButtonText }]}>
+                {primaryAction.label}
+              </Text>
+            )}
+          </TouchableOpacity>
+          {secondaryStatusAction ? (
+            <TouchableOpacity
+              style={[
+                styles.prioritySecondaryAction,
+                { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
+              ]}
+              onPress={secondaryStatusAction.onPress}
+              disabled={busy}
+            >
+              <Text style={[styles.prioritySecondaryText, { color: palette.refreshText }]}>
+                {secondaryStatusAction.label}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         <View style={styles.actionsRow}>
@@ -665,7 +730,6 @@ export default function WorkTabScreen() {
       </View>
     );
   }, [nowMs, onChangeStatus, onSelectInstallation, palette, router, updatingIncidentId]);
-
   if (checkingSession) {
     return (
       <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
@@ -803,7 +867,7 @@ export default function WorkTabScreen() {
             ) : null}
             <Text style={[styles.supportingText, { color: palette.textMuted }]}>
               {linkedTechnician.employee_code
-                ? `Legajo ${linkedTechnician.employee_code} · `
+                ? `Legajo ${linkedTechnician.employee_code} - `
                 : ""}
               {queueInstallationIds.length} casos en cola
             </Text>
@@ -879,11 +943,12 @@ export default function WorkTabScreen() {
               body="Cuando te asignen un caso, una incidencia o un activo, va a aparecer primero aqui."
             />
           ) : (
-            queueIncidents.map((incident) =>
+            queueIncidents.map((incident, index) =>
               renderIncidentCard(incident, {
                 showInstallationTag: true,
                 showQueueMeta: true,
                 detailButtonLabel: "Seguir incidencia",
+                priorityIndex: index,
               }),
             )
           )}
@@ -984,8 +1049,8 @@ export default function WorkTabScreen() {
               <StatusChip value={missionIncident.incident_status} />
             </View>
             <Text style={[styles.missionSupport, { color: palette.textSecondary }]}>
-              #{missionIncident.id} · {getSeverityLabel(missionIncident.severity)} · fotos{" "}
-              {missionIncident.photos?.length ?? 0} · {missionIncident.reporter_username || "-"}
+              #{missionIncident.id} - {getSeverityLabel(missionIncident.severity)} - fotos{" "}
+              {missionIncident.photos?.length ?? 0} - {missionIncident.reporter_username || "-"}
             </Text>
             <View style={styles.runtimeGrid}>
               <RuntimeChip
@@ -1215,152 +1280,24 @@ export default function WorkTabScreen() {
       ) : null}
 
       <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>
-        Cola del caso ({activeIncidents.length})
+        {missionIncident ? `Sigue despues de la mision (${remainingActiveIncidents.length})` : `Cola del caso (${sortedActiveIncidents.length})`}
       </Text>
-      {activeIncidents.length === 0 ? (
+      {sortedActiveIncidents.length === 0 ? (
         <EmptyStateCard
           title="Sin incidencias activas."
           body="Este caso no tiene incidencias abiertas, en curso o pausadas."
         />
+      ) : remainingActiveIncidents.length === 0 && missionIncident ? (
+        <EmptyStateCard
+          title="Solo tienes una incidencia en foco."
+          body="El resto del caso esta limpio por ahora. Cuando entre otra incidencia activa va a aparecer debajo."
+        />
       ) : (
-        activeIncidents.map((incident) => {
-          const status = normalizeIncidentStatus(incident.incident_status);
-          const busy = updatingIncidentId === incident.id;
-          const estimated = resolveIncidentEstimatedDurationSeconds(incident);
-          const runtime = resolveIncidentRealDurationSeconds(incident, nowMs);
-
-          const actionButtons: Array<{ key: IncidentStatus; label: string; primary?: boolean }> = [
-            { key: "open", label: "Abrir" },
-            { key: "in_progress", label: status === "paused" ? "Reanudar" : "En curso" },
-            { key: "paused", label: "Pausar" },
-            { key: "resolved", label: "Resolver", primary: true },
-          ];
-
-          return (
-            <View
-              key={incident.id}
-              style={[
-                styles.card,
-                { backgroundColor: palette.cardBg, borderColor: palette.cardBorder },
-              ]}
-            >
-              <View style={styles.cardHeader}>
-                <View style={styles.badgesRow}>
-                  <StatusChip value={status} />
-                  <StatusChip
-                    kind="attention"
-                    value={incident.severity === "critical" ? "critical" : "open"}
-                  />
-                </View>
-                <Text style={[styles.metaText, { color: palette.textMuted }]}>
-                  #{incident.id} · {formatDateTime(incident.created_at)}
-                </Text>
-              </View>
-
-              <Text style={[styles.noteText, { color: palette.textPrimary }]}>
-                {incident.note || "Sin detalle operativo."}
-              </Text>
-              <Text style={[styles.supportingText, { color: palette.textSecondary }]}>
-                Usuario: {incident.reporter_username || "-"} · Fotos: {incident.photos?.length ?? 0} ·
-                Severidad: {getSeverityLabel(incident.severity)}
-              </Text>
-              {incident.evidence_note?.trim() ? (
-                <Text style={[styles.supportingText, { color: palette.textSecondary }]}>
-                  Nota operativa: {incident.evidence_note}
-                </Text>
-              ) : null}
-              {incident.checklist_items?.length ? (
-                <Text style={[styles.supportingText, { color: palette.textSecondary }]}>
-                  Checklist: {incident.checklist_items.slice(0, 3).join(" · ")}
-                </Text>
-              ) : null}
-
-              <View style={styles.runtimeGrid}>
-                <RuntimeChip label="Estado" value={getIncidentStatusLabel(status)} />
-                <RuntimeChip label="Estimado" value={formatDuration(estimated)} />
-                <RuntimeChip label="Real" value={formatDuration(runtime)} />
-              </View>
-
-              <View style={styles.statusRow}>
-                {actionButtons.map((action) => {
-                  const selected = status === action.key;
-                  return (
-                    <TouchableOpacity
-                      key={`${incident.id}-${action.key}`}
-                      style={[
-                        styles.statusButton,
-                        {
-                          backgroundColor:
-                            selected || action.primary
-                              ? palette.primaryButtonBg
-                              : palette.refreshBg,
-                          borderColor: action.primary
-                            ? palette.primaryButtonBg
-                            : palette.inputBorder,
-                        },
-                      ]}
-                      onPress={() => {
-                        void onChangeStatus(incident, action.key);
-                      }}
-                      disabled={busy}
-                    >
-                      {busy && action.primary ? (
-                        <ActivityIndicator size="small" color={palette.primaryButtonText} />
-                      ) : (
-                        <Text
-                          style={[
-                            styles.statusButtonText,
-                            {
-                              color:
-                                selected || action.primary
-                                  ? palette.primaryButtonText
-                                  : palette.refreshText,
-                            },
-                          ]}
-                        >
-                          {action.label}
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              <View style={styles.actionsRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.detailButton,
-                    { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-                  ]}
-                  onPress={() =>
-                    router.push(
-                      `/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
-                    )
-                  }
-                >
-                  <Text style={[styles.detailButtonText, { color: palette.refreshText }]}>
-                    Ver detalle
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.uploadButton,
-                    { backgroundColor: palette.uploadButtonBg, borderColor: palette.uploadButtonBg },
-                  ]}
-                  onPress={() =>
-                    router.push(
-                      `/incident/upload?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
-                    )
-                  }
-                >
-                  <Text style={[styles.uploadButtonText, { color: palette.uploadButtonText }]}>
-                    Subir evidencia
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          );
-        })
+        remainingActiveIncidents.map((incident, index) =>
+          renderIncidentCard(incident, {
+            priorityIndex: index + (missionIncident ? 1 : 0),
+          }),
+        )
       )}
 
 
@@ -1710,17 +1647,44 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 10,
   },
+  cardSignalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  priorityPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  priorityPillText: {
+    fontSize: 10.5,
+    fontFamily: fontFamilies.mono,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  cardHeaderText: {
+    flex: 1,
+    gap: 4,
+  },
   badgesRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-    flex: 1,
+    justifyContent: "flex-end",
   },
   metaText: {
     fontSize: 12,
     fontFamily: fontFamilies.mono,
     textAlign: "right",
     flexShrink: 1,
+  },
+  cardSummaryText: {
+    fontSize: 12.5,
+    lineHeight: 17,
+    fontFamily: fontFamilies.regular,
   },
   noteText: {
     fontSize: 14,
@@ -1731,6 +1695,55 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     lineHeight: 18,
     fontFamily: fontFamilies.regular,
+  },
+  infoPillsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  infoPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  infoPillText: {
+    fontSize: 11,
+    fontFamily: fontFamilies.mono,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  priorityActionsRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  priorityPrimaryAction: {
+    flex: 1.3,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    borderWidth: 1,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+  },
+  priorityPrimaryText: {
+    fontSize: 13.5,
+    fontFamily: fontFamilies.bold,
+  },
+  prioritySecondaryAction: {
+    flex: 1,
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    borderWidth: 1,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+  },
+  prioritySecondaryText: {
+    fontSize: 12,
+    fontFamily: fontFamilies.mono,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   statusRow: {
     flexDirection: "row",
@@ -1794,3 +1807,4 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.regular,
   },
 });
+

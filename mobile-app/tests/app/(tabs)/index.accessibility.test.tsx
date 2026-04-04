@@ -19,6 +19,12 @@ const driversApiMocks = vi.hoisted(() => ({
   listDrivers: vi.fn(),
   uploadDriver: vi.fn(),
 }));
+const techniciansApiMocks = vi.hoisted(() => ({
+  getCurrentLinkedTechnicianContext: vi.fn(async () => ({
+    user: { username: "usuario_web" },
+    technician: null,
+  })),
+}));
 
 const secureStorageMocks = vi.hoisted(() => ({
   getStoredWebAccessUsername: vi.fn(async () => "usuario_web"),
@@ -277,6 +283,7 @@ vi.mock("@/src/api/incidents", () => incidentsApiMocks);
 vi.mock("@/src/api/assets", () => assetsApiMocks);
 vi.mock("@/src/api/statistics", () => statisticsApiMocks);
 vi.mock("@/src/api/drivers", () => driversApiMocks);
+vi.mock("@/src/api/technicians", () => techniciansApiMocks);
 vi.mock("@/src/storage/secure", () => secureStorageMocks);
 vi.mock("@/src/api/webAuth", () => webAuthMocks);
 vi.mock("@/src/security/startup-session-policy", () => startupSessionPolicyMocks);
@@ -287,6 +294,16 @@ vi.mock("@/src/components/SyncStatusBanner", () => ({
 vi.mock("@/src/services/sync/incident-outbox-service", () => ({
   enqueueCreateIncident: vi.fn(),
   registerIncidentExecutors: vi.fn(),
+}));
+vi.mock("@/src/services/sync/photo-outbox-service", () => ({
+  registerPhotoExecutors: vi.fn(),
+}));
+vi.mock("@/src/services/sync/incident-evidence-outbox-service", () => ({
+  registerIncidentEvidenceExecutors: vi.fn(),
+}));
+vi.mock("@/src/services/sync/case-outbox-service", () => ({
+  enqueueCreateCase: vi.fn(),
+  registerCaseExecutors: vi.fn(),
 }));
 vi.mock("@/src/services/sync/sync-runner", () => ({
   runSync: vi.fn(),

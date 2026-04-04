@@ -164,7 +164,7 @@
         function openCreateLoanModal(asset) {
             if (!options.requireActiveSession()) return;
             if (!options.canCurrentUserEditAssets()) {
-                options.showNotification('Solo admin/super_admin puede registrar prestamos.', 'warning');
+                options.showNotification('Solo admin o plataforma puede registrar prestamos.', 'warning');
                 return;
             }
 
@@ -240,7 +240,7 @@
         function openReturnLoanModal(asset, loan) {
             if (!options.requireActiveSession()) return;
             if (!options.canCurrentUserEditAssets()) {
-                options.showNotification('Solo admin/super_admin puede registrar devoluciones.', 'warning');
+                options.showNotification('Solo admin o plataforma puede registrar devoluciones.', 'warning');
                 return;
             }
 
@@ -838,7 +838,7 @@
         async function updateAssetStatusFromWeb(assetOrId, nextStatus) {
             if (!options.requireActiveSession()) return;
             if (!options.canCurrentUserEditAssets()) {
-                options.showNotification('Solo admin/super_admin puede cambiar estado de equipos.', 'warning');
+                options.showNotification('Solo admin o plataforma puede cambiar estado de equipos.', 'warning');
                 return;
             }
 
@@ -887,7 +887,7 @@
         async function deleteAssetFromWeb(assetOrId) {
             if (!options.requireActiveSession()) return;
             if (!options.canCurrentUserEditAssets()) {
-                options.showNotification('Solo admin/super_admin puede eliminar equipos.', 'warning');
+                options.showNotification('Solo admin o plataforma puede eliminar equipos.', 'warning');
                 return;
             }
 

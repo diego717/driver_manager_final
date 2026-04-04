@@ -13,6 +13,7 @@ const axiosCreateMock = vi.hoisted(() =>
 );
 
 vi.mock("expo-secure-store", () => ({
+  AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: "after_first_unlock_this_device_only",
   setItemAsync: vi.fn(async (key: string, value: string) => {
     secureState.set(key, value);
   }),
@@ -27,6 +28,15 @@ vi.mock("axios", () => ({
     create: axiosCreateMock,
   },
   create: axiosCreateMock,
+}));
+
+vi.mock("../db/repositories/incidents-repository", () => ({
+  incidentsRepository: {
+    replaceRemoteInstallationSnapshots: vi.fn(async () => undefined),
+    listCachedIncidentsByInstallation: vi.fn(async () => []),
+    upsertRemoteIncidentSnapshot: vi.fn(async () => undefined),
+    getCachedIncidentByRemoteId: vi.fn(async () => null),
+  },
 }));
 
 import {

@@ -7,6 +7,8 @@
 import { flush } from './sync-engine'
 import { syncJobsRepository } from '../../db/repositories/sync-jobs-repository'
 import { syncStateStore } from './sync-state-store'
+import { getStoredWebAccessExpiresAt, getStoredWebAccessToken } from '../../storage/secure'
+import { resolveWebSession } from '../../api/webSession'
 
 /**
  * Trigger a sync flush if there is an active session.
@@ -24,6 +26,15 @@ async function _runSync(options?: { force?: boolean }): Promise<void> {
     syncStateStore.setPendingCount(pending)
 
     if (pending === 0) return
+
+    const session = await resolveWebSession({
+      getAccessToken: getStoredWebAccessToken,
+      getExpiresAt: getStoredWebAccessExpiresAt,
+    })
+    if (session.state !== 'active') {
+      syncStateStore.setError('Sesion web requerida. Inicia sesion para continuar la sincronizacion.')
+      return
+    }
 
     await flush(options)
   } catch (err) {

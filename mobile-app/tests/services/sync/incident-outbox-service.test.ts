@@ -6,8 +6,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  */
 
 // ─── Mock WatermelonDB before any imports touch it ───────────────────────────
-vi.mock('@nozbe/watermelondb', () => ({}))
-vi.mock('@nozbe/watermelondb/adapters/sqlite', () => ({}))
 
 // ─── Mock the repository layer ───────────────────────────────────────────────
 const mockCreatedIncident = vi.hoisted(() => ({
@@ -57,6 +55,12 @@ vi.mock('../../../src/db/repositories/incidents-repository', () => ({
 
 vi.mock('../../../src/db/repositories/sync-jobs-repository', () => ({
   syncJobsRepository: mockSyncJobsRepo,
+}))
+
+vi.mock('../../../src/db/repositories/cases-repository', () => ({
+  casesRepository: {
+    getByLocalId: vi.fn(),
+  },
 }))
 
 // ─── Mock API (should not be called by enqueue) ──────────────────────────────

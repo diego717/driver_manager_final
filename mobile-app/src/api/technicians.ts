@@ -331,16 +331,18 @@ export async function listAssignedIncidentsMap(): Promise<{
       ? response.incidents.map(normalizeAssignedIncidentMapItem)
       : [];
     await assignedIncidentsMapRepository.replaceAll(incidents);
-    if (technician) {
-      await setStoredLinkedTechnician({
-        id: technician.id,
-        tenantId: technician.tenant_id,
-        webUserId: technician.web_user_id,
-        displayName: technician.display_name,
-        employeeCode: technician.employee_code || null,
-        isActive: technician.is_active,
-      });
-    }
+    await setStoredLinkedTechnician(
+      technician
+        ? {
+            id: technician.id,
+            tenantId: technician.tenant_id,
+            webUserId: technician.web_user_id,
+            displayName: technician.display_name,
+            employeeCode: technician.employee_code || null,
+            isActive: technician.is_active,
+          }
+        : null,
+    );
     lastAssignedIncidentsMapSource = "network";
     return {
       technician,

@@ -1,3 +1,5 @@
+import { canonicalizeWebRole } from "../lib/core.js";
+
 export function createWebAuthRouteHandlers({
   HttpError,
   DEFAULT_REALTIME_TENANT_ID,
@@ -78,7 +80,7 @@ export function createWebAuthRouteHandlers({
   }
 
   function isPlatformOwnerRole(role) {
-    const normalizedRole = normalizeOptionalString(role, "").toLowerCase();
+    const normalizedRole = canonicalizeWebRole(role, "");
     return normalizedRole === "platform_owner" || normalizedRole === "super_admin";
   }
 
@@ -376,7 +378,7 @@ export function createWebAuthRouteHandlers({
 
     const username = validateWebUsername(body?.username);
     const password = validateWebPassword(body?.password);
-    const role = normalizeWebRole(body?.role || "viewer");
+    const role = normalizeWebRole(body?.role || "solo_lectura");
     const sessionTenantId = normalizeRealtimeTenantId(session.tenant_id);
     const requestedTenantId = normalizeOptionalString(body?.tenant_id, "");
     const targetTenantId = requestedTenantId
@@ -582,7 +584,7 @@ export function createWebAuthRouteHandlers({
         FROM web_users
         WHERE tenant_id = ?
           AND id <> ?
-          AND LOWER(COALESCE(role, 'viewer')) IN ('platform_owner', 'super_admin')
+          AND LOWER(COALESCE(role, 'solo_lectura')) IN ('platform_owner', 'super_admin')
       `)
         .bind(DEFAULT_REALTIME_TENANT_ID, userId)
         .all();
@@ -651,9 +653,7 @@ export function createWebAuthRouteHandlers({
     ensureDbBinding(env);
 
     const session = await verifyWebAccessToken(request, env);
-    if (!["admin", "super_admin", "platform_owner"].includes(session.role)) {
-      throw new HttpError(403, "No tienes permisos para importar usuarios web.");
-    }
+    requireAdminRole(session.role);
 
     const body = await readWebAuthRequestBody(request, MAX_WEB_AUTH_IMPORT_BODY_BYTES);
 

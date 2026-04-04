@@ -207,6 +207,15 @@ vi.mock("@/src/session/web-session-store", () => webSessionStoreMocks);
 vi.mock("@/src/services/sync/incident-outbox-service", () => ({
   registerIncidentExecutors: vi.fn(),
 }));
+vi.mock("@/src/services/sync/photo-outbox-service", () => ({
+  registerPhotoExecutors: vi.fn(),
+}));
+vi.mock("@/src/services/sync/incident-evidence-outbox-service", () => ({
+  registerIncidentEvidenceExecutors: vi.fn(),
+}));
+vi.mock("@/src/services/sync/case-outbox-service", () => ({
+  registerCaseExecutors: vi.fn(),
+}));
 vi.mock("@/src/services/sync/sync-runner", () => syncRunnerMocks);
 
 import { RootLayoutNav } from "@/app/_layout";

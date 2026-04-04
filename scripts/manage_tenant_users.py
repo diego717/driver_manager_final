@@ -56,9 +56,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--password", help="Password del usuario a crear")
     parser.add_argument(
         "--role",
-        default="viewer",
-        choices=["viewer", "admin", "super_admin"],
-        help="Rol del usuario a crear (default: viewer)",
+        default="solo_lectura",
+        choices=["solo_lectura", "tecnico", "supervisor", "admin", "super_admin", "platform_owner", "viewer"],
+        help="Rol del usuario a crear (default: solo_lectura). 'viewer' se acepta solo por compatibilidad.",
     )
 
     args = parser.parse_args()

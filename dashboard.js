@@ -747,6 +747,7 @@ dashboardIncidents = window.createDashboardIncidents({
     bindIncidentEstimatedDurationFields,
     canCurrentUserEditAssets,
     canCurrentUserManageTechnicianAssignments,
+    canCurrentUserWriteOperationalData,
     closeActionModal,
     createMaterialIconNode,
     escapeHtml,
@@ -1123,13 +1124,15 @@ function canCurrentUserAssignPlatformSuperAdmin() {
 }
 
 function canCurrentUserManageTechnicians() {
-    const role = String(currentUser?.role || '').trim().toLowerCase();
-    return role === 'admin' || role === 'super_admin' || role === 'platform_owner';
+    return dashboardAuth.canCurrentUserManageTechnicians();
 }
 
 function canCurrentUserManageTechnicianAssignments() {
-    const role = String(currentUser?.role || '').trim().toLowerCase();
-    return role === 'admin' || role === 'super_admin' || role === 'platform_owner' || role === 'supervisor';
+    return dashboardAuth.canCurrentUserManageTechnicianAssignments();
+}
+
+function canCurrentUserWriteOperationalData() {
+    return dashboardAuth.canCurrentUserWriteOperationalData();
 }
 
 function resetTechniciansState() {
@@ -1216,9 +1219,12 @@ function repairTenantSectionMojibake(root) {
 function getTenantUserRoleOptions() {
     const options = [
         ['admin', 'Admin'],
-        ['viewer', 'Solo lectura'],
+        ['supervisor', 'Supervisor'],
+        ['tecnico', 'Tecnico'],
+        ['solo_lectura', 'Solo lectura'],
     ];
     if (canCurrentUserAssignPlatformSuperAdmin()) {
+        options.push(['super_admin', 'Super admin (legacy)']);
         options.push(['platform_owner', 'Platform owner']);
     }
     return options;
@@ -1255,10 +1261,18 @@ function buildTenantUserFields(user = null, tenantId = '') {
     const roleSelect = document.createElement('select');
     roleSelect.id = 'actionTenantUserRole';
     const normalizedTenantId = String(tenantId || user?.tenant_id || '').trim().toLowerCase();
+    const normalizedUserRole = String(user?.role || 'solo_lectura').trim().toLowerCase() === 'viewer'
+        ? 'solo_lectura'
+        : String(user?.role || 'solo_lectura').trim().toLowerCase();
     getTenantUserRoleOptions()
-        .filter(([value]) => value !== 'platform_owner' || normalizedTenantId === 'default')
+        .filter(([value]) => {
+        if ((value === 'platform_owner' || value === 'super_admin') && normalizedTenantId !== 'default') {
+            return false;
+        }
+        return true;
+        })
         .forEach(([value, label]) => {
-        const selected = value === (user?.role || 'viewer');
+        const selected = value === normalizedUserRole;
         roleSelect.appendChild(new Option(label, value, selected, selected));
         });
     grid.append(createModalInputGroup('Rol', roleSelect, { htmlFor: roleSelect.id }));
@@ -1324,7 +1338,7 @@ function openTenantUserCreateModal() {
         onSubmit: async () => {
             const username = String(document.getElementById('actionTenantUserUsername')?.value || '').trim();
             const password = String(document.getElementById('actionTenantUserPassword')?.value || '').trim();
-            const role = String(document.getElementById('actionTenantUserRole')?.value || 'viewer').trim().toLowerCase();
+            const role = String(document.getElementById('actionTenantUserRole')?.value || 'solo_lectura').trim().toLowerCase();
             const isActive = String(document.getElementById('actionTenantUserIsActive')?.value || '1').trim() === '1';
 
             if (!username) {
@@ -1369,7 +1383,7 @@ function openTenantUserEditModal(user) {
         focusId: 'actionTenantUserRole',
         fields: buildTenantUserFields(user, tenantId),
         onSubmit: async () => {
-            const role = String(document.getElementById('actionTenantUserRole')?.value || user?.role || 'viewer').trim().toLowerCase();
+            const role = String(document.getElementById('actionTenantUserRole')?.value || normalizedUserRole || 'solo_lectura').trim().toLowerCase();
             const isActive = String(document.getElementById('actionTenantUserIsActive')?.value || (user?.is_active ? '1' : '0')).trim() === '1';
 
             await api.updateWebUser(userId, {
@@ -1680,7 +1694,7 @@ function renderTenantDetail() {
                 const meta = document.createElement('small');
                 meta.className = 'settings-assignment-meta';
                 meta.textContent = [
-                    user.role || 'viewer',
+                    user.role || 'solo_lectura',
                     user.is_active ? 'activo' : 'inactivo',
                     user.last_login_at ? `ultimo login ${formatDateTime(user.last_login_at)}` : 'sin login',
                 ].join(' Â· ');

@@ -5,6 +5,7 @@ import { Platform } from "react-native";
 
 import { registerDeviceToken } from "@/src/api/devices";
 import { extractApiError } from "@/src/api/client";
+import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import {
   addNotificationListeners,
   configureNotificationHandler,
@@ -23,6 +24,7 @@ export interface UseNotificationsState {
 }
 
 export function useNotifications(): UseNotificationsState {
+  const { hasActiveSession } = useSharedWebSessionState();
   const [loading, setLoading] = useState(true);
   const [permissionStatus, setPermissionStatus] =
     useState<Notifications.PermissionStatus | null>(null);
@@ -58,23 +60,7 @@ export function useNotifications(): UseNotificationsState {
         setPermissionStatus(registration.permissionStatus);
         setExpoPushToken(registration.expoPushToken);
         setFcmPushToken(registration.fcmToken);
-
-        if (registration.fcmToken) {
-          const deviceModel = Constants.deviceName ?? null;
-          const appVersion =
-            Constants.expoConfig?.version ?? Constants.nativeAppVersion ?? null;
-
-          const registered = await registerDeviceToken({
-            fcmToken: registration.fcmToken,
-            deviceModel,
-            appVersion,
-            platform: Platform.OS,
-          });
-
-          if (mounted) {
-            setTokenRegisteredInApi(registered);
-          }
-        }
+        setTokenRegisteredInApi(null);
 
         const initialResponse =
           await Notifications.getLastNotificationResponseAsync();
@@ -94,6 +80,42 @@ export function useNotifications(): UseNotificationsState {
       disposeListeners();
     };
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    if (!hasActiveSession || !fcmPushToken) {
+      return () => {
+        mounted = false;
+      };
+    }
+
+    void (async () => {
+      try {
+        const deviceModel = Constants.deviceName ?? null;
+        const appVersion =
+          Constants.expoConfig?.version ?? Constants.nativeAppVersion ?? null;
+
+        const registered = await registerDeviceToken({
+          fcmToken: fcmPushToken,
+          deviceModel,
+          appVersion,
+          platform: Platform.OS,
+        });
+
+        if (!mounted) return;
+        setTokenRegisteredInApi(registered);
+      } catch (caughtError) {
+        if (!mounted) return;
+        setTokenRegisteredInApi(false);
+        setError(extractApiError(caughtError));
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [fcmPushToken, hasActiveSession]);
 
   return useMemo(
     () => ({

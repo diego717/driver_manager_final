@@ -27,6 +27,7 @@ import SyncStatusBanner from "@/src/components/SyncStatusBanner";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { triggerSuccessHaptic, triggerWarningHaptic } from "@/src/services/haptics";
 import { captureCurrentGpsSnapshot } from "@/src/services/location";
+import { canReachConfiguredApi } from "@/src/services/network/api-connectivity";
 import { enqueueCreateIncident, registerIncidentExecutors } from "@/src/services/sync/incident-outbox-service";
 import { runSync } from "@/src/services/sync/sync-runner";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
@@ -48,14 +49,7 @@ registerIncidentExecutors();
 
 /** Lightweight connectivity probe — no extra dependencies needed */
 async function isOnline(): Promise<boolean> {
-  try {
-    const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? "";
-    if (!apiBase) return true; // assume online if no base configured
-    await fetch(`${apiBase}/health`, { method: "HEAD", signal: AbortSignal.timeout(3000) });
-    return true;
-  } catch {
-    return false;
-  }
+  return canReachConfiguredApi();
 }
 
 const MIN_TOUCH_TARGET_SIZE = 44;
@@ -102,12 +96,18 @@ export default function CreateIncidentScreen() {
   const router = useRouter();
   const queryParams = useLocalSearchParams<{
     installationId?: string | string[];
+    localCaseLocalId?: string | string[];
     assetExternalCode?: string | string[];
     assetRecordId?: string | string[];
   }>();
   const palette = useAppPalette();
   const { checkingSession, hasActiveSession } = useSharedWebSessionState();
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
+  const [localCaseSummary, setLocalCaseSummary] = useState<{
+    localId: string;
+    clientName: string;
+    notes: string;
+  } | null>(null);
   const [reporterUsername, setReporterUsername] = useState("");
   const [linkedTechnician, setLinkedTechnician] = useState<TechnicianRecord | null>(null);
   const [note, setNote] = useState("");
@@ -130,6 +130,10 @@ export default function CreateIncidentScreen() {
     () => parsePositiveInt(queryParams.installationId),
     [queryParams.installationId],
   );
+  const localCaseLocalId = useMemo(
+    () => normalizeRouteParam(queryParams.localCaseLocalId).trim(),
+    [queryParams.localCaseLocalId],
+  );
   const assetExternalCode = useMemo(
     () => normalizeRouteParam(queryParams.assetExternalCode).trim(),
     [queryParams.assetExternalCode],
@@ -148,6 +152,12 @@ export default function CreateIncidentScreen() {
       }
     );
   }, [installationId, installations]);
+  const selectedCaseLabel = selectedCase?.client_name || localCaseSummary?.clientName || "Sin cliente";
+  const resolvedCaseTitle = installationId
+    ? `Caso #${installationId}`
+    : localCaseSummary
+      ? "Caso local pendiente"
+      : "Nueva incidencia";
   const requiresGpsOverride = gpsSnapshot.status !== "captured";
   const showGpsOverrideField = requiresGpsOverride;
 
@@ -182,6 +192,30 @@ export default function CreateIncidentScreen() {
     }
   }, [hasActiveSession, installationId, notify]);
 
+  const loadLocalCaseSummary = useCallback(async () => {
+    if (!hasActiveSession || !localCaseLocalId) {
+      setLocalCaseSummary(null);
+      return;
+    }
+
+    try {
+      const { casesRepository } = await import("@/src/db/repositories/cases-repository");
+      const localCase = await casesRepository.getByLocalId(localCaseLocalId);
+      if (!localCase) {
+        setLocalCaseSummary(null);
+        return;
+      }
+      const sensitive = await casesRepository.resolveSensitiveFields(localCase);
+      setLocalCaseSummary({
+        localId: localCaseLocalId,
+        clientName: sensitive.clientName || "Caso local",
+        notes: sensitive.notes || "",
+      });
+    } catch {
+      setLocalCaseSummary(null);
+    }
+  }, [hasActiveSession, localCaseLocalId]);
+
   const captureGps = useCallback(async (options?: { silent?: boolean }) => {
     if (capturingGpsRef.current) return;
     try {
@@ -206,10 +240,15 @@ export default function CreateIncidentScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (!hasActiveSession || !installationId) return;
-      void loadCases();
+      if (!hasActiveSession) return;
+      if (installationId) {
+        void loadCases();
+      }
+      if (localCaseLocalId) {
+        void loadLocalCaseSummary();
+      }
       void captureGps({ silent: true });
-    }, [captureGps, hasActiveSession, installationId, loadCases]),
+    }, [captureGps, hasActiveSession, installationId, loadCases, loadLocalCaseSummary, localCaseLocalId]),
   );
 
   useEffect(() => {
@@ -221,6 +260,12 @@ export default function CreateIncidentScreen() {
   }, []);
 
   useEffect(() => {
+    if (!hasActiveSession) {
+      setReporterUsername("");
+      setLinkedTechnician(null);
+      return;
+    }
+
     let mounted = true;
     void getCurrentLinkedTechnicianContext()
       .then(({ user, technician }) => {
@@ -238,10 +283,10 @@ export default function CreateIncidentScreen() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [hasActiveSession]);
 
   const onSubmit = async () => {
-    if (!hasActiveSession || !installationId) return;
+    if (!hasActiveSession || (!installationId && !localCaseLocalId)) return;
 
     if (!note.trim()) {
       void triggerWarningHaptic();
@@ -269,7 +314,9 @@ export default function CreateIncidentScreen() {
 
       // ── Local-first: save to WatermelonDB and enqueue a sync job ──
       const { localId } = await enqueueCreateIncident({
-        installationId,
+        installationId: installationId ?? 0,
+        remoteInstallationId: installationId ?? null,
+        localCaseLocalId: localCaseLocalId || null,
         note: note.trim(),
         reporterUsername: reporterUsername.trim() || "mobile_user",
         timeAdjustmentSeconds: 0,
@@ -294,7 +341,7 @@ export default function CreateIncidentScreen() {
       }
 
       // Asset link (best-effort, only if online and a code was provided)
-      if (online && assetExternalCode.trim()) {
+      if (online && installationId && assetExternalCode.trim()) {
         try {
           let resolvedAssetId = assetRecordId;
           if (!resolvedAssetId || resolvedAssetId <= 0) {
@@ -340,7 +387,11 @@ export default function CreateIncidentScreen() {
         <WebInlineLoginCard
           hint="Inicia sesion web para crear incidencias dentro de un caso."
           onLoginSuccess={async () => {
-            await loadCases();
+            await Promise.all([
+              installationId ? loadCases() : Promise.resolve(),
+              localCaseLocalId ? loadLocalCaseSummary() : Promise.resolve(),
+              captureGps({ silent: true }),
+            ]);
           }}
           onOpenAdvanced={() => router.push("/modal?focus=login")}
         />
@@ -348,7 +399,7 @@ export default function CreateIncidentScreen() {
     );
   }
 
-  if (!installationId) {
+  if (!installationId && !localCaseLocalId) {
     return (
       <ScreenScaffold contentContainerStyle={styles.container}>
         <ScreenHero
@@ -380,11 +431,15 @@ export default function CreateIncidentScreen() {
   }
 
   return (
-    <ScreenScaffold contentContainerStyle={styles.container}>
+      <ScreenScaffold contentContainerStyle={styles.container}>
       <ScreenHero
         eyebrow="Nueva incidencia"
-        title={`Caso #${installationId}`}
-        description="El caso ya esta resuelto. Aqui solo cargas el problema."
+        title={resolvedCaseTitle}
+        description={
+          installationId
+            ? "El caso ya esta resuelto. Aqui solo cargas el problema."
+            : "La incidencia queda asociada al caso local y se sincroniza cuando el caso obtenga ID remoto."
+        }
       >
         <View style={styles.heroMetaRow}>
           <View
@@ -394,7 +449,7 @@ export default function CreateIncidentScreen() {
             ]}
           >
             <Text style={[styles.heroMetaText, { color: palette.heroEyebrowText }]}>
-              {selectedCase?.client_name || "Sin cliente"}
+              {selectedCaseLabel}
             </Text>
           </View>
           {assetExternalCode ? (
@@ -419,8 +474,12 @@ export default function CreateIncidentScreen() {
       <SyncStatusBanner />
 
       <SectionCard
-        title="Caso listo"
-        description="Contexto fijo para esta incidencia."
+        title={installationId ? "Caso listo" : "Caso local"}
+        description={
+          installationId
+            ? "Contexto fijo para esta incidencia."
+            : "Este caso aun no termino de sincronizar, pero ya puedes cargar la incidencia."
+        }
         aside={
           loadingCase ? (
             <ActivityIndicator size="small" color={palette.loadingSpinner} />
@@ -429,30 +488,36 @@ export default function CreateIncidentScreen() {
           ) : undefined
         }
       >
-        {selectedCase ? (
+        {selectedCase || localCaseSummary ? (
           <View style={styles.caseSummaryCard}>
             <Text style={[styles.caseTitle, { color: palette.textPrimary }]}>
-              #{selectedCase.id} {selectedCase.client_name ? `- ${selectedCase.client_name}` : ""}
+              {installationId
+                ? `#${selectedCase?.id} ${selectedCase?.client_name ? `- ${selectedCase.client_name}` : ""}`
+                : `${localCaseSummary?.clientName || "Caso local"} · pendiente de sincronizar`}
             </Text>
             <Text style={[styles.caseBody, { color: palette.textSecondary }]}>
               {assetExternalCode
                 ? `Equipo asociado: ${assetExternalCode}.`
-                : "Caso manual o sin equipo asociado confirmado."}
+                : installationId
+                  ? "Caso manual o sin equipo asociado confirmado."
+                  : (localCaseSummary?.notes?.trim() || "Caso manual guardado localmente.")}
             </Text>
             <View style={styles.contextActionRow}>
-              <TouchableOpacity
-                style={[
-                  styles.secondaryButton,
-                  { backgroundColor: palette.secondaryButtonBg, borderColor: palette.inputBorder },
-                ]}
-                onPress={() => router.push(`/work?installationId=${installationId}` as never)}
-                accessibilityRole="button"
-                accessibilityLabel={`Abrir el caso ${installationId}`}
-              >
-                <Text style={[styles.secondaryButtonText, { color: palette.secondaryButtonText }]}>
-                  Abrir backlog
-                </Text>
-              </TouchableOpacity>
+              {installationId ? (
+                <TouchableOpacity
+                  style={[
+                    styles.secondaryButton,
+                    { backgroundColor: palette.secondaryButtonBg, borderColor: palette.inputBorder },
+                  ]}
+                  onPress={() => router.push(`/work?installationId=${installationId}` as never)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Abrir el caso ${installationId}`}
+                >
+                  <Text style={[styles.secondaryButtonText, { color: palette.secondaryButtonText }]}>
+                    Abrir backlog
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
               <TouchableOpacity
                 style={[
                   styles.ghostButton,
@@ -460,14 +525,16 @@ export default function CreateIncidentScreen() {
                 ]}
                 onPress={() =>
                   router.replace(
-                    `/case/context?installationId=${installationId}${assetExternalCode ? `&assetExternalCode=${encodeURIComponent(assetExternalCode)}` : ""}${assetRecordId ? `&assetRecordId=${assetRecordId}` : ""}` as never,
+                    installationId
+                      ? `/case/context?installationId=${installationId}${assetExternalCode ? `&assetExternalCode=${encodeURIComponent(assetExternalCode)}` : ""}${assetRecordId ? `&assetRecordId=${assetRecordId}` : ""}` as never
+                      : "/case/manual" as never,
                   )
                 }
                 accessibilityRole="button"
-                accessibilityLabel="Cambiar el caso resuelto"
+                accessibilityLabel={installationId ? "Cambiar el caso resuelto" : "Volver al caso manual"}
               >
-            <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>
-                  Cambiar contexto
+                <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>
+                  {installationId ? "Cambiar contexto" : "Volver al caso manual"}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -657,14 +724,16 @@ export default function CreateIncidentScreen() {
             style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
             onPress={() =>
               router.push(
-                `/work?installationId=${installationId}` as never,
+                installationId
+                  ? `/work?installationId=${installationId}` as never
+                  : "/(tabs)" as never,
               )
             }
             accessibilityRole="button"
-            accessibilityLabel="Ver backlog del caso"
+            accessibilityLabel={installationId ? "Ver backlog del caso" : "Volver al inicio"}
           >
             <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
-              Ver backlog del caso
+              {installationId ? "Ver backlog del caso" : "Volver al inicio"}
             </Text>
           </TouchableOpacity>
         </SectionCard>

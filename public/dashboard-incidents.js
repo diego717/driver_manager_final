@@ -32,9 +32,6 @@
         const INCIDENT_MAP_DEFAULT_DAYS = '30';
         const INCIDENT_MAP_DEFAULT_LIMIT = 240;
         const INCIDENT_MAP_ALLOWED_DAYS = new Set(['7', '30', '90', 'all']);
-        const INCIDENT_MAP_SOURCE_ID = 'incident-map-source';
-        const INCIDENT_MAP_LAYER_ID = 'incident-map-points';
-        const INCIDENT_MAP_LAYER_HALO_ID = 'incident-map-points-halo';
         const INCIDENT_MAP_DEFAULT_CENTER = [-56.1645, -34.9011];
         let incidentMapState = {
             days: INCIDENT_MAP_DEFAULT_DAYS,
@@ -47,11 +44,11 @@
             loading: false,
             map: null,
             mapLoaded: false,
-            currentStyleUrl: '',
-            currentToken: '',
+            mapMarkers: [],
             pendingFitBounds: false,
         };
         let incidentMapRequestVersion = 0;
+        let incidentGoogleMapsLoaderPromise = null;
 
         function canCurrentUserAuditDeletedIncidents() {
             const role = String(options.getCurrentUser?.()?.role || '').toLowerCase();
@@ -467,10 +464,16 @@
             const dispatchAddressInput = document.createElement('input');
             dispatchAddressInput.type = 'text';
             dispatchAddressInput.id = 'actionIncidentDispatchAddress';
-            dispatchAddressInput.autocomplete = 'street-address';
+            dispatchAddressInput.autocomplete = 'off';
             dispatchAddressInput.placeholder = 'Ej: Av. Italia 2456';
             dispatchAddressInput.value = String(incident?.dispatch_address || '').trim();
             dispatchFields.appendChild(createInputGroup('Direccion', dispatchAddressInput, { htmlFor: dispatchAddressInput.id, className: 'full-width' }));
+
+            const dispatchPlacesStatus = document.createElement('p');
+            dispatchPlacesStatus.id = 'actionIncidentDispatchPlacesStatus';
+            dispatchPlacesStatus.className = 'asset-muted full-width';
+            dispatchPlacesStatus.textContent = 'Puedes escribir manualmente o elegir una sugerencia de Google para completar direccion y coordenadas.';
+            dispatchFields.appendChild(dispatchPlacesStatus);
 
             const dispatchReferenceInput = document.createElement('textarea');
             dispatchReferenceInput.id = 'actionIncidentDispatchReference';
@@ -685,42 +688,182 @@
             return `https://www.google.com/maps?q=${coordinates.lat},${coordinates.lng}`;
         }
 
-        function resolveIncidentMapboxToken() {
-            const globalToken = String(window.__DM_MAPBOX_ACCESS_TOKEN__ || '').trim();
-            if (globalToken) return globalToken;
+        function resolveIncidentGoogleMapsApiKey() {
+            const globalKey = String(window.__DM_GOOGLE_MAPS_API_KEY__ || '').trim();
+            if (globalKey) return globalKey;
             try {
-                return String(window.localStorage.getItem('dm_mapbox_access_token') || '').trim();
+                return String(window.localStorage.getItem('dm_google_maps_api_key') || '').trim();
             } catch {
                 return '';
             }
         }
 
-        function resolveIncidentMapStyleUrl() {
-            const isDark = document.body?.dataset?.theme === 'dark';
-            const themeStyle = String(
-                isDark
-                    ? window.__DM_MAPBOX_STYLE_URL_DARK__ || ''
-                    : window.__DM_MAPBOX_STYLE_URL_LIGHT__ || '',
-            ).trim();
-            if (themeStyle) return themeStyle;
+        function hasIncidentGoogleMapsApi() {
+            return Boolean(window.google?.maps && typeof window.google.maps.Map === 'function');
+        }
 
-            const globalStyle = String(window.__DM_MAPBOX_STYLE_URL__ || '').trim();
-            if (globalStyle) return globalStyle;
-            try {
-                const themeStoredStyle = String(
-                    isDark
-                        ? window.localStorage.getItem('dm_mapbox_style_url_dark') || ''
-                        : window.localStorage.getItem('dm_mapbox_style_url_light') || '',
-                ).trim();
-                if (themeStoredStyle) return themeStoredStyle;
-                const storedStyle = String(window.localStorage.getItem('dm_mapbox_style_url') || '').trim();
-                if (storedStyle) return storedStyle;
-            } catch {
-                // ignore localStorage access issues
+        function hasIncidentGooglePlacesApi() {
+            return Boolean(window.google?.maps?.places && typeof window.google.maps.places.Autocomplete === 'function');
+        }
+
+        function ensureIncidentGoogleMapsApi() {
+            if (hasIncidentGoogleMapsApi()) {
+                return Promise.resolve(window.google.maps);
             }
-            return isDark
-                ? 'mapbox://styles/mapbox/dark-v11'
-                : 'mapbox://styles/mapbox/light-v11';
+            if (incidentGoogleMapsLoaderPromise) {
+                return incidentGoogleMapsLoaderPromise;
+            }
+
+            const apiKey = resolveIncidentGoogleMapsApiKey();
+            if (!apiKey) {
+                return Promise.reject(new Error(
+                    'Configura `GOOGLE_MAPS_API_KEY` o `dm_google_maps_api_key` para ver el mapa real de incidencias.',
+                ));
+            }
+
+            incidentGoogleMapsLoaderPromise = new Promise((resolve, reject) => {
+                const cleanup = () => {
+                    try {
+                        delete window.__dmIncidentGoogleMapsReady__;
+                    } catch {
+                        window.__dmIncidentGoogleMapsReady__ = undefined;
+                    }
+                };
+                const failLoad = () => {
+                    cleanup();
+                    incidentGoogleMapsLoaderPromise = null;
+                    reject(new Error('Google Maps no pudo inicializarse. Revisa la API key o la conectividad.'));
+                };
+
+                window.__dmIncidentGoogleMapsReady__ = () => {
+                    cleanup();
+                    resolve(window.google.maps);
+                };
+
+                const existingScript = document.getElementById('incidentGoogleMapsScript');
+                if (existingScript) {
+                    existingScript.addEventListener('error', failLoad, { once: true });
+                    return;
+                }
+
+                const script = document.createElement('script');
+                script.id = 'incidentGoogleMapsScript';
+                script.async = true;
+                script.defer = true;
+                script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&loading=async&libraries=places&language=es&region=UY&callback=__dmIncidentGoogleMapsReady__`;
+                script.addEventListener('error', failLoad, { once: true });
+                document.head.appendChild(script);
+            });
+
+            return incidentGoogleMapsLoaderPromise;
+        }
+
+        function setIncidentDispatchPlacesStatus(message) {
+            const help = document.getElementById('actionIncidentDispatchPlacesStatus');
+            if (!(help instanceof HTMLElement)) return;
+            help.textContent = String(message || '').trim();
+        }
+
+        function dispatchIncidentInputMutation(input, value) {
+            if (!(input instanceof HTMLInputElement)) return;
+            input.value = value;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        function applyIncidentDispatchPlaceSelection(place) {
+            const addressInput = document.getElementById('actionIncidentDispatchAddress');
+            const placeInput = document.getElementById('actionIncidentDispatchPlace');
+            const latInput = document.getElementById('actionIncidentTargetLat');
+            const lngInput = document.getElementById('actionIncidentTargetLng');
+            const targetLabelInput = document.getElementById('actionIncidentTargetLabel');
+            if (!(addressInput instanceof HTMLInputElement)) return;
+
+            const nextAddress = String(place?.formatted_address || '').trim();
+            const nextPlaceName = String(place?.name || '').trim();
+            const nextLat = Number(place?.geometry?.location?.lat?.());
+            const nextLng = Number(place?.geometry?.location?.lng?.());
+            const previousPlace = placeInput instanceof HTMLInputElement ? String(placeInput.value || '').trim() : '';
+            const previousAddress = String(addressInput.value || '').trim();
+            const previousTargetLabel = targetLabelInput instanceof HTMLInputElement
+                ? String(targetLabelInput.value || '').trim()
+                : '';
+
+            if (nextAddress) {
+                dispatchIncidentInputMutation(addressInput, nextAddress);
+            }
+            if (placeInput instanceof HTMLInputElement && nextPlaceName) {
+                dispatchIncidentInputMutation(placeInput, nextPlaceName);
+            }
+            if (latInput instanceof HTMLInputElement && Number.isFinite(nextLat)) {
+                dispatchIncidentInputMutation(latInput, nextLat.toFixed(6));
+            }
+            if (lngInput instanceof HTMLInputElement && Number.isFinite(nextLng)) {
+                dispatchIncidentInputMutation(lngInput, nextLng.toFixed(6));
+            }
+            if (
+                targetLabelInput instanceof HTMLInputElement
+                && (
+                    !previousTargetLabel
+                    || previousTargetLabel === previousPlace
+                    || previousTargetLabel === previousAddress
+                )
+            ) {
+                const nextTargetLabel = nextPlaceName || nextAddress;
+                if (nextTargetLabel) {
+                    dispatchIncidentInputMutation(targetLabelInput, nextTargetLabel);
+                }
+            }
+
+            setIncidentDispatchPlacesStatus(
+                Number.isFinite(nextLat) && Number.isFinite(nextLng)
+                    ? 'Direccion validada con Google Maps. Coordenadas y nombre completados.'
+                    : 'Direccion sugerida aplicada. Puedes completar coordenadas manualmente si hace falta.',
+            );
+        }
+
+        function bindIncidentDispatchPlacesAutocomplete() {
+            const addressInput = document.getElementById('actionIncidentDispatchAddress');
+            if (!(addressInput instanceof HTMLInputElement)) return;
+            if (addressInput.dataset.placesBound === '1') return;
+
+            setIncidentDispatchPlacesStatus(
+                'Escribe una direccion o lugar y elige una sugerencia de Google. Si no aparece, puedes cargarlo manualmente.',
+            );
+
+            if (!hasIncidentGooglePlacesApi()) {
+                const apiKey = resolveIncidentGoogleMapsApiKey();
+                if (!apiKey) {
+                    return;
+                }
+                void ensureIncidentGoogleMapsApi()
+                    .then(() => {
+                        bindIncidentDispatchPlacesAutocomplete();
+                    })
+                    .catch(() => {
+                        setIncidentDispatchPlacesStatus(
+                            'No pudimos cargar Google Places. Puedes seguir completando direccion y coordenadas manualmente.',
+                        );
+                    });
+                return;
+            }
+
+            addressInput.dataset.placesBound = '1';
+            addressInput.autocomplete = 'off';
+            const autocomplete = new window.google.maps.places.Autocomplete(addressInput, {
+                fields: ['formatted_address', 'geometry', 'name'],
+                types: ['geocode', 'establishment'],
+            });
+            autocomplete.addListener('place_changed', () => {
+                const place = autocomplete.getPlace?.();
+                if (!place || typeof place !== 'object') {
+                    setIncidentDispatchPlacesStatus(
+                        'No pudimos leer la sugerencia elegida. Puedes completar la direccion manualmente.',
+                    );
+                    return;
+                }
+                applyIncidentDispatchPlaceSelection(place);
+            });
         }
 
         function renderIncidentMapCanvasMessage(message, tone = 'neutral') {
@@ -742,19 +885,34 @@
             canvas.appendChild(state);
         }
 
+        function clearIncidentMapMarkers() {
+            if (!Array.isArray(incidentMapState.mapMarkers)) {
+                incidentMapState.mapMarkers = [];
+                return;
+            }
+            incidentMapState.mapMarkers.forEach((marker) => {
+                if (marker && typeof marker.setMap === 'function') {
+                    marker.setMap(null);
+                }
+            });
+            incidentMapState.mapMarkers = [];
+        }
+
         function destroyIncidentMap() {
-            if (incidentMapState.map && typeof incidentMapState.map.remove === 'function') {
-                incidentMapState.map.remove();
+            clearIncidentMapMarkers();
+            if (incidentMapState.map && typeof incidentMapState.map.getDiv === 'function') {
+                const mapContainer = incidentMapState.map.getDiv();
+                if (mapContainer) {
+                    mapContainer.replaceChildren();
+                }
             }
             incidentMapState.map = null;
             incidentMapState.mapLoaded = false;
-            incidentMapState.currentStyleUrl = '';
-            incidentMapState.currentToken = '';
         }
 
         function syncIncidentMapCursor() {
-            const canvas = incidentMapState.map && typeof incidentMapState.map.getCanvas === 'function'
-                ? incidentMapState.map.getCanvas()
+            const canvas = incidentMapState.map && typeof incidentMapState.map.getDiv === 'function'
+                ? incidentMapState.map.getDiv()
                 : null;
             if (!canvas || !canvas.style) return;
             canvas.style.cursor = incidentMapState.targetSelectionIncidentId ? 'crosshair' : '';
@@ -862,148 +1020,92 @@
             }
         }
 
-        function buildIncidentMapGeoJson(incidents) {
+        function buildIncidentMapFeatures(incidents) {
+            return (Array.isArray(incidents) ? incidents : [])
+                .map((incident) => ({
+                    incident,
+                    coordinates: resolveIncidentOperationalCoordinates(incident),
+                }))
+                .filter((entry) => entry.coordinates)
+                .map(({ incident, coordinates }) => ({
+                    incident,
+                    incidentId: options.parseStrictInteger(incident?.id) || 0,
+                    lat: coordinates.lat,
+                    lng: coordinates.lng,
+                    coordinateSource: coordinates.source,
+                }));
+        }
+
+        function buildIncidentMapMarkerIcon(incident, isSelected) {
+            const severity = getIncidentMapSeverityTone(incident?.severity);
+            const status = getIncidentMapStatusTone(incident?.incident_status);
+            const fillColor = severity === 'critical'
+                ? '#ff6b5c'
+                : severity === 'high'
+                    ? '#ef7f1a'
+                    : severity === 'medium'
+                        ? '#0f756d'
+                        : '#3fa57c';
+            const fillOpacity = status === 'resolved'
+                ? 0.68
+                : status === 'paused'
+                    ? 0.8
+                    : 0.96;
+
             return {
-                type: 'FeatureCollection',
-                features: (Array.isArray(incidents) ? incidents : [])
-                    .map((incident) => ({
-                        incident,
-                        coordinates: resolveIncidentOperationalCoordinates(incident),
-                    }))
-                    .filter((entry) => entry.coordinates)
-                    .map(({ incident, coordinates }) => {
-                        const incidentId = options.parseStrictInteger(incident?.id) || 0;
-                        return {
-                            type: 'Feature',
-                            geometry: {
-                                type: 'Point',
-                                coordinates: [coordinates.lng, coordinates.lat],
-                            },
-                            properties: {
-                                id: incidentId,
-                                client_name: String(incident?.installation_client_name || '').trim(),
-                                asset_code: String(incident?.asset_code || '').trim(),
-                                severity: getIncidentMapSeverityTone(incident?.severity),
-                                status: getIncidentMapStatusTone(incident?.incident_status),
-                                coordinate_source: coordinates.source,
-                                selected: incidentId === incidentMapState.selectedIncidentId ? 1 : 0,
-                            },
-                        };
-                    }),
+                path: window.google.maps.SymbolPath.CIRCLE,
+                scale: isSelected ? 8 : 6,
+                fillColor,
+                fillOpacity,
+                strokeColor: '#ffffff',
+                strokeWeight: isSelected ? 3 : 2,
             };
         }
 
-        function ensureIncidentMapLayers(mapInstance) {
-            if (!mapInstance || !incidentMapState.mapLoaded) return;
-
-            if (!mapInstance.getSource(INCIDENT_MAP_SOURCE_ID)) {
-                mapInstance.addSource(INCIDENT_MAP_SOURCE_ID, {
-                    type: 'geojson',
-                    data: buildIncidentMapGeoJson([]),
-                });
-            }
-
-            if (!mapInstance.getLayer(INCIDENT_MAP_LAYER_HALO_ID)) {
-                mapInstance.addLayer({
-                    id: INCIDENT_MAP_LAYER_HALO_ID,
-                    type: 'circle',
-                    source: INCIDENT_MAP_SOURCE_ID,
-                    paint: {
-                        'circle-radius': [
-                            'case',
-                            ['==', ['get', 'selected'], 1],
-                            16,
-                            11,
-                        ],
-                        'circle-color': [
-                            'match',
-                            ['get', 'severity'],
-                            'critical', '#ef5b4d',
-                            'high', '#f09a29',
-                            'medium', '#0f756d',
-                            '#3fa57c',
-                        ],
-                        'circle-opacity': [
-                            'case',
-                            ['==', ['get', 'selected'], 1],
-                            0.24,
-                            0.12,
-                        ],
-                        'circle-stroke-width': 0,
-                    },
-                });
-            }
-
-            if (!mapInstance.getLayer(INCIDENT_MAP_LAYER_ID)) {
-                mapInstance.addLayer({
-                    id: INCIDENT_MAP_LAYER_ID,
-                    type: 'circle',
-                    source: INCIDENT_MAP_SOURCE_ID,
-                    paint: {
-                        'circle-radius': [
-                            'case',
-                            ['==', ['get', 'selected'], 1],
-                            8,
-                            6,
-                        ],
-                        'circle-color': [
-                            'match',
-                            ['get', 'severity'],
-                            'critical', '#ff6b5c',
-                            'high', '#ef7f1a',
-                            'medium', '#0f756d',
-                            '#3fa57c',
-                        ],
-                        'circle-stroke-width': [
-                            'case',
-                            ['==', ['get', 'selected'], 1],
-                            3,
-                            2,
-                        ],
-                        'circle-stroke-color': '#ffffff',
-                        'circle-opacity': [
-                            'match',
-                            ['get', 'status'],
-                            'resolved', 0.68,
-                            'paused', 0.8,
-                            0.96,
-                        ],
-                    },
-                });
-            }
-        }
-
-        function syncIncidentMapSource() {
+        function syncIncidentMapMarkers() {
             if (!incidentMapState.map || !incidentMapState.mapLoaded) return [];
-            ensureIncidentMapLayers(incidentMapState.map);
-            const source = incidentMapState.map.getSource(INCIDENT_MAP_SOURCE_ID);
-            const geoJson = buildIncidentMapGeoJson(incidentMapState.incidents);
-            if (source && typeof source.setData === 'function') {
-                source.setData(geoJson);
-            }
-            return geoJson.features || [];
+            clearIncidentMapMarkers();
+            const features = buildIncidentMapFeatures(incidentMapState.incidents);
+
+            incidentMapState.mapMarkers = features.map((feature) => {
+                const isSelected = feature.incidentId === incidentMapState.selectedIncidentId;
+                const marker = new window.google.maps.Marker({
+                    map: incidentMapState.map,
+                    position: { lat: feature.lat, lng: feature.lng },
+                    title: String(
+                        feature.incident?.dispatch_place_name
+                        || feature.incident?.installation_client_name
+                        || `Incidencia #${feature.incidentId}`,
+                    ).trim(),
+                    icon: buildIncidentMapMarkerIcon(feature.incident, isSelected),
+                    zIndex: isSelected ? 20 : 10,
+                });
+
+                marker.addListener('click', () => {
+                    if (incidentMapState.targetSelectionIncidentId) return;
+                    incidentMapState.selectedIncidentId = feature.incidentId;
+                    renderIncidentMap();
+                });
+
+                return marker;
+            });
+
+            return features;
         }
 
         function fitIncidentMapToFeatures(features) {
             if (!incidentMapState.map || !Array.isArray(features) || !features.length) return;
             if (features.length === 1) {
-                incidentMapState.map.easeTo({
-                    center: features[0].geometry.coordinates,
-                    zoom: 12.6,
-                    duration: 700,
-                });
+                incidentMapState.map.panTo({ lat: features[0].lat, lng: features[0].lng });
+                incidentMapState.map.setZoom(12);
                 return;
             }
 
-            const bounds = new window.mapboxgl.LngLatBounds();
+            const bounds = new window.google.maps.LatLngBounds();
             features.forEach((feature) => {
-                bounds.extend(feature.geometry.coordinates);
+                bounds.extend({ lat: feature.lat, lng: feature.lng });
             });
-            incidentMapState.map.fitBounds(bounds, {
-                padding: { top: 68, right: 72, bottom: 68, left: 72 },
-                duration: 700,
-                maxZoom: 12.8,
-            });
+            incidentMapState.map.fitBounds(bounds, 72);
         }
 
         function focusIncidentInMap() {
@@ -1014,11 +1116,7 @@
             if (!selectedIncident) return;
             const coordinates = resolveIncidentOperationalCoordinates(selectedIncident);
             if (!coordinates) return;
-            incidentMapState.map.easeTo({
-                center: [coordinates.lng, coordinates.lat],
-                duration: 550,
-                offset: [0, -40],
-            });
+            incidentMapState.map.panTo({ lat: coordinates.lat, lng: coordinates.lng });
         }
 
         function getIncidentMapSeverityTone(severity) {
@@ -1216,7 +1314,7 @@
             const actions = document.createElement('div');
             actions.className = 'incident-map-detail-actions';
 
-            if (options.canCurrentUserEditAssets()) {
+            if (options.canCurrentUserWriteOperationalData()) {
                 const adjustTargetBtn = document.createElement('button');
                 adjustTargetBtn.type = 'button';
                 adjustTargetBtn.className = selectionActive ? 'btn-primary' : 'btn-secondary';
@@ -1280,62 +1378,50 @@
         function ensureIncidentMapInstance() {
             const canvas = document.getElementById('incidentMapCanvas');
             if (!canvas) return false;
-            if (!window.mapboxgl || typeof window.mapboxgl.Map !== 'function') {
-                destroyIncidentMap();
-                renderIncidentMapCanvasMessage('Mapbox GL JS no pudo cargarse en este navegador.', 'error');
+            if (!hasIncidentGoogleMapsApi()) {
+                const apiKey = resolveIncidentGoogleMapsApiKey();
+                if (!apiKey) {
+                    destroyIncidentMap();
+                    renderIncidentMapCanvasMessage(
+                        'Configura `GOOGLE_MAPS_API_KEY` o `dm_google_maps_api_key` para ver el mapa real de incidencias.',
+                        'neutral',
+                    );
+                    return false;
+                }
+
+                renderIncidentMapCanvasMessage('Cargando Google Maps para incidencias...', 'neutral');
+                void ensureIncidentGoogleMapsApi()
+                    .then(() => {
+                        renderIncidentMap();
+                    })
+                    .catch((error) => {
+                        destroyIncidentMap();
+                        renderIncidentMapCanvasMessage(
+                            error?.message || 'Google Maps no pudo inicializarse. Revisa la API key o la conectividad.',
+                            'error',
+                        );
+                    });
                 return false;
             }
 
-            const token = resolveIncidentMapboxToken();
-            if (!token) {
-                destroyIncidentMap();
-                renderIncidentMapCanvasMessage('Configura `dm_mapbox_access_token` para ver el mapa real de incidencias.', 'neutral');
-                return false;
-            }
-
-            const styleUrl = resolveIncidentMapStyleUrl();
-            const requiresRebuild =
-                !incidentMapState.map
-                || incidentMapState.currentToken !== token
-                || incidentMapState.currentStyleUrl !== styleUrl;
-
-            if (!requiresRebuild) {
+            if (incidentMapState.map) {
+                syncIncidentMapCursor();
                 return true;
             }
 
             destroyIncidentMap();
             canvas.innerHTML = '';
-            window.mapboxgl.accessToken = token;
-
-            const map = new window.mapboxgl.Map({
-                container: canvas,
-                style: styleUrl,
-                center: INCIDENT_MAP_DEFAULT_CENTER,
+            const map = new window.google.maps.Map(canvas, {
+                center: { lat: INCIDENT_MAP_DEFAULT_CENTER[1], lng: INCIDENT_MAP_DEFAULT_CENTER[0] },
                 zoom: 8.8,
-                attributionControl: false,
+                clickableIcons: false,
+                fullscreenControl: false,
+                mapTypeControl: false,
+                streetViewControl: false,
+                gestureHandling: 'greedy',
             });
-            map.addControl(new window.mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
 
-            map.on('load', () => {
-                incidentMapState.mapLoaded = true;
-                ensureIncidentMapLayers(map);
-                renderIncidentMap();
-            });
-            map.on('mouseenter', INCIDENT_MAP_LAYER_ID, () => {
-                map.getCanvas().style.cursor = incidentMapState.targetSelectionIncidentId ? 'crosshair' : 'pointer';
-            });
-            map.on('mouseleave', INCIDENT_MAP_LAYER_ID, () => {
-                map.getCanvas().style.cursor = incidentMapState.targetSelectionIncidentId ? 'crosshair' : '';
-            });
-            map.on('click', INCIDENT_MAP_LAYER_ID, (event) => {
-                if (incidentMapState.targetSelectionIncidentId) return;
-                const feature = Array.isArray(event?.features) ? event.features[0] : null;
-                const incidentId = options.parseStrictInteger(feature?.properties?.id);
-                if (!Number.isInteger(incidentId) || incidentId <= 0) return;
-                incidentMapState.selectedIncidentId = incidentId;
-                renderIncidentMap();
-            });
-            map.on('click', (event) => {
+            map.addListener('click', (event) => {
                 const targetIncidentId = incidentMapState.targetSelectionIncidentId;
                 if (!Number.isInteger(targetIncidentId) || targetIncidentId <= 0) return;
                 if (incidentMapState.savingTargetIncidentId === targetIncidentId) return;
@@ -1343,20 +1429,14 @@
                     options.parseStrictInteger(incident?.id) === targetIncidentId
                 ));
                 if (!targetIncident) return;
-                const lng = Number(event?.lngLat?.lng);
-                const lat = Number(event?.lngLat?.lat);
+                const lat = Number(event?.latLng?.lat?.());
+                const lng = Number(event?.latLng?.lng?.());
                 if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
                 void persistIncidentMapTargetSelection(targetIncident, { lat, lng });
             });
-            map.on('error', () => {
-                if (!incidentMapState.mapLoaded) {
-                    renderIncidentMapCanvasMessage('Mapbox no pudo inicializarse. Revisa el token o la conectividad.', 'error');
-                }
-            });
 
             incidentMapState.map = map;
-            incidentMapState.currentStyleUrl = styleUrl;
-            incidentMapState.currentToken = token;
+            incidentMapState.mapLoaded = true;
             syncIncidentMapCursor();
             return true;
         }
@@ -1380,7 +1460,7 @@
                 incidentMapState.selectedIncidentId = options.parseStrictInteger(incidents[0]?.id);
             }
 
-            const features = syncIncidentMapSource();
+            const features = syncIncidentMapMarkers();
             if (incidentMapState.pendingFitBounds) {
                 fitIncidentMapToFeatures(features);
                 incidentMapState.pendingFitBounds = false;
@@ -2865,7 +2945,7 @@
             const statusActions = document.createElement('div');
             statusActions.className = 'incident-actions';
             const incidentStatus = options.normalizeIncidentStatus(incident.incident_status);
-            const canUpdateIncident = options.canCurrentUserEditAssets() && !isSoftDeleted;
+            const canUpdateIncident = options.canCurrentUserWriteOperationalData() && !isSoftDeleted;
             const updateOptions = buildIncidentStatusUpdateOptions(incident, config);
 
             if (isSoftDeleted) {
@@ -2885,7 +2965,7 @@
                 button.dataset.current = incidentStatus === statusValue ? 'true' : 'false';
                 button.disabled = !canUpdateIncident || incidentStatus === statusValue;
                 if (!canUpdateIncident) {
-                    button.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
+                    button.title = 'Solo roles operativos pueden cambiar estado de incidencias';
                 }
                 button.addEventListener('click', () => {
                     const liveIncident = button.closest('.incident-card')?.__incidentData || incident;
@@ -2900,7 +2980,7 @@
             decorateIncidentActionButton(evidenceBtn, 'evidence', 'Evidencia', 'fact_check');
             evidenceBtn.disabled = !canUpdateIncident;
             if (!canUpdateIncident) {
-                evidenceBtn.title = 'Solo admin/super_admin puede actualizar evidencia';
+                evidenceBtn.title = 'Solo roles operativos pueden actualizar evidencia';
             }
             evidenceBtn.addEventListener('click', () => {
                 const liveIncident = evidenceBtn.closest('.incident-card')?.__incidentData || incident;
@@ -2913,7 +2993,7 @@
             decorateIncidentActionButton(dispatchBtn, 'dispatch', 'Destino', 'place');
             dispatchBtn.disabled = !canUpdateIncident;
             if (!canUpdateIncident) {
-                dispatchBtn.title = 'Solo admin/super_admin puede editar destino operativo';
+                dispatchBtn.title = 'Solo roles operativos pueden editar destino operativo';
             }
             dispatchBtn.addEventListener('click', () => {
                 const liveIncident = dispatchBtn.closest('.incident-card')?.__incidentData || incident;
@@ -3185,7 +3265,7 @@
             if (!cards.length) return;
 
             const statusValue = options.normalizeIncidentStatus(incident?.incident_status);
-            const canUpdateIncident = options.canCurrentUserEditAssets();
+            const canUpdateIncident = options.canCurrentUserWriteOperationalData();
             const runtimeText = Number.isInteger(options.resolveIncidentRealDurationSeconds(incident))
                 ? `Tiempo real: ${options.formatDuration(options.resolveIncidentRealDurationSeconds(incident))}${statusValue === 'in_progress'
                     ? ' (en curso)'
@@ -3248,7 +3328,7 @@
                     actionBtn.dataset.current = statusValue === targetStatus ? 'true' : 'false';
                     actionBtn.disabled = !canUpdateIncident || statusValue === targetStatus;
                     if (!canUpdateIncident) {
-                        actionBtn.title = 'Solo admin/super_admin puede cambiar estado de incidencias';
+                        actionBtn.title = 'Solo roles operativos pueden cambiar estado de incidencias';
                     } else {
                         actionBtn.removeAttribute('title');
                     }
@@ -3277,9 +3357,9 @@
                     }
                     const targetStatus = String(button.dataset.action || '').trim();
                     if (['open', 'in_progress', 'paused', 'resolved'].includes(targetStatus)) {
-                        button.disabled = !options.canCurrentUserEditAssets() || currentStatus === targetStatus;
+                        button.disabled = !options.canCurrentUserWriteOperationalData() || currentStatus === targetStatus;
                     } else if (targetStatus === 'evidence') {
-                        button.disabled = !options.canCurrentUserEditAssets();
+                        button.disabled = !options.canCurrentUserWriteOperationalData();
                     }
                 });
             });
@@ -4086,6 +4166,9 @@
                         note: '',
                     });
                 }
+                requestAnimationFrame(() => {
+                    bindIncidentDispatchPlacesAutocomplete();
+                });
             }
         }
 
@@ -4264,8 +4347,8 @@
                 options.showNotification('Incidencia invalida para actualizar evidencia.', 'error');
                 return;
             }
-            if (!options.canCurrentUserEditAssets()) {
-                options.showNotification('Solo admin/super_admin puede actualizar evidencia.', 'warning');
+            if (!options.canCurrentUserWriteOperationalData()) {
+                options.showNotification('Solo roles operativos pueden actualizar evidencia.', 'warning');
                 return;
             }
 
@@ -4320,12 +4403,12 @@
                 options.showNotification('Incidencia invalida para actualizar destino operativo.', 'error');
                 return;
             }
-            if (!options.canCurrentUserEditAssets()) {
-                options.showNotification('Solo admin/super_admin puede editar destino operativo.', 'warning');
+            if (!options.canCurrentUserWriteOperationalData()) {
+                options.showNotification('Solo roles operativos pueden editar destino operativo.', 'warning');
                 return;
             }
 
-            options.openActionModal({
+            const modalOpened = options.openActionModal({
                 title: `Destino operativo #${incidentId}`,
                 subtitle: 'Define direccion, referencia y coordenadas operativas para el despacho.',
                 submitLabel: 'Guardar destino',
@@ -4355,6 +4438,11 @@
                     void options.loadDashboard();
                 },
             });
+            if (modalOpened) {
+                requestAnimationFrame(() => {
+                    bindIncidentDispatchPlacesAutocomplete();
+                });
+            }
         }
 
         async function updateIncidentStatusFromWeb(incident, targetStatus, config = {}) {

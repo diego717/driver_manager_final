@@ -21,6 +21,7 @@ import {
 import { extractApiError } from "@/src/api/client";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
+import { canReachConfiguredApi } from "@/src/services/network/api-connectivity";
 import { enqueueUpdateIncidentEvidence } from "@/src/services/sync/incident-evidence-outbox-service";
 import { enqueueUploadIncidentPhoto } from "@/src/services/sync/photo-outbox-service";
 import { runSync } from "@/src/services/sync/sync-runner";
@@ -82,6 +83,10 @@ function toJpegFileName(originalName: string | null | undefined, incidentId: str
   return `${finalBase}.jpg`;
 }
 
+function resolveIncidentFileToken(remoteIncidentId: string, localIncidentLocalId: string): string {
+  return remoteIncidentId.trim() || localIncidentLocalId.trim() || "0";
+}
+
 function uniqueUris(uris: string[]): string[] {
   return Array.from(new Set(uris.filter((uri) => Boolean(uri && uri.trim()))));
 }
@@ -119,12 +124,22 @@ export default function UploadIncidentPhotoScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
     incidentId?: string | string[];
+    localIncidentLocalId?: string | string[];
+    incidentJobId?: string | string[];
     installationId?: string | string[];
   }>();
 
   const initialIncidentId = useMemo(
     () => normalizeParam(params.incidentId),
     [params.incidentId],
+  );
+  const localIncidentLocalId = useMemo(
+    () => normalizeParam(params.localIncidentLocalId).trim(),
+    [params.localIncidentLocalId],
+  );
+  const incidentJobId = useMemo(
+    () => normalizeParam(params.incidentJobId).trim(),
+    [params.incidentJobId],
   );
   const installationId = useMemo(
     () => normalizeParam(params.installationId),
@@ -316,7 +331,10 @@ export default function UploadIncidentPhotoScreen() {
 
       return {
         uri: bestUri,
-        fileName: toJpegFileName(asset.fileName, incidentId),
+        fileName: toJpegFileName(
+          asset.fileName,
+          resolveIncidentFileToken(incidentId, localIncidentLocalId),
+        ),
         contentType: "image/jpeg",
         sizeBytes: bestSize,
         isTemporary,
@@ -447,10 +465,12 @@ export default function UploadIncidentPhotoScreen() {
 
   const onSaveAllEvidence = async () => {
     const parsedIncidentId = Number.parseInt(incidentId, 10);
-    if (!Number.isInteger(parsedIncidentId) || parsedIncidentId <= 0) {
+    const hasRemoteIncident = Number.isInteger(parsedIncidentId) && parsedIncidentId > 0;
+    const hasLocalIncident = Boolean(localIncidentLocalId);
+    if (!hasRemoteIncident && !hasLocalIncident) {
       publishFeedback({
         title: "Dato invalido",
-        message: "incident_id debe ser un numero positivo.",
+        message: "Necesitas una incidencia remota o una incidencia local pendiente para guardar evidencia.",
         tone: "error",
       });
       return;
@@ -474,10 +494,13 @@ export default function UploadIncidentPhotoScreen() {
     let metadataError = "";
 
     try {
+      const online = await canReachConfiguredApi();
       try {
         const appliedChecklistItems = CHECKLIST_ITEMS.filter((label) => Boolean(selectedChecklist[label]));
         await enqueueUpdateIncidentEvidence({
-          remoteIncidentId: parsedIncidentId,
+          remoteIncidentId: hasRemoteIncident ? parsedIncidentId : null,
+          localIncidentLocalId: hasLocalIncident ? localIncidentLocalId : null,
+          dependsOnJobId: incidentJobId || null,
           checklistItems: appliedChecklistItems,
           evidenceNote: note.trim() || null,
         });
@@ -489,7 +512,9 @@ export default function UploadIncidentPhotoScreen() {
       for (const evidence of confirmedEvidence) {
         try {
           await enqueueUploadIncidentPhoto({
-            remoteIncidentId: parsedIncidentId,
+            remoteIncidentId: hasRemoteIncident ? parsedIncidentId : null,
+            localIncidentLocalId: hasLocalIncident ? localIncidentLocalId : null,
+            dependsOnJobId: incidentJobId || null,
             localPath: evidence.uri,
             fileName: evidence.fileName,
             contentType: evidence.contentType,
@@ -501,7 +526,7 @@ export default function UploadIncidentPhotoScreen() {
         }
       }
 
-      if (successCount > 0 || metadataQueued) {
+      if (online && (successCount > 0 || metadataQueued)) {
         runSync();
       }
 
@@ -509,15 +534,25 @@ export default function UploadIncidentPhotoScreen() {
         publishFeedback({
           title: metadataQueued ? "Evidencias en cola" : "Evidencias en cola con metadata pendiente",
           message: metadataQueued
-            ? `Se guardaron ${successCount} fotos y la metadata de evidencia para sincronizar con la incidencia #${parsedIncidentId}.`
-            : `Se guardaron ${successCount} fotos para sincronizar, pero no se pudo guardar checklist/nota (${metadataError || "error desconocido"}).`,
+            ? hasRemoteIncident
+              ? `Se guardaron ${successCount} fotos y la metadata de evidencia para sincronizar con la incidencia #${parsedIncidentId}.`
+              : `Se guardaron ${successCount} fotos y la metadata de evidencia para la incidencia local pendiente.`
+            : hasRemoteIncident
+              ? `Se guardaron ${successCount} fotos para sincronizar, pero no se pudo guardar checklist/nota (${metadataError || "error desconocido"}).`
+              : `Se guardaron ${successCount} fotos para la incidencia local, pero no se pudo guardar checklist/nota (${metadataError || "error desconocido"}).`,
           tone: metadataQueued ? "success" : "info",
         });
         setConfirmedEvidence([]);
         setSelectedImage(null);
-        router.replace(
-          `/incident/detail?incidentId=${parsedIncidentId}&installationId=${installationId}` as never,
-        );
+        if (hasRemoteIncident) {
+          router.replace(
+            `/incident/detail?incidentId=${parsedIncidentId}&installationId=${installationId}` as never,
+          );
+        } else if (installationId.trim()) {
+          router.replace(`/work?installationId=${installationId}` as never);
+        } else {
+          router.replace("/(tabs)" as never);
+        }
         return;
       }
 
@@ -652,6 +687,11 @@ export default function UploadIncidentPhotoScreen() {
         cursorColor={textInputAccentColor}
         accessibilityLabel="ID de incidencia para subir evidencia"
       />
+      {localIncidentLocalId ? (
+        <Text style={[styles.hintText, { color: palette.hint }]}>
+          Incidencia local pendiente: {localIncidentLocalId}
+        </Text>
+      ) : null}
 
       {installationId ? (
         <Text style={[styles.subtitle, { color: palette.textSecondary }]}>Installation ID: {installationId}</Text>

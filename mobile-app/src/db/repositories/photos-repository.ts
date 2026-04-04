@@ -96,6 +96,10 @@ export const photosRepository = {
         if (status === 'failed') {
           p.syncAttempts = p.syncAttempts + 1
           p.lastSyncError = sanitizeStoredSyncMessage(error)
+        } else if (status === 'pending') {
+          p.lastSyncError = sanitizeStoredSyncMessage(error)
+        } else if (status === 'syncing') {
+          p.lastSyncError = null
         } else if (status === 'synced') {
           p.isSynced = true
           p.lastSyncError = null

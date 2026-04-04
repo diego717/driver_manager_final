@@ -1,5 +1,6 @@
 import {
   HttpError,
+  isMissingIncidentDispatchColumnsError,
   isMissingIncidentReadModelColumnsError,
   isIncidentStatusConstraintError,
   isMissingIncidentSoftDeleteColumnsError,
@@ -10,7 +11,6 @@ export function createIncidentsRouteHandlers({
   jsonResponse,
   parsePositiveInt,
   requireWebWriteRole,
-  requireAdminRole,
   requireSuperAdminRole,
   readJsonOrThrowBadRequest,
   validateIncidentPayload,
@@ -207,65 +207,44 @@ export function createIncidentsRouteHandlers({
         throw new HttpError(400, "Filtro de severidad invalido.");
       }
 
-      const conditions = [
-        "i.tenant_id = ?",
-        "i.deleted_at IS NULL",
-        `(
-          (i.target_lat IS NOT NULL AND i.target_lng IS NOT NULL)
-          OR
-          (i.gps_capture_status = ? AND i.gps_lat IS NOT NULL AND i.gps_lng IS NOT NULL)
-        )`,
-      ];
-      const bindings = [incidentsTenantId, "captured"];
+      const parsedDays =
+        daysRaw && daysRaw !== "all"
+          ? Number.parseInt(daysRaw, 10)
+          : null;
+      if (daysRaw && daysRaw !== "all" && (!Number.isInteger(parsedDays) || parsedDays <= 0)) {
+        throw new HttpError(400, "Filtro de dias invalido.");
+      }
 
-      if (daysRaw && daysRaw !== "all") {
-        const parsedDays = Number.parseInt(daysRaw, 10);
-        if (!Number.isInteger(parsedDays) || parsedDays <= 0) {
-          throw new HttpError(400, "Filtro de dias invalido.");
+      const loadIncidentMapRows = async (includeDispatchTargetColumns = true) => {
+        const conditions = [
+          "i.tenant_id = ?",
+          "i.deleted_at IS NULL",
+          includeDispatchTargetColumns
+            ? `(
+              (i.target_lat IS NOT NULL AND i.target_lng IS NOT NULL)
+              OR
+              (i.gps_capture_status = ? AND i.gps_lat IS NOT NULL AND i.gps_lng IS NOT NULL)
+            )`
+            : "(i.gps_capture_status = ? AND i.gps_lat IS NOT NULL AND i.gps_lng IS NOT NULL)",
+        ];
+        const bindings = [incidentsTenantId, "captured"];
+
+        if (parsedDays !== null) {
+          conditions.push(`i.created_at >= datetime('now', ?)`);
+          bindings.push(`-${parsedDays} days`);
         }
-        conditions.push(`i.created_at >= datetime('now', ?)`);
-        bindings.push(`-${parsedDays} days`);
-      }
 
-      if (status) {
-        conditions.push("i.incident_status = ?");
-        bindings.push(status);
-      }
-      if (severity) {
-        conditions.push("i.severity = ?");
-        bindings.push(severity);
-      }
+        if (status) {
+          conditions.push("i.incident_status = ?");
+          bindings.push(status);
+        }
+        if (severity) {
+          conditions.push("i.severity = ?");
+          bindings.push(severity);
+        }
 
-      const { results } = await env.DB.prepare(`
-        SELECT
-          i.id,
-          i.installation_id,
-          i.asset_id,
-          i.reporter_username,
-          i.note,
-          i.time_adjustment_seconds,
-          i.estimated_duration_seconds,
-          i.severity,
-          i.source,
-          i.created_at,
-          i.incident_status,
-          i.status_updated_at,
-          i.status_updated_by,
-          i.resolved_at,
-          i.resolved_by,
-          i.resolution_note,
-          i.checklist_json,
-          i.evidence_note,
-          i.work_started_at,
-          i.work_ended_at,
-          i.actual_duration_seconds,
-          i.gps_lat,
-          i.gps_lng,
-          i.gps_accuracy_m,
-          i.gps_captured_at,
-          i.gps_capture_source,
-          i.gps_capture_status,
-          i.gps_capture_note,
+        const dispatchTargetColumns = includeDispatchTargetColumns
+          ? `
           i.target_lat,
           i.target_lng,
           i.target_label,
@@ -278,70 +257,126 @@ export function createIncidentsRouteHandlers({
           i.dispatch_reference,
           i.dispatch_contact_name,
           i.dispatch_contact_phone,
-          i.dispatch_notes,
-          inst.client_name AS installation_client_name,
-          inst.driver_brand AS installation_brand,
-          inst.driver_version AS installation_version,
-          COALESCE(
-            asset.external_code,
-            (
-              SELECT linked_asset.external_code
-              FROM asset_installation_links links
-              INNER JOIN assets linked_asset
-                ON linked_asset.id = links.asset_id
-               AND linked_asset.tenant_id = links.tenant_id
-              WHERE links.installation_id = i.installation_id
-                AND links.tenant_id = i.tenant_id
-                AND links.unlinked_at IS NULL
-              ORDER BY links.linked_at DESC, links.id DESC
-              LIMIT 1
-            )
-          ) AS asset_code,
-          COALESCE(
-            asset.brand,
-            (
-              SELECT linked_asset.brand
-              FROM asset_installation_links links
-              INNER JOIN assets linked_asset
-                ON linked_asset.id = links.asset_id
-               AND linked_asset.tenant_id = links.tenant_id
-              WHERE links.installation_id = i.installation_id
-                AND links.tenant_id = i.tenant_id
-                AND links.unlinked_at IS NULL
-              ORDER BY links.linked_at DESC, links.id DESC
-              LIMIT 1
-            )
-          ) AS asset_brand,
-          COALESCE(
-            asset.model,
-            (
-              SELECT linked_asset.model
-              FROM asset_installation_links links
-              INNER JOIN assets linked_asset
-                ON linked_asset.id = links.asset_id
-               AND linked_asset.tenant_id = links.tenant_id
-              WHERE links.installation_id = i.installation_id
-                AND links.tenant_id = i.tenant_id
-                AND links.unlinked_at IS NULL
-              ORDER BY links.linked_at DESC, links.id DESC
-              LIMIT 1
-            )
-          ) AS asset_model
-        FROM incidents i
-        INNER JOIN installations inst
-          ON inst.id = i.installation_id
-         AND inst.tenant_id = i.tenant_id
-        LEFT JOIN assets asset
-          ON asset.id = i.asset_id
-         AND asset.tenant_id = i.tenant_id
-        WHERE ${conditions.join("\n          AND ")}
-        ORDER BY i.created_at DESC, i.id DESC
-        LIMIT ?
-      `)
-        .bind(...bindings, limit)
-        .all();
+          i.dispatch_notes,`
+          : `
+          NULL AS target_lat,
+          NULL AS target_lng,
+          NULL AS target_label,
+          NULL AS target_source,
+          NULL AS target_updated_at,
+          NULL AS target_updated_by,
+          1 AS dispatch_required,
+          NULL AS dispatch_place_name,
+          NULL AS dispatch_address,
+          NULL AS dispatch_reference,
+          NULL AS dispatch_contact_name,
+          NULL AS dispatch_contact_phone,
+          NULL AS dispatch_notes,`;
 
-      const incidents = (results || []).map((incident) => mapIncidentRow(incident, []));
+        return env.DB.prepare(`
+          SELECT
+            i.id,
+            i.installation_id,
+            i.asset_id,
+            i.reporter_username,
+            i.note,
+            i.time_adjustment_seconds,
+            i.estimated_duration_seconds,
+            i.severity,
+            i.source,
+            i.created_at,
+            i.incident_status,
+            i.status_updated_at,
+            i.status_updated_by,
+            i.resolved_at,
+            i.resolved_by,
+            i.resolution_note,
+            i.checklist_json,
+            i.evidence_note,
+            i.work_started_at,
+            i.work_ended_at,
+            i.actual_duration_seconds,
+            i.gps_lat,
+            i.gps_lng,
+            i.gps_accuracy_m,
+            i.gps_captured_at,
+            i.gps_capture_source,
+            i.gps_capture_status,
+            i.gps_capture_note,${dispatchTargetColumns}
+            inst.client_name AS installation_client_name,
+            inst.driver_brand AS installation_brand,
+            inst.driver_version AS installation_version,
+            COALESCE(
+              asset.external_code,
+              (
+                SELECT linked_asset.external_code
+                FROM asset_installation_links links
+                INNER JOIN assets linked_asset
+                  ON linked_asset.id = links.asset_id
+                 AND linked_asset.tenant_id = links.tenant_id
+                WHERE links.installation_id = i.installation_id
+                  AND links.tenant_id = i.tenant_id
+                  AND links.unlinked_at IS NULL
+                ORDER BY links.linked_at DESC, links.id DESC
+                LIMIT 1
+              )
+            ) AS asset_code,
+            COALESCE(
+              asset.brand,
+              (
+                SELECT linked_asset.brand
+                FROM asset_installation_links links
+                INNER JOIN assets linked_asset
+                  ON linked_asset.id = links.asset_id
+                 AND linked_asset.tenant_id = links.tenant_id
+                WHERE links.installation_id = i.installation_id
+                  AND links.tenant_id = i.tenant_id
+                  AND links.unlinked_at IS NULL
+                ORDER BY links.linked_at DESC, links.id DESC
+                LIMIT 1
+              )
+            ) AS asset_brand,
+            COALESCE(
+              asset.model,
+              (
+                SELECT linked_asset.model
+                FROM asset_installation_links links
+                INNER JOIN assets linked_asset
+                  ON linked_asset.id = links.asset_id
+                 AND linked_asset.tenant_id = links.tenant_id
+                WHERE links.installation_id = i.installation_id
+                  AND links.tenant_id = i.tenant_id
+                  AND links.unlinked_at IS NULL
+                ORDER BY links.linked_at DESC, links.id DESC
+                LIMIT 1
+              )
+            ) AS asset_model
+          FROM incidents i
+          INNER JOIN installations inst
+            ON inst.id = i.installation_id
+           AND inst.tenant_id = i.tenant_id
+          LEFT JOIN assets asset
+            ON asset.id = i.asset_id
+           AND asset.tenant_id = i.tenant_id
+          WHERE ${conditions.join("\n            AND ")}
+          ORDER BY i.created_at DESC, i.id DESC
+          LIMIT ?
+        `)
+          .bind(...bindings, limit)
+          .all();
+      };
+
+      let queryResult;
+      try {
+        queryResult = await loadIncidentMapRows(true);
+      } catch (error) {
+        if (!isMissingIncidentDispatchColumnsError(error)) {
+          throw error;
+        }
+        queryResult = await loadIncidentMapRows(false);
+      }
+
+      const incidents = (queryResult?.results || []).map((incident) => mapIncidentRow(incident, []));
       return jsonResponse(request, env, corsPolicy, {
         success: true,
         incidents,
@@ -374,7 +409,7 @@ export function createIncidentsRouteHandlers({
       throw new HttpError(405, methodNotAllowedMessage);
     }
     if (isWebRoute) {
-      requireAdminRole(webSession?.role);
+      requireWebWriteRole(webSession?.role);
     }
   }
 
@@ -1090,7 +1125,7 @@ export function createIncidentsRouteHandlers({
     if (!isWebRoute) {
       throw new HttpError(405, "Ruta disponible solo en /web.");
     }
-    requireAdminRole(webSession?.role);
+    requireWebWriteRole(webSession?.role);
 
     const incidentId = parsePositiveInt(routeParts[1], "incident_id");
     const payload = normalizeDispatchTargetPayload(await readJsonOrThrowBadRequest(request));

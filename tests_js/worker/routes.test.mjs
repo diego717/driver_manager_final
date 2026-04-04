@@ -1192,6 +1192,105 @@ function createIncidentRouteDeps(overrides = {}) {
   };
 }
 
+test("incident map route falls back to GPS-only rows when dispatch columns are missing", async () => {
+  const { handleIncidentMapRoute } = createIncidentsRouteHandlers(createIncidentRouteDeps());
+
+  let attempts = 0;
+  const db = {
+    prepare(sql) {
+      attempts += 1;
+      if (sql.includes("i.target_lat")) {
+        return {
+          bind() {
+            return this;
+          },
+          async all() {
+            throw new Error("no such column: i.target_lat");
+          },
+        };
+      }
+
+      assert.match(sql, /NULL AS target_lat/);
+      return {
+        bind(...args) {
+          assert.deepEqual(args, ["tenant-a", "captured", "-30 days", 240]);
+          return this;
+        },
+        async all() {
+          return {
+            results: [{
+              id: 99,
+              installation_id: 45,
+              asset_id: 12,
+              reporter_username: "ops",
+              note: "GPS pendiente de despacho",
+              time_adjustment_seconds: 0,
+              estimated_duration_seconds: 0,
+              severity: "high",
+              source: "web",
+              created_at: "2026-12-01T09:00:00.000Z",
+              incident_status: "open",
+              status_updated_at: null,
+              status_updated_by: null,
+              resolved_at: null,
+              resolved_by: null,
+              resolution_note: null,
+              checklist_json: null,
+              evidence_note: null,
+              work_started_at: null,
+              work_ended_at: null,
+              actual_duration_seconds: null,
+              gps_lat: -34.9011,
+              gps_lng: -56.1645,
+              gps_accuracy_m: 8,
+              gps_captured_at: "2026-12-01T08:55:00.000Z",
+              gps_capture_source: "browser",
+              gps_capture_status: "captured",
+              gps_capture_note: "",
+              target_lat: null,
+              target_lng: null,
+              target_label: null,
+              target_source: null,
+              target_updated_at: null,
+              target_updated_by: null,
+              dispatch_required: 1,
+              dispatch_place_name: null,
+              dispatch_address: null,
+              dispatch_reference: null,
+              dispatch_contact_name: null,
+              dispatch_contact_phone: null,
+              dispatch_notes: null,
+              installation_client_name: "Cliente GPS",
+              installation_brand: "Brand",
+              installation_version: "v1",
+              asset_code: "ATM-009",
+              asset_brand: "NCR",
+              asset_model: "SelfServ",
+            }],
+          };
+        },
+      };
+    },
+  };
+
+  const response = await handleIncidentMapRoute(
+    new Request("https://worker.example/web/incidents/map", { method: "GET" }),
+    { DB: db },
+    {},
+    ["incidents", "map"],
+    "tenant-a",
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(attempts, 2);
+  assert.equal(body.success, true);
+  assert.equal(body.incidents.length, 1);
+  assert.equal(body.incidents[0].id, 99);
+  assert.equal(body.incidents[0].target_lat, null);
+  assert.equal(body.incidents[0].dispatch_required, 1);
+});
+
 test("system routes expose metadata and health handlers", async () => {
   const { handleHealthCheckRoute, handleServiceMetadataRoute } = createSystemRouteHandlers({
     jsonResponse,
@@ -3119,7 +3218,7 @@ test("incident status handler resolves incidents through the nested installation
   const publicTrackingRefreshes = [];
   let adminRole = null;
   const { handleIncidentStatusRoute } = createIncidentsRouteHandlers(createIncidentRouteDeps({
-    requireAdminRole(role) {
+    requireWebWriteRole(role) {
       adminRole = role;
     },
     async readJsonOrThrowBadRequest() {

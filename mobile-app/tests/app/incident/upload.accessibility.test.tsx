@@ -125,6 +125,15 @@ vi.mock("expo-file-system/legacy", () => ({
 vi.mock("@/src/api/photos", () => ({
   uploadIncidentPhoto: vi.fn(),
 }));
+vi.mock("@/src/services/sync/photo-outbox-service", () => ({
+  enqueueUploadIncidentPhoto: vi.fn(),
+}));
+vi.mock("@/src/services/sync/incident-evidence-outbox-service", () => ({
+  enqueueUpdateIncidentEvidence: vi.fn(),
+}));
+vi.mock("@/src/services/sync/sync-runner", () => ({
+  runSync: vi.fn(),
+}));
 vi.mock("@/src/api/client", () => ({
   extractApiError: (error: unknown) =>
     error instanceof Error ? error.message : String(error),

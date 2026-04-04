@@ -1,4 +1,4 @@
-import { HttpError } from "../lib/core.js";
+import { HttpError, canonicalizeWebRole } from "../lib/core.js";
 
 const TENANT_STATUS_VALUES = new Set(["active", "suspended"]);
 
@@ -385,7 +385,7 @@ export function createTenantsRouteHandlers({
       SELECT username
       FROM web_users
       WHERE tenant_id = ?
-        AND LOWER(COALESCE(role, 'viewer')) IN ('admin', 'super_admin', 'platform_owner')
+        AND LOWER(COALESCE(role, 'solo_lectura')) IN ('admin', 'super_admin', 'platform_owner')
       ORDER BY LOWER(username) ASC, id ASC
       LIMIT 5
     `)
@@ -448,7 +448,7 @@ export function createTenantsRouteHandlers({
         ${tenantIdExpr}
       FROM web_users
       WHERE ${tenantFilter}
-        AND LOWER(COALESCE(${columns.has("role") ? "role" : "'admin'"}, 'viewer')) IN ('admin', 'super_admin', 'platform_owner')
+        AND LOWER(COALESCE(${columns.has("role") ? "role" : "'admin'"}, 'solo_lectura')) IN ('admin', 'super_admin', 'platform_owner')
       ORDER BY LOWER(username) ASC, id ASC
     `)
       .bind(...tenantBindArgs)
@@ -456,7 +456,7 @@ export function createTenantsRouteHandlers({
     return (results || []).map((row) => ({
       id: Number(row.id),
       username: normalizeOptionalString(row.username, ""),
-      role: normalizeOptionalString(row.role, "viewer"),
+      role: canonicalizeWebRole(row.role, "solo_lectura"),
       is_active: Number(row.is_active ?? 1) === 1,
       last_login_at: row.last_login_at || null,
       tenant_id: normalizeRealtimeTenantId(row.tenant_id),

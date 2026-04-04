@@ -30,6 +30,7 @@ import {
 } from "@/src/api/photos";
 import { getCurrentLinkedTechnicianContext, getTechnicianAssignmentsByEntity } from "@/src/api/technicians";
 import { readStoredWebSession } from "@/src/api/webAuth";
+import { canAssignTechnicians, canDeleteCriticalData } from "@/src/auth/roles";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import RuntimeChip from "@/src/components/RuntimeChip";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -109,7 +110,8 @@ export default function IncidentDetailScreen() {
   const [resolutionNote, setResolutionNote] = useState("");
   const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
   const [linkedTechnician, setLinkedTechnician] = useState<TechnicianRecord | null>(null);
-  const [assignmentSummary, setAssignmentSummary] = useState<TechnicianAssignment[]>([]);
+  const [directAssignmentSummary, setDirectAssignmentSummary] = useState<TechnicianAssignment[]>([]);
+  const [inheritedAssignmentSummary, setInheritedAssignmentSummary] = useState<TechnicianAssignment[]>([]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [activePhotoIndex, setActivePhotoIndex] = useState(0);
   const { width: windowWidth } = useWindowDimensions();
@@ -166,7 +168,8 @@ export default function IncidentDetailScreen() {
   useEffect(() => {
     let mounted = true;
     if (!incident) {
-      setAssignmentSummary([]);
+      setDirectAssignmentSummary([]);
+      setInheritedAssignmentSummary([]);
       return () => {
         mounted = false;
       };
@@ -180,19 +183,30 @@ export default function IncidentDetailScreen() {
         : Promise.resolve([]),
     ]).then(([incidentAssignments, installationAssignments, assetAssignments]) => {
       if (!mounted) return;
+      const directAssignments = incidentAssignments.filter((assignment) => !assignment.unassigned_at);
       const seen = new Set<number>();
-      const merged = [...incidentAssignments, ...installationAssignments, ...assetAssignments].filter((assignment) => {
+      const inheritedAssignments = [...installationAssignments, ...assetAssignments].filter((assignment) => {
         if (!assignment?.id || seen.has(assignment.id)) return false;
         seen.add(assignment.id);
         return !assignment.unassigned_at;
       });
-      setAssignmentSummary(merged);
+      setDirectAssignmentSummary(directAssignments);
+      setInheritedAssignmentSummary(inheritedAssignments);
     });
 
     return () => {
       mounted = false;
     };
   }, [incident]);
+
+  const assignmentSummary = useMemo(() => {
+    const seen = new Set<number>();
+    return [...directAssignmentSummary, ...inheritedAssignmentSummary].filter((assignment) => {
+      if (!assignment?.id || seen.has(assignment.id)) return false;
+      seen.add(assignment.id);
+      return true;
+    });
+  }, [directAssignmentSummary, inheritedAssignmentSummary]);
 
   useEffect(() => {
     if (normalizeIncidentStatus(incident?.incident_status) !== "in_progress") {
@@ -460,9 +474,8 @@ export default function IncidentDetailScreen() {
   const status = normalizeIncidentStatus(incident?.incident_status);
   const runtime = resolveIncidentRealDurationSeconds(incident, nowMs);
   const estimated = resolveIncidentEstimatedDurationSeconds(incident);
-  const canDeleteIncident = webSessionRole === "super_admin" || webSessionRole === "platform_owner";
-  const canManageTechnicianAssignments =
-    webSessionRole === "admin" || webSessionRole === "super_admin" || webSessionRole === "platform_owner";
+  const canDeleteIncident = canDeleteCriticalData(webSessionRole);
+  const canManageTechnicianAssignments = canAssignTechnicians(webSessionRole);
   const currentTechnicianAssigned = Boolean(
     linkedTechnician?.id &&
       assignmentSummary.some((assignment) => assignment.technician_id === linkedTechnician.id),
@@ -652,7 +665,7 @@ export default function IncidentDetailScreen() {
             >
               {assignmentSummary.map((assignment) => (
                 <Text key={assignment.id} style={[styles.cardText, { color: palette.textSecondary }]}>
-                  {assignment.technician_display_name || `Tecnico #${assignment.technician_id}`} · {assignment.assignment_role} · {assignment.entity_type}
+                  {assignment.technician_display_name || `Tecnico #${assignment.technician_id}`} - {assignment.assignment_role} - {assignment.entity_type}
                 </Text>
               ))}
             </SectionCard>
@@ -670,7 +683,7 @@ export default function IncidentDetailScreen() {
                 canManage={canManageTechnicianAssignments}
                 currentLinkedTechnicianId={linkedTechnician?.id ?? null}
                 emptyText="Sin tecnicos asignados directo a esta incidencia."
-                onAssignmentsChanged={setAssignmentSummary}
+                onAssignmentsChanged={setDirectAssignmentSummary}
               />
             </SectionCard>
           ) : null}

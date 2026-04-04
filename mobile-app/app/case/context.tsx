@@ -22,6 +22,7 @@ import {
   listInstallations,
 } from "@/src/api/incidents";
 import { readStoredWebSession } from "@/src/api/webAuth";
+import { canAssignTechnicians } from "@/src/auth/roles";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -30,8 +31,8 @@ import SectionCard from "@/src/components/SectionCard";
 import StatusChip from "@/src/components/StatusChip";
 import TechnicianAssignmentsPanel from "@/src/components/TechnicianAssignmentsPanel";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
+import { canReachConfiguredApi } from "@/src/services/network/api-connectivity";
 import { enqueueCreateCase } from "@/src/services/sync/case-outbox-service";
-import { runSync } from "@/src/services/sync/sync-runner";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
@@ -39,17 +40,6 @@ import { type InstallationRecord } from "@/src/types/api";
 import { deriveRecordIncidentSummary } from "@/src/utils/incidents";
 
 const MIN_TOUCH_TARGET_SIZE = 44;
-
-async function isOnline(): Promise<boolean> {
-  try {
-    const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? "";
-    if (!apiBase) return true;
-    await fetch(`${apiBase}/health`, { method: "HEAD", signal: AbortSignal.timeout(3000) });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 type FeedbackState = {
   tone: InlineFeedbackTone;
@@ -121,8 +111,7 @@ export default function CaseContextScreen() {
     [selectedCase],
   );
   const canSendConformity = Boolean(selectedCase) && selectedSummary.active === 0;
-  const canManageTechnicianAssignments =
-    webSessionRole === "admin" || webSessionRole === "super_admin" || webSessionRole === "platform_owner";
+  const canManageTechnicianAssignments = canAssignTechnicians(webSessionRole);
 
   const clearFeedbackSoon = useCallback(() => {
     if (feedbackTimeoutRef.current) {
@@ -251,7 +240,7 @@ export default function CaseContextScreen() {
 
     try {
       setCreatingCase(true);
-      const online = await isOnline();
+      const online = await canReachConfiguredApi();
 
       if (!online) {
         await enqueueCreateCase({
@@ -264,7 +253,6 @@ export default function CaseContextScreen() {
           osInfo: "mobile",
           installationTimeSeconds: 0,
         });
-        runSync();
         notify("info", "Caso guardado localmente. Se sincronizara cuando vuelva la conectividad.");
         router.replace("/(tabs)" as never);
         return;

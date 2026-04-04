@@ -5,6 +5,12 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 const routerMocks = vi.hoisted(() => ({
   replace: vi.fn(),
 }));
+const routeParamsMocks = vi.hoisted(() => ({
+  params: {
+    incidentId: "25",
+    installationId: "7",
+  } as Record<string, string>,
+}));
 
 function flattenStyle(style: unknown): Record<string, unknown> {
   if (Array.isArray(style)) {
@@ -103,7 +109,7 @@ vi.mock("expo-router", () => {
   Stack.Screen = ({ children }: { children?: React.ReactNode }) => <>{children}</>;
   return {
     Stack,
-    useLocalSearchParams: () => ({ incidentId: "25", installationId: "7" }),
+    useLocalSearchParams: () => routeParamsMocks.params,
     useRouter: () => routerMocks,
   };
 });
@@ -128,6 +134,24 @@ vi.mock("@/src/api/photos", () => ({
 vi.mock("@/src/api/incidents", () => ({
   updateIncidentEvidence: vi.fn(async () => ({})),
 }));
+const syncQueueMocks = vi.hoisted(() => ({
+  enqueueUploadIncidentPhoto: vi.fn(async () => ({ localId: "photo-1", jobId: "job-photo-1" })),
+  enqueueUpdateIncidentEvidence: vi.fn(async () => ({ localId: "evidence-1", jobId: "job-evidence-1" })),
+  runSync: vi.fn(),
+}));
+const connectivityMocks = vi.hoisted(() => ({
+  canReachConfiguredApi: vi.fn(async () => true),
+}));
+vi.mock("@/src/services/sync/photo-outbox-service", () => ({
+  enqueueUploadIncidentPhoto: syncQueueMocks.enqueueUploadIncidentPhoto,
+}));
+vi.mock("@/src/services/sync/incident-evidence-outbox-service", () => ({
+  enqueueUpdateIncidentEvidence: syncQueueMocks.enqueueUpdateIncidentEvidence,
+}));
+vi.mock("@/src/services/network/api-connectivity", () => connectivityMocks);
+vi.mock("@/src/services/sync/sync-runner", () => ({
+  runSync: syncQueueMocks.runSync,
+}));
 vi.mock("@/src/api/client", () => ({
   extractApiError: (error: unknown) =>
     error instanceof Error ? error.message : String(error),
@@ -150,6 +174,11 @@ import UploadIncidentPhotoScreen from "@/app/incident/upload";
 describe("UploadIncidentPhotoScreen upload flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    connectivityMocks.canReachConfiguredApi.mockResolvedValue(true);
+    routeParamsMocks.params = {
+      incidentId: "25",
+      installationId: "7",
+    };
   });
 
   it("completes wizard flow and uploads confirmed evidence", async () => {
@@ -194,9 +223,108 @@ describe("UploadIncidentPhotoScreen upload flow", () => {
 
     await waitFor(() => {
       expect(routerMocks.replace).toHaveBeenCalled();
-      expect(updateIncidentEvidence).toHaveBeenCalledTimes(1);
-      expect(uploadIncidentPhoto).toHaveBeenCalledTimes(1);
-      expect(view.getByText("Evidencias guardadas")).toBeTruthy();
+      expect(syncQueueMocks.enqueueUpdateIncidentEvidence).toHaveBeenCalledTimes(1);
+      expect(syncQueueMocks.enqueueUploadIncidentPhoto).toHaveBeenCalledTimes(1);
+      expect(syncQueueMocks.runSync).toHaveBeenCalledTimes(1);
+      expect(view.getByText("Evidencias en cola")).toBeTruthy();
+    });
+  });
+
+  it("keeps the evidence queued locally without forcing sync when offline", async () => {
+    const { fireEvent, render, waitFor } = await import("@testing-library/react-native/pure");
+
+    connectivityMocks.canReachConfiguredApi.mockResolvedValue(false);
+    vi.mocked(ImagePicker.requestMediaLibraryPermissionsAsync).mockResolvedValue({
+      granted: true,
+    } as any);
+    vi.mocked(ImagePicker.launchImageLibraryAsync).mockResolvedValue({
+      canceled: false,
+      assets: [
+        {
+          uri: "file:///picked-offline.jpg",
+          fileName: "picked-offline.jpg",
+          width: 800,
+          height: 600,
+        },
+      ],
+    } as any);
+    vi.mocked(ImageManipulator.manipulateAsync).mockResolvedValue({ uri: "file:///processed-offline.jpg" } as any);
+
+    const view = render(<UploadIncidentPhotoScreen />);
+    fireEvent.press(view.getByText("Siguiente").parent);
+    fireEvent.press(view.getByText("Siguiente").parent);
+    fireEvent.press(view.getByLabelText("Seleccionar foto desde la galeria"));
+
+    await waitFor(() => {
+      expect(view.getByText("Archivo: picked-offline.jpg")).toBeTruthy();
+    });
+    fireEvent.press(view.getByText("Confirmar").parent);
+    fireEvent.press(view.getByText("Siguiente").parent);
+    fireEvent.press(view.getByLabelText("Confirmar y guardar evidencia"));
+
+    await waitFor(() => {
+      expect(syncQueueMocks.enqueueUpdateIncidentEvidence).toHaveBeenCalledTimes(1);
+      expect(syncQueueMocks.enqueueUploadIncidentPhoto).toHaveBeenCalledTimes(1);
+      expect(syncQueueMocks.runSync).not.toHaveBeenCalled();
+      expect(routerMocks.replace).toHaveBeenCalled();
+    });
+  });
+
+  it("queues evidence against a local incident when no remote incident id exists yet", async () => {
+    const { fireEvent, render, waitFor } = await import("@testing-library/react-native/pure");
+
+    routeParamsMocks.params = {
+      localIncidentLocalId: "incident-local-44",
+      incidentJobId: "job-incident-44",
+      installationId: "7",
+    };
+    connectivityMocks.canReachConfiguredApi.mockResolvedValue(false);
+    vi.mocked(ImagePicker.requestMediaLibraryPermissionsAsync).mockResolvedValue({
+      granted: true,
+    } as any);
+    vi.mocked(ImagePicker.launchImageLibraryAsync).mockResolvedValue({
+      canceled: false,
+      assets: [
+        {
+          uri: "file:///picked-local.jpg",
+          fileName: "picked-local.jpg",
+          width: 800,
+          height: 600,
+        },
+      ],
+    } as any);
+    vi.mocked(ImageManipulator.manipulateAsync).mockResolvedValue({ uri: "file:///processed-local.jpg" } as any);
+
+    const view = render(<UploadIncidentPhotoScreen />);
+    expect(view.getByText("Incidencia local pendiente: incident-local-44")).toBeTruthy();
+    fireEvent.press(view.getByText("Siguiente").parent);
+    fireEvent.press(view.getByText("Siguiente").parent);
+    fireEvent.press(view.getByLabelText("Seleccionar foto desde la galeria"));
+
+    await waitFor(() => {
+      expect(view.getByText("Archivo: picked-local.jpg")).toBeTruthy();
+    });
+    fireEvent.press(view.getByText("Confirmar").parent);
+    fireEvent.press(view.getByText("Siguiente").parent);
+    fireEvent.press(view.getByLabelText("Confirmar y guardar evidencia"));
+
+    await waitFor(() => {
+      expect(syncQueueMocks.enqueueUpdateIncidentEvidence).toHaveBeenCalledWith(
+        expect.objectContaining({
+          remoteIncidentId: null,
+          localIncidentLocalId: "incident-local-44",
+          dependsOnJobId: "job-incident-44",
+        }),
+      );
+      expect(syncQueueMocks.enqueueUploadIncidentPhoto).toHaveBeenCalledWith(
+        expect.objectContaining({
+          remoteIncidentId: null,
+          localIncidentLocalId: "incident-local-44",
+          dependsOnJobId: "job-incident-44",
+        }),
+      );
+      expect(syncQueueMocks.runSync).not.toHaveBeenCalled();
+      expect(routerMocks.replace).toHaveBeenCalledWith("/work?installationId=7");
     });
   });
 });

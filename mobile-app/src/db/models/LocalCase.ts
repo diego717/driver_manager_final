@@ -10,15 +10,15 @@ import type { LocalSyncStatus } from './Incident'
 export default class LocalCase extends Model {
   static table = 'cases_local'
 
-  @text('local_id') localId!: string
-  @field('remote_id') remoteId!: number | null
-  @text('client_name') clientName!: string
-  @text('notes') notes!: string
+  @text('local_id') localId: string
+  @field('remote_id') remoteId: number | null
+  @text('client_name') clientName: string
+  @text('notes') notes: string
   // Prefixed to avoid WMDb base class conflict
-  @text('sync_status') localSyncStatus!: LocalSyncStatus
-  @field('sync_attempts') syncAttempts!: number
-  @text('last_sync_error') lastSyncError!: string | null
-  @text('client_request_id') clientRequestId!: string
-  @readonly @date('created_at') createdAt!: Date
-  @field('updated_at') updatedAt!: number
+  @text('sync_status') localSyncStatus: LocalSyncStatus
+  @field('sync_attempts') syncAttempts: number
+  @text('last_sync_error') lastSyncError: string | null
+  @text('client_request_id') clientRequestId: string
+  @readonly @date('created_at') createdAt: Date
+  @field('updated_at') updatedAt: number
 }

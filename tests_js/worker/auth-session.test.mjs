@@ -42,7 +42,10 @@ function createWebSessionTestKit(overrides = {}) {
       return String(value || "").trim().toLowerCase();
     },
     async hmacSha256Hex(secret, message) {
-      return `sig-${secret}-${message}`;
+      return Buffer.from(`${secret}:${message}`, "utf8")
+        .toString("hex")
+        .padEnd(64, "0")
+        .slice(0, 64);
     },
     timingSafeEqual(left, right) {
       return left === right;
@@ -110,7 +113,10 @@ test("web session helpers build and verify bearer tokens", async () => {
         Authorization: `Bearer ${token.token}`,
       },
     }),
-    env,
+    {
+      ...env,
+      DB: {},
+    },
   );
   const statusPayload = helpers.buildWebSessionStatusPayload(
     {

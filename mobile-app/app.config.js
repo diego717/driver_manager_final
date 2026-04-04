@@ -6,6 +6,7 @@ const baseExpoConfig = {
   slug: "mobile-app",
   version: "1.0.0",
   orientation: "portrait",
+  platforms: ["ios", "android"],
   icon: "./assets/images/icon.png",
   scheme: "mobileapp",
   userInterfaceStyle: "automatic",
@@ -51,6 +52,7 @@ const baseExpoConfig = {
   plugins: [
     "expo-router",
     "expo-secure-store",
+    "expo-maps",
     [
       "expo-local-authentication",
       {
@@ -118,6 +120,7 @@ function resolveTrimmedEnvValue(envName) {
 module.exports = () => {
   const expo = JSON.parse(JSON.stringify(baseExpoConfig));
   const appDisplayName = resolveTrimmedEnvValue("APP_DISPLAY_NAME");
+  const googleMapsApiKey = resolveTrimmedEnvValue("GOOGLE_MAPS_API_KEY");
 
   if (appDisplayName) {
     expo.name = appDisplayName;
@@ -127,6 +130,14 @@ module.exports = () => {
     "GOOGLE_SERVICES_JSON",
     "google-services.json",
   );
+  if (googleMapsApiKey) {
+    expo.android = expo.android || {};
+    expo.android.config = expo.android.config || {};
+    expo.android.config.googleMaps = {
+      ...(expo.android.config.googleMaps || {}),
+      apiKey: googleMapsApiKey,
+    };
+  }
   if (androidGoogleServicesFile) {
     expo.android = expo.android || {};
     expo.android.googleServicesFile = androidGoogleServicesFile;
@@ -138,6 +149,11 @@ module.exports = () => {
     "GOOGLE_SERVICE_INFO_PLIST",
     "GoogleService-Info.plist",
   );
+  if (googleMapsApiKey) {
+    expo.ios = expo.ios || {};
+    expo.ios.config = expo.ios.config || {};
+    expo.ios.config.googleMapsApiKey = googleMapsApiKey;
+  }
   if (iosGoogleServicesFile) {
     expo.ios = expo.ios || {};
     expo.ios.googleServicesFile = iosGoogleServicesFile;

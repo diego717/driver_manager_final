@@ -1,5 +1,10 @@
 import {
   addUtcDays,
+  canonicalizeWebRole,
+  canDeleteCriticalData,
+  canManagePlatform,
+  canManageUsers,
+  canWriteOperationalData,
   DEFAULT_REALTIME_TENANT_ID,
   HttpError,
   isMissingAssetsTableError,
@@ -176,11 +181,11 @@ function dashboardAssetSecurityHeaders() {
       "base-uri 'self'",
       "frame-ancestors 'none'",
       "object-src 'none'",
-      "img-src 'self' data: blob: https://api.mapbox.com https://*.tiles.mapbox.com",
+      "img-src 'self' data: blob: https://maps.googleapis.com https://maps.gstatic.com https://*.googleapis.com https://*.gstatic.com",
       "font-src 'self' data: https://fonts.gstatic.com",
-      "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://api.mapbox.com https://events.mapbox.com https://*.tiles.mapbox.com",
-      "script-src 'self' https://api.mapbox.com",
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.mapbox.com",
+      "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://maps.googleapis.com https://maps.gstatic.com https://*.googleapis.com https://*.gstatic.com",
+      "script-src 'self' https://maps.googleapis.com",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://maps.googleapis.com",
       "worker-src 'self' blob:",
       "child-src 'self' blob:",
       "manifest-src 'self'",
@@ -293,31 +298,10 @@ function dashboardFallbackHtml() {
 
 function buildDashboardRuntimeConfigScript(env) {
   const runtimeConfig = {};
-  const mapboxToken = normalizeOptionalString(
-    env?.MAPBOX_PUBLIC_TOKEN || env?.MAPBOX_ACCESS_TOKEN || "",
-    "",
-  ).trim();
-  const mapboxStyleUrl = normalizeOptionalString(env?.MAPBOX_STYLE_URL || "", "").trim();
-  const mapboxStyleUrlLight = normalizeOptionalString(
-    env?.MAPBOX_STYLE_URL_LIGHT || "",
-    "",
-  ).trim();
-  const mapboxStyleUrlDark = normalizeOptionalString(
-    env?.MAPBOX_STYLE_URL_DARK || "",
-    "",
-  ).trim();
+  const googleMapsApiKey = normalizeOptionalString(env?.GOOGLE_MAPS_API_KEY || "", "").trim();
 
-  if (mapboxToken) {
-    runtimeConfig.__DM_MAPBOX_ACCESS_TOKEN__ = mapboxToken;
-  }
-  if (mapboxStyleUrl) {
-    runtimeConfig.__DM_MAPBOX_STYLE_URL__ = mapboxStyleUrl;
-  }
-  if (mapboxStyleUrlLight) {
-    runtimeConfig.__DM_MAPBOX_STYLE_URL_LIGHT__ = mapboxStyleUrlLight;
-  }
-  if (mapboxStyleUrlDark) {
-    runtimeConfig.__DM_MAPBOX_STYLE_URL_DARK__ = mapboxStyleUrlDark;
+  if (googleMapsApiKey) {
+    runtimeConfig.__DM_GOOGLE_MAPS_API_KEY__ = googleMapsApiKey;
   }
 
   const entries = Object.entries(runtimeConfig);
@@ -461,17 +445,17 @@ function resolveRealtimeTenantId(request, webSession = null) {
 }
 
 function canManageAllTenants(actorOrRole, explicitTenantId = undefined) {
-  const role =
-    actorOrRole && typeof actorOrRole === "object"
-      ? normalizeOptionalString(actorOrRole.role, "").toLowerCase()
-      : normalizeOptionalString(actorOrRole, "").toLowerCase();
+  const role = canonicalizeWebRole(
+    actorOrRole && typeof actorOrRole === "object" ? actorOrRole.role : actorOrRole,
+    "",
+  );
   const tenantId =
     explicitTenantId !== undefined
       ? normalizeRealtimeTenantId(explicitTenantId)
       : actorOrRole && typeof actorOrRole === "object"
         ? normalizeRealtimeTenantId(actorOrRole.tenant_id)
         : "";
-  return ["super_admin", "platform_owner"].includes(role) && tenantId === DEFAULT_REALTIME_TENANT_ID;
+  return canManagePlatform(role) && tenantId === DEFAULT_REALTIME_TENANT_ID;
 }
 
 function assertSameTenantOrSuperAdmin(session, targetTenantId) {
@@ -2527,19 +2511,19 @@ function parseBooleanOrNull(value) {
 }
 
 function requireAdminRole(role) {
-  if (!["admin", "super_admin", "platform_owner"].includes(normalizeOptionalString(role, "").toLowerCase())) {
+  if (!canManageUsers(role)) {
     throw new HttpError(403, "No tienes permisos para administrar usuarios web.");
   }
 }
 
 function requireSuperAdminRole(role) {
-  if (!["super_admin", "platform_owner"].includes(normalizeOptionalString(role, "").toLowerCase())) {
+  if (!canDeleteCriticalData(role)) {
     throw new HttpError(403, "Solo super_admin puede eliminar incidencias.");
   }
 }
 
 function requireWebWriteRole(role) {
-  if (!["admin", "super_admin", "platform_owner"].includes(normalizeOptionalString(role, "").toLowerCase())) {
+  if (!canWriteOperationalData(role)) {
     throw new HttpError(403, "No tienes permisos para modificar datos.");
   }
 }
@@ -5891,7 +5875,6 @@ const incidentsRouteHandlers = createIncidentsRouteHandlers({
   jsonResponse,
   parsePositiveInt,
   requireWebWriteRole,
-  requireAdminRole,
   requireSuperAdminRole,
   readJsonOrThrowBadRequest,
   validateIncidentPayload,

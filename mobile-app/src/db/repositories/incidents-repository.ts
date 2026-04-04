@@ -182,6 +182,10 @@ export const incidentsRepository = {
         if (status === 'failed') {
           i.syncAttempts = i.syncAttempts + 1
           i.lastSyncError = sanitizeStoredSyncMessage(error)
+        } else if (status === 'pending') {
+          i.lastSyncError = sanitizeStoredSyncMessage(error)
+        } else if (status === 'syncing') {
+          i.lastSyncError = null
         } else if (status === 'synced') {
           i.isSynced = true
           i.lastSyncError = null

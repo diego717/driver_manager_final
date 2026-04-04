@@ -1,3 +1,5 @@
+import { canonicalizeWebRole } from "../lib/core.js";
+
 export function createWebSessionHelpers({
   HttpError,
   DEFAULT_REALTIME_TENANT_ID,
@@ -148,7 +150,7 @@ export function createWebSessionHelpers({
     const iat = nowUnixSeconds();
     const exp = iat + WEB_ACCESS_TTL_SECONDS;
     const sub = normalizeWebUsername(sessionUser.username || "web-user") || "web-user";
-    const role = normalizeOptionalString(sessionUser.role, WEB_DEFAULT_ROLE) || WEB_DEFAULT_ROLE;
+    const role = canonicalizeWebRole(sessionUser.role, WEB_DEFAULT_ROLE);
     const payload = {
       scope: "web",
       sub,
@@ -260,7 +262,7 @@ export function createWebSessionHelpers({
     return {
       scope: "web",
       sub: subject,
-      role: normalizeOptionalString(currentUser?.role, WEB_DEFAULT_ROLE) || WEB_DEFAULT_ROLE,
+      role: canonicalizeWebRole(currentUser?.role, WEB_DEFAULT_ROLE),
       tenant_id: normalizeRealtimeTenantId(currentUser?.tenant_id || payload.tenant_id),
       user_id: userId,
       session_version: tokenSessionVersion,

@@ -1,7 +1,18 @@
 (function attachDashboardAuthFactory(global) {
     function createDashboardAuth(options) {
+        function normalizeRoleValue(role, fallback = 'solo_lectura') {
+            const normalizedRole = String(role || fallback).trim().toLowerCase();
+            if (!normalizedRole) return String(fallback || 'solo_lectura').trim().toLowerCase() || 'solo_lectura';
+            if (normalizedRole === 'viewer') return 'solo_lectura';
+            return normalizedRole;
+        }
+
+        function getCurrentRole() {
+            return normalizeRoleValue(options.getCurrentUser()?.role || '');
+        }
+
         function formatRoleLabel(role, tenantId = "") {
-            const normalizedRole = String(role || "").trim().toLowerCase();
+            const normalizedRole = normalizeRoleValue(role, '');
             const normalizedTenantId = String(tenantId || "").trim().toLowerCase();
             if (
                 normalizedRole === "platform_owner" ||
@@ -9,7 +20,38 @@
             ) {
                 return "platform_owner";
             }
-            return String(role || "admin");
+            if (normalizedRole === 'solo_lectura') return 'solo_lectura';
+            if (normalizedRole === 'tecnico') return 'tecnico';
+            if (normalizedRole === 'supervisor') return 'supervisor';
+            return normalizedRole || 'admin';
+        }
+
+        function canCurrentUserManagePlatform() {
+            const role = getCurrentRole();
+            return role === 'platform_owner' || role === 'super_admin';
+        }
+
+        function canCurrentUserManageUsers() {
+            const role = getCurrentRole();
+            return role === 'admin' || canCurrentUserManagePlatform();
+        }
+
+        function canCurrentUserManageTechnicians() {
+            return canCurrentUserManageUsers();
+        }
+
+        function canCurrentUserManageTechnicianAssignments() {
+            const role = getCurrentRole();
+            return role === 'admin' || role === 'supervisor' || canCurrentUserManagePlatform();
+        }
+
+        function canCurrentUserWriteOperationalData() {
+            const role = getCurrentRole();
+            return role === 'admin' || role === 'supervisor' || role === 'tecnico' || canCurrentUserManagePlatform();
+        }
+
+        function canCurrentUserEditAssets() {
+            return canCurrentUserManageUsers();
         }
 
         function showLogin() {
@@ -66,8 +108,7 @@
         }
 
         function canCurrentUserAccessAudit() {
-            const role = String(options.getCurrentUser()?.role || '').toLowerCase();
-            return role === 'admin' || role === 'super_admin' || role === 'platform_owner';
+            return canCurrentUserManageUsers();
         }
 
         function syncRoleBasedNavigationAccess() {
@@ -222,7 +263,13 @@
         return {
             applyAuthenticatedUser,
             bindSessionUi,
+            canCurrentUserEditAssets,
             canCurrentUserAccessAudit,
+            canCurrentUserManagePlatform,
+            canCurrentUserManageTechnicianAssignments,
+            canCurrentUserManageTechnicians,
+            canCurrentUserManageUsers,
+            canCurrentUserWriteOperationalData,
             handleUnauthorized,
             hasActiveSession,
             hideLogin,

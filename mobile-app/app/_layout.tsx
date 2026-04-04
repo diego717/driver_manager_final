@@ -22,6 +22,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import BiometricLockScreen from "@/src/components/BiometricLockScreen";
 import AppHeaderTitle from "@/src/components/AppHeaderTitle";
 import { useNotifications } from "@/src/hooks/useNotifications";
+import { NotificationsProvider } from "@/src/notifications/notifications-context";
 import { refreshSharedWebSessionState } from "@/src/session/web-session-store";
 import { getNavigationTheme, useAppPalette } from "@/src/theme/palette";
 import {
@@ -337,26 +338,24 @@ export function RootLayoutNav() {
 
   useEffect(() => {
     let mounted = true;
-    let subscription: { remove: () => void } | null = null;
-
     const toReachable = (state: Network.NetworkState): boolean =>
       Boolean(state.isConnected && state.isInternetReachable !== false);
+    const handleNetworkState = (state: Network.NetworkState) => {
+      const previousReachable = networkReachableRef.current;
+      const nextReachable = toReachable(state);
+      networkReachableRef.current = nextReachable;
+
+      if (previousReachable === false && nextReachable) {
+        triggerSync();
+      }
+    };
+    const subscription = Network.addNetworkStateListener(handleNetworkState);
 
     void (async () => {
       try {
         const initialState = await Network.getNetworkStateAsync();
         if (!mounted) return;
         networkReachableRef.current = toReachable(initialState);
-
-        subscription = Network.addNetworkStateListener((state) => {
-          const previousReachable = networkReachableRef.current;
-          const nextReachable = toReachable(state);
-          networkReachableRef.current = nextReachable;
-
-          if (previousReachable === false && nextReachable) {
-            triggerSync();
-          }
-        });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`[sync] network listener unavailable: ${message}`);
@@ -376,8 +375,9 @@ export function RootLayoutNav() {
   }, [triggerSync]);
 
   return (
-    <ThemeProvider value={navigationTheme}>
-      <View style={styles.root}>
+    <NotificationsProvider value={notifications}>
+      <ThemeProvider value={navigationTheme}>
+        <View style={styles.root}>
         <Stack
           screenOptions={{
             headerStyle: { backgroundColor: palette.surface },
@@ -457,8 +457,9 @@ export function RootLayoutNav() {
             }}
           />
         ) : null}
-      </View>
-    </ThemeProvider>
+        </View>
+      </ThemeProvider>
+    </NotificationsProvider>
   );
 }
 

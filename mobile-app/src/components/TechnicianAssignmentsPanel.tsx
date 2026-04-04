@@ -36,6 +36,15 @@ export default function TechnicianAssignmentsPanel(props: {
   emptyText?: string;
   onAssignmentsChanged?: (assignments: TechnicianAssignment[]) => void;
 }) {
+  const {
+    entityType,
+    entityId,
+    entityLabel,
+    canManage,
+    currentLinkedTechnicianId,
+    emptyText,
+    onAssignmentsChanged,
+  } = props;
   const palette = useAppPalette();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -45,11 +54,11 @@ export default function TechnicianAssignmentsPanel(props: {
   const [selectedTechnicianId, setSelectedTechnicianId] = useState<number | null>(null);
   const [selectedRole, setSelectedRole] = useState<(typeof ROLE_OPTIONS)[number]["value"]>("owner");
   const [feedback, setFeedback] = useState<string>("");
-  const normalizedEntityId = useMemo(() => String(props.entityId).trim(), [props.entityId]);
+  const normalizedEntityId = useMemo(() => String(entityId).trim(), [entityId]);
 
   const emitAssignments = useCallback((nextAssignments: TechnicianAssignment[]) => {
-    props.onAssignmentsChanged?.(nextAssignments);
-  }, [props]);
+    onAssignmentsChanged?.(nextAssignments);
+  }, [onAssignmentsChanged]);
 
   const loadData = useCallback(async () => {
     if (!normalizedEntityId) {
@@ -62,8 +71,8 @@ export default function TechnicianAssignmentsPanel(props: {
     try {
       setLoading(true);
       const [assignmentRows, technicianRows] = await Promise.all([
-        getTechnicianAssignmentsByEntity(props.entityType, props.entityId),
-        props.canManage ? listTechnicians() : Promise.resolve([]),
+        getTechnicianAssignmentsByEntity(entityType, entityId),
+        canManage ? listTechnicians() : Promise.resolve([]),
       ]);
       setAssignments(assignmentRows.filter((assignment) => !assignment.unassigned_at));
       setTechnicians(technicianRows.filter((technician) => technician?.is_active));
@@ -77,7 +86,7 @@ export default function TechnicianAssignmentsPanel(props: {
     } finally {
       setLoading(false);
     }
-  }, [emitAssignments, normalizedEntityId, props.canManage, props.entityId, props.entityType]);
+  }, [canManage, emitAssignments, entityId, entityType, normalizedEntityId]);
 
   useEffect(() => {
     void loadData();
@@ -105,12 +114,12 @@ export default function TechnicianAssignmentsPanel(props: {
   }, [availableTechnicians]);
 
   const onAssign = useCallback(async () => {
-    if (!props.canManage || !selectedTechnicianId) return;
+    if (!canManage || !selectedTechnicianId) return;
     try {
       setSubmitting(true);
       await createTechnicianAssignment(selectedTechnicianId, {
-        entityType: props.entityType,
-        entityId: props.entityId,
+        entityType,
+        entityId,
         assignmentRole: selectedRole,
       });
       await loadData();
@@ -121,10 +130,10 @@ export default function TechnicianAssignmentsPanel(props: {
     } finally {
       setSubmitting(false);
     }
-  }, [loadData, props.canManage, props.entityId, props.entityType, selectedRole, selectedTechnicianId]);
+  }, [canManage, entityId, entityType, loadData, selectedRole, selectedTechnicianId]);
 
   const onRemove = useCallback(async (assignmentId: number) => {
-    if (!props.canManage) return;
+    if (!canManage) return;
     try {
       setSubmitting(true);
       await deleteTechnicianAssignment(assignmentId);
@@ -135,7 +144,7 @@ export default function TechnicianAssignmentsPanel(props: {
     } finally {
       setSubmitting(false);
     }
-  }, [loadData, props.canManage]);
+  }, [canManage, loadData]);
 
   return (
     <View style={styles.container}>
@@ -150,8 +159,8 @@ export default function TechnicianAssignmentsPanel(props: {
         <View style={styles.list}>
           {assignments.map((assignment) => {
             const isCurrentLinked = Boolean(
-              props.currentLinkedTechnicianId &&
-              assignment.technician_id === props.currentLinkedTechnicianId,
+              currentLinkedTechnicianId &&
+              assignment.technician_id === currentLinkedTechnicianId,
             );
             return (
               <View
@@ -169,8 +178,8 @@ export default function TechnicianAssignmentsPanel(props: {
                     {assignment.technician_display_name || `Tecnico #${assignment.technician_id}`}
                   </Text>
                   <Text style={[styles.assignmentMeta, { color: palette.textSecondary }]}>
-                    {assignment.assignment_role} · {assignment.entity_type}
-                    {props.entityLabel ? ` · ${props.entityLabel}` : ""}
+                    {assignment.assignment_role} - {assignment.entity_type}
+                    {entityLabel ? ` - ${entityLabel}` : ""}
                   </Text>
                   {assignment.technician_employee_code ? (
                     <Text style={[styles.assignmentMeta, { color: palette.textMuted }]}>
@@ -178,7 +187,7 @@ export default function TechnicianAssignmentsPanel(props: {
                     </Text>
                   ) : null}
                 </View>
-                {props.canManage ? (
+                {canManage ? (
                   <TouchableOpacity
                     style={[
                       styles.removeButton,
@@ -203,7 +212,7 @@ export default function TechnicianAssignmentsPanel(props: {
         </View>
       ) : (
         <Text style={[styles.supportText, { color: palette.textSecondary }]}>
-          {props.emptyText || "Sin tecnicos asignados."}
+          {emptyText || "Sin tecnicos asignados."}
         </Text>
       )}
 
@@ -213,7 +222,7 @@ export default function TechnicianAssignmentsPanel(props: {
         </Text>
       ) : null}
 
-      {props.canManage ? (
+      {canManage ? (
         <View style={styles.manageStack}>
           <TouchableOpacity
             style={[
@@ -265,7 +274,7 @@ export default function TechnicianAssignmentsPanel(props: {
                           ]}
                         >
                           {technician.display_name}
-                          {technician.employee_code ? ` · ${technician.employee_code}` : ""}
+                          {technician.employee_code ? ` - ${technician.employee_code}` : ""}
                         </Text>
                       </TouchableOpacity>
                     );

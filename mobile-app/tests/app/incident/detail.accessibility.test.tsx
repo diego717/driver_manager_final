@@ -9,6 +9,7 @@ const routerMocks = vi.hoisted(() => ({
 
 const incidentsApiMocks = vi.hoisted(() => ({
   getIncidentById: vi.fn(),
+  getLastIncidentDetailSource: vi.fn(() => "network"),
   updateIncidentStatus: vi.fn(),
   deleteIncident: vi.fn(),
 }));
@@ -16,6 +17,10 @@ const incidentsApiMocks = vi.hoisted(() => ({
 const photosApiMocks = vi.hoisted(() => ({
   resolveIncidentPhotoPreviewTarget: vi.fn(),
   fetchIncidentPhotoDataUri: vi.fn(),
+}));
+const techniciansApiMocks = vi.hoisted(() => ({
+  getCurrentLinkedTechnicianContext: vi.fn(async () => ({ technician: null })),
+  getTechnicianAssignmentsByEntity: vi.fn(async () => []),
 }));
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -186,9 +191,25 @@ vi.mock("@react-navigation/native", () => ({
 
 vi.mock("@/src/api/incidents", () => incidentsApiMocks);
 vi.mock("@/src/api/photos", () => photosApiMocks);
+vi.mock("@/src/api/technicians", () => techniciansApiMocks);
 vi.mock("@/src/api/client", () => ({
   extractApiError: (error: unknown) =>
     error instanceof Error ? error.message : String(error),
+}));
+vi.mock("@/src/services/sync/photo-outbox-service", () => ({
+  registerPhotoExecutors: vi.fn(),
+}));
+vi.mock("@/src/services/sync/incident-evidence-outbox-service", () => ({
+  registerIncidentEvidenceExecutors: vi.fn(),
+}));
+vi.mock("@/src/services/sync/case-outbox-service", () => ({
+  registerCaseExecutors: vi.fn(),
+}));
+vi.mock("@/src/services/sync/incident-outbox-service", () => ({
+  registerIncidentExecutors: vi.fn(),
+}));
+vi.mock("@/src/services/sync/sync-runner", () => ({
+  runSync: vi.fn(),
 }));
 
 vi.mock("expo-modules-core", () => ({

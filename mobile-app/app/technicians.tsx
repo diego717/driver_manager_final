@@ -4,6 +4,7 @@ import { ActivityIndicator, StyleSheet, Text } from "react-native";
 
 import { extractApiError } from "@/src/api/client";
 import { readStoredWebSession } from "@/src/api/webAuth";
+import { canManageTechnicians as canManageTechnicianDirectory } from "@/src/auth/roles";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import TechnicianDirectoryCard from "@/src/components/TechnicianDirectoryCard";
@@ -18,7 +19,7 @@ export default function TechniciansScreen() {
   const { checkingSession, hasActiveSession } = useSharedWebSessionState();
   const [loadingRole, setLoadingRole] = useState(false);
   const [sessionRole, setSessionRole] = useState<string | null>(null);
-  const canManage = sessionRole === "admin" || sessionRole === "super_admin" || sessionRole === "platform_owner";
+  const canManage = canManageTechnicianDirectory(sessionRole);
 
   const loadRole = useCallback(async () => {
     if (!hasActiveSession) {
@@ -84,7 +85,7 @@ export default function TechniciansScreen() {
         <TechnicianDirectoryCard enabled />
       ) : (
         <Text style={[styles.restrictedText, { color: palette.textMuted }]}>
-          Solo `admin` y `platform_owner` pueden gestionar tecnicos desde esta vista.
+          Solo `admin` o plataforma pueden gestionar tecnicos desde esta vista.
         </Text>
       )}
     </ScreenScaffold>

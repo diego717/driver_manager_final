@@ -12,6 +12,14 @@ const devicesApiMocks = vi.hoisted(() => ({
   registerDeviceToken: vi.fn(async () => true),
 }));
 
+const sharedWebSessionMocks = vi.hoisted(() => ({
+  useSharedWebSessionState: vi.fn(() => ({
+    checkingSession: false,
+    hasActiveSession: false,
+    lastCheckedAt: 0,
+  })),
+}));
+
 const clientApiMocks = vi.hoisted(() => ({
   extractApiError: vi.fn((error: unknown) =>
     error instanceof Error ? error.message : String(error),
@@ -30,6 +38,7 @@ const expoNotificationsMocks = vi.hoisted(() => ({
 vi.mock("@/src/services/notifications", () => notificationsServiceMocks);
 vi.mock("@/src/api/devices", () => devicesApiMocks);
 vi.mock("@/src/api/client", () => clientApiMocks);
+vi.mock("@/src/session/web-session-store", () => sharedWebSessionMocks);
 vi.mock("expo-notifications", () => expoNotificationsMocks);
 vi.mock("expo-constants", () => ({
   default: {
@@ -56,6 +65,11 @@ describe("useNotifications hook", () => {
     vi.clearAllMocks();
     notificationsServiceMocks.addNotificationListeners.mockReturnValue(vi.fn());
     expoNotificationsMocks.getLastNotificationResponseAsync.mockResolvedValue(null);
+    sharedWebSessionMocks.useSharedWebSessionState.mockReturnValue({
+      checkingSession: false,
+      hasActiveSession: false,
+      lastCheckedAt: 0,
+    });
   });
 
   it("keeps tokenRegisteredInApi as null when fcmToken is null", async () => {
@@ -106,6 +120,47 @@ describe("useNotifications hook", () => {
     await flushAsync();
 
     expect(devicesApiMocks.registerDeviceToken).not.toHaveBeenCalled();
+    treeRef.current?.unmount();
+  });
+
+  it("registers the device token after the web session becomes active", async () => {
+    notificationsServiceMocks.registerForPushNotifications.mockResolvedValueOnce({
+      permissionStatus: expoNotificationsMocks.PermissionStatus.GRANTED,
+      expoPushToken: "expo-token",
+      fcmToken: "fcm-token-123",
+    });
+
+    const Probe = () => {
+      useNotifications();
+      return null;
+    };
+
+    const treeRef: { current: { unmount: () => void; update: (node: React.ReactElement) => void } | null } = { current: null };
+    await act(async () => {
+      treeRef.current = create(<Probe />);
+    });
+    await flushAsync();
+
+    expect(devicesApiMocks.registerDeviceToken).not.toHaveBeenCalled();
+
+    sharedWebSessionMocks.useSharedWebSessionState.mockReturnValue({
+      checkingSession: false,
+      hasActiveSession: true,
+      lastCheckedAt: 1,
+    });
+
+    await act(async () => {
+      treeRef.current?.update(<Probe />);
+    });
+    await flushAsync();
+
+    expect(devicesApiMocks.registerDeviceToken).toHaveBeenCalledWith({
+      fcmToken: "fcm-token-123",
+      deviceModel: "Test Device",
+      appVersion: "1.0.0",
+      platform: "android",
+    });
+
     treeRef.current?.unmount();
   });
 

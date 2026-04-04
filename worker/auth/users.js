@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { canonicalizeWebRole, isValidWebRole } from "../lib/core.js";
 
 export function createWebUserAuthHelpers({
   HttpError,
@@ -223,8 +224,8 @@ export function createWebUserAuthHelpers({
   }
 
   function normalizeWebRole(roleRaw) {
-    const role = normalizeOptionalString(roleRaw, WEB_DEFAULT_ROLE).toLowerCase();
-    if (!["admin", "viewer", "super_admin", "platform_owner"].includes(role)) {
+    const role = canonicalizeWebRole(roleRaw, WEB_DEFAULT_ROLE);
+    if (!isValidWebRole(role)) {
       throw new HttpError(400, "Rol web invalido.");
     }
     return role;

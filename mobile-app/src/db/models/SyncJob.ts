@@ -14,18 +14,18 @@ export type SyncJobEntityType = 'case' | 'incident' | 'incident_evidence' | 'pho
 export default class SyncJob extends Model {
   static table = 'sync_jobs'
 
-  @text('entity_type') entityType!: SyncJobEntityType
-  @text('entity_local_id') entityLocalId!: string
-  @text('operation') operation!: SyncJobOperation
-  @text('depends_on_job_id') dependsOnJobId!: string | null
+  @text('entity_type') entityType: SyncJobEntityType
+  @text('entity_local_id') entityLocalId: string
+  @text('operation') operation: SyncJobOperation
+  @text('depends_on_job_id') dependsOnJobId: string | null
   // Prefixed to avoid WMDb base class 'syncStatus' accessor conflict
-  @text('status') jobStatus!: LocalSyncStatus
-  @field('attempt_count') attemptCount!: number
-  @field('next_retry_at') nextRetryAt!: number
-  @text('last_error') lastError!: string | null
-  @field('priority') priority!: number
-  @readonly @date('created_at') createdAt!: Date
-  @field('updated_at') updatedAt!: number
+  @text('status') jobStatus: LocalSyncStatus
+  @field('attempt_count') attemptCount: number
+  @field('next_retry_at') nextRetryAt: number
+  @text('last_error') lastError: string | null
+  @field('priority') priority: number
+  @readonly @date('created_at') createdAt: Date
+  @field('updated_at') updatedAt: number
 
   @writer async markSyncing() {
     await this.update(job => {

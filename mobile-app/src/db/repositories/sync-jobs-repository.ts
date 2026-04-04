@@ -35,6 +35,7 @@ export const syncJobsRepository = {
   /**
    * Returns jobs that are ready to run:
    * - pending status
+   * - stale syncing status after an interrupted app session
    * - nextRetryAt <= now (0 means run immediately)
    * Sorted by priority ASC then creation date ASC.
    */
@@ -49,7 +50,7 @@ export const syncJobsRepository = {
 
     return all
       .filter(job =>
-        job.jobStatus === 'pending' &&
+        (job.jobStatus === 'pending' || job.jobStatus === 'syncing') &&
         (options?.force ? true : job.nextRetryAt <= now)
       )
       .sort((a, b) => {

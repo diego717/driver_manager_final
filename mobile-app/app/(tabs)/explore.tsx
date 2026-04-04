@@ -6,6 +6,7 @@ import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, TouchableOpacity
 import { getAssetIncidents, linkAssetToInstallation, listAssets, type AssetRecord } from "@/src/api/assets";
 import { extractApiError } from "@/src/api/client";
 import { readStoredWebSession } from "@/src/api/webAuth";
+import { canAssignTechnicians } from "@/src/auth/roles";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
@@ -52,8 +53,7 @@ export default function ExploreTabScreen() {
     () => assets.find((item) => item.id === selectedAssetId) || assetDetail?.asset || null,
     [assetDetail?.asset, assets, selectedAssetId],
   );
-  const canManageTechnicianAssignments =
-    webSessionRole === "admin" || webSessionRole === "super_admin" || webSessionRole === "platform_owner";
+  const canManageTechnicianAssignments = canAssignTechnicians(webSessionRole);
 
   const loadAssets = useCallback(async () => {
     if (!hasActiveSession) return;
