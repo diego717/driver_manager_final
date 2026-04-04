@@ -561,6 +561,62 @@ test("super admin can open the tenants section and review tenant detail", async 
   assert.match(detailText, /27 incidencias/i);
 });
 
+test("platform owner can open the tenants section even when session tenant id is missing", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(buildWebSessionPayload({
+          username: "root",
+          role: "platform_owner",
+          tenantId: "",
+        })),
+    },
+    {
+      method: "GET",
+      match: "/web/tenants",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          tenants: [
+            {
+              id: "tenant-a",
+              name: "Acme Uruguay",
+              slug: "acme-uy",
+              status: "active",
+              plan_code: "growth",
+              metrics: {
+                users_count: 4,
+                technicians_count: 2,
+                installations_count: 11,
+                active_incidents_count: 3,
+              },
+              admin_usernames: ["ana", "bruno"],
+            },
+          ],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = dom.window;
+
+  await loginThroughForm(dom, {
+    username: "root",
+    password: "StrongPass#2026",
+  });
+
+  await window.loadTenantsSection({ silent: false });
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(document.getElementById("tenantsSection").hidden, false);
+  assert.equal(document.getElementById("navTenantsLink").closest("li").hidden, false);
+  assert.match(document.getElementById("tenantsList").textContent || "", /Acme Uruguay/i);
+});
+
 test("super admin can create and update tenant web users from tenant detail", async () => {
   const tenantUsers = [
     {

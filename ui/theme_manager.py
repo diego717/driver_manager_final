@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QSettings
-from PyQt6.QtGui import QFont, QFontDatabase
+from PyQt6.QtGui import QFont, QFontDatabase, QGuiApplication
 
 
 def resolve_theme_manager(parent=None):
@@ -131,6 +131,8 @@ class ThemeManager:
 
     def _load_font_family(self, relative_path):
         """Load a bundled font and return its primary family name."""
+        if QGuiApplication.instance() is None:
+            return None
         font_path = Path(__file__).resolve().parents[1] / relative_path
         if not font_path.exists():
             return None

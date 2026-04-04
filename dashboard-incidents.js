@@ -60,6 +60,27 @@
             return role === 'admin' || role === 'super_admin';
         }
 
+        function canCurrentUserWriteOperationalData() {
+            if (typeof options.canCurrentUserWriteOperationalData === 'function') {
+                return Boolean(options.canCurrentUserWriteOperationalData());
+            }
+
+            const role = String(options.getCurrentUser?.()?.role || '').trim().toLowerCase();
+            if (role) {
+                return role === 'admin'
+                    || role === 'supervisor'
+                    || role === 'tecnico'
+                    || role === 'platform_owner'
+                    || role === 'super_admin';
+            }
+
+            if (typeof options.canCurrentUserEditAssets === 'function') {
+                return Boolean(options.canCurrentUserEditAssets());
+            }
+
+            return false;
+        }
+
         let includeDeletedIncidentsAudit = false;
         const recentLocalStatusUpdates = new Map();
         const LOCAL_STATUS_UPDATE_TTL_MS = 5000;
@@ -1314,7 +1335,7 @@
             const actions = document.createElement('div');
             actions.className = 'incident-map-detail-actions';
 
-            if (options.canCurrentUserWriteOperationalData()) {
+            if (canCurrentUserWriteOperationalData()) {
                 const adjustTargetBtn = document.createElement('button');
                 adjustTargetBtn.type = 'button';
                 adjustTargetBtn.className = selectionActive ? 'btn-primary' : 'btn-secondary';
@@ -2945,7 +2966,7 @@
             const statusActions = document.createElement('div');
             statusActions.className = 'incident-actions';
             const incidentStatus = options.normalizeIncidentStatus(incident.incident_status);
-            const canUpdateIncident = options.canCurrentUserWriteOperationalData() && !isSoftDeleted;
+            const canUpdateIncident = canCurrentUserWriteOperationalData() && !isSoftDeleted;
             const updateOptions = buildIncidentStatusUpdateOptions(incident, config);
 
             if (isSoftDeleted) {
@@ -3265,7 +3286,7 @@
             if (!cards.length) return;
 
             const statusValue = options.normalizeIncidentStatus(incident?.incident_status);
-            const canUpdateIncident = options.canCurrentUserWriteOperationalData();
+            const canUpdateIncident = canCurrentUserWriteOperationalData();
             const runtimeText = Number.isInteger(options.resolveIncidentRealDurationSeconds(incident))
                 ? `Tiempo real: ${options.formatDuration(options.resolveIncidentRealDurationSeconds(incident))}${statusValue === 'in_progress'
                     ? ' (en curso)'
@@ -3357,9 +3378,9 @@
                     }
                     const targetStatus = String(button.dataset.action || '').trim();
                     if (['open', 'in_progress', 'paused', 'resolved'].includes(targetStatus)) {
-                        button.disabled = !options.canCurrentUserWriteOperationalData() || currentStatus === targetStatus;
+                        button.disabled = !canCurrentUserWriteOperationalData() || currentStatus === targetStatus;
                     } else if (targetStatus === 'evidence') {
-                        button.disabled = !options.canCurrentUserWriteOperationalData();
+                        button.disabled = !canCurrentUserWriteOperationalData();
                     }
                 });
             });
@@ -4347,7 +4368,7 @@
                 options.showNotification('Incidencia invalida para actualizar evidencia.', 'error');
                 return;
             }
-            if (!options.canCurrentUserWriteOperationalData()) {
+            if (!canCurrentUserWriteOperationalData()) {
                 options.showNotification('Solo roles operativos pueden actualizar evidencia.', 'warning');
                 return;
             }
@@ -4403,7 +4424,7 @@
                 options.showNotification('Incidencia invalida para actualizar destino operativo.', 'error');
                 return;
             }
-            if (!options.canCurrentUserWriteOperationalData()) {
+            if (!canCurrentUserWriteOperationalData()) {
                 options.showNotification('Solo roles operativos pueden editar destino operativo.', 'warning');
                 return;
             }

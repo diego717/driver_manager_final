@@ -15,9 +15,11 @@ try:
     from ui.main_window_session import (
         apply_authenticated_login_state,
         apply_navigation_access_control,
+        configure_admin_panel_for_role,
         current_user_role,
         handle_tab_changed,
         is_user_authenticated,
+        prepare_login_session_runtime,
         run_admin_logout,
         run_login_dialog,
     )
@@ -305,6 +307,17 @@ class DummyLogger:
         self.calls.append(("error", args, kwargs))
 
 
+class DummyMessageBox:
+    def __init__(self):
+        self.calls = []
+
+    def warning(self, *args):
+        self.calls.append(("warning", args))
+
+    def information(self, *args):
+        self.calls.append(("information", args))
+
+
 class DummyDialogAccepted:
     def __init__(self, _user_manager, _parent):
         pass
@@ -563,6 +576,92 @@ class MainWindowHelpersTests(unittest.TestCase):
         self.assertTrue(window.can_manage_operational_records)
         self.assertTrue(window.can_operate_incidents)
         self.assertFalse(window.can_manage_platform)
+
+    def test_prepare_login_session_runtime_bootstraps_history_and_web_auth_without_cloud(self):
+        logger = DummyLogger()
+        message_box = DummyMessageBox()
+        status_bar = DummyStatusBar()
+        sync_calls = []
+
+        class UserManagerStub:
+            def __init__(self, cloud_manager, _security_manager, *, local_mode, audit_api_client, auth_mode):
+                self.cloud_manager = cloud_manager
+                self.local_mode = local_mode
+                self.audit_api_client = audit_api_client
+                self.auth_mode = auth_mode
+                self.current_user = {}
+
+            def needs_initialization(self):
+                return False
+
+            def set_audit_api_client(self, client):
+                self.audit_api_client = client
+
+        window = SimpleNamespace(
+            cloud_manager=None,
+            user_manager=None,
+            history_manager=None,
+            config_manager=DummyConfigManager(),
+            security_manager=object(),
+            statusBar=lambda: status_bar,
+            _resolve_desktop_auth_mode=lambda: "web",
+            _sync_history_web_token_provider=lambda: sync_calls.append("sync"),
+            init_cloud_connection=lambda: None,
+        )
+
+        result = prepare_login_session_runtime(
+            window,
+            logger=logger,
+            message_box=message_box,
+            history_cls=DummyHistory,
+            user_manager_cls=UserManagerStub,
+        )
+
+        self.assertTrue(result)
+        self.assertIsInstance(window.history_manager, DummyHistory)
+        self.assertEqual(sync_calls, ["sync"])
+        self.assertEqual(window.user_manager.auth_mode, "web")
+        self.assertTrue(window.user_manager.local_mode)
+        self.assertIn("login en modo web habilitado", status_bar.messages[-1][0])
+        self.assertEqual(status_bar.messages[-1][1], 6000)
+
+    def test_configure_admin_panel_for_role_hides_r2_for_admin(self):
+        logger = DummyLogger()
+        admin_tab = DummyAdminTab()
+        window = SimpleNamespace(
+            is_admin=True,
+            history_tab=DummyHistoryTab(),
+            admin_tab=admin_tab,
+            event_handlers=SimpleNamespace(load_r2_config_to_admin_panel=lambda: None),
+            statusBar=lambda: DummyStatusBar(),
+            _is_web_auth_context=lambda: False,
+        )
+
+        configure_admin_panel_for_role(window, "admin-user", "admin", logger=logger)
+
+        self.assertTrue(admin_tab.user_mgmt_btn.visible)
+        self.assertFalse(admin_tab.group_boxes[0].visible)
+        self.assertTrue(admin_tab.group_boxes[1].visible)
+        self.assertFalse(admin_tab.line_edits[1].visible)
+        self.assertFalse(admin_tab.line_edits[2].visible)
+
+    def test_configure_admin_panel_for_role_hides_admin_controls_for_read_only_user(self):
+        logger = DummyLogger()
+        admin_tab = DummyAdminTab()
+        window = SimpleNamespace(
+            is_admin=False,
+            history_tab=DummyHistoryTab(),
+            admin_tab=admin_tab,
+            event_handlers=SimpleNamespace(load_r2_config_to_admin_panel=lambda: None),
+            statusBar=lambda: DummyStatusBar(),
+            _is_web_auth_context=lambda: True,
+        )
+
+        configure_admin_panel_for_role(window, "viewer-user", "solo_lectura", logger=logger)
+
+        self.assertFalse(admin_tab.user_mgmt_btn.visible)
+        self.assertTrue(all(widget.visible is False for widget in admin_tab.group_boxes))
+        self.assertTrue(all(widget.visible is False for widget in admin_tab.line_edits))
 
     def test_run_admin_logout_resets_navigation_and_drivers(self):
         calls = []

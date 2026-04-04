@@ -9,7 +9,7 @@
     "geolocation": "a99f19d896",
     "scan": "6884e82f3e",
     "modals": "6976cff499",
-    "incidents": "a7a2297c5b",
+    "incidents": "514ba643db",
     "assets": "d141d05bbe",
     "drivers": "107284fd17",
     "audit": "cb0cf05086",
@@ -18,11 +18,11 @@
     "auth": "24ec67b0e1",
     "navigation": "848b5ca093",
     "bootstrap": "65dba6e7cf",
-    "js": "652ff64544",
+    "js": "26081cb515",
     "pwa": "55b84aa40e",
     "manifest": "9130a5f920",
     "sw": "4c87568cf6",
     "materialSymbolsFont": "ee7248184b",
-    "build": "15c3a5c0d9"
+    "build": "a3b46f2fed"
   }
 }

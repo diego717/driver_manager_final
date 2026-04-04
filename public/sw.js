@@ -1,5 +1,5 @@
 // Service Worker for SiteOps Dashboard PWA
-const CACHE_NAME = 'driver-manager-15c3a5c0d9';
+const CACHE_NAME = 'driver-manager-a3b46f2fed';
 const STATIC_ASSETS = [
   '/web/dashboard',
   '/dashboard.css?v=ad8e49d767',
@@ -10,7 +10,7 @@ const STATIC_ASSETS = [
   '/dashboard-geolocation.js?v=a99f19d896',
   '/dashboard-scan.js?v=6884e82f3e',
   '/dashboard-modals.js?v=6976cff499',
-  '/dashboard-incidents.js?v=a7a2297c5b',
+  '/dashboard-incidents.js?v=514ba643db',
   '/dashboard-assets.js?v=d141d05bbe',
   '/dashboard-drivers.js?v=107284fd17',
   '/dashboard-audit.js?v=cb0cf05086',
@@ -19,7 +19,7 @@ const STATIC_ASSETS = [
   '/dashboard-auth.js?v=24ec67b0e1',
   '/dashboard-navigation.js?v=848b5ca093',
   '/dashboard-bootstrap.js?v=65dba6e7cf',
-  '/dashboard.js?v=652ff64544',
+  '/dashboard.js?v=26081cb515',
   '/dashboard-pwa.js?v=55b84aa40e',
   '/manifest.json?v=9130a5f920',
   '/assets/fonts/material-symbols-outlined.ttf'

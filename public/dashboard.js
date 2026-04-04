@@ -1115,8 +1115,11 @@ function applyAuthenticatedUser(user) {
 
 function canCurrentUserManageTenants() {
     const role = String(currentUser?.role || '').trim().toLowerCase();
+    if (role === 'platform_owner') {
+        return true;
+    }
     const tenantId = String(currentUser?.tenant_id || '').trim().toLowerCase();
-    return (role === 'super_admin' || role === 'platform_owner') && tenantId === 'default';
+    return role === 'super_admin' && tenantId === 'default';
 }
 
 function canCurrentUserAssignPlatformSuperAdmin() {
@@ -1553,7 +1556,7 @@ function renderTenantDetail() {
     }
 
     if (!canCurrentUserManageTenants()) {
-        detailEl.innerHTML = '<p class="settings-empty-state">Solo super admin puede gestionar tenants.</p>';
+        detailEl.innerHTML = '<p class="settings-empty-state">Solo plataforma puede gestionar tenants.</p>';
         editBtn.disabled = true;
         deleteBtn.disabled = true;
         return;
@@ -1752,7 +1755,7 @@ function renderTenantsSection() {
         setTenantSummaryValue('tenantsActive', '-');
         setTenantSummaryValue('tenantsSuspended', '-');
         setTenantSummaryValue('tenantsUsers', '-');
-        copyEl.textContent = 'Inicia sesiÃ³n como super admin para ver la administraciÃ³n de tenants.';
+        copyEl.textContent = 'Inicia sesión con un rol de plataforma para ver la administración de tenants.';
         listEl.innerHTML = '<p class="settings-empty-state">Inicia sesiÃ³n para ver tenants.</p>';
         createBtn.disabled = true;
         renderTenantDetail();
@@ -1764,8 +1767,8 @@ function renderTenantsSection() {
         setTenantSummaryValue('tenantsActive', '-');
         setTenantSummaryValue('tenantsSuspended', '-');
         setTenantSummaryValue('tenantsUsers', '-');
-        copyEl.textContent = 'Esta secciÃ³n queda reservada para super admin.';
-        listEl.innerHTML = '<p class="settings-empty-state">Solo super admin puede administrar tenants.</p>';
+        copyEl.textContent = 'Esta sección queda reservada para roles de plataforma.';
+        listEl.innerHTML = '<p class="settings-empty-state">Solo plataforma puede administrar tenants.</p>';
         createBtn.disabled = true;
         renderTenantDetail();
         return;
@@ -2453,7 +2456,7 @@ function buildTenantModalFields(tenant = null) {
 
 function openTenantEditorModal(tenant = null) {
     if (!canCurrentUserManageTenants()) {
-        showNotification('Solo super admin puede editar tenants.', 'error');
+        showNotification('Solo plataforma puede editar tenants.', 'error');
         return;
     }
 
@@ -5594,7 +5597,7 @@ function executeHeaderPrimaryAction(actionKey) {
             return;
         case 'createTenant':
             if (!canCurrentUserManageTenants()) {
-                showNotification('Solo super admin puede crear tenants.', 'error');
+                showNotification('Solo plataforma puede crear tenants.', 'error');
                 return;
             }
             navigateToSectionByKey('tenants');
@@ -5812,7 +5815,7 @@ document.querySelectorAll('.nav-links a').forEach(link => {
         const section = link.dataset.section;
         if (!section) return;
         if (section === 'tenants' && !canCurrentUserManageTenants()) {
-            showNotification('Solo super admin puede acceder a tenants.', 'error');
+            showNotification('Solo plataforma puede acceder a tenants.', 'error');
             return;
         }
         if (section === 'audit' && !canCurrentUserAccessAudit()) {
