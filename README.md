@@ -273,6 +273,25 @@ Referencia detallada:
 
 - `docs/public-tracking-magic-link-implementation-plan.md`
 
+## OCR de etiquetas (mobile/web)
+
+Endpoint:
+
+- `POST /web/scan/asset-label`
+
+Mobile:
+
+- OCR local on-device con `expo-text-extractor` (sin costo por request).
+- Fallback remoto opcional con `EXPO_PUBLIC_ENABLE_REMOTE_OCR_FALLBACK=true`.
+- Revision estricta opcional para baja confianza:
+  - `EXPO_PUBLIC_OCR_STRICT_REVIEW=true`
+  - `EXPO_PUBLIC_OCR_LOW_CONFIDENCE_THRESHOLD=0.72`
+
+Variables de entorno relevantes del Worker:
+
+- `OPENAI_API_KEY` (requerida)
+- `OPENAI_OCR_MODEL` (opcional, default: `gpt-4.1-mini`)
+
 ## Autenticacion
 
 El repositorio mantiene dos modelos:

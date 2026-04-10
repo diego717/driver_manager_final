@@ -1,4 +1,6 @@
 import {
+  canReopenIncidents,
+  canViewTenantIncidentMap,
   HttpError,
   isMissingIncidentDispatchColumnsError,
   isMissingIncidentReadModelColumnsError,
@@ -176,6 +178,8 @@ export function createIncidentsRouteHandlers({
     env,
     corsPolicy,
     routeParts,
+    isWebRoute,
+    webSession,
     incidentsTenantId,
   ) {
     if (!(routeParts.length === 2 && routeParts[0] === "incidents" && routeParts[1] === "map")) {
@@ -183,6 +187,9 @@ export function createIncidentsRouteHandlers({
     }
     if (request.method !== "GET") {
       return null;
+    }
+    if (isWebRoute && !canViewTenantIncidentMap(webSession?.role)) {
+      throw new HttpError(403, "No tienes permisos para ver el mapa global de incidencias.");
     }
 
     try {
@@ -1344,6 +1351,11 @@ export function createIncidentsRouteHandlers({
       );
       const previousStatus = normalizeOptionalString(existingIncident.incident_status, "open")
         .toLowerCase();
+      const isReopenAttempt =
+        previousStatus === "resolved" && payload.incidentStatus !== "resolved";
+      if (isWebRoute && isReopenAttempt && !canReopenIncidents(webSession?.role)) {
+        throw new HttpError(403, "No tienes permisos para reabrir incidencias.");
+      }
       const parseIsoMillis = (value) => {
         let text = String(value || "").trim();
         if (text && !text.endsWith("Z") && !text.includes("+") && !text.includes("-")) {

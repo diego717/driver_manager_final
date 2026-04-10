@@ -40,6 +40,14 @@
             return canCurrentUserManageUsers();
         }
 
+        function canCurrentUserViewTechnicianCatalog() {
+            const role = getCurrentRole();
+            return role === 'admin'
+                || role === 'supervisor'
+                || role === 'solo_lectura'
+                || canCurrentUserManagePlatform();
+        }
+
         function canCurrentUserManageTechnicianAssignments() {
             const role = getCurrentRole();
             return role === 'admin' || role === 'supervisor' || canCurrentUserManagePlatform();
@@ -52,6 +60,49 @@
 
         function canCurrentUserEditAssets() {
             return canCurrentUserManageUsers();
+        }
+
+        function canCurrentUserViewAssetCatalog() {
+            const role = getCurrentRole();
+            return role === 'admin'
+                || role === 'supervisor'
+                || role === 'solo_lectura'
+                || canCurrentUserManagePlatform();
+        }
+
+        function canCurrentUserManageAssetLinks() {
+            const role = getCurrentRole();
+            return role === 'admin' || role === 'supervisor' || canCurrentUserManagePlatform();
+        }
+
+        function canCurrentUserManageAssetLoans() {
+            return canCurrentUserManageAssetLinks();
+        }
+
+        function canCurrentUserViewTenantIncidentMap() {
+            const role = getCurrentRole();
+            return role === 'admin'
+                || role === 'supervisor'
+                || role === 'solo_lectura'
+                || canCurrentUserManagePlatform();
+        }
+
+        function canCurrentUserOpenIncidentMap() {
+            const role = getCurrentRole();
+            return hasActiveSession() && (
+                canCurrentUserViewTenantIncidentMap()
+                || role === 'tecnico'
+            );
+        }
+
+        function canCurrentUserViewGlobalIncidents() {
+            const role = getCurrentRole();
+            return role !== 'tecnico' && hasActiveSession();
+        }
+
+        function canCurrentUserReopenIncidents() {
+            const role = getCurrentRole();
+            return role === 'admin' || role === 'supervisor' || canCurrentUserManagePlatform();
         }
 
         function showLogin() {
@@ -111,18 +162,55 @@
             return canCurrentUserManageUsers();
         }
 
+        function setSectionAccessVisibility(section, isVisible, selectors = []) {
+            selectors.forEach((selector) => {
+                const node = document.querySelector(selector);
+                if (!(node instanceof HTMLElement)) return;
+                node.classList.toggle('is-hidden', !isVisible);
+                node.hidden = !isVisible;
+            });
+        }
+
         function syncRoleBasedNavigationAccess() {
-            const auditLink = document.querySelector('.nav-links a[data-section="audit"]');
             const shouldShowAudit = canCurrentUserAccessAudit();
-            if (auditLink) {
-                const parent = auditLink.closest('li');
-                if (parent) {
-                    parent.classList.toggle('is-hidden', !shouldShowAudit);
-                }
+            const shouldShowTechnicians = canCurrentUserViewTechnicianCatalog();
+            const shouldShowAssets = canCurrentUserViewAssetCatalog();
+            const shouldShowIncidentMap = canCurrentUserOpenIncidentMap();
+            const shouldShowIncidents = canCurrentUserViewGlobalIncidents();
+
+            setSectionAccessVisibility('incidents', shouldShowIncidents, [
+                '.nav-links a[data-section="incidents"]',
+                '#mobileNavIncidentsBtn',
+            ]);
+            setSectionAccessVisibility('incidentMap', shouldShowIncidentMap, [
+                '.nav-links a[data-section="incidentMap"]',
+                '#mobileNavIncidentMapBtn',
+            ]);
+            setSectionAccessVisibility('assets', shouldShowAssets, [
+                '.nav-links a[data-section="assets"]',
+                '#mobileNavAssetsBtn',
+            ]);
+            setSectionAccessVisibility('audit', shouldShowAudit, [
+                '.nav-links a[data-section="audit"]',
+                '#mobileNavAuditBtn',
+                '#settingsOpenAuditBtn',
+            ]);
+
+            const techniciansPanel = document.getElementById('settingsTechniciansPanel');
+            if (techniciansPanel) {
+                techniciansPanel.hidden = !shouldShowTechnicians;
             }
-            const mobileAuditBtn = document.getElementById('mobileNavAuditBtn');
-            if (mobileAuditBtn) {
-                mobileAuditBtn.classList.toggle('is-hidden', !shouldShowAudit);
+
+            const activeSection = options.getActiveSectionName?.() || 'dashboard';
+            const blockedActiveSection = (
+                (activeSection === 'audit' && !shouldShowAudit)
+                || (activeSection === 'assets' && !shouldShowAssets)
+                || (activeSection === 'incidentMap' && !shouldShowIncidentMap)
+                || (activeSection === 'incidents' && !shouldShowIncidents)
+            );
+            if (blockedActiveSection && typeof options.navigateToSectionByKey === 'function') {
+                const fallbackSection = hasActiveSession() && getCurrentRole() === 'tecnico' ? 'myCases' : 'dashboard';
+                options.navigateToSectionByKey(fallbackSection);
             }
         }
 
@@ -266,10 +354,18 @@
             canCurrentUserEditAssets,
             canCurrentUserAccessAudit,
             canCurrentUserManagePlatform,
+            canCurrentUserManageAssetLinks,
+            canCurrentUserManageAssetLoans,
             canCurrentUserManageTechnicianAssignments,
             canCurrentUserManageTechnicians,
             canCurrentUserManageUsers,
+            canCurrentUserOpenIncidentMap,
+            canCurrentUserReopenIncidents,
+            canCurrentUserViewAssetCatalog,
+            canCurrentUserViewGlobalIncidents,
             canCurrentUserWriteOperationalData,
+            canCurrentUserViewTechnicianCatalog,
+            canCurrentUserViewTenantIncidentMap,
             handleUnauthorized,
             hasActiveSession,
             hideLogin,

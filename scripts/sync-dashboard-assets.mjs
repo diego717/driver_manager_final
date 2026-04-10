@@ -21,6 +21,7 @@ const sources = {
   drivers: path.join(rootDir, "dashboard-drivers.js"),
   audit: path.join(rootDir, "dashboard-audit.js"),
   overview: path.join(rootDir, "dashboard-overview.js"),
+  myCases: path.join(rootDir, "dashboard-my-cases.js"),
   realtime: path.join(rootDir, "dashboard-realtime.js"),
   auth: path.join(rootDir, "dashboard-auth.js"),
   navigation: path.join(rootDir, "dashboard-navigation.js"),
@@ -62,6 +63,7 @@ function rewriteDashboardHtml(content, versions) {
     .replace(/src="\/dashboard-drivers\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-drivers.js?v=${versions.drivers}"`)
     .replace(/src="\/dashboard-audit\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-audit.js?v=${versions.audit}"`)
     .replace(/src="\/dashboard-overview\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-overview.js?v=${versions.overview}"`)
+    .replace(/src="\/dashboard-my-cases\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-my-cases.js?v=${versions.myCases}"`)
     .replace(/src="\/dashboard-realtime\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-realtime.js?v=${versions.realtime}"`)
     .replace(/src="\/dashboard-auth\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-auth.js?v=${versions.auth}"`)
     .replace(
@@ -97,6 +99,7 @@ function rewriteServiceWorker(content, versions) {
     `/dashboard-drivers.js?v=${versions.drivers}`,
     `/dashboard-audit.js?v=${versions.audit}`,
     `/dashboard-overview.js?v=${versions.overview}`,
+    `/dashboard-my-cases.js?v=${versions.myCases}`,
     `/dashboard-realtime.js?v=${versions.realtime}`,
     `/dashboard-auth.js?v=${versions.auth}`,
     `/dashboard-navigation.js?v=${versions.navigation}`,
@@ -152,6 +155,7 @@ function main() {
   const drivers = readFile(sources.drivers);
   const audit = readFile(sources.audit);
   const overview = readFile(sources.overview);
+  const myCases = readFile(sources.myCases);
   const realtime = readFile(sources.realtime);
   const auth = readFile(sources.auth);
   const navigation = readFile(sources.navigation);
@@ -179,6 +183,7 @@ function main() {
     drivers: hashOf(drivers),
     audit: hashOf(audit),
     overview: hashOf(overview),
+    myCases: hashOf(myCases),
     realtime: hashOf(realtime),
     auth: hashOf(auth),
     navigation: hashOf(navigation),
@@ -205,6 +210,7 @@ function main() {
       versions.drivers,
       versions.audit,
       versions.overview,
+      versions.myCases,
       versions.realtime,
       versions.auth,
       versions.navigation,
@@ -231,6 +237,7 @@ function main() {
   writeFile("dashboard-drivers.js", drivers);
   writeFile("dashboard-audit.js", audit);
   writeFile("dashboard-overview.js", overview);
+  writeFile("dashboard-my-cases.js", myCases);
   writeFile("dashboard-realtime.js", realtime);
   writeFile("dashboard-auth.js", auth);
   writeFile("dashboard-navigation.js", navigation);

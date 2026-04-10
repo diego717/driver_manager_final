@@ -37,6 +37,16 @@ export function canManageTechnicians(role: unknown): boolean {
   return canManageUsers(role);
 }
 
+export function canViewTechnicianCatalog(role: unknown): boolean {
+  const normalized = normalizeWebRole(role);
+  return (
+    normalized === "admin" ||
+    normalized === "supervisor" ||
+    normalized === "solo_lectura" ||
+    canManagePlatform(normalized)
+  );
+}
+
 export function canAssignTechnicians(role: unknown): boolean {
   const normalized = normalizeWebRole(role);
   return normalized === "admin" || normalized === "supervisor" || canManagePlatform(normalized);
@@ -50,6 +60,56 @@ export function canWriteOperationalData(role: unknown): boolean {
     normalized === "tecnico" ||
     canManagePlatform(normalized)
   );
+}
+
+export function canViewTenantIncidentMap(role: unknown): boolean {
+  const normalized = normalizeWebRole(role);
+  return (
+    normalized === "admin" ||
+    normalized === "supervisor" ||
+    normalized === "solo_lectura" ||
+    canManagePlatform(normalized)
+  );
+}
+
+export function canReopenIncidents(role: unknown): boolean {
+  const normalized = normalizeWebRole(role);
+  return normalized === "admin" || normalized === "supervisor" || canManagePlatform(normalized);
+}
+
+export function canViewAssetCatalog(role: unknown): boolean {
+  const normalized = normalizeWebRole(role);
+  return (
+    normalized === "admin" ||
+    normalized === "supervisor" ||
+    normalized === "solo_lectura" ||
+    canManagePlatform(normalized)
+  );
+}
+
+export function canViewAssetDetail(role: unknown): boolean {
+  const normalized = normalizeWebRole(role);
+  return normalized === "tecnico" || canViewAssetCatalog(normalized);
+}
+
+export function canEditAssetCatalog(role: unknown): boolean {
+  const normalized = normalizeWebRole(role);
+  return normalized === "admin" || canManagePlatform(normalized);
+}
+
+export function canManageAssetLinks(role: unknown): boolean {
+  const normalized = normalizeWebRole(role);
+  return normalized === "admin" || normalized === "supervisor" || canManagePlatform(normalized);
+}
+
+export function canManageAssetLoans(role: unknown): boolean {
+  const normalized = normalizeWebRole(role);
+  return normalized === "admin" || normalized === "supervisor" || canManagePlatform(normalized);
+}
+
+export function canManagePublicTracking(role: unknown): boolean {
+  const normalized = normalizeWebRole(role);
+  return normalized === "admin" || normalized === "supervisor" || canManagePlatform(normalized);
 }
 
 export function canDeleteCriticalData(role: unknown): boolean {

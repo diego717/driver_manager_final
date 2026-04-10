@@ -19,7 +19,10 @@
     "build:android:aab": "npx eas-cli build --platform android --profile production",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e:android": "maestro test .maestro",
+    "test:e2e:android:work": "maestro test .maestro/smoke-login-work.yaml",
+    "test:e2e:android:map": "maestro test .maestro/smoke-map.yaml"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -27,7 +30,6 @@
     "@react-navigation/native": "^7.1.8",
     "axios": "^1.13.5",
     "crypto-js": "^4.2.0",
-    "driver-manager-db": "file:..",
     "expo": "~54.0.33",
     "expo-camera": "~17.0.8",
     "expo-constants": "~18.0.13",
@@ -51,6 +53,7 @@
     "expo-splash-screen": "~31.0.13",
     "expo-sqlite": "^16.0.10",
     "expo-status-bar": "~3.0.9",
+    "expo-text-extractor": "^2.0.0",
     "expo-web-browser": "~15.0.10",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -74,6 +77,9 @@
     "react-test-renderer": "19.1.0",
     "typescript": "~5.9.2",
     "vitest": "^3.2.4"
+  },
+  "overrides": {
+    "@babel/runtime": "^7.28.6"
   },
   "private": true,
   "expo": {

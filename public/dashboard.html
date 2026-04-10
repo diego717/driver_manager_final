@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0f756d">
     <meta name="description" content="Dashboard de gestión de registros de drivers">
     <title>SiteOps Dashboard</title>
-    <link rel="stylesheet" href="/dashboard.css?v=ad8e49d767">
+    <link rel="stylesheet" href="/dashboard.css?v=a6af40695a">
     <link rel="manifest" href="/manifest.json?v=9130a5f920">
     <link rel="icon" href="/icons/icon-192x192.png">
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
@@ -49,6 +49,7 @@
                     <span class="nav-group-label">Operación</span>
                     <ul class="nav-group-list">
                         <li><a href="#" class="active" data-section="dashboard"><span class="material-symbols-outlined">today</span> Hoy</a></li>
+                        <li><a href="#" data-section="myCases"><span class="material-symbols-outlined">assignment</span> Mis casos</a></li>
                         <li><a href="#" data-section="incidents"><span class="material-symbols-outlined">warning</span> Incidencias</a></li>
                         <li><a href="#" data-section="incidentMap"><span class="material-symbols-outlined">map</span> Mapa</a></li>
                         <li><a href="#" data-section="installations"><span class="material-symbols-outlined">dns</span> Registros</a></li>
@@ -101,9 +102,17 @@
                     </button>
                 </div>
                 <div class="mobile-nav-panel-links">
-                    <button type="button" class="mobile-nav-menu-item" data-mobile-section="incidentMap">
+                    <button id="mobileNavIncidentMapBtn" type="button" class="mobile-nav-menu-item" data-mobile-section="incidentMap">
                         <span class="material-symbols-outlined">map</span>
                         <span>Mapa</span>
+                    </button>
+                    <button id="mobileNavIncidentsBtn" type="button" class="mobile-nav-menu-item" data-mobile-section="incidents">
+                        <span class="material-symbols-outlined">warning</span>
+                        <span>Incidencias</span>
+                    </button>
+                    <button id="mobileNavAssetsBtn" type="button" class="mobile-nav-menu-item" data-mobile-section="assets">
+                        <span class="material-symbols-outlined">inventory_2</span>
+                        <span>Equipos</span>
                     </button>
                     <button type="button" class="mobile-nav-menu-item" data-mobile-section="drivers">
                         <span class="material-symbols-outlined">upload_file</span>
@@ -310,6 +319,29 @@
                 </div>
             </div>
             
+            <div id="myCasesSection" class="section">
+                <div class="recent-section settings-panel-card my-cases-shell">
+                    <div class="settings-panel-head">
+                        <div>
+                            <h3><span class="material-symbols-outlined">assignment</span> Mis casos</h3>
+                            <p class="settings-panel-copy">Vista personal para seguir rapido pendientes, trabajo en curso, pausas y resueltos del tecnico vinculado a tu sesion.</p>
+                        </div>
+                        <div class="incident-actions settings-actions">
+                            <button id="myCasesRefreshBtn" class="btn-secondary" type="button">
+                                <span class="material-symbols-outlined icon-inline-sm">refresh</span> Actualizar
+                            </button>
+                        </div>
+                    </div>
+                    <div id="myCasesSummary" class="my-cases-summary">
+                        <p class="loading">Inicia sesion para ver tus casos.</p>
+                    </div>
+                    <p id="myCasesContext" class="settings-actions-note">Tus incidencias asignadas apareceran aqui cuando el usuario tenga un tecnico vinculado.</p>
+                    <div id="myCasesList" class="my-cases-list">
+                        <p class="loading">Inicia sesion para ver tus casos.</p>
+                    </div>
+                </div>
+            </div>
+
             <div id="installationsSection" class="section">
                 <div class="filters">
                     <!-- Real-time search -->
@@ -558,7 +590,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="recent-section settings-panel-card">
+                <div id="settingsTechniciansPanel" class="recent-section settings-panel-card">
                     <div class="settings-panel-head">
                         <div>
                             <h3><span class="material-symbols-outlined">engineering</span> Técnicos</h3>
@@ -819,7 +851,7 @@
             <p id="scanQrModalDescription" class="qr-modal-subtitle">Usa camara si el navegador soporta escaneo nativo. Si no, ingresa el codigo manualmente.</p>
             <div class="flow-panel-onboard">
                 <p class="flow-panel-onboard-title">Formatos soportados</p>
-                <p class="flow-panel-onboard-text">dm://installation/{id}, dm://asset/{external_code} o un numero puro para instalacion.</p>
+                <p class="flow-panel-onboard-text">dm://installation/{id}, dm://asset/{external_code} o dm://asset/{external_code}?v=2&brand=...&model=... (alta directa). Tambien acepta numero puro para instalacion.</p>
             </div>
             <div class="scan-video-shell">
                 <video id="scanQrVideo" playsinline muted></video>
@@ -832,7 +864,7 @@
             <form id="scanQrManualForm" class="scan-manual-form">
                 <div class="input-group">
                     <label for="scanQrManualInput">Fallback manual</label>
-                    <input type="text" id="scanQrManualInput" placeholder="dm://installation/12 o dm://asset/EQ-001" autocomplete="off">
+                    <input type="text" id="scanQrManualInput" placeholder="dm://installation/12 o dm://asset/EQ-001?v=2&brand=Entrust" autocomplete="off">
                 </div>
                 <p id="scanQrError" class="error"></p>
                 <div class="qr-actions">
@@ -865,20 +897,21 @@
     
     <script src="/dashboard-runtime.js" defer></script>
     <script src="/dashboard-qr.js?v=961179b0a2" defer></script>
-    <script src="/dashboard-api.js?v=4349b34891" defer></script>
+    <script src="/dashboard-api.js?v=0c3f98fae4" defer></script>
     <script src="/dashboard-geolocation.js?v=a99f19d896" defer></script>
-    <script src="/dashboard-scan.js?v=6884e82f3e" defer></script>
+    <script src="/dashboard-scan.js?v=eee9eb93aa" defer></script>
     <script src="/dashboard-modals.js?v=6976cff499" defer></script>
-    <script src="/dashboard-incidents.js?v=514ba643db" defer></script>
-    <script src="/dashboard-assets.js?v=d141d05bbe" defer></script>
+    <script src="/dashboard-incidents.js?v=b9e761e562" defer></script>
+    <script src="/dashboard-assets.js?v=ee6f012fdc" defer></script>
     <script src="/dashboard-drivers.js?v=107284fd17" defer></script>
     <script src="/dashboard-audit.js?v=cb0cf05086" defer></script>
     <script src="/dashboard-overview.js?v=c278d46315" defer></script>
+    <script src="/dashboard-my-cases.js?v=12d40c4c92" defer></script>
     <script src="/dashboard-realtime.js?v=d763a18c75" defer></script>
-    <script src="/dashboard-auth.js?v=24ec67b0e1" defer></script>
-    <script src="/dashboard-navigation.js?v=848b5ca093" defer></script>
+    <script src="/dashboard-auth.js?v=3c47463a40" defer></script>
+    <script src="/dashboard-navigation.js?v=0db5e4304a" defer></script>
     <script src="/dashboard-bootstrap.js?v=65dba6e7cf" defer></script>
-    <script src="/dashboard.js?v=26081cb515" defer></script>
+    <script src="/dashboard.js?v=47436c066c" defer></script>
     <script src="/dashboard-pwa.js?v=55b84aa40e" defer></script>
 </body>
 </html>

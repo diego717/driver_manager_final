@@ -26,6 +26,7 @@ export function createSystemRouteHandlers({ jsonResponse }) {
         web_assets: "/web/assets",
         web_assets_resolve: "/web/assets/resolve",
         web_asset_link: "/web/assets/:asset_id/link-installation",
+        web_scan_asset_label: "/web/scan/asset-label",
         web_installation_conformity: "/web/installations/:installation_id/conformity",
         web_installation_conformity_pdf: "/web/installations/:installation_id/conformity/pdf?conformity_id=:id",
         web_incident_status: "/web/incidents/:incident_id/status",

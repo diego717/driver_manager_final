@@ -1,0 +1,122 @@
+name: E2E
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/e2e.yml"
+      - "e2e/**"
+      - "scripts/e2e/**"
+      - "docs/qa-automation.md"
+      - "mobile-app/**"
+      - "worker/**"
+      - "public/**"
+      - "dashboard*.js"
+      - "dashboard*.css"
+      - "dashboard.html"
+      - "package.json"
+      - "package-lock.json"
+      - "wrangler.toml"
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-e2e:
+    name: Web E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: |
+            package-lock.json
+            mobile-app/package-lock.json
+
+      - name: Install Root Dependencies
+        run: npm ci
+
+      - name: Install Playwright Browser
+        run: npm run playwright:install
+
+      - name: Run Web E2E
+        run: npm run test:e2e:web
+
+      - name: Upload Web E2E Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-e2e-artifacts
+          path: |
+            reports/e2e/seed-state.json
+            reports/playwright/html
+            reports/playwright/artifacts
+          if-no-files-found: warn
+
+  android-smoke:
+    name: Android Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle Cache
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Install Root Dependencies
+        run: npm ci
+
+      - name: Install Mobile Dependencies
+        run: npm --prefix mobile-app ci
+
+      - name: Install Maestro CLI
+        run: |
+          curl -fsSL "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+          "$HOME/.maestro/bin/maestro" --version
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run Android Smoke On Emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          profile: pixel_7_pro
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: npm run test:e2e:android:work
+
+      - name: Upload Android Smoke Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-smoke-artifacts
+          path: |
+            reports/e2e/seed-state.json
+          if-no-files-found: warn

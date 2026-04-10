@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { BottomTabBarButtonProps } from "@react-navigation/bottom-tabs";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { Link, Tabs } from "expo-router";
@@ -6,7 +6,10 @@ import { Animated, Easing, Platform, Pressable, StyleSheet, View } from "react-n
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useClientOnlyValue } from "@/components/useClientOnlyValue";
+import { readStoredWebSession } from "@/src/api/webAuth";
+import { canViewAssetCatalog } from "@/src/auth/roles";
 import AppHeaderTitle from "@/src/components/AppHeaderTitle";
+import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useAppPalette } from "@/src/theme/palette";
 import { useThemePreference } from "@/src/theme/theme-preference";
 import { fontFamilies } from "@/src/theme/typography";
@@ -154,8 +157,36 @@ function AppTabBarButton(props: BottomTabBarButtonProps) {
 export default function TabLayout() {
   const palette = useAppPalette();
   const insets = useSafeAreaInsets();
+  const { hasActiveSession } = useSharedWebSessionState();
+  const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
   const tabBarBottomInset = Math.max(insets.bottom, Platform.OS === "android" ? 12 : 6);
   const tabBarHeight = 52 + tabBarBottomInset + 8;
+  const shouldHideInventoryTab =
+    hasActiveSession && webSessionRole !== null && !canViewAssetCatalog(webSessionRole);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (!hasActiveSession) {
+      setWebSessionRole(null);
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    void readStoredWebSession()
+      .then((session) => {
+        if (!isMounted) return;
+        setWebSessionRole(session.role);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setWebSessionRole(null);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [hasActiveSession]);
 
   return (
     <Tabs
@@ -244,6 +275,7 @@ export default function TabLayout() {
         name="explore"
         options={{
           title: "Inventario",
+          href: shouldHideInventoryTab ? null : undefined,
           tabBarIcon: ({ color }) => <TabBarIcon name="search" color={color} />,
         }}
       />

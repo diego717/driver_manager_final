@@ -357,6 +357,11 @@ function runPublicDashboardScripts(dom) {
   });
   overviewScript.runInContext(context);
 
+  const myCasesScript = new vm.Script(readPublicTextAsset("dashboard-my-cases.js"), {
+    filename: "public/dashboard-my-cases.js",
+  });
+  myCasesScript.runInContext(context);
+
   const realtimeScript = new vm.Script(readPublicTextAsset("dashboard-realtime.js"), {
     filename: "public/dashboard-realtime.js",
   });

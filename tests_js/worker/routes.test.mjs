@@ -8,6 +8,7 @@ import { createInstallationsRouteHandlers } from "../../worker/routes/installati
 import { createLookupRouteHandlers } from "../../worker/routes/lookup.js";
 import { createMaintenanceRouteHandlers } from "../../worker/routes/maintenance.js";
 import { createRecordsRouteHandlers } from "../../worker/routes/records.js";
+import { createScanRouteHandlers } from "../../worker/routes/scan.js";
 import { createStatisticsRouteHandlers } from "../../worker/routes/statistics.js";
 import { createSystemRouteHandlers } from "../../worker/routes/system.js";
 import { createTenantsRouteHandlers } from "../../worker/routes/tenants.js";
@@ -1278,6 +1279,8 @@ test("incident map route falls back to GPS-only rows when dispatch columns are m
     { DB: db },
     {},
     ["incidents", "map"],
+    true,
+    { role: "admin", sub: "ops-admin" },
     "tenant-a",
   );
   const body = await response.json();
@@ -1289,6 +1292,27 @@ test("incident map route falls back to GPS-only rows when dispatch columns are m
   assert.equal(body.incidents[0].id, 99);
   assert.equal(body.incidents[0].target_lat, null);
   assert.equal(body.incidents[0].dispatch_required, 1);
+});
+
+test("incident map route rejects tenant-wide access for technician role", async () => {
+  const { handleIncidentMapRoute } = createIncidentsRouteHandlers(createIncidentRouteDeps());
+
+  await assert.rejects(
+    () => handleIncidentMapRoute(
+      new Request("https://worker.example/web/incidents/map", { method: "GET" }),
+      { DB: { prepare() { throw new Error("DB should not be queried"); } } },
+      {},
+      ["incidents", "map"],
+      true,
+      { role: "tecnico", sub: "tech-1" },
+      "tenant-a",
+    ),
+    (error) => {
+      assert.equal(error?.status, 403);
+      assert.match(error?.message || "", /mapa global/i);
+      return true;
+    },
+  );
 });
 
 test("system routes expose metadata and health handlers", async () => {
@@ -1508,6 +1532,133 @@ test("lookup handler falls back to installation search when assets tables are un
   });
 });
 
+test("scan asset-label route extracts OCR payload and normalizes fields", async () => {
+  const seenRoles = [];
+  const handlers = createScanRouteHandlers({
+    jsonResponse,
+    async readJsonOrThrowBadRequest() {
+      return {
+        image_data_url: "data:image/jpeg;base64,ZmFrZS1pbWFnZS1iYXNlNjQ=",
+      };
+    },
+    requireWebWriteRole(role) {
+      seenRoles.push(role);
+    },
+  });
+
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (resource, options) => {
+    assert.equal(resource, "https://api.openai.com/v1/chat/completions");
+    assert.equal(options?.method, "POST");
+
+    const payload = JSON.parse(String(options?.body || "{}"));
+    assert.equal(payload.model, "gpt-4.1-mini");
+    assert.equal(payload.response_format?.type, "json_object");
+
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                external_code: " EQ-900 ",
+                brand: " Acme ",
+                model: " Z1  ",
+                serial_number: " SN-900 ",
+                client_name: " Planta Norte ",
+                notes: " Etiqueta lateral ",
+                confidence: 1.4,
+              }),
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const response = await handlers.handleAssetLabelScanRoute(
+      new Request("https://worker.example/web/scan/asset-label", { method: "POST" }),
+      { OPENAI_API_KEY: "sk-test" },
+      {},
+      ["scan", "asset-label"],
+      true,
+      { role: "tecnico" },
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(seenRoles, ["tecnico"]);
+    assert.equal(body.success, true);
+    assert.equal(body.provider, "openai");
+    assert.equal(body.label.external_code, "EQ-900");
+    assert.equal(body.label.brand, "Acme");
+    assert.equal(body.label.model, "Z1");
+    assert.equal(body.label.serial_number, "SN-900");
+    assert.equal(body.label.client_name, "Planta Norte");
+    assert.equal(body.label.notes, "Etiqueta lateral");
+    assert.equal(body.label.confidence, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("scan asset-label route requires web session context", async () => {
+  const handlers = createScanRouteHandlers({
+    jsonResponse,
+    async readJsonOrThrowBadRequest() {
+      return {};
+    },
+    requireWebWriteRole() {},
+  });
+
+  await assert.rejects(
+    () => handlers.handleAssetLabelScanRoute(
+      new Request("https://worker.example/scan/asset-label", { method: "POST" }),
+      { OPENAI_API_KEY: "sk-test" },
+      {},
+      ["scan", "asset-label"],
+      false,
+      null,
+    ),
+    (error) => {
+      assert.equal(error?.status, 401);
+      assert.match(error?.message || "", /requiere sesion web/i);
+      return true;
+    },
+  );
+});
+
+test("scan asset-label route returns 503 when OPENAI_API_KEY is missing", async () => {
+  const handlers = createScanRouteHandlers({
+    jsonResponse,
+    async readJsonOrThrowBadRequest() {
+      return {
+        image_base64: "ZmFrZS1pbWFnZS1iYXNlNjQ=",
+        mime_type: "image/jpeg",
+      };
+    },
+    requireWebWriteRole() {},
+  });
+
+  await assert.rejects(
+    () => handlers.handleAssetLabelScanRoute(
+      new Request("https://worker.example/web/scan/asset-label", { method: "POST" }),
+      {},
+      {},
+      ["scan", "asset-label"],
+      true,
+      { role: "admin" },
+    ),
+    (error) => {
+      assert.equal(error?.status, 503);
+      assert.match(error?.message || "", /OPENAI_API_KEY/i);
+      return true;
+    },
+  );
+});
+
 test("technicians route lists tenant technicians for authenticated web sessions", async () => {
   const { handleTechniciansRoute } = createTechniciansRouteHandlers(createTechniciansRouteDeps());
 
@@ -1562,6 +1713,125 @@ test("technicians route lists tenant technicians for authenticated web sessions"
   assert.equal(body.technicians.length, 1);
   assert.equal(body.technicians[0].display_name, "Ana Campo");
   assert.equal(body.technicians[0].active_assignment_count, 2);
+});
+
+test("technicians route blocks catalog access for technician role", async () => {
+  const { handleTechniciansRoute } = createTechniciansRouteHandlers(createTechniciansRouteDeps());
+
+  await assert.rejects(
+    () => handleTechniciansRoute(
+      new Request("https://worker.example/web/technicians", { method: "GET" }),
+      { DB: { prepare() { throw new Error("DB should not be queried"); } } },
+      new URL("https://worker.example/web/technicians"),
+      {},
+      ["technicians"],
+      true,
+      {
+        sub: "field-tech",
+        tenant_id: "tenant-a",
+        role: "tecnico",
+        user_id: 44,
+      },
+    ),
+    (error) => {
+      assert.equal(error?.status, 403);
+      assert.match(error?.message || "", /catalogo de tecnicos/i);
+      return true;
+    },
+  );
+});
+
+test("technicians route lets a technician read only their own assignments", async () => {
+  const { handleTechniciansRoute } = createTechniciansRouteHandlers(createTechniciansRouteDeps());
+
+  const db = {
+    prepare(sql) {
+      if (sql.includes("FROM technicians") && sql.includes("WHERE id = ?")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [12, "tenant-a"]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [{
+                id: 12,
+                tenant_id: "tenant-a",
+                web_user_id: 44,
+                display_name: "Diego Tecnico",
+                is_active: 1,
+              }],
+            };
+          },
+        };
+      }
+      if (sql.includes("FROM technicians") && sql.includes("web_user_id = ?")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, [44, "tenant-a"]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [{
+                id: 12,
+                tenant_id: "tenant-a",
+                web_user_id: 44,
+                display_name: "Diego Tecnico",
+                is_active: 1,
+              }],
+            };
+          },
+        };
+      }
+      if (sql.includes("FROM technician_assignments")) {
+        return {
+          bind(...args) {
+            assert.deepEqual(args, ["tenant-a", 12, 1]);
+            return this;
+          },
+          async all() {
+            return {
+              results: [{
+                id: 700,
+                tenant_id: "tenant-a",
+                technician_id: 12,
+                entity_type: "incident",
+                entity_id: "41",
+                assignment_role: "owner",
+                assigned_by_user_id: 7,
+                assigned_by_username: "ops-supervisor",
+                assigned_at: "2026-03-28T18:00:00.000Z",
+                unassigned_at: null,
+                metadata_json: null,
+              }],
+            };
+          },
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+
+  const response = await handleTechniciansRoute(
+    new Request("https://worker.example/web/technicians/12/assignments", { method: "GET" }),
+    { DB: db },
+    new URL("https://worker.example/web/technicians/12/assignments"),
+    {},
+    ["technicians", "12", "assignments"],
+    true,
+    {
+      sub: "field-tech",
+      tenant_id: "tenant-a",
+      role: "tecnico",
+      user_id: 44,
+    },
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.assignments.length, 1);
+  assert.equal(body.assignments[0].entity_id, "41");
 });
 
 test("technicians route creates a technician linked to a tenant web user", async () => {
@@ -2166,8 +2436,9 @@ test("technicians route lists assigned incidents map for the linked technician",
                 asset_id: 88,
                 note: "Visita urgente",
                 severity: "critical",
-                incident_status: "open",
+                incident_status: "resolved",
                 created_at: "2026-03-28T18:00:00.000Z",
+                resolved_at: "2026-03-29T08:00:00.000Z",
                 target_lat: "-34.9011",
                 target_lng: "-56.1645",
                 target_label: "Acceso principal",
@@ -2213,6 +2484,7 @@ test("technicians route lists assigned incidents map for the linked technician",
   assert.equal(body.incidents.length, 1);
   assert.equal(body.incidents[0].id, 99);
   assert.equal(body.incidents[0].assignment_source, "incident");
+  assert.equal(body.incidents[0].incident_status, "resolved");
   assert.equal(body.incidents[0].dispatch_place_name, "ATM-009");
   assert.equal(body.incidents[0].target_lat, -34.9011);
 });
@@ -3347,6 +3619,54 @@ test("incident status handler resolves incidents through the nested installation
       installationId: 45,
     },
   ]);
+});
+
+test("incident status handler blocks technicians from reopening resolved incidents", async () => {
+  const { handleIncidentStatusRoute } = createIncidentsRouteHandlers(createIncidentRouteDeps({
+    async readJsonOrThrowBadRequest() {
+      return {};
+    },
+    normalizeIncidentStatusPayload() {
+      return {
+        incidentStatus: "in_progress",
+        resolutionNote: null,
+      };
+    },
+    async loadIncidentForTenant() {
+      return {
+        id: 99,
+        installation_id: 45,
+        incident_status: "resolved",
+        status_updated_at: "2026-12-01T10:00:00.000Z",
+        created_at: "2026-12-01T09:58:00.000Z",
+      };
+    },
+    async loadIncidentTimingFieldsForTenant() {
+      return {
+        work_started_at: null,
+        work_ended_at: "2026-12-01T10:00:00.000Z",
+        actual_duration_seconds: 300,
+      };
+    },
+  }));
+
+  await assert.rejects(
+    () => handleIncidentStatusRoute(
+      new Request("https://worker.example/installations/45/incidents/99/status", { method: "PATCH" }),
+      { DB: { prepare() { throw new Error("DB should not be queried"); } } },
+      {},
+      ["installations", "45", "incidents", "99", "status"],
+      true,
+      { role: "tecnico", sub: "tech-1" },
+      "tenant-z",
+      "tenant-z",
+    ),
+    (error) => {
+      assert.equal(error?.status, 403);
+      assert.match(error?.message || "", /reabrir incidencias/i);
+      return true;
+    },
+  );
 });
 
 test("incident status handler pauses incidents and preserves accumulated runtime", async () => {

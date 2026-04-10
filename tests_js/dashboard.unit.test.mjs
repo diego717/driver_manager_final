@@ -466,6 +466,192 @@ test("dashboard overview surfaces technician load in the attention panel", async
   assert.match(attentionText, /3 asignaciones activas/i);
 });
 
+test("linked technician can review my cases grouped by incident status", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(buildWebSessionPayload({ username: "diego", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/technicians",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          technicians: [
+            {
+              id: 7,
+              tenant_id: "default",
+              web_user_id: 1,
+              display_name: "Diego Sasen",
+              employee_code: "TEC-01",
+              is_active: true,
+              active_assignment_count: 3,
+            },
+          ],
+        }),
+    },
+    {
+      method: "GET",
+      match: ({ url }) => url.pathname === "/web/auth/users",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          users: [],
+          pagination: { has_more: false, next_cursor: null },
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/technicians/7/assignments",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          technician: { id: 7, display_name: "Diego Sasen" },
+          assignments: [
+            {
+              id: 401,
+              technician_id: 7,
+              entity_type: "installation",
+              entity_id: "44",
+              assignment_role: "owner",
+              assigned_at: "2026-04-05T11:00:00.000Z",
+            },
+            {
+              id: 402,
+              technician_id: 7,
+              entity_type: "incident",
+              entity_id: "51",
+              assignment_role: "assistant",
+              assigned_at: "2026-04-05T11:05:00.000Z",
+            },
+            {
+              id: 403,
+              technician_id: 7,
+              entity_type: "asset",
+              entity_id: "9",
+              assignment_role: "reviewer",
+              assigned_at: "2026-04-05T11:10:00.000Z",
+            },
+          ],
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/44/incidents",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          installation_id: 44,
+          incidents: [
+            {
+              id: 41,
+              installation_id: 44,
+              asset_id: 9,
+              note: "Pendiente de visita",
+              severity: "high",
+              incident_status: "open",
+              created_at: "2026-04-05T08:00:00.000Z",
+              reporter_username: "ops-admin",
+              photos: [],
+            },
+            {
+              id: 42,
+              installation_id: 44,
+              asset_id: null,
+              note: "Trabajo ya cerrado",
+              severity: "low",
+              incident_status: "resolved",
+              created_at: "2026-04-04T10:00:00.000Z",
+              resolved_at: "2026-04-04T13:00:00.000Z",
+              reporter_username: "ops-admin",
+              photos: [],
+            },
+          ],
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/incidents/51",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          incident: {
+            id: 51,
+            installation_id: 48,
+            asset_id: null,
+            note: "Equipo en intervencion",
+            severity: "critical",
+            incident_status: "in_progress",
+            created_at: "2026-04-05T09:30:00.000Z",
+            status_updated_at: "2026-04-05T10:10:00.000Z",
+            reporter_username: "ops-admin",
+            photos: [],
+          },
+        }),
+    },
+    {
+      method: "GET",
+      match: "/web/assets/9/incidents",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          incidents: [
+            {
+              id: 61,
+              installation_id: 44,
+              asset_id: 9,
+              note: "Esperando repuesto",
+              severity: "medium",
+              incident_status: "paused",
+              created_at: "2026-04-05T07:15:00.000Z",
+              status_updated_at: "2026-04-05T09:00:00.000Z",
+              reporter_username: "ops-admin",
+              photos: [],
+            },
+          ],
+        }),
+    },
+    {
+      method: "GET",
+      match: ({ url }) => url.pathname === "/web/technician-assignments",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          assignments: [],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+
+  await loginThroughForm(dom, {
+    username: "diego",
+    password: "StrongPass#2026",
+  });
+
+  await window.activateSection("myCases");
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const sectionText = document.getElementById("myCasesSection").textContent || "";
+  assert.match(sectionText, /Diego Sasen/i);
+  assert.match(sectionText, /Pendientes \(1\)/i);
+  assert.match(sectionText, /En curso \(1\)/i);
+  assert.match(sectionText, /Pausadas \(1\)/i);
+  assert.match(sectionText, /Resueltas \(1\)/i);
+  assert.match(sectionText, /Pendiente de visita/i);
+  assert.match(sectionText, /Equipo en intervencion/i);
+  assert.match(sectionText, /Esperando repuesto/i);
+  assert.ok(router.calls.some((call) => call.pathname === "/web/incidents/51"));
+  assert.ok(router.calls.some((call) => call.pathname === "/web/assets/9/incidents"));
+});
+
 test("super admin can open the tenants section and review tenant detail", async () => {
   const router = createFetchRouter([
     {
@@ -2105,6 +2291,100 @@ test("manual qr resolution opens asset detail when lookup resolves an asset", as
   assert.ok(document.getElementById("assetsSection").classList.contains("active"));
   assert.ok(router.calls.some((call) => call.pathname === "/web/lookup"));
   assert.ok(router.calls.some((call) => call.pathname === "/web/assets/77/incidents"));
+});
+
+test("manual qr resolution can register an asset directly from embedded label metadata", async () => {
+  const resolvePayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload()),
+    },
+    {
+      method: "GET",
+      match: ({ url }) =>
+        url.pathname === "/web/lookup" &&
+        url.searchParams.get("code") === "EQ-NEW-91" &&
+        url.searchParams.get("type") === "asset",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          match: null,
+        }),
+    },
+    {
+      method: "POST",
+      match: "/web/assets/resolve",
+      resolver: async ({ request }) => {
+        resolvePayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse(
+          {
+            success: true,
+            created: true,
+            asset: {
+              id: 91,
+              external_code: "EQ-NEW-91",
+              brand: "Entrust",
+              model: "Sigma SL3",
+              serial_number: "SN-NEW-91",
+              client_name: "QA Bank",
+              notes: "",
+              status: "active",
+            },
+          },
+          { status: 201 },
+        );
+      },
+    },
+    {
+      method: "GET",
+      match: "/web/assets/91/incidents",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          asset: {
+            id: 91,
+            external_code: "EQ-NEW-91",
+            brand: "Entrust",
+            model: "Sigma SL3",
+            serial_number: "SN-NEW-91",
+            client_name: "QA Bank",
+            status: "active",
+          },
+          active_link: null,
+          links: [],
+          incidents: [],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { document, Event } = dom.window;
+
+  await loginThroughForm(dom);
+  document.getElementById("overflowScanQrBtn").click();
+  await flushDashboardTasks();
+
+  document.getElementById("scanQrManualInput").value =
+    "dm://asset/EQ-NEW-91?v=2&brand=Entrust&model=Sigma%20SL3&serial_number=SN-NEW-91&client_name=QA%20Bank";
+  document.getElementById("scanQrManualForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks(220);
+
+  assert.equal(resolvePayloads.length, 1);
+  assert.equal(resolvePayloads[0].external_code, "EQ-NEW-91");
+  assert.equal(resolvePayloads[0].brand, "Entrust");
+  assert.equal(resolvePayloads[0].model, "Sigma SL3");
+  assert.equal(resolvePayloads[0].serial_number, "SN-NEW-91");
+  assert.equal(resolvePayloads[0].client_name, "QA Bank");
+  assert.equal(resolvePayloads[0].status, "active");
+  assert.equal(resolvePayloads[0].update_existing, true);
+  assert.ok(document.getElementById("assetsSection").classList.contains("active"));
+  assert.ok(router.calls.some((call) => call.pathname === "/web/assets/resolve"));
+  assert.ok(router.calls.some((call) => call.pathname === "/web/assets/91/incidents"));
 });
 
 test("photo modal navigates between multiple evidence photos without closing", async () => {
@@ -3842,6 +4122,147 @@ test("incident map lets admin set operational target directly from the map", asy
   assert.match(document.getElementById("incidentMapDetail").textContent || "", /Punto manual/i);
   assert.match(document.getElementById("incidentMapDetail").textContent || "", /-34\.90765/i);
   assert.match(document.getElementById("incidentMapDetail").textContent || "", /-56\.19877/i);
+});
+
+test("technician incident map uses assigned scope and keeps older assigned incidents visible", async () => {
+  const assignedIncident = {
+    id: 71,
+    installation_id: 44,
+    asset_id: 9,
+    note: "Pendiente historica con pin",
+    severity: "medium",
+    incident_status: "resolved",
+    created_at: "2025-12-15T08:00:00.000Z",
+    resolved_at: "2025-12-18T10:30:00.000Z",
+    status_updated_at: "2025-12-18T10:30:00.000Z",
+    gps_lat: -34.9011,
+    gps_lng: -56.1645,
+    gps_accuracy_m: 8,
+    target_lat: null,
+    target_lng: null,
+    dispatch_required: true,
+    dispatch_place_name: "Cliente historico",
+    installation_client_name: "Cliente historico",
+    asset_code: "ATM-009",
+    photos: [],
+  };
+
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "diego",
+            role: "tecnico",
+          }),
+        ),
+    },
+    {
+      method: "GET",
+      match: "/web/me/assigned-incidents-map",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          technician: {
+            id: 7,
+            display_name: "Diego Sasen",
+            employee_code: "TEC-01",
+          },
+          incidents: [assignedIncident],
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+
+  class MockLatLngBounds {
+    constructor() {
+      this.points = [];
+    }
+
+    extend(coordinates) {
+      this.points.push(coordinates);
+      return this;
+    }
+  }
+
+  class MockMap {
+    constructor(element) {
+      this.handlers = new Map();
+      this.canvas = element || document.createElement("div");
+      window.__lastAssignedIncidentMap = this;
+    }
+
+    addListener(eventName, handler) {
+      this.handlers.set(eventName, handler);
+      return { remove() {} };
+    }
+
+    getDiv() {
+      return this.canvas;
+    }
+
+    panTo(position) {
+      this.lastPanTo = position;
+    }
+
+    setZoom(value) {
+      this.lastSetZoom = value;
+    }
+
+    fitBounds(bounds, padding) {
+      this.lastFitBounds = { bounds, padding };
+    }
+  }
+
+  class MockMarker {
+    constructor(config = {}) {
+      this.config = config;
+      this.map = config.map || null;
+      this.handlers = new Map();
+    }
+
+    addListener(eventName, handler) {
+      this.handlers.set(eventName, handler);
+      return { remove() {} };
+    }
+
+    setMap(map) {
+      this.map = map;
+    }
+  }
+
+  window.google = {
+    maps: {
+      Map: MockMap,
+      Marker: MockMarker,
+      LatLngBounds: MockLatLngBounds,
+      SymbolPath: {
+        CIRCLE: "CIRCLE",
+      },
+    },
+  };
+
+  await loginThroughForm(dom, {
+    username: "diego",
+    password: "StrongPass#2026",
+  });
+
+  await window.activateSection("incidentMap");
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.ok(router.calls.some((call) => call.pathname === "/web/me/assigned-incidents-map"));
+  const sectionText = document.getElementById("incidentMapSection").textContent || "";
+  assert.match(sectionText, /Cliente historico/i);
+  assert.match(sectionText, /Pendiente historica con pin/i);
+  const activeRangeButton = document.querySelector(".incident-map-range-btn.is-active");
+  assert.equal(activeRangeButton?.getAttribute("data-incident-map-days"), "all");
 });
 
 test("paused incidents show paused runtime and offer resume action", async () => {

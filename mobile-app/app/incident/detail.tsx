@@ -30,7 +30,7 @@ import {
 } from "@/src/api/photos";
 import { getCurrentLinkedTechnicianContext, getTechnicianAssignmentsByEntity } from "@/src/api/technicians";
 import { readStoredWebSession } from "@/src/api/webAuth";
-import { canAssignTechnicians, canDeleteCriticalData } from "@/src/auth/roles";
+import { canAssignTechnicians, canDeleteCriticalData, canReopenIncidents } from "@/src/auth/roles";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import RuntimeChip from "@/src/components/RuntimeChip";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -476,6 +476,17 @@ export default function IncidentDetailScreen() {
   const estimated = resolveIncidentEstimatedDurationSeconds(incident);
   const canDeleteIncident = canDeleteCriticalData(webSessionRole);
   const canManageTechnicianAssignments = canAssignTechnicians(webSessionRole);
+  const canReopenResolvedIncident =
+    status !== "resolved" || canReopenIncidents(webSessionRole);
+  const statusActions = [
+    { key: "open" as const, label: "Abrir" },
+    {
+      key: "in_progress" as const,
+      label: status === "paused" ? "Reanudar" : "En curso",
+    },
+    { key: "paused" as const, label: "Pausar" },
+    { key: "resolved" as const, label: "Resolver", primary: true },
+  ].filter((action) => canReopenResolvedIncident || action.key === "resolved");
   const currentTechnicianAssigned = Boolean(
     linkedTechnician?.id &&
       assignmentSummary.some((assignment) => assignment.technician_id === linkedTechnician.id),
@@ -591,15 +602,7 @@ export default function IncidentDetailScreen() {
             </View>
 
             <View style={styles.statusButtonsRow}>
-              {[
-                { key: "open" as const, label: "Abrir" },
-                {
-                  key: "in_progress" as const,
-                  label: status === "paused" ? "Reanudar" : "En curso",
-                },
-                { key: "paused" as const, label: "Pausar" },
-                { key: "resolved" as const, label: "Resolver", primary: true },
-              ].map((action) => {
+              {statusActions.map((action) => {
                 const selected = status === action.key;
                 return (
                   <TouchableOpacity
@@ -619,7 +622,7 @@ export default function IncidentDetailScreen() {
                     onPress={() => {
                       void onChangeStatus(action.key);
                     }}
-                    disabled={updatingStatus}
+                    disabled={updatingStatus || (status === "resolved" && action.key === "resolved")}
                     accessibilityRole="button"
                   >
                     <Text
@@ -639,6 +642,11 @@ export default function IncidentDetailScreen() {
                 );
               })}
             </View>
+            {status === "resolved" && !canReopenResolvedIncident ? (
+              <Text style={[styles.cardText, { color: palette.textMuted }]}>
+                Solo admin, supervisor o plataforma pueden reabrir una incidencia resuelta.
+              </Text>
+            ) : null}
             <TextInput
               value={resolutionNote}
               onChangeText={setResolutionNote}

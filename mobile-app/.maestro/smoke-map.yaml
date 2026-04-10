@@ -1,0 +1,22 @@
+appId: com.diego717.drivermanager
+name: Smoke - Login and map queue
+env:
+  E2E_TECHNICIAN_USERNAME: e2e-tech
+  E2E_TECHNICIAN_PASSWORD: E2ETech#2026
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Acceso seguro"
+- tapOn: "Usuario web para iniciar sesion"
+- inputText: ${E2E_TECHNICIAN_USERNAME}
+- tapOn: "Contrasena web para iniciar sesion"
+- inputText: ${E2E_TECHNICIAN_PASSWORD}
+- tapOn: "Iniciar sesion"
+- extendedWaitUntil:
+    visible: "Centro del turno"
+    timeout: 30000
+- tapOn: "Mapa"
+- extendedWaitUntil:
+    visible: "Mapa operativo"
+    timeout: 30000
+- assertVisible: "Tecnico E2E Campo"

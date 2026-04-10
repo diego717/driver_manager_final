@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  canManageAssetLinks,
+  canManageAssetLoans,
   canDeleteCriticalData,
   canManagePlatform,
   canManageTechnicians,
   canManageUsers,
+  canReopenIncidents,
+  canViewAssetCatalog,
+  canViewTechnicianCatalog,
+  canViewTenantIncidentMap,
   canWriteOperationalData,
   normalizeWebRole,
 } from "./roles";
@@ -49,5 +55,21 @@ describe("web roles", () => {
     expect(canDeleteCriticalData("super_admin")).toBe(true);
     expect(canDeleteCriticalData("platform_owner")).toBe(true);
     expect(canDeleteCriticalData("admin")).toBe(false);
+  });
+
+  it("keeps catalog and tenant-wide views away from tecnico", () => {
+    expect(canViewTechnicianCatalog("tecnico")).toBe(false);
+    expect(canViewAssetCatalog("tecnico")).toBe(false);
+    expect(canViewTenantIncidentMap("tecnico")).toBe(false);
+    expect(canViewAssetCatalog("solo_lectura")).toBe(true);
+  });
+
+  it("allows only admin supervisor and platform roles to reopen incidents or manage asset ops", () => {
+    expect(canReopenIncidents("admin")).toBe(true);
+    expect(canReopenIncidents("supervisor")).toBe(true);
+    expect(canReopenIncidents("tecnico")).toBe(false);
+    expect(canManageAssetLinks("supervisor")).toBe(true);
+    expect(canManageAssetLoans("admin")).toBe(true);
+    expect(canManageAssetLoans("solo_lectura")).toBe(false);
   });
 });

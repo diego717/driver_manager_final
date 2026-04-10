@@ -156,7 +156,7 @@ export function useQrGenerator() {
     if (!prefillValues.autoGenerate || !prefilledAsset.external_code) return;
 
     try {
-      const nextPayload = buildQrPayload("asset", prefilledAsset.external_code);
+      const nextPayload = buildQrPayload("asset", prefilledAsset.external_code, prefilledAsset);
       setPayload(nextPayload);
       setDetailsText(buildAssetDetailsText(prefilledAsset));
     } catch (caughtError) {
@@ -241,7 +241,7 @@ export function useQrGenerator() {
         clientName,
         notes,
       });
-      const nextPayload = buildQrPayload("asset", asset.external_code);
+      const nextPayload = buildQrPayload("asset", asset.external_code, asset);
       applyAssetToForm(asset);
       setPayload(nextPayload);
       setDetailsText(buildAssetDetailsText(asset));
@@ -286,7 +286,7 @@ export function useQrGenerator() {
 
       applyAssetToForm(merged);
 
-      const nextPayload = buildQrPayload("asset", merged.external_code);
+      const nextPayload = buildQrPayload("asset", merged.external_code, merged);
       setPayload(nextPayload);
       setDetailsText(buildAssetDetailsText(merged));
       setError("");
@@ -327,7 +327,7 @@ export function useQrGenerator() {
 
       applyAssetToForm(loaded);
 
-      const nextPayload = buildQrPayload("asset", loaded.external_code);
+      const nextPayload = buildQrPayload("asset", loaded.external_code, loaded);
       setPayload(nextPayload);
       setDetailsText(buildAssetDetailsText(loaded));
       setError("");

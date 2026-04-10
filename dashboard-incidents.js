@@ -38,6 +38,8 @@
             status: '',
             severity: '',
             incidents: [],
+            linkedTechnician: null,
+            scope: 'tenant',
             selectedIncidentId: null,
             targetSelectionIncidentId: null,
             savingTargetIncidentId: null,
@@ -56,8 +58,35 @@
         }
 
         function canCurrentUserManagePublicTracking() {
+            if (typeof options.canCurrentUserManagePublicTracking === 'function') {
+                return Boolean(options.canCurrentUserManagePublicTracking());
+            }
             const role = String(options.getCurrentUser?.()?.role || '').toLowerCase();
-            return role === 'admin' || role === 'super_admin';
+            return role === 'admin' || role === 'super_admin' || role === 'platform_owner';
+        }
+
+        function canCurrentUserReopenIncidents() {
+            if (typeof options.canCurrentUserReopenIncidents === 'function') {
+                return Boolean(options.canCurrentUserReopenIncidents());
+            }
+            const role = String(options.getCurrentUser?.()?.role || '').toLowerCase();
+            return role === 'admin' || role === 'supervisor' || role === 'platform_owner' || role === 'super_admin';
+        }
+
+        function canCurrentUserViewTenantIncidentMap() {
+            if (typeof options.canCurrentUserViewTenantIncidentMap === 'function') {
+                return Boolean(options.canCurrentUserViewTenantIncidentMap());
+            }
+            const role = String(options.getCurrentUser?.()?.role || '').trim().toLowerCase();
+            return role === 'admin' || role === 'supervisor' || role === 'solo_lectura'
+                || role === 'platform_owner' || role === 'super_admin';
+        }
+
+        function shouldUseAssignedIncidentMap() {
+            if (typeof options.canCurrentUserOpenIncidentMap === 'function' && !options.canCurrentUserOpenIncidentMap()) {
+                return false;
+            }
+            return !canCurrentUserViewTenantIncidentMap();
         }
 
         function canCurrentUserWriteOperationalData() {
@@ -1176,6 +1205,61 @@
             return options.formatDateTime?.(isoValue) || String(isoValue || '').trim() || 'Sin fecha';
         }
 
+        function syncIncidentMapRangeButtons() {
+            document.querySelectorAll('.incident-map-range-btn').forEach((button) => {
+                button.classList.toggle(
+                    'is-active',
+                    String(button.dataset.incidentMapDays || '').trim().toLowerCase() === incidentMapState.days,
+                );
+            });
+        }
+
+        function ensureAssignedIncidentMapDefaults() {
+            if (!shouldUseAssignedIncidentMap()) return;
+            if (incidentMapState.days !== 'all') {
+                incidentMapState.days = 'all';
+                syncIncidentMapRangeButtons();
+            }
+        }
+
+        function applyIncidentMapClientFilters(incidents, filters = {}) {
+            const list = Array.isArray(incidents) ? [...incidents] : [];
+            const normalizedStatus = String(filters.status || '').trim().toLowerCase();
+            const normalizedSeverity = String(filters.severity || '').trim().toLowerCase();
+            const normalizedDays = String(filters.days || '').trim().toLowerCase();
+            const limit = Number(filters.limit);
+            let minTimestamp = null;
+            if (normalizedDays && normalizedDays !== 'all') {
+                const parsedDays = Number.parseInt(normalizedDays, 10);
+                if (Number.isFinite(parsedDays) && parsedDays > 0) {
+                    minTimestamp = Date.now() - (parsedDays * 24 * 60 * 60 * 1000);
+                }
+            }
+
+            return list
+                .filter((incident) => {
+                    if (normalizedStatus && options.normalizeIncidentStatus(incident?.incident_status) !== normalizedStatus) {
+                        return false;
+                    }
+                    if (normalizedSeverity && options.normalizeSeverity(incident?.severity) !== normalizedSeverity) {
+                        return false;
+                    }
+                    if (minTimestamp !== null) {
+                        const createdAt = Date.parse(String(
+                            incident?.status_updated_at
+                            || incident?.resolved_at
+                            || incident?.created_at
+                            || '',
+                        ));
+                        if (Number.isFinite(createdAt) && createdAt < minTimestamp) {
+                            return false;
+                        }
+                    }
+                    return true;
+                })
+                .slice(0, Number.isFinite(limit) && limit > 0 ? limit : undefined);
+        }
+
         function updateIncidentMapSummary(incidents) {
             const summary = document.getElementById('incidentMapSummary');
             if (!summary) return;
@@ -1250,7 +1334,11 @@
             if (!incidentMapState.incidents.length) {
                 const empty = document.createElement('p');
                 empty.className = 'incident-map-detail-empty';
-                empty.textContent = 'No hay incidencias con coordenadas para este filtro.';
+                empty.textContent = incidentMapState.scope === 'assigned'
+                    ? incidentMapState.linkedTechnician?.id
+                        ? 'No tienes incidencias asignadas con coordenadas para este filtro.'
+                        : 'Vincula un tecnico a tu usuario web para ver tu mapa operativo personal.'
+                    : 'No hay incidencias con coordenadas para este filtro.';
                 container.appendChild(empty);
                 return;
             }
@@ -1494,6 +1582,7 @@
 
         async function loadIncidentMap(config = {}) {
             const requestVersion = ++incidentMapRequestVersion;
+            ensureAssignedIncidentMapDefaults();
             incidentMapState.loading = true;
             if (config.resetSelection === true) {
                 incidentMapState.selectedIncidentId = null;
@@ -1503,14 +1592,27 @@
             renderIncidentMap();
 
             try {
-                const response = await options.api.getIncidentMap({
-                    days: incidentMapState.days,
-                    status: incidentMapState.status,
-                    severity: incidentMapState.severity,
-                    limit: INCIDENT_MAP_DEFAULT_LIMIT,
-                });
+                const useAssignedMap = shouldUseAssignedIncidentMap();
+                const response = useAssignedMap
+                    ? await options.api.getMyAssignedIncidentsMap()
+                    : await options.api.getIncidentMap({
+                        days: incidentMapState.days,
+                        status: incidentMapState.status,
+                        severity: incidentMapState.severity,
+                        limit: INCIDENT_MAP_DEFAULT_LIMIT,
+                    });
                 if (requestVersion !== incidentMapRequestVersion) return;
-                incidentMapState.incidents = Array.isArray(response?.incidents) ? response.incidents : [];
+                incidentMapState.scope = useAssignedMap ? 'assigned' : 'tenant';
+                incidentMapState.linkedTechnician = useAssignedMap ? response?.technician || null : null;
+                incidentMapState.incidents = applyIncidentMapClientFilters(
+                    Array.isArray(response?.incidents) ? response.incidents : [],
+                    {
+                        days: incidentMapState.days,
+                        status: incidentMapState.status,
+                        severity: incidentMapState.severity,
+                        limit: INCIDENT_MAP_DEFAULT_LIMIT,
+                    },
+                );
                 const selectedStillExists = incidentMapState.incidents.some((incident) => (
                     options.parseStrictInteger(incident?.id) === incidentMapState.selectedIncidentId
                 ));
@@ -1519,6 +1621,7 @@
                 }
             } catch (error) {
                 if (requestVersion !== incidentMapRequestVersion) return;
+                incidentMapState.linkedTechnician = null;
                 incidentMapState.incidents = [];
                 options.showNotification(
                     `No se pudo cargar el mapa de incidencias: ${error?.message || error}`,
@@ -1540,9 +1643,7 @@
                     const nextDays = String(button.dataset.incidentMapDays || '').trim().toLowerCase();
                     if (!INCIDENT_MAP_ALLOWED_DAYS.has(nextDays) || nextDays === incidentMapState.days) return;
                     incidentMapState.days = nextDays;
-                    document.querySelectorAll('.incident-map-range-btn').forEach((btn) => {
-                        btn.classList.toggle('is-active', btn === button);
-                    });
+                    syncIncidentMapRangeButtons();
                     void loadIncidentMap({ resetSelection: true });
                 });
             });
@@ -3378,7 +3479,11 @@
                     }
                     const targetStatus = String(button.dataset.action || '').trim();
                     if (['open', 'in_progress', 'paused', 'resolved'].includes(targetStatus)) {
-                        button.disabled = !canCurrentUserWriteOperationalData() || currentStatus === targetStatus;
+                        const isReopenAction = currentStatus === 'resolved' && targetStatus !== 'resolved';
+                        button.disabled =
+                            !canCurrentUserWriteOperationalData()
+                            || currentStatus === targetStatus
+                            || (isReopenAction && !canCurrentUserReopenIncidents());
                     } else if (targetStatus === 'evidence') {
                         button.disabled = !canCurrentUserWriteOperationalData();
                     }
@@ -3989,6 +4094,7 @@
         function showIncidentMapWorkspace() {
             if (!options.requireActiveSession()) return;
             bindIncidentMapControls();
+            ensureAssignedIncidentMapDefaults();
             void loadIncidentMap();
         }
 

@@ -1,0 +1,23 @@
+appId: com.diego717.drivermanager
+name: Smoke - Login and assigned work
+env:
+  E2E_TECHNICIAN_USERNAME: e2e-tech
+  E2E_TECHNICIAN_PASSWORD: E2ETech#2026
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Acceso seguro"
+- tapOn: "Usuario web para iniciar sesion"
+- inputText: ${E2E_TECHNICIAN_USERNAME}
+- tapOn: "Contrasena web para iniciar sesion"
+- inputText: ${E2E_TECHNICIAN_PASSWORD}
+- tapOn: "Iniciar sesion"
+- extendedWaitUntil:
+    visible: "Centro del turno"
+    timeout: 30000
+- tapOn: "Casos"
+- extendedWaitUntil:
+    visible: "Trabajo asignado"
+    timeout: 30000
+- assertVisible: "Tecnico activo"
+- assertVisible: "Tecnico E2E Campo"

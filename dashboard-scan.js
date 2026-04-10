@@ -1,6 +1,12 @@
 (function attachDashboardScanFactory(global) {
     function createDashboardScan(options) {
-        const DM_URI_PATTERN = /^dm:\/\/(installation|asset)\/([^/?#]+)$/i;
+        const DM_URI_PATTERN = /^dm:\/\/(installation|asset)\/([^?#]+)(?:\?([^#]*))?$/i;
+        const ASSET_CODE_MAX_LENGTH = 128;
+        const ASSET_BRAND_MAX_LENGTH = 120;
+        const ASSET_MODEL_MAX_LENGTH = 160;
+        const ASSET_SERIAL_MAX_LENGTH = 128;
+        const ASSET_CLIENT_MAX_LENGTH = 180;
+        const ASSET_NOTES_MAX_LENGTH = 2000;
         let stream = null;
         let detector = null;
         let detectorLoopHandle = 0;
@@ -39,6 +45,69 @@
             }
         }
 
+        function normalizeAssetMetadataValue(rawValue, maxLength) {
+            return String(rawValue || '')
+                .trim()
+                .replace(/\s+/g, ' ')
+                .slice(0, maxLength);
+        }
+
+        function parseAssetMetadataFromQuery(queryString, externalCode = '') {
+            const rawQuery = String(queryString || '').trim();
+            if (!rawQuery) return null;
+
+            let params = null;
+            try {
+                params = new URLSearchParams(rawQuery);
+            } catch {
+                return null;
+            }
+
+            const readFirst = (...keys) => {
+                for (const key of keys) {
+                    const value = params.get(key);
+                    if (value !== null && value !== undefined) {
+                        return value;
+                    }
+                }
+                return '';
+            };
+
+            const normalizedExternalCode = normalizeAssetMetadataValue(
+                externalCode || readFirst('external_code', 'code', 'asset_code'),
+                ASSET_CODE_MAX_LENGTH,
+            );
+            if (!normalizedExternalCode) return null;
+
+            const brand = normalizeAssetMetadataValue(readFirst('brand', 'b'), ASSET_BRAND_MAX_LENGTH);
+            const model = normalizeAssetMetadataValue(readFirst('model', 'm'), ASSET_MODEL_MAX_LENGTH);
+            const serialNumber = normalizeAssetMetadataValue(
+                readFirst('serial_number', 'serial', 'sn', 's'),
+                ASSET_SERIAL_MAX_LENGTH,
+            );
+            const clientName = normalizeAssetMetadataValue(
+                readFirst('client_name', 'client', 'c'),
+                ASSET_CLIENT_MAX_LENGTH,
+            );
+            const notes = normalizeAssetMetadataValue(
+                readFirst('notes', 'note', 'n'),
+                ASSET_NOTES_MAX_LENGTH,
+            );
+
+            if (!brand && !model && !serialNumber && !clientName && !notes) {
+                return null;
+            }
+
+            return {
+                external_code: normalizedExternalCode,
+                brand,
+                model,
+                serial_number: serialNumber,
+                client_name: clientName,
+                notes,
+            };
+        }
+
         function parseScannedPayload(input) {
             const raw = String(input || '').trim();
             if (!raw) return null;
@@ -47,6 +116,7 @@
             if (dmMatch) {
                 const type = String(dmMatch[1] || '').toLowerCase();
                 const payload = decodeURIComponent(dmMatch[2] || '').trim();
+                const queryString = String(dmMatch[3] || '').trim();
                 if (type === 'installation') {
                     const installationId = Number.parseInt(payload, 10);
                     if (!Number.isInteger(installationId) || installationId <= 0) {
@@ -55,7 +125,12 @@
                     return { type: 'installation', installationId, raw };
                 }
                 if (!payload) return null;
-                return { type: 'asset', externalCode: payload, raw };
+                return {
+                    type: 'asset',
+                    externalCode: payload,
+                    assetData: parseAssetMetadataFromQuery(queryString, payload),
+                    raw,
+                };
             }
 
             if (/^\d+$/.test(raw)) {
@@ -184,6 +259,38 @@
             return false;
         }
 
+        async function resolveAssetFromLabelPayload(parsed, source = 'manual') {
+            if (!parsed || parsed.type !== 'asset' || !parsed.assetData) return false;
+            if (typeof options.resolveAssetFromLabelPayload !== 'function') return false;
+
+            setStatus('Etiqueta detectada. Registrando equipo...');
+            const resolved = await options.resolveAssetFromLabelPayload(parsed.assetData, {
+                source,
+                rawValue: parsed.raw,
+            });
+            const assetRecordId = Number.parseInt(
+                String(resolved?.asset?.id ?? resolved?.id ?? ''),
+                10,
+            );
+            const installationId = Number.parseInt(
+                String(
+                    resolved?.active_link?.installation_id
+                    ?? resolved?.installation_id
+                    ?? '',
+                ),
+                10,
+            );
+            if (!Number.isInteger(assetRecordId) || assetRecordId <= 0) {
+                return false;
+            }
+            await openResolvedAsset(
+                assetRecordId,
+                Number.isInteger(installationId) && installationId > 0 ? installationId : null,
+            );
+            await closeModal();
+            return true;
+        }
+
         async function resolveScannedValue(rawValue, source = 'manual') {
             if (resolving) return;
             resolving = true;
@@ -196,7 +303,9 @@
                         setStatus('Codigo detectado, pero no coincide con el formato operativo. Sigue apuntando o usa el fallback manual.');
                         return;
                     }
-                    throw new Error('Formato esperado: dm://installation/{id}, dm://asset/{external_code} o numero puro.');
+                    throw new Error(
+                        'Formato esperado: dm://installation/{id}, dm://asset/{external_code}, dm://asset/{external_code}?v=2&brand=... o numero puro.',
+                    );
                 }
 
                 setError('');
@@ -225,6 +334,11 @@
                 if (Number.isInteger(installationId) && installationId > 0) {
                     await openResolvedInstallation(installationId);
                     await closeModal();
+                    return;
+                }
+
+                const resolvedFromLabel = await resolveAssetFromLabelPayload(parsed, source);
+                if (resolvedFromLabel) {
                     return;
                 }
 

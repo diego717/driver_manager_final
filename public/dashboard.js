@@ -121,7 +121,7 @@ const SSE_RECONNECT_BASE_DELAY = 2500;
 const SSE_RECONNECT_MAX_DELAY = 30000;
 const SSE_MIN_CONNECT_GAP_MS = 1200;
 const CONNECTION_STATUS_DEDUP_MS = 700;
-const SSE_ACTIVE_SECTIONS = new Set(['dashboard', 'installations', 'assets', 'drivers', 'incidents']);
+const SSE_ACTIVE_SECTIONS = new Set(['dashboard', 'myCases', 'installations', 'assets', 'drivers', 'incidents']);
 const FORCE_LOGIN_ON_OPEN = true;
 const QR_MAX_ASSET_CODE_LENGTH = 128;
 const QR_MAX_BRAND_LENGTH = 120;
@@ -129,6 +129,7 @@ const QR_MAX_MODEL_LENGTH = 160;
 const QR_MAX_SERIAL_LENGTH = 128;
 const QR_MAX_CLIENT_LENGTH = 180;
 const QR_MAX_NOTES_LENGTH = 2000;
+const QR_EMBEDDED_NOTES_MAX_LENGTH = 320;
 
 function normalizeInstallationCacheId(rawId) {
     const parsedId = Number.parseInt(String(rawId), 10);
@@ -294,6 +295,7 @@ const MODAL_FOCUSABLE_SELECTOR = [
 ].join(',');
 const SECTION_TITLES = {
     dashboard: 'Centro del turno',
+    myCases: 'Mis casos',
     installations: 'Registros',
     assets: 'Equipos',
     drivers: 'Drivers',
@@ -305,6 +307,7 @@ const SECTION_TITLES = {
 };
 const SECTION_SUBTITLES = {
     dashboard: 'Prioriza incidencias, registros activos y desvio de SLA',
+    myCases: 'Tu bandeja personal de incidencias asignadas, agrupada por estado operativo',
     installations: 'Historial técnico para consultar contexto y registros',
     assets: 'Equipos con acceso directo a incidencias y contexto',
     drivers: 'Versionado centralizado de controladores',
@@ -338,6 +341,12 @@ const SECTION_REQUIRED_BINDINGS = Object.freeze({
         'trendChart',
         'recentInstallations',
         'attentionPanel',
+    ],
+    myCases: [
+        'myCasesRefreshBtn',
+        'myCasesSummary',
+        'myCasesContext',
+        'myCasesList',
     ],
     installations: [
         'searchInput',
@@ -397,6 +406,7 @@ const SECTION_REQUIRED_BINDINGS = Object.freeze({
 const MOBILE_NAV_OVERFLOW_SECTIONS = new Set(['drivers', 'tenants', 'audit', 'settings']);
 const HEADER_PRIMARY_ACTIONS = {
     dashboard: { icon: 'add_circle', label: 'Nuevo registro', action: 'createRecord' },
+    myCases: { icon: 'refresh', label: 'Actualizar mis casos', action: 'refreshMyCases' },
     installations: { icon: 'add_circle', label: 'Nuevo registro', action: 'createRecord' },
     assets: { icon: 'qr_code_2', label: 'Nuevo equipo + QR', action: 'createAsset' },
     drivers: { icon: 'cloud_upload', label: 'Subir driver', action: 'pickDriverFile' },
@@ -421,6 +431,7 @@ let dashboardAssets = null;
 let dashboardDrivers = null;
 let dashboardAudit = null;
 let dashboardOverview = null;
+let dashboardMyCases = null;
 let dashboardRealtime = null;
 let dashboardScan = null;
 let dashboardGeolocation = null;
@@ -472,7 +483,7 @@ function renderContextualEmptyState(container, options = {}) {
         wrapper.appendChild(actionBtn);
     }
 
-    container.appendChild(wrapper);
+    container.replaceChildren(wrapper);
 }
 
 
@@ -746,6 +757,10 @@ dashboardIncidents = window.createDashboardIncidents({
     api,
     bindIncidentEstimatedDurationFields,
     canCurrentUserEditAssets,
+    canCurrentUserOpenIncidentMap,
+    canCurrentUserReopenIncidents,
+    canCurrentUserViewTenantIncidentMap,
+    canCurrentUserManagePublicTracking: () => canCurrentUserManageAssetLinks(),
     canCurrentUserManageTechnicianAssignments,
     canCurrentUserWriteOperationalData,
     closeActionModal,
@@ -801,6 +816,9 @@ dashboardAssets = window.createDashboardAssets({
     api,
     appendIncidentCard: (...args) => dashboardIncidents.appendIncidentCard(...args),
     canCurrentUserEditAssets,
+    canCurrentUserManageAssetLinks,
+    canCurrentUserManageAssetLoans,
+    canCurrentUserViewAssetCatalog,
     canCurrentUserManageTechnicianAssignments,
     closeActionModal,
     createIncidentForAsset: (...args) => dashboardIncidents.createIncidentForAsset(...args),
@@ -845,6 +863,39 @@ dashboardAssets = window.createDashboardAssets({
 dashboardScan = window.createDashboardScan({
     api,
     ensureJsQrAvailability: ensureJsQrLibrary,
+    resolveAssetFromLabelPayload: async (assetData) => {
+        if (!canCurrentUserEditAssets()) {
+            throw new Error('No tienes permisos para registrar equipos desde etiqueta.');
+        }
+
+        const normalizedAsset = {
+            external_code: normalizeAssetCodeForQr(assetData?.external_code || ''),
+            brand: normalizeAssetFormText(assetData?.brand, QR_MAX_BRAND_LENGTH),
+            model: normalizeAssetFormText(assetData?.model, QR_MAX_MODEL_LENGTH),
+            serial_number: normalizeAssetFormText(assetData?.serial_number, QR_MAX_SERIAL_LENGTH),
+            client_name: normalizeAssetFormText(assetData?.client_name, QR_MAX_CLIENT_LENGTH),
+            notes: normalizeAssetFormText(assetData?.notes, QR_MAX_NOTES_LENGTH),
+        };
+        if (!normalizedAsset.external_code) {
+            throw new Error('La etiqueta no incluye un codigo externo valido.');
+        }
+        if (!normalizedAsset.brand && !normalizedAsset.model) {
+            throw new Error('La etiqueta debe incluir marca o modelo para registrar el equipo.');
+        }
+        if (!normalizedAsset.serial_number) {
+            throw new Error('La etiqueta debe incluir numero de serie para registrar el equipo.');
+        }
+
+        const result = await api.resolveAsset({
+            ...normalizedAsset,
+            update_existing: true,
+            status: 'active',
+        });
+        if (getActiveSectionName() === 'assets') {
+            void loadAssets();
+        }
+        return result;
+    },
     requireActiveSession,
     showNotification,
     openInstallation: async (installationId) => {
@@ -910,6 +961,25 @@ dashboardOverview = window.createDashboardOverview({
     validateSectionBindings,
 });
 
+dashboardMyCases = typeof window.createDashboardMyCases === 'function'
+    ? window.createDashboardMyCases({
+        api,
+        appendIncidentCard: (...args) => dashboardIncidents.appendIncidentCard(...args),
+        getCurrentLinkedTechnician: () => currentTechniciansData.find((item) =>
+            item && Number(item.web_user_id) === Number(currentUser?.id)) || null,
+        getCurrentUser: () => currentUser,
+        loadTechniciansSection,
+        normalizeIncidentStatus,
+        normalizeSeverity,
+        parseStrictInteger,
+        renderContextualEmptyState,
+        requireActiveSession,
+        setElementTextWithMaterialIcon,
+        showNotification,
+    })
+    : null;
+dashboardMyCases?.setupMyCasesRefreshButton?.();
+
 dashboardRealtime = window.createDashboardRealtime({
     activeSections: SSE_ACTIVE_SECTIONS,
     apiBase: API_BASE,
@@ -919,8 +989,18 @@ dashboardRealtime = window.createDashboardRealtime({
     getCurrentInstallationsData: () => currentInstallationsData,
     getCurrentTrendRangeDays: () => currentTrendRangeDays,
     getCurrentUser: () => currentUser,
-    handleRealtimeIncident: (incident) => dashboardIncidents.handleRealtimeIncident(incident),
-    handleRealtimeIncidentStatusUpdate: (incident) => dashboardIncidents.handleRealtimeIncidentStatusUpdate(incident),
+    handleRealtimeIncident: (incident) => {
+        dashboardIncidents.handleRealtimeIncident(incident);
+        if (document.getElementById('myCasesSection')?.classList.contains('active')) {
+            void dashboardMyCases?.loadMyCasesSection({ force: true, silent: true });
+        }
+    },
+    handleRealtimeIncidentStatusUpdate: (incident) => {
+        dashboardIncidents.handleRealtimeIncidentStatusUpdate(incident);
+        if (document.getElementById('myCasesSection')?.classList.contains('active')) {
+            void dashboardMyCases?.loadMyCasesSection({ force: true, silent: true });
+        }
+    },
     isSectionActive: (section) => document.getElementById(section + 'Section')?.classList.contains('active') === true,
     loadDashboard,
     maxReconnectAttempts: MAX_SSE_RECONNECT_ATTEMPTS,
@@ -969,6 +1049,7 @@ dashboardAuth = window.createDashboardAuth({
     setCurrentUser: (user) => {
         currentUser = user;
     },
+    navigateToSectionByKey,
     setNotificationBadgeCount,
     showNotification,
     syncHeaderPrimaryAction,
@@ -1130,12 +1211,44 @@ function canCurrentUserManageTechnicians() {
     return dashboardAuth.canCurrentUserManageTechnicians();
 }
 
+function canCurrentUserViewTechnicianCatalog() {
+    return dashboardAuth.canCurrentUserViewTechnicianCatalog();
+}
+
 function canCurrentUserManageTechnicianAssignments() {
     return dashboardAuth.canCurrentUserManageTechnicianAssignments();
 }
 
 function canCurrentUserWriteOperationalData() {
     return dashboardAuth.canCurrentUserWriteOperationalData();
+}
+
+function canCurrentUserViewAssetCatalog() {
+    return dashboardAuth.canCurrentUserViewAssetCatalog();
+}
+
+function canCurrentUserManageAssetLinks() {
+    return dashboardAuth.canCurrentUserManageAssetLinks();
+}
+
+function canCurrentUserManageAssetLoans() {
+    return dashboardAuth.canCurrentUserManageAssetLoans();
+}
+
+function canCurrentUserViewTenantIncidentMap() {
+    return dashboardAuth.canCurrentUserViewTenantIncidentMap();
+}
+
+function canCurrentUserOpenIncidentMap() {
+    return dashboardAuth.canCurrentUserOpenIncidentMap();
+}
+
+function canCurrentUserViewGlobalIncidents() {
+    return dashboardAuth.canCurrentUserViewGlobalIncidents();
+}
+
+function canCurrentUserReopenIncidents() {
+    return dashboardAuth.canCurrentUserReopenIncidents();
 }
 
 function resetTechniciansState() {
@@ -1758,6 +1871,7 @@ function renderTenantsSection() {
         copyEl.textContent = 'Inicia sesión con un rol de plataforma para ver la administración de tenants.';
         listEl.innerHTML = '<p class="settings-empty-state">Inicia sesiÃ³n para ver tenants.</p>';
         createBtn.disabled = true;
+        if (refreshBtn) refreshBtn.disabled = true;
         renderTenantDetail();
         return;
     }
@@ -1874,28 +1988,33 @@ function buildTechnicianAssignmentEntityKey(entityType, entityId) {
 function updateTechniciansPermissionCopy() {
     const copyEl = document.getElementById('settingsTechniciansPermissions');
     const createBtn = document.getElementById('settingsCreateTechnicianBtn');
+    const refreshBtn = document.getElementById('settingsRefreshTechniciansBtn');
     if (!copyEl || !createBtn) return;
 
     if (!hasActiveSession()) {
         copyEl.textContent = 'Inicia sesión para gestionar el staff técnico del tenant activo.';
         createBtn.disabled = true;
+        if (refreshBtn) refreshBtn.disabled = true;
         return;
     }
 
     if (canCurrentUserManageTechnicians()) {
         copyEl.textContent = 'Puedes crear, editar, activar o desactivar técnicos. Las asignaciones quedan auditadas por tenant.';
         createBtn.disabled = false;
+        if (refreshBtn) refreshBtn.disabled = false;
         return;
     }
 
     if (canCurrentUserManageTechnicianAssignments()) {
         copyEl.textContent = 'Puedes consultar técnicos y gestionar sus asignaciones operativas, pero no crear ni editar su ficha.';
         createBtn.disabled = true;
+        if (refreshBtn) refreshBtn.disabled = false;
         return;
     }
 
     copyEl.textContent = 'Tienes acceso de consulta sobre el staff técnico del tenant.';
     createBtn.disabled = true;
+    if (refreshBtn) refreshBtn.disabled = false;
 }
 
 function setTechnicianSummaryValue(id, value) {
@@ -1907,9 +2026,11 @@ function setTechnicianSummaryValue(id, value) {
 
 function renderTechniciansSection() {
     const listEl = document.getElementById('settingsTechniciansList');
-    if (!listEl) return;
+    const panelEl = document.getElementById('settingsTechniciansPanel');
+    if (!listEl || !panelEl) return;
 
     updateTechniciansPermissionCopy();
+    panelEl.hidden = hasActiveSession() && !canCurrentUserViewTechnicianCatalog();
 
     if (!hasActiveSession()) {
         setTechnicianSummaryValue('settingsTechniciansTotal', '-');
@@ -1917,6 +2038,15 @@ function renderTechniciansSection() {
         setTechnicianSummaryValue('settingsTechniciansLinked', '-');
         setTechnicianSummaryValue('settingsTechniciansAssignments', '-');
         listEl.innerHTML = '<p class="loading">Inicia sesión para ver técnicos.</p>';
+        return;
+    }
+
+    if (!canCurrentUserViewTechnicianCatalog()) {
+        setTechnicianSummaryValue('settingsTechniciansTotal', '-');
+        setTechnicianSummaryValue('settingsTechniciansActive', '-');
+        setTechnicianSummaryValue('settingsTechniciansLinked', '-');
+        setTechnicianSummaryValue('settingsTechniciansAssignments', '-');
+        listEl.innerHTML = '<p class="settings-empty-state">Esta vista no esta disponible para tu rol actual.</p>';
         return;
     }
 
@@ -2301,7 +2431,7 @@ async function loadWebUsersForTechnicians(options = {}) {
 }
 
 async function loadTechniciansSection(options = {}) {
-    if (!hasActiveSession()) {
+    if (!hasActiveSession() || !canCurrentUserViewTechnicianCatalog()) {
         resetTechniciansState();
         return [];
     }
@@ -5103,6 +5233,31 @@ function buildQrPreviewInput() {
     };
 }
 
+function buildEmbeddedAssetMetadataForQr(assetData = null) {
+    if (!assetData || typeof assetData !== 'object') return null;
+
+    const brand = normalizeAssetFormText(assetData.brand, QR_MAX_BRAND_LENGTH);
+    const model = normalizeAssetFormText(assetData.model, QR_MAX_MODEL_LENGTH);
+    const serialNumber = normalizeAssetFormText(assetData.serial_number, QR_MAX_SERIAL_LENGTH);
+    const clientName = normalizeAssetFormText(assetData.client_name, QR_MAX_CLIENT_LENGTH);
+    const notes = normalizeAssetFormText(
+        assetData.notes,
+        Math.min(QR_MAX_NOTES_LENGTH, QR_EMBEDDED_NOTES_MAX_LENGTH),
+    );
+
+    if (!brand && !model && !serialNumber && !clientName && !notes) {
+        return null;
+    }
+
+    return {
+        brand,
+        model,
+        serial_number: serialNumber,
+        client_name: clientName,
+        notes,
+    };
+}
+
 function buildQrPayload(qrType, rawValue, assetData = null) {
     if (qrType === 'installation') {
         const installationId = Number.parseInt(String(rawValue || '').trim(), 10);
@@ -5118,7 +5273,23 @@ function buildQrPayload(qrType, rawValue, assetData = null) {
     if (!assetCode) {
         throw new Error('El codigo de equipo es obligatorio.');
     }
-    return `dm://asset/${encodeURIComponent(assetCode)}`;
+    const metadata = buildEmbeddedAssetMetadataForQr(assetData);
+    if (!metadata) {
+        return `dm://asset/${encodeURIComponent(assetCode)}`;
+    }
+
+    const params = new URLSearchParams();
+    params.set('v', '2');
+    if (metadata.brand) params.set('brand', metadata.brand);
+    if (metadata.model) params.set('model', metadata.model);
+    if (metadata.serial_number) params.set('serial_number', metadata.serial_number);
+    if (metadata.client_name) params.set('client_name', metadata.client_name);
+    if (metadata.notes) params.set('notes', metadata.notes);
+    const serialized = params.toString();
+
+    return serialized
+        ? `dm://asset/${encodeURIComponent(assetCode)}?${serialized}`
+        : `dm://asset/${encodeURIComponent(assetCode)}`;
 }
 
 function buildQrImageUrl(payload) {
@@ -5576,6 +5747,12 @@ function resolveHeaderPrimaryActionConfig(section) {
     if (normalizedSection === 'tenants' && !canCurrentUserManageTenants()) {
         return HEADER_PRIMARY_ACTIONS.dashboard;
     }
+    if (normalizedSection === 'assets' && !canCurrentUserEditAssets()) {
+        return { icon: 'refresh', label: 'Actualizar equipos', action: 'refreshAssets' };
+    }
+    if ((normalizedSection === 'incidents' || normalizedSection === 'incidentMap') && !canCurrentUserWriteOperationalData()) {
+        return { icon: 'refresh', label: 'Actualizar incidencias', action: 'refreshIncidents' };
+    }
     if (normalizedSection === 'settings' && !canCurrentUserAccessAudit()) {
         return { icon: 'logout', label: 'Cerrar sesión', action: 'logout' };
     }
@@ -5594,6 +5771,19 @@ function executeHeaderPrimaryAction(actionKey) {
         case 'createAsset':
             navigateToSectionByKey('assets');
             showQrModal({ type: 'asset', value: '' });
+            return;
+        case 'refreshAssets':
+            navigateToSectionByKey('assets');
+            void loadAssets();
+            return;
+        case 'refreshIncidents':
+            if (getActiveSectionName() === 'incidentMap') {
+                navigateToSectionByKey('incidentMap');
+                void dashboardIncidents.showIncidentMapWorkspace();
+                return;
+            }
+            navigateToSectionByKey('incidents');
+            void loadIncidentsWorkspace();
             return;
         case 'createTenant':
             if (!canCurrentUserManageTenants()) {
@@ -5614,6 +5804,10 @@ function executeHeaderPrimaryAction(actionKey) {
             }
             navigateToSectionByKey('audit');
             document.getElementById('refreshAudit')?.click();
+            return;
+        case 'refreshMyCases':
+            navigateToSectionByKey('myCases');
+            document.getElementById('myCasesRefreshBtn')?.click();
             return;
         case 'openAudit':
             if (!canCurrentUserAccessAudit()) {
@@ -5754,6 +5948,7 @@ const dashboardNavigation = window.createDashboardNavigation({
     loadIncidentMapWorkspace: (...args) => dashboardIncidents.showIncidentMapWorkspace(...args),
     loadIncidentsWorkspace: (...args) => dashboardIncidents.showIncidentsWorkspace(...args),
     loadInstallations,
+    loadMyCasesSection: (...args) => dashboardMyCases?.loadMyCasesSection(...args),
     loadTenants: loadTenantsSection,
     prefersReducedMotion,
     sectionTransitionOutMs: SECTION_TRANSITION_OUT_MS,
@@ -5818,6 +6013,18 @@ document.querySelectorAll('.nav-links a').forEach(link => {
             showNotification('Solo plataforma puede acceder a tenants.', 'error');
             return;
         }
+        if (section === 'incidentMap' && !canCurrentUserOpenIncidentMap()) {
+            showNotification('No tienes permisos para abrir el mapa operativo.', 'error');
+            return;
+        }
+        if (section === 'incidents' && !canCurrentUserViewGlobalIncidents()) {
+            showNotification('Usa "Mis casos" para revisar solo tu cola asignada.', 'warning');
+            return;
+        }
+        if (section === 'assets' && !canCurrentUserViewAssetCatalog()) {
+            showNotification('El catalogo global de equipos no esta disponible para tu rol.', 'error');
+            return;
+        }
         if (section === 'audit' && !canCurrentUserAccessAudit()) {
             showNotification('No tienes permisos para acceder a Auditoría.', 'error');
             return;
@@ -5843,11 +6050,19 @@ document.getElementById('settingsOpenAuditBtn')?.addEventListener('click', () =>
 
 document.getElementById('settingsRefreshTechniciansBtn')?.addEventListener('click', () => {
     if (!requireActiveSession()) return;
+    if (!canCurrentUserViewTechnicianCatalog()) {
+        showNotification('No tienes permisos para ver el catalogo de tecnicos.', 'error');
+        return;
+    }
     void loadTechniciansSection({ silent: false, refreshAssignments: true });
 });
 
 document.getElementById('settingsCreateTechnicianBtn')?.addEventListener('click', () => {
     if (!requireActiveSession()) return;
+    if (!canCurrentUserManageTechnicians()) {
+        showNotification('Solo admin o plataforma puede crear tecnicos.', 'error');
+        return;
+    }
     openTechnicianEditorModal(null);
 });
 

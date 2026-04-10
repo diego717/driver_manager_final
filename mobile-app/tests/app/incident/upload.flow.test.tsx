@@ -205,6 +205,10 @@ describe("UploadIncidentPhotoScreen upload flow", () => {
 
     const view = render(<UploadIncidentPhotoScreen />);
     fireEvent.press(view.getByText("Siguiente").parent);
+    fireEvent.changeText(
+      view.getByLabelText("Nota operativa de la evidencia"),
+      "Checklist y foto capturados en sitio",
+    );
     fireEvent.press(view.getByText("Siguiente").parent);
     expect(view.getByText("Paso 3 de 4: Fotos")).toBeTruthy();
 
@@ -223,10 +227,15 @@ describe("UploadIncidentPhotoScreen upload flow", () => {
 
     await waitFor(() => {
       expect(routerMocks.replace).toHaveBeenCalled();
-      expect(syncQueueMocks.enqueueUpdateIncidentEvidence).toHaveBeenCalledTimes(1);
-      expect(syncQueueMocks.enqueueUploadIncidentPhoto).toHaveBeenCalledTimes(1);
-      expect(syncQueueMocks.runSync).toHaveBeenCalledTimes(1);
-      expect(view.getByText("Evidencias en cola")).toBeTruthy();
+      expect(updateIncidentEvidence).toHaveBeenCalledWith(25, {
+        checklist_items: [],
+        evidence_note: "Checklist y foto capturados en sitio",
+      });
+      expect(uploadIncidentPhoto).toHaveBeenCalledTimes(1);
+      expect(syncQueueMocks.enqueueUpdateIncidentEvidence).not.toHaveBeenCalled();
+      expect(syncQueueMocks.enqueueUploadIncidentPhoto).not.toHaveBeenCalled();
+      expect(syncQueueMocks.runSync).not.toHaveBeenCalled();
+      expect(view.getByText("Evidencias guardadas")).toBeTruthy();
     });
   });
 
@@ -252,6 +261,10 @@ describe("UploadIncidentPhotoScreen upload flow", () => {
 
     const view = render(<UploadIncidentPhotoScreen />);
     fireEvent.press(view.getByText("Siguiente").parent);
+    fireEvent.changeText(
+      view.getByLabelText("Nota operativa de la evidencia"),
+      "Sin red, dejar en cola",
+    );
     fireEvent.press(view.getByText("Siguiente").parent);
     fireEvent.press(view.getByLabelText("Seleccionar foto desde la galeria"));
 
@@ -265,6 +278,8 @@ describe("UploadIncidentPhotoScreen upload flow", () => {
     await waitFor(() => {
       expect(syncQueueMocks.enqueueUpdateIncidentEvidence).toHaveBeenCalledTimes(1);
       expect(syncQueueMocks.enqueueUploadIncidentPhoto).toHaveBeenCalledTimes(1);
+      expect(updateIncidentEvidence).not.toHaveBeenCalled();
+      expect(uploadIncidentPhoto).not.toHaveBeenCalled();
       expect(syncQueueMocks.runSync).not.toHaveBeenCalled();
       expect(routerMocks.replace).toHaveBeenCalled();
     });
@@ -298,6 +313,10 @@ describe("UploadIncidentPhotoScreen upload flow", () => {
     const view = render(<UploadIncidentPhotoScreen />);
     expect(view.getByText("Incidencia local pendiente: incident-local-44")).toBeTruthy();
     fireEvent.press(view.getByText("Siguiente").parent);
+    fireEvent.changeText(
+      view.getByLabelText("Nota operativa de la evidencia"),
+      "Guardar junto con incidencia local",
+    );
     fireEvent.press(view.getByText("Siguiente").parent);
     fireEvent.press(view.getByLabelText("Seleccionar foto desde la galeria"));
 
@@ -323,6 +342,8 @@ describe("UploadIncidentPhotoScreen upload flow", () => {
           dependsOnJobId: "job-incident-44",
         }),
       );
+      expect(updateIncidentEvidence).not.toHaveBeenCalled();
+      expect(uploadIncidentPhoto).not.toHaveBeenCalled();
       expect(syncQueueMocks.runSync).not.toHaveBeenCalled();
       expect(routerMocks.replace).toHaveBeenCalledWith("/work?installationId=7");
     });

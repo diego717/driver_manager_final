@@ -1,5 +1,61 @@
 (function attachDashboardAssetsFactory(global) {
     function createDashboardAssets(options) {
+        function canCurrentUserViewAssetCatalog() {
+            if (typeof options.canCurrentUserViewAssetCatalog === 'function') {
+                return Boolean(options.canCurrentUserViewAssetCatalog());
+            }
+            return true;
+        }
+
+        function canCurrentUserManageAssetLinks() {
+            if (typeof options.canCurrentUserManageAssetLinks === 'function') {
+                return Boolean(options.canCurrentUserManageAssetLinks());
+            }
+            return false;
+        }
+
+        function canCurrentUserManageAssetLoans() {
+            if (typeof options.canCurrentUserManageAssetLoans === 'function') {
+                return Boolean(options.canCurrentUserManageAssetLoans());
+            }
+            return false;
+        }
+
+        let assetDetailMoreActionsDismissController = null;
+
+        function teardownAssetDetailMoreActionsDismiss() {
+            if (assetDetailMoreActionsDismissController) {
+                assetDetailMoreActionsDismissController.abort();
+                assetDetailMoreActionsDismissController = null;
+            }
+        }
+
+        function setupAssetDetailMoreActionsDismiss(detailsElement, summaryElement) {
+            teardownAssetDetailMoreActionsDismiss();
+            if (!(detailsElement instanceof HTMLDetailsElement)) return;
+            const controller = new AbortController();
+            const { signal } = controller;
+            assetDetailMoreActionsDismissController = controller;
+
+            document.addEventListener('pointerdown', (event) => {
+                if (!detailsElement.open) return;
+                const targetNode = event.target;
+                if (targetNode instanceof Node && detailsElement.contains(targetNode)) {
+                    return;
+                }
+                detailsElement.open = false;
+            }, { capture: true, signal });
+
+            document.addEventListener('keydown', (event) => {
+                if (event.key !== 'Escape' || !detailsElement.open) return;
+                event.preventDefault();
+                detailsElement.open = false;
+                if (summaryElement instanceof HTMLElement) {
+                    summaryElement.focus();
+                }
+            }, { signal });
+        }
+
         function setContainerMessage(container, className, message) {
             if (!(container instanceof HTMLElement)) return;
             const copy = document.createElement('p');
@@ -163,8 +219,8 @@
 
         function openCreateLoanModal(asset) {
             if (!options.requireActiveSession()) return;
-            if (!options.canCurrentUserEditAssets()) {
-                options.showNotification('Solo admin o plataforma puede registrar prestamos.', 'warning');
+            if (!canCurrentUserManageAssetLoans()) {
+                options.showNotification('Solo admin, supervisor o plataforma puede registrar prestamos.', 'warning');
                 return;
             }
 
@@ -239,8 +295,8 @@
 
         function openReturnLoanModal(asset, loan) {
             if (!options.requireActiveSession()) return;
-            if (!options.canCurrentUserEditAssets()) {
-                options.showNotification('Solo admin o plataforma puede registrar devoluciones.', 'warning');
+            if (!canCurrentUserManageAssetLoans()) {
+                options.showNotification('Solo admin, supervisor o plataforma puede registrar devoluciones.', 'warning');
                 return;
             }
 
@@ -297,6 +353,7 @@
         async function renderAssetDetail(data) {
             const container = document.getElementById('assetDetail');
             if (!container) return;
+            teardownAssetDetailMoreActionsDismiss();
             container.replaceChildren();
 
             const asset = data?.asset;
@@ -436,14 +493,6 @@
                 void options.createIncidentForAsset(asset.id);
             });
 
-            const linkBtn = document.createElement('button');
-            linkBtn.type = 'button';
-            linkBtn.className = 'btn-secondary';
-            linkBtn.textContent = activeLink?.installation_id ? 'Ajustar contexto' : 'Vincular registro';
-            linkBtn.addEventListener('click', () => {
-                void linkAssetFromDetail(asset.id);
-            });
-
             const qrBtn = document.createElement('button');
             qrBtn.type = 'button';
             qrBtn.className = 'btn-secondary';
@@ -453,9 +502,19 @@
                 options.showAssetQrModal(asset);
             });
             primaryActions.appendChild(createIncidentBtn);
-            secondaryActions.append(linkBtn, qrBtn);
+            if (canCurrentUserManageAssetLinks()) {
+                const linkBtn = document.createElement('button');
+                linkBtn.type = 'button';
+                linkBtn.className = 'btn-secondary';
+                linkBtn.textContent = activeLink?.installation_id ? 'Ajustar contexto' : 'Vincular registro';
+                linkBtn.addEventListener('click', () => {
+                    void linkAssetFromDetail(asset.id);
+                });
+                secondaryActions.append(linkBtn);
+            }
+            secondaryActions.append(qrBtn);
 
-            if (options.canCurrentUserEditAssets()) {
+            if (canCurrentUserManageAssetLoans()) {
                 const loanBtn = document.createElement('button');
                 loanBtn.type = 'button';
                 loanBtn.className = activeLoan ? 'btn-primary' : 'btn-secondary';
@@ -473,7 +532,9 @@
                 } else {
                     secondaryActions.appendChild(loanBtn);
                 }
+            }
 
+            if (options.canCurrentUserEditAssets()) {
                 const normalizedStatus = String(asset.status || '').trim().toLowerCase();
                 const isInactiveAsset = normalizedStatus === 'inactive' || normalizedStatus === 'retired';
 
@@ -501,8 +562,16 @@
 
                 const moreList = document.createElement('div');
                 moreList.className = 'asset-detail-more-actions-list';
+                moreList.addEventListener('click', (event) => {
+                    const targetNode = event.target;
+                    if (!(targetNode instanceof Element)) return;
+                    if (targetNode.closest('button')) {
+                        moreActions.open = false;
+                    }
+                });
                 moreList.append(statusBtn, deleteBtn);
                 moreActions.append(moreSummary, moreList);
+                setupAssetDetailMoreActionsDismiss(moreActions, moreSummary);
                 secondaryActions.appendChild(moreActions);
             }
             toolbar.append(primaryActions, secondaryActions);
@@ -664,6 +733,13 @@
             const resultsCount = document.getElementById('assetsResultsCount');
             const searchInput = document.getElementById('assetsSearchInput');
             if (!tableContainer) return;
+            if (!canCurrentUserViewAssetCatalog()) {
+                setContainerMessage(tableContainer, 'error', 'Tu rol no puede navegar el catalogo global de equipos.');
+                if (resultsCount) {
+                    resultsCount.textContent = 'Sin acceso';
+                }
+                return;
+            }
 
             setContainerMessage(tableContainer, 'loading', 'Cargando equipos...');
             if (resultsCount) {
@@ -711,8 +787,10 @@
                 options.renderContextualEmptyState(container, {
                     title: 'No hay equipos registrados',
                     description: 'Crea un equipo con QR para asociarlo a registros o incidencias.',
-                    actionLabel: 'Nuevo equipo + QR',
-                    onAction: () => document.getElementById('assetsCreateQrBtn')?.click(),
+                    actionLabel: options.canCurrentUserEditAssets() ? 'Nuevo equipo + QR' : '',
+                    onAction: options.canCurrentUserEditAssets()
+                        ? () => document.getElementById('assetsCreateQrBtn')?.click()
+                        : null,
                     tone: 'info',
                 });
                 return;
@@ -824,6 +902,10 @@
 
         async function linkAssetFromDetail(assetId) {
             if (!options.requireActiveSession()) return;
+            if (!canCurrentUserManageAssetLinks()) {
+                options.showNotification('Solo admin, supervisor o plataforma puede vincular equipos.', 'warning');
+                return;
+            }
             const numericAssetId = Number.parseInt(String(assetId), 10);
             if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
                 options.showNotification('asset_id invalido.', 'error');

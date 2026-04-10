@@ -1,9 +1,14 @@
 import {
   addUtcDays,
   canonicalizeWebRole,
+  canEditAssetCatalog,
   canDeleteCriticalData,
+  canManageAssetLinks,
+  canManageAssetLoans,
   canManagePlatform,
   canManageUsers,
+  canViewAssetCatalog,
+  canViewAssetDetail,
   canWriteOperationalData,
   DEFAULT_REALTIME_TENANT_ID,
   HttpError,
@@ -50,6 +55,7 @@ import { createInstallationsRouteHandlers } from "./worker/routes/installations.
 import { createLookupRouteHandlers } from "./worker/routes/lookup.js";
 import { createMaintenanceRouteHandlers } from "./worker/routes/maintenance.js";
 import { createRecordsRouteHandlers } from "./worker/routes/records.js";
+import { createScanRouteHandlers } from "./worker/routes/scan.js";
 import { createStatisticsRouteHandlers } from "./worker/routes/statistics.js";
 import { createSystemRouteHandlers } from "./worker/routes/system.js";
 import { createTechniciansRouteHandlers } from "./worker/routes/technicians.js";
@@ -2528,6 +2534,30 @@ function requireWebWriteRole(role) {
   }
 }
 
+function requireAssetCatalogViewRole(role) {
+  if (!canViewAssetCatalog(role)) {
+    throw new HttpError(403, "No tienes permisos para ver el catalogo de equipos.");
+  }
+}
+
+function requireAssetCatalogEditRole(role) {
+  if (!canEditAssetCatalog(role)) {
+    throw new HttpError(403, "No tienes permisos para editar el catalogo de equipos.");
+  }
+}
+
+function requireAssetLinkManagerRole(role) {
+  if (!canManageAssetLinks(role)) {
+    throw new HttpError(403, "No tienes permisos para vincular equipos.");
+  }
+}
+
+function requireAssetLoanManagerRole(role) {
+  if (!canManageAssetLoans(role)) {
+    throw new HttpError(403, "No tienes permisos para gestionar prestamos de equipos.");
+  }
+}
+
 async function upsertDeviceTokenForWebUser(
   env,
   {
@@ -3331,8 +3361,82 @@ async function handleAssetsRoute(
     const assetsTenantId = normalizeRealtimeTenantId(
       isWebRoute ? webSession?.tenant_id : realtimeTenantId,
     );
+    const sessionRole = canonicalizeWebRole(webSession?.role, "");
+    const sessionUserId =
+      isWebRoute && Number.isInteger(webSession?.user_id) && Number(webSession.user_id) > 0
+        ? Number(webSession.user_id)
+        : null;
+
+    const canScopedTechnicianAccessAsset = async (assetId) => {
+      if (!isWebRoute) return true;
+      if (!canViewAssetDetail(sessionRole)) return false;
+      if (canViewAssetCatalog(sessionRole)) return true;
+      if (sessionRole !== "tecnico" || sessionUserId === null) return false;
+
+      try {
+        const { results } = await env.DB.prepare(`
+          SELECT 1
+          FROM technicians tech
+          INNER JOIN technician_assignments ta
+            ON ta.technician_id = tech.id
+           AND ta.tenant_id = tech.tenant_id
+           AND ta.unassigned_at IS NULL
+          WHERE tech.web_user_id = ?
+            AND tech.tenant_id = ?
+            AND (
+              (ta.entity_type = 'asset' AND ta.entity_id = CAST(? AS TEXT))
+              OR (
+                ta.entity_type = 'installation'
+                AND EXISTS (
+                  SELECT 1
+                  FROM asset_installation_links links
+                  WHERE links.tenant_id = tech.tenant_id
+                    AND links.asset_id = ?
+                    AND links.installation_id = CAST(ta.entity_id AS INTEGER)
+                    AND links.unlinked_at IS NULL
+                )
+              )
+              OR (
+                ta.entity_type = 'incident'
+                AND EXISTS (
+                  SELECT 1
+                  FROM incidents i
+                  WHERE i.tenant_id = tech.tenant_id
+                    AND i.id = CAST(ta.entity_id AS INTEGER)
+                    AND i.deleted_at IS NULL
+                    AND (
+                      i.asset_id = ?
+                      OR EXISTS (
+                        SELECT 1
+                        FROM asset_installation_links links
+                        WHERE links.tenant_id = i.tenant_id
+                          AND links.asset_id = ?
+                          AND links.installation_id = i.installation_id
+                          AND i.created_at >= links.linked_at
+                          AND (links.unlinked_at IS NULL OR i.created_at <= links.unlinked_at)
+                      )
+                    )
+                )
+              )
+            )
+          LIMIT 1
+        `)
+          .bind(sessionUserId, assetsTenantId, assetId, assetId, assetId, assetId)
+          .all();
+        return Boolean(results?.[0]);
+      } catch (error) {
+        const message = normalizeOptionalString(error?.message, "").toLowerCase();
+        if (message.includes("no such table")) {
+          return false;
+        }
+        throw error;
+      }
+    };
 
     if (routeParts.length === 1 && request.method === "GET") {
+      if (isWebRoute) {
+        requireAssetCatalogViewRole(sessionRole);
+      }
       const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
       const pageSize = limit + 1;
       const cursor = parseTimestampIdCursor(url.searchParams.get("cursor"));
@@ -3428,7 +3532,7 @@ async function handleAssetsRoute(
       if (!isWebRoute) {
         throw new HttpError(401, "Gestion de equipos requiere sesion web.");
       }
-      requireAdminRole(webSession?.role);
+      requireAssetCatalogEditRole(sessionRole);
 
       const data = await readJsonOrThrowBadRequest(request);
       const payload = normalizeAssetPayload(data);
@@ -3689,6 +3793,18 @@ async function handleAssetsRoute(
       }
       const assetId = parsePositiveInt(routeParts[1], "asset_id");
 
+      if (
+        isWebRoute &&
+        (request.method === "GET" || request.method === "PATCH" || request.method === "DELETE")
+      ) {
+        if (request.method === "GET") {
+          const canAccessAsset = await canScopedTechnicianAccessAsset(assetId);
+          if (!canAccessAsset) {
+            throw new HttpError(403, "No tienes permisos para ver este equipo.");
+          }
+        }
+      }
+
       if (request.method === "GET") {
         let results;
         try {
@@ -3736,7 +3852,7 @@ async function handleAssetsRoute(
         if (!isWebRoute) {
           throw new HttpError(401, "Gestion de equipos requiere sesion web.");
         }
-        requireAdminRole(webSession?.role);
+        requireAssetCatalogEditRole(sessionRole);
 
         const data = await readJsonOrThrowBadRequest(request);
         const updates = normalizeAssetPayload(data, { allowPartial: true });
@@ -3824,7 +3940,7 @@ async function handleAssetsRoute(
         if (!isWebRoute) {
           throw new HttpError(401, "Gestion de equipos requiere sesion web.");
         }
-        requireAdminRole(webSession?.role);
+        requireAssetCatalogEditRole(sessionRole);
 
         const { results: existingRows } = await env.DB.prepare(`
               SELECT id
@@ -3864,6 +3980,12 @@ async function handleAssetsRoute(
       }
 
       const incidentLimit = parsePageLimit(url.searchParams, { fallback: 100, max: 300 });
+      if (isWebRoute) {
+        const canAccessAsset = await canScopedTechnicianAccessAsset(assetId);
+        if (!canAccessAsset) {
+          throw new HttpError(403, "No tienes permisos para operar sobre este equipo.");
+        }
+      }
 
       try {
         const { results: assetRows } = await env.DB.prepare(`
@@ -4560,7 +4682,7 @@ async function handleAssetsRoute(
       request.method === "POST"
     ) {
       if (isWebRoute) {
-        requireWebWriteRole(webSession?.role);
+        requireAssetLinkManagerRole(sessionRole);
       }
       const assetId = parsePositiveInt(routeParts[1], "asset_id");
       const data = await readJsonOrThrowBadRequest(request);
@@ -4972,8 +5094,10 @@ async function handleLoansRoute(
     isWebRoute ? webSession?.tenant_id : realtimeTenantId,
   );
   const actorUsername = normalizeWebUsername(webSession?.sub || "unknown");
+  const sessionRole = canonicalizeWebRole(webSession?.role, "");
 
   if (routeParts.length === 1 && routeParts[0] === "loans" && request.method === "GET") {
+    requireAssetCatalogViewRole(sessionRole);
     const requestedStatus = normalizeOptionalString(url.searchParams.get("status"), "").trim().toLowerCase();
     const limit = parsePageLimit(url.searchParams, { fallback: 100, max: 500 });
     const currentIso = nowIso();
@@ -5031,6 +5155,7 @@ async function handleLoansRoute(
     routeParts[2] === "loans" &&
     request.method === "GET"
   ) {
+    requireAssetCatalogViewRole(sessionRole);
     const assetId = parsePositiveInt(routeParts[1], "asset_id");
     const currentIso = nowIso();
 
@@ -5072,7 +5197,7 @@ async function handleLoansRoute(
     routeParts[2] === "loans" &&
     request.method === "POST"
   ) {
-    requireWebWriteRole(webSession?.role);
+    requireAssetLoanManagerRole(sessionRole);
     const assetId = parsePositiveInt(routeParts[1], "asset_id");
     const data = await readJsonOrThrowBadRequest(request);
     const borrowingClient = normalizeOptionalString(data?.borrowing_client, "").trim().slice(0, 180);
@@ -5225,7 +5350,7 @@ async function handleLoansRoute(
     routeParts[2] === "return" &&
     request.method === "PATCH"
   ) {
-    requireWebWriteRole(webSession?.role);
+    requireAssetLoanManagerRole(sessionRole);
     const loanId = parsePositiveInt(routeParts[1], "loan_id");
     const data = await readJsonOrThrowBadRequest(request);
     const returnNotes = normalizeOptionalString(data?.return_notes, "").trim().slice(0, 2000);
@@ -5737,6 +5862,12 @@ const lookupRouteHandlers = createLookupRouteHandlers({
   isMissingAssetsTableError,
 });
 
+const scanRouteHandlers = createScanRouteHandlers({
+  jsonResponse,
+  readJsonOrThrowBadRequest,
+  requireWebWriteRole,
+});
+
 const maintenanceRouteHandlers = createMaintenanceRouteHandlers({
   jsonResponse,
   textResponse,
@@ -6024,6 +6155,18 @@ export default {
         return lookupResponse;
       }
 
+      const scanAssetLabelResponse = await scanRouteHandlers.handleAssetLabelScanRoute(
+        request,
+        env,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+      );
+      if (scanAssetLabelResponse) {
+        return scanAssetLabelResponse;
+      }
+
       const assetsResponse = await handleAssetsRoute(
         request,
         env,
@@ -6190,6 +6333,8 @@ export default {
         env,
         corsPolicy,
         routeParts,
+        isWebRoute,
+        webSession,
         incidentsTenantId,
       );
       if (incidentMapResponse) {

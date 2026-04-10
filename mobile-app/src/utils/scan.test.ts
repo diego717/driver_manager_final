@@ -16,6 +16,27 @@ describe("scan payload parser", () => {
       type: "asset",
       raw: "dm://asset/EQ-ABC-001",
       externalCode: "EQ-ABC-001",
+      assetData: null,
+    });
+  });
+
+  it("parses enriched asset dm uri with embedded label metadata", () => {
+    expect(
+      parseScannedPayload(
+        "dm://asset/EQ-9?v=2&brand=Entrust&model=Sigma%20SL3&serial_number=SN-9&client_name=QA%20Bank",
+      ),
+    ).toEqual({
+      type: "asset",
+      raw: "dm://asset/EQ-9?v=2&brand=Entrust&model=Sigma%20SL3&serial_number=SN-9&client_name=QA%20Bank",
+      externalCode: "EQ-9",
+      assetData: {
+        external_code: "EQ-9",
+        brand: "Entrust",
+        model: "Sigma SL3",
+        serial_number: "SN-9",
+        client_name: "QA Bank",
+        notes: "",
+      },
     });
   });
 

@@ -300,6 +300,12 @@
                 const suffix = query.toString() ? `?${query.toString()}` : '';
                 return request(`/web/technicians/${technicianId}/assignments${suffix}`);
             },
+            getMyLinkedTechnician() {
+                return request('/web/me/technician');
+            },
+            getMyAssignedIncidentsMap() {
+                return request('/web/me/assigned-incidents-map');
+            },
             createTechnicianAssignment(technicianId, payload) {
                 return request(`/web/technicians/${technicianId}/assignments`, {
                     method: 'POST',
@@ -380,6 +386,9 @@
                 return request(`/web/incidents/${incidentId}`, {
                     method: 'DELETE',
                 });
+            },
+            getIncident(incidentId) {
+                return request(`/web/incidents/${incidentId}`);
             },
             updateIncidentStatus(incidentId, payload) {
                 return request(`/web/incidents/${incidentId}/status`, {

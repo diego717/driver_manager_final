@@ -1,4 +1,9 @@
-import { HttpError, canAssignTechnicians, canManageTechnicians } from "../lib/core.js";
+import {
+  HttpError,
+  canAssignTechnicians,
+  canManageTechnicians,
+  canViewTechnicianCatalog,
+} from "../lib/core.js";
 
 const TECHNICIAN_ASSIGNMENT_ENTITY_TYPES = new Set(["installation", "incident", "asset", "zone"]);
 const TECHNICIAN_ASSIGNMENT_ROLES = new Set(["owner", "assistant", "reviewer"]);
@@ -35,6 +40,12 @@ export function createTechniciansRouteHandlers({
   function requireAssignmentManagerRole(role) {
     if (!canAssignTechnicians(role)) {
       throw new HttpError(403, "No tienes permisos para gestionar asignaciones de tecnicos.");
+    }
+  }
+
+  function requireTechnicianCatalogViewRole(role) {
+    if (!canViewTechnicianCatalog(role)) {
+      throw new HttpError(403, "No tienes permisos para ver el catalogo de tecnicos.");
     }
   }
 
@@ -403,6 +414,24 @@ export function createTechniciansRouteHandlers({
       severity: normalizeOptionalString(row.severity, "low").toLowerCase(),
       incident_status: normalizeOptionalString(row.incident_status, "open").toLowerCase(),
       created_at: normalizeOptionalString(row.created_at, ""),
+      status_updated_at: normalizeOptionalString(row.status_updated_at, "") || null,
+      resolved_at: normalizeOptionalString(row.resolved_at, "") || null,
+      gps_lat:
+        row.gps_lat === null || row.gps_lat === undefined
+          ? null
+          : Number(row.gps_lat),
+      gps_lng:
+        row.gps_lng === null || row.gps_lng === undefined
+          ? null
+          : Number(row.gps_lng),
+      gps_accuracy_m:
+        row.gps_accuracy_m === null || row.gps_accuracy_m === undefined
+          ? null
+          : Number(row.gps_accuracy_m),
+      dispatch_required:
+        row.dispatch_required === null || row.dispatch_required === undefined
+          ? null
+          : Boolean(Number(row.dispatch_required)),
       target_lat:
         row.target_lat === null || row.target_lat === undefined
           ? null
@@ -439,6 +468,12 @@ export function createTechniciansRouteHandlers({
         i.severity,
         i.incident_status,
         i.created_at,
+        i.status_updated_at,
+        i.resolved_at,
+        i.gps_lat,
+        i.gps_lng,
+        i.gps_accuracy_m,
+        i.dispatch_required,
         i.target_lat,
         i.target_lng,
         i.target_label,
@@ -494,7 +529,6 @@ export function createTechniciansRouteHandlers({
         AND ta.technician_id = ?
         AND ta.unassigned_at IS NULL
         AND ta.entity_type IN ('incident', 'installation', 'asset')
-        AND LOWER(COALESCE(i.incident_status, 'open')) != 'resolved'
       ORDER BY
         CASE ta.entity_type
           WHEN 'incident' THEN 0
@@ -550,6 +584,29 @@ export function createTechniciansRouteHandlers({
     if (
       routeParts.length === 2 &&
       routeParts[0] === "me" &&
+      routeParts[1] === "technician" &&
+      request.method === "GET"
+    ) {
+      requireAuthenticatedWebSession(isWebRoute, webSession);
+      const sessionTenantId = normalizeRealtimeTenantId(webSession?.tenant_id);
+      const sessionUserId =
+        Number.isInteger(webSession?.user_id) && Number(webSession.user_id) > 0
+          ? Number(webSession.user_id)
+          : null;
+      if (!sessionUserId) {
+        throw new HttpError(401, "Sesion web invalida.");
+      }
+
+      const technician = await loadTechnicianByWebUserId(env, sessionUserId, sessionTenantId);
+      return jsonResponse(request, env, corsPolicy, {
+        success: true,
+        technician: technician ? serializeTechnician(technician) : null,
+      });
+    }
+
+    if (
+      routeParts.length === 2 &&
+      routeParts[0] === "me" &&
       routeParts[1] === "assigned-incidents-map" &&
       request.method === "GET"
     ) {
@@ -591,8 +648,13 @@ export function createTechniciansRouteHandlers({
 
     requireAuthenticatedWebSession(isWebRoute, webSession);
     const sessionTenantId = normalizeRealtimeTenantId(webSession?.tenant_id);
+    const sessionUserId =
+      Number.isInteger(webSession?.user_id) && Number(webSession.user_id) > 0
+        ? Number(webSession.user_id)
+        : null;
 
     if (routeParts.length === 1 && request.method === "GET") {
+      requireTechnicianCatalogViewRole(webSession?.role);
       const includeInactive = parseBooleanQuery(url.searchParams.get("include_inactive"), false);
       const { results } = await env.DB.prepare(`
         SELECT
@@ -794,6 +856,17 @@ export function createTechniciansRouteHandlers({
       const technician = await loadTechnicianById(env, technicianId, sessionTenantId);
       if (!technician) {
         throw new HttpError(404, "Tecnico no encontrado.");
+      }
+      const linkedTechnician =
+        sessionUserId !== null
+          ? await loadTechnicianByWebUserId(env, sessionUserId, sessionTenantId)
+          : null;
+      const canViewAssignments =
+        canViewTechnicianCatalog(webSession?.role) ||
+        (String(webSession?.role || "").trim().toLowerCase() === "tecnico" &&
+          Number(linkedTechnician?.id) === technicianId);
+      if (!canViewAssignments) {
+        throw new HttpError(403, "No tienes permisos para ver estas asignaciones.");
       }
 
       const activeOnly = !parseBooleanQuery(url.searchParams.get("include_inactive"), false);

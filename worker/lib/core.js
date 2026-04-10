@@ -58,6 +58,16 @@ export function canManageTechnicians(actorOrRole) {
   return canManageUsers(actorOrRole);
 }
 
+export function canViewTechnicianCatalog(actorOrRole) {
+  const role = resolveRoleFromActor(actorOrRole, "");
+  return (
+    role === "admin" ||
+    role === "supervisor" ||
+    role === "solo_lectura" ||
+    canManagePlatform(role)
+  );
+}
+
 export function canAssignTechnicians(actorOrRole) {
   const role = resolveRoleFromActor(actorOrRole, "");
   return role === "admin" || role === "supervisor" || canManagePlatform(role);
@@ -75,6 +85,56 @@ export function canWriteOperationalData(actorOrRole) {
 
 export function canReadOperationalData(actorOrRole) {
   return WEB_CANONICAL_ROLE_SET.has(resolveRoleFromActor(actorOrRole, ""));
+}
+
+export function canViewTenantIncidentMap(actorOrRole) {
+  const role = resolveRoleFromActor(actorOrRole, "");
+  return (
+    role === "admin" ||
+    role === "supervisor" ||
+    role === "solo_lectura" ||
+    canManagePlatform(role)
+  );
+}
+
+export function canReopenIncidents(actorOrRole) {
+  const role = resolveRoleFromActor(actorOrRole, "");
+  return role === "admin" || role === "supervisor" || canManagePlatform(role);
+}
+
+export function canViewAssetCatalog(actorOrRole) {
+  const role = resolveRoleFromActor(actorOrRole, "");
+  return (
+    role === "admin" ||
+    role === "supervisor" ||
+    role === "solo_lectura" ||
+    canManagePlatform(role)
+  );
+}
+
+export function canViewAssetDetail(actorOrRole) {
+  const role = resolveRoleFromActor(actorOrRole, "");
+  return role === "tecnico" || canViewAssetCatalog(role);
+}
+
+export function canEditAssetCatalog(actorOrRole) {
+  const role = resolveRoleFromActor(actorOrRole, "");
+  return role === "admin" || canManagePlatform(role);
+}
+
+export function canManageAssetLinks(actorOrRole) {
+  const role = resolveRoleFromActor(actorOrRole, "");
+  return role === "admin" || role === "supervisor" || canManagePlatform(role);
+}
+
+export function canManageAssetLoans(actorOrRole) {
+  const role = resolveRoleFromActor(actorOrRole, "");
+  return role === "admin" || role === "supervisor" || canManagePlatform(role);
+}
+
+export function canManagePublicTracking(actorOrRole) {
+  const role = resolveRoleFromActor(actorOrRole, "");
+  return role === "admin" || role === "supervisor" || canManagePlatform(role);
 }
 
 export function canDeleteCriticalData(actorOrRole) {

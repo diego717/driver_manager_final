@@ -19,6 +19,8 @@ import {
 } from "react-native";
 
 import { extractApiError } from "@/src/api/client";
+import { updateIncidentEvidence } from "@/src/api/incidents";
+import { uploadIncidentPhoto } from "@/src/api/photos";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import { canReachConfiguredApi } from "@/src/services/network/api-connectivity";
@@ -489,24 +491,148 @@ export default function UploadIncidentPhotoScreen() {
     setFeedback(null);
 
     const failed: ConfirmedEvidence[] = [];
-    let successCount = 0;
+    let queuedPhotoCount = 0;
     let metadataQueued = false;
     let metadataError = "";
+    const appliedChecklistItems = CHECKLIST_ITEMS.filter((label) => Boolean(selectedChecklist[label]));
+    const trimmedNote = note.trim();
+    const hasMetadataPayload = appliedChecklistItems.length > 0 || Boolean(trimmedNote);
+    const evidencePayload = {
+      checklist_items: appliedChecklistItems,
+      evidence_note: trimmedNote || null,
+    };
+    const navigateAfterSave = () => {
+      setConfirmedEvidence([]);
+      setSelectedImage(null);
+      if (hasRemoteIncident) {
+        router.replace(
+          `/incident/detail?incidentId=${parsedIncidentId}&installationId=${installationId}` as never,
+        );
+        return;
+      }
+      if (installationId.trim()) {
+        router.replace(`/work?installationId=${installationId}` as never);
+        return;
+      }
+      router.replace("/(tabs)" as never);
+    };
 
     try {
       const online = await canReachConfiguredApi();
-      try {
-        const appliedChecklistItems = CHECKLIST_ITEMS.filter((label) => Boolean(selectedChecklist[label]));
-        await enqueueUpdateIncidentEvidence({
-          remoteIncidentId: hasRemoteIncident ? parsedIncidentId : null,
-          localIncidentLocalId: hasLocalIncident ? localIncidentLocalId : null,
-          dependsOnJobId: incidentJobId || null,
-          checklistItems: appliedChecklistItems,
-          evidenceNote: note.trim() || null,
+      if (hasRemoteIncident && online) {
+        let metadataSavedDirectly = !hasMetadataPayload;
+        let directPhotoCount = 0;
+        const photosStillPending: ConfirmedEvidence[] = [];
+
+        if (hasMetadataPayload) {
+          try {
+            await updateIncidentEvidence(parsedIncidentId, evidencePayload);
+            metadataSavedDirectly = true;
+          } catch (error) {
+            metadataError = extractApiError(error);
+          }
+        }
+
+        for (const evidence of confirmedEvidence) {
+          try {
+            await uploadIncidentPhoto({
+              incidentId: parsedIncidentId,
+              fileUri: evidence.uri,
+              fileName: evidence.fileName,
+              contentType: evidence.contentType,
+            });
+            directPhotoCount += 1;
+          } catch (error) {
+            if (!metadataError) {
+              metadataError = extractApiError(error);
+            }
+            failed.push(evidence);
+          }
+        }
+
+        if (metadataSavedDirectly && failed.length === 0) {
+          publishFeedback({
+            title: "Evidencias guardadas",
+            message: `Se guardaron ${directPhotoCount} fotos${hasMetadataPayload ? " y la evidencia" : ""} en la incidencia #${parsedIncidentId}.`,
+            tone: "success",
+          });
+          navigateAfterSave();
+          return;
+        }
+
+        if (!metadataSavedDirectly && hasMetadataPayload) {
+          try {
+            await enqueueUpdateIncidentEvidence({
+              remoteIncidentId: parsedIncidentId,
+              localIncidentLocalId: null,
+              dependsOnJobId: incidentJobId || null,
+              checklistItems: appliedChecklistItems,
+              evidenceNote: trimmedNote || null,
+            });
+            metadataQueued = true;
+          } catch (error) {
+            metadataError = extractApiError(error);
+          }
+        }
+
+        for (const evidence of failed) {
+          try {
+            await enqueueUploadIncidentPhoto({
+              remoteIncidentId: parsedIncidentId,
+              localIncidentLocalId: null,
+              dependsOnJobId: incidentJobId || null,
+              localPath: evidence.uri,
+              fileName: evidence.fileName,
+              contentType: evidence.contentType,
+              sizeBytes: evidence.sizeBytes,
+            });
+            queuedPhotoCount += 1;
+          } catch {
+            photosStillPending.push(evidence);
+          }
+        }
+
+        const stillFailedCount = photosStillPending.length;
+        if (online && (queuedPhotoCount > 0 || metadataQueued)) {
+          runSync();
+        }
+
+        if (stillFailedCount === 0) {
+          const fallbackCount = queuedPhotoCount + (metadataQueued ? 1 : 0);
+          publishFeedback({
+            title: directPhotoCount > 0 || metadataSavedDirectly ? "Guardado parcial" : "Evidencias en cola",
+            message:
+              directPhotoCount > 0 || metadataSavedDirectly
+                ? `Se guardaron ${directPhotoCount} fotos${metadataSavedDirectly && hasMetadataPayload ? " y la evidencia" : ""} ahora. ${fallbackCount} elemento(s) quedaron en cola para sincronizar${metadataError ? ` (${metadataError})` : ""}.`
+                : `No se pudo guardar directo en la incidencia #${parsedIncidentId}; se dejaron ${queuedPhotoCount} fotos${metadataQueued ? " y la evidencia" : ""} en cola para sincronizar${metadataError ? ` (${metadataError})` : ""}.`,
+            tone: "info",
+          });
+          navigateAfterSave();
+          return;
+        }
+
+        setConfirmedEvidence(photosStillPending);
+        publishFeedback({
+          title: "Guardado incompleto",
+          message: `Se guardaron ${directPhotoCount} fotos y ${queuedPhotoCount} quedaron en cola, pero faltan ${stillFailedCount} por persistir${metadataError ? ` (${metadataError})` : ""}.`,
+          tone: "error",
         });
-        metadataQueued = true;
-      } catch (error) {
-        metadataError = extractApiError(error);
+        return;
+      }
+
+      if (hasMetadataPayload) {
+        try {
+          await enqueueUpdateIncidentEvidence({
+            remoteIncidentId: hasRemoteIncident ? parsedIncidentId : null,
+            localIncidentLocalId: hasLocalIncident ? localIncidentLocalId : null,
+            dependsOnJobId: incidentJobId || null,
+            checklistItems: appliedChecklistItems,
+            evidenceNote: trimmedNote || null,
+          });
+          metadataQueued = true;
+        } catch (error) {
+          metadataError = extractApiError(error);
+        }
       }
 
       for (const evidence of confirmedEvidence) {
@@ -520,13 +646,13 @@ export default function UploadIncidentPhotoScreen() {
             contentType: evidence.contentType,
             sizeBytes: evidence.sizeBytes,
           });
-          successCount += 1;
+          queuedPhotoCount += 1;
         } catch {
           failed.push(evidence);
         }
       }
 
-      if (online && (successCount > 0 || metadataQueued)) {
+      if (online && (queuedPhotoCount > 0 || metadataQueued)) {
         runSync();
       }
 
@@ -535,24 +661,14 @@ export default function UploadIncidentPhotoScreen() {
           title: metadataQueued ? "Evidencias en cola" : "Evidencias en cola con metadata pendiente",
           message: metadataQueued
             ? hasRemoteIncident
-              ? `Se guardaron ${successCount} fotos y la metadata de evidencia para sincronizar con la incidencia #${parsedIncidentId}.`
-              : `Se guardaron ${successCount} fotos y la metadata de evidencia para la incidencia local pendiente.`
+              ? `Se guardaron ${queuedPhotoCount} fotos y la metadata de evidencia para sincronizar con la incidencia #${parsedIncidentId}.`
+              : `Se guardaron ${queuedPhotoCount} fotos y la metadata de evidencia para la incidencia local pendiente.`
             : hasRemoteIncident
-              ? `Se guardaron ${successCount} fotos para sincronizar, pero no se pudo guardar checklist/nota (${metadataError || "error desconocido"}).`
-              : `Se guardaron ${successCount} fotos para la incidencia local, pero no se pudo guardar checklist/nota (${metadataError || "error desconocido"}).`,
+              ? `Se guardaron ${queuedPhotoCount} fotos para sincronizar, pero no se pudo guardar checklist/nota (${metadataError || "error desconocido"}).`
+              : `Se guardaron ${queuedPhotoCount} fotos para la incidencia local, pero no se pudo guardar checklist/nota (${metadataError || "error desconocido"}).`,
           tone: metadataQueued ? "success" : "info",
         });
-        setConfirmedEvidence([]);
-        setSelectedImage(null);
-        if (hasRemoteIncident) {
-          router.replace(
-            `/incident/detail?incidentId=${parsedIncidentId}&installationId=${installationId}` as never,
-          );
-        } else if (installationId.trim()) {
-          router.replace(`/work?installationId=${installationId}` as never);
-        } else {
-          router.replace("/(tabs)" as never);
-        }
+        navigateAfterSave();
         return;
       }
 
@@ -560,8 +676,8 @@ export default function UploadIncidentPhotoScreen() {
       publishFeedback({
         title: "Sincronizacion pendiente",
         message: metadataQueued
-          ? `Se encolaron ${successCount}. Pendientes de guardar localmente: ${failed.length}. Checklist/nota tambien quedaron en cola.`
-          : `Se encolaron ${successCount}. Pendientes de guardar localmente: ${failed.length}. Checklist/nota pendientes (${metadataError || "error desconocido"}).`,
+          ? `Se encolaron ${queuedPhotoCount}. Pendientes de guardar localmente: ${failed.length}. Checklist/nota tambien quedaron en cola.`
+          : `Se encolaron ${queuedPhotoCount}. Pendientes de guardar localmente: ${failed.length}. Checklist/nota pendientes (${metadataError || "error desconocido"}).`,
         tone: "error",
       });
     } catch (error) {

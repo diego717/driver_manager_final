@@ -6,7 +6,7 @@ import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, TouchableOpacity
 import { getAssetIncidents, linkAssetToInstallation, listAssets, type AssetRecord } from "@/src/api/assets";
 import { extractApiError } from "@/src/api/client";
 import { readStoredWebSession } from "@/src/api/webAuth";
-import { canAssignTechnicians } from "@/src/auth/roles";
+import { canAssignTechnicians, canViewAssetCatalog } from "@/src/auth/roles";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
@@ -54,6 +54,7 @@ export default function ExploreTabScreen() {
     [assetDetail?.asset, assets, selectedAssetId],
   );
   const canManageTechnicianAssignments = canAssignTechnicians(webSessionRole);
+  const canAccessAssetCatalog = canViewAssetCatalog(webSessionRole);
 
   const loadAssets = useCallback(async () => {
     if (!hasActiveSession) return;
@@ -180,6 +181,21 @@ export default function ExploreTabScreen() {
             await loadAssets();
           }}
           onOpenAdvanced={() => router.push("/modal?focus=login")}
+        />
+      </ScreenScaffold>
+    );
+  }
+
+  if (!canAccessAssetCatalog) {
+    return (
+      <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
+        <EmptyStateCard
+          title="Inventario reservado"
+          body={
+            resolveIntent
+              ? "Tu rol no puede abrir el catalogo global. Usa Mis casos o el contexto de una incidencia asignada."
+              : "Tu rol no puede ver el catalogo global de equipos. Si necesitas contexto operativo, entra desde una incidencia o caso asignado."
+          }
         />
       </ScreenScaffold>
     );

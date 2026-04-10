@@ -14,6 +14,7 @@
         function runSectionLoaders(section) {
             options.validateSectionBindings(section, { notify: true });
             if (section === 'dashboard') options.loadDashboard({ followupDelayMs: 1200 });
+            if (section === 'myCases') options.loadMyCasesSection?.();
             if (section === 'installations') options.loadInstallations();
             if (section === 'incidents') options.loadIncidentsWorkspace?.();
             if (section === 'incidentMap') options.loadIncidentMapWorkspace?.();

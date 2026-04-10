@@ -131,6 +131,7 @@ export function buildCorsPolicy(isWebRoute, routeParts) {
     isInstallationIncidentStatusRoute ||
     first === "records" ||
     first === "assets" ||
+    first === "scan" ||
     first === "drivers" ||
     first === "devices" ||
     first === "audit-logs" ||
@@ -174,6 +175,8 @@ export function buildCorsPolicy(isWebRoute, routeParts) {
     methods.add("POST");
     methods.add("PATCH");
     methods.add("DELETE");
+  } else if (first === "scan") {
+    methods.add("POST");
   } else if (first === "drivers") {
     methods.add("GET");
     methods.add("POST");
