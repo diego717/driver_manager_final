@@ -125,6 +125,9 @@ vi.mock("expo-file-system/legacy", () => ({
 vi.mock("@/src/api/photos", () => ({
   uploadIncidentPhoto: vi.fn(),
 }));
+vi.mock("@/src/api/incidents", () => ({
+  updateIncidentEvidence: vi.fn(async () => ({})),
+}));
 vi.mock("@/src/services/sync/photo-outbox-service", () => ({
   enqueueUploadIncidentPhoto: vi.fn(),
 }));
