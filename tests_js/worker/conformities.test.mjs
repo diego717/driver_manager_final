@@ -297,6 +297,33 @@ test("conformity route persists emailed status when delivery succeeds", async ()
     async loadInstallationConformityPdfById() {
       return null;
     },
+    async loadLatestApprovedInstallationBudget() {
+      return {
+        id: 71,
+        installation_id: 42,
+        tenant_id: "tenant-a",
+        budget_number: "P-20260323-42-ABCD",
+        approval_status: "approved",
+        approved_by_name: "Cliente ACME",
+        approved_by_channel: "email",
+        approved_at: "2026-03-23T16:00:00.000Z",
+      };
+    },
+    async loadInstallationBudgetById(_env, installationId, budgetId, tenantId) {
+      if (Number(installationId) !== 42 || Number(budgetId) !== 71 || String(tenantId) !== "tenant-a") {
+        return null;
+      }
+      return {
+        id: 71,
+        installation_id: 42,
+        tenant_id: "tenant-a",
+        budget_number: "P-20260323-42-ABCD",
+        approval_status: "approved",
+        approved_by_name: "Cliente ACME",
+        approved_by_channel: "email",
+        approved_at: "2026-03-23T16:00:00.000Z",
+      };
+    },
     async persistInstallationConformity(_env, input) {
       persistedInput = input;
       return {
@@ -395,10 +422,14 @@ test("conformity route persists emailed status when delivery succeeds", async ()
   assert.equal(emailPayload?.assetLabel, "ATM-001");
   assert.equal(emailPayload?.technicianName, "tech1");
   assert.equal(persistedInput?.status, "emailed");
+  assert.equal(persistedInput?.budgetId, 71);
   assert.equal(readJsonOptions?.maxBytes, 512 * 1024);
   assert.match(persistedInput?.metadataJson || "", /"email_requested":true/);
   assert.match(persistedInput?.metadataJson || "", /"message_id":"email_123"/);
+  assert.match(persistedInput?.metadataJson || "", /"budget_id":71/);
   assert.equal(auditPayloads[0]?.details?.email_result?.message_id, "email_123");
+  assert.equal(auditPayloads[0]?.details?.budget_id, 71);
+  assert.equal(auditPayloads[0]?.details?.budget_number, "P-20260323-42-ABCD");
   assert.deepEqual(publicTrackingRefreshes, [
     {
       tenantId: "tenant-a",
@@ -456,6 +487,21 @@ test("conformity route persists captured gps snapshot in metadata", async () => 
       return null;
     },
     async loadInstallationConformityPdfById() {
+      return null;
+    },
+    async loadLatestApprovedInstallationBudget() {
+      return {
+        id: 88,
+        installation_id: 42,
+        tenant_id: "default",
+        budget_number: "P-20260326-42-GPS1",
+        approval_status: "approved",
+        approved_by_name: "Cliente",
+        approved_by_channel: "email",
+        approved_at: "2026-03-26T09:00:00.000Z",
+      };
+    },
+    async loadInstallationBudgetById() {
       return null;
     },
     async persistInstallationConformity(_env, input) {
@@ -516,6 +562,8 @@ test("conformity route persists captured gps snapshot in metadata", async () => 
 
   assert.equal(response.status, 201);
   const metadata = JSON.parse(persistedInput?.metadataJson || "{}");
+  assert.equal(metadata.budget?.budget_id, 88);
+  assert.equal(metadata.budget?.budget_number, "P-20260326-42-GPS1");
   assert.deepEqual(metadata.gps, {
     lat: -34.9011,
     lng: -56.1645,
@@ -581,6 +629,21 @@ test("conformity route logs gps override with mandatory reason", async () => {
       return null;
     },
     async loadInstallationConformityPdfById() {
+      return null;
+    },
+    async loadLatestApprovedInstallationBudget() {
+      return {
+        id: 90,
+        installation_id: 42,
+        tenant_id: "default",
+        budget_number: "P-20260326-42-OVRD",
+        approval_status: "approved",
+        approved_by_name: "Cliente",
+        approved_by_channel: "whatsapp",
+        approved_at: "2026-03-26T09:00:00.000Z",
+      };
+    },
+    async loadInstallationBudgetById() {
       return null;
     },
     async persistInstallationConformity(_env, input) {
@@ -707,6 +770,21 @@ test("conformity route ignores deprecated geofence policy inputs and persists GP
     async loadInstallationConformityPdfById() {
       return null;
     },
+    async loadLatestApprovedInstallationBudget() {
+      return {
+        id: 99,
+        installation_id: 42,
+        tenant_id: "default",
+        budget_number: "P-20260326-42-DEPR",
+        approval_status: "approved",
+        approved_by_name: "Cliente",
+        approved_by_channel: "email",
+        approved_at: "2026-03-26T09:00:00.000Z",
+      };
+    },
+    async loadInstallationBudgetById() {
+      return null;
+    },
     async persistInstallationConformity(_env, input) {
       persistedInput = input;
       return { id: 18, installation_id: 42, tenant_id: input.tenantId, status: input.status, metadata_json: input.metadataJson };
@@ -770,4 +848,474 @@ test("conformity route ignores deprecated geofence policy inputs and persists GP
   assert.equal(metadata.geofence, undefined);
   assert.equal(metadata.gps?.status, "captured");
   assert.equal(auditPayloads.some((payload) => payload.action === "override_installation_conformity_geofence"), false);
+});
+
+test("conformity route returns 409 when there is no approved budget", async () => {
+  const { handleInstallationConformityRoute } = createConformitiesRouteHandlers({
+    buildGpsMapsUrl,
+    buildGpsMetadataSnapshot,
+    jsonResponse,
+    corsHeaders() {
+      return {};
+    },
+    parsePositiveInt(value, field = "id") {
+      const parsed = Number.parseInt(String(value), 10);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new Error(`invalid_${field}`);
+      }
+      return parsed;
+    },
+    normalizeOptionalString(value, fallback = "") {
+      if (value === null || value === undefined) return fallback;
+      return String(value).trim();
+    },
+    normalizeGpsPayload,
+    normalizeRealtimeTenantId(value) {
+      return String(value || "").trim().toLowerCase() || "default";
+    },
+    requireWebWriteRole() {},
+    async readJsonOrThrowBadRequest(request) {
+      return request.json();
+    },
+    async logAuditEvent() {},
+    getClientIpForRateLimit() {
+      return "127.0.0.1";
+    },
+    nowIso() {
+      return "2026-03-26T10:00:00.000Z";
+    },
+    async loadInstallationConformityContext() {
+      return {
+        installation: { id: 42, client_name: "Acme", status: "done", notes: "", driver_brand: "Intel", driver_version: "1.0.0" },
+        asset: null,
+        incidents: [],
+        photos: [],
+      };
+    },
+    async loadLatestInstallationConformity() {
+      return null;
+    },
+    async loadInstallationConformityPdfById() {
+      return null;
+    },
+    async loadLatestApprovedInstallationBudget() {
+      return null;
+    },
+    async loadInstallationBudgetById() {
+      return null;
+    },
+    async persistInstallationConformity() {
+      throw new Error("should_not_persist_without_budget");
+    },
+    async storeSignatureAsset() {
+      return { r2Key: "signature.png", bytes: new Uint8Array([137, 80, 78, 71]) };
+    },
+    async generateConformityPdf() {
+      return new Uint8Array([1, 2, 3]);
+    },
+    async storeConformityPdf() {
+      return { r2Key: "conformity.pdf" };
+    },
+    async sendConformityEmail() {
+      return { delivered: false, skipped: true, error: null };
+    },
+    async syncPublicTrackingSnapshotForInstallation() {},
+  });
+
+  await assert.rejects(
+    () =>
+      handleInstallationConformityRoute(
+        new Request("https://worker.example/web/installations/42/conformity", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            signed_by_name: "Juan Perez",
+            email_to: "cliente@example.com",
+            signature_data_url: "data:image/png;base64,iVBORw0KGgo=",
+            send_email: false,
+          }),
+        }),
+        {},
+        {},
+        ["installations", "42", "conformity"],
+        true,
+        {
+          tenant_id: "default",
+          role: "admin",
+          sub: "tech1",
+          user_id: 7,
+          session_version: 3,
+        },
+      ),
+    (error) => {
+      assert.equal(error?.status, 409);
+      assert.match(String(error?.message || ""), /presupuesto aprobado/i);
+      return true;
+    },
+  );
+});
+
+test("conformity route allows closure without approved budget when commercial coverage includes service", async () => {
+  let persistedInput = null;
+  const { handleInstallationConformityRoute } = createConformitiesRouteHandlers({
+    buildGpsMapsUrl,
+    buildGpsMetadataSnapshot,
+    jsonResponse,
+    corsHeaders() {
+      return {};
+    },
+    parsePositiveInt(value, field = "id") {
+      const parsed = Number.parseInt(String(value), 10);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new Error(`invalid_${field}`);
+      }
+      return parsed;
+    },
+    normalizeOptionalString(value, fallback = "") {
+      if (value === null || value === undefined) return fallback;
+      return String(value).trim();
+    },
+    normalizeGpsPayload,
+    normalizeRealtimeTenantId(value) {
+      return String(value || "").trim().toLowerCase() || "default";
+    },
+    requireWebWriteRole() {},
+    async readJsonOrThrowBadRequest(request) {
+      return request.json();
+    },
+    async logAuditEvent() {},
+    getClientIpForRateLimit() {
+      return "127.0.0.1";
+    },
+    nowIso() {
+      return "2026-03-26T10:00:00.000Z";
+    },
+    async loadInstallationConformityContext() {
+      return {
+        installation: {
+          id: 42,
+          client_name: "Acme",
+          status: "done",
+          notes: "",
+          driver_brand: "Intel",
+          driver_version: "1.0.0",
+          commercial_closure_mode: "warranty_included",
+          commercial_closure_note: "Reparacion cubierta por garantia vigente.",
+        },
+        asset: null,
+        incidents: [],
+        photos: [],
+      };
+    },
+    async loadLatestInstallationConformity() {
+      return null;
+    },
+    async loadInstallationConformityPdfById() {
+      return null;
+    },
+    async loadLatestApprovedInstallationBudget() {
+      return null;
+    },
+    async loadInstallationBudgetById() {
+      return null;
+    },
+    async persistInstallationConformity(_env, input) {
+      persistedInput = input;
+      return {
+        id: 700,
+        installation_id: 42,
+        tenant_id: input.tenantId,
+        status: input.status,
+        budget_id: input.budgetId,
+        metadata_json: input.metadataJson,
+      };
+    },
+    async storeSignatureAsset() {
+      return { r2Key: "signature.png", bytes: new Uint8Array([137, 80, 78, 71]) };
+    },
+    async generateConformityPdf() {
+      return new Uint8Array([1, 2, 3]);
+    },
+    async storeConformityPdf() {
+      return { r2Key: "conformity.pdf" };
+    },
+    async sendConformityEmail() {
+      return { delivered: false, skipped: true, error: null };
+    },
+    async syncPublicTrackingSnapshotForInstallation() {},
+  });
+
+  const response = await handleInstallationConformityRoute(
+    new Request("https://worker.example/web/installations/42/conformity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        signed_by_name: "Juan Perez",
+        email_to: "cliente@example.com",
+        signature_data_url: "data:image/png;base64,iVBORw0KGgo=",
+        send_email: false,
+      }),
+    }),
+    {},
+    {},
+    ["installations", "42", "conformity"],
+    true,
+    {
+      tenant_id: "default",
+      role: "admin",
+      sub: "tech1",
+      user_id: 7,
+      session_version: 3,
+    },
+  );
+
+  assert.equal(response.status, 201);
+  assert.equal(persistedInput?.budgetId, null);
+  const metadata = JSON.parse(String(persistedInput?.metadataJson || "{}"));
+  assert.equal(metadata?.commercial_closure?.mode, "warranty_included");
+  assert.equal(metadata?.commercial_closure?.requires_budget, false);
+});
+
+test("conformity route returns 409 when commercial no-budget mode has no note", async () => {
+  const { handleInstallationConformityRoute } = createConformitiesRouteHandlers({
+    buildGpsMapsUrl,
+    buildGpsMetadataSnapshot,
+    jsonResponse,
+    corsHeaders() {
+      return {};
+    },
+    parsePositiveInt(value, field = "id") {
+      const parsed = Number.parseInt(String(value), 10);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new Error(`invalid_${field}`);
+      }
+      return parsed;
+    },
+    normalizeOptionalString(value, fallback = "") {
+      if (value === null || value === undefined) return fallback;
+      return String(value).trim();
+    },
+    normalizeGpsPayload,
+    normalizeRealtimeTenantId(value) {
+      return String(value || "").trim().toLowerCase() || "default";
+    },
+    requireWebWriteRole() {},
+    async readJsonOrThrowBadRequest(request) {
+      return request.json();
+    },
+    async logAuditEvent() {},
+    getClientIpForRateLimit() {
+      return "127.0.0.1";
+    },
+    nowIso() {
+      return "2026-03-26T10:00:00.000Z";
+    },
+    async loadInstallationConformityContext() {
+      return {
+        installation: {
+          id: 42,
+          client_name: "Acme",
+          status: "done",
+          notes: "",
+          driver_brand: "Intel",
+          driver_version: "1.0.0",
+          commercial_closure_mode: "plan_included",
+          commercial_closure_note: "",
+        },
+        asset: null,
+        incidents: [],
+        photos: [],
+      };
+    },
+    async loadLatestInstallationConformity() {
+      return null;
+    },
+    async loadInstallationConformityPdfById() {
+      return null;
+    },
+    async loadLatestApprovedInstallationBudget() {
+      return null;
+    },
+    async loadInstallationBudgetById() {
+      return null;
+    },
+    async persistInstallationConformity() {
+      throw new Error("should_not_persist_without_commercial_note");
+    },
+    async storeSignatureAsset() {
+      return { r2Key: "signature.png", bytes: new Uint8Array([137, 80, 78, 71]) };
+    },
+    async generateConformityPdf() {
+      return new Uint8Array([1, 2, 3]);
+    },
+    async storeConformityPdf() {
+      return { r2Key: "conformity.pdf" };
+    },
+    async sendConformityEmail() {
+      return { delivered: false, skipped: true, error: null };
+    },
+    async syncPublicTrackingSnapshotForInstallation() {},
+  });
+
+  await assert.rejects(
+    () =>
+      handleInstallationConformityRoute(
+        new Request("https://worker.example/web/installations/42/conformity", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            signed_by_name: "Juan Perez",
+            email_to: "cliente@example.com",
+            signature_data_url: "data:image/png;base64,iVBORw0KGgo=",
+            send_email: false,
+          }),
+        }),
+        {},
+        {},
+        ["installations", "42", "conformity"],
+        true,
+        {
+          tenant_id: "default",
+          role: "admin",
+          sub: "tech1",
+          user_id: 7,
+          session_version: 3,
+        },
+      ),
+    (error) => {
+      assert.equal(error?.status, 409);
+      assert.match(String(error?.message || ""), /motivo comercial/i);
+      return true;
+    },
+  );
+});
+
+test("conformity route accepts explicit budget_id when it matches latest approved budget", async () => {
+  let persistedInput = null;
+  const { handleInstallationConformityRoute } = createConformitiesRouteHandlers({
+    buildGpsMapsUrl,
+    buildGpsMetadataSnapshot,
+    jsonResponse,
+    corsHeaders() {
+      return {};
+    },
+    parsePositiveInt(value, field = "id") {
+      const parsed = Number.parseInt(String(value), 10);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new Error(`invalid_${field}`);
+      }
+      return parsed;
+    },
+    normalizeOptionalString(value, fallback = "") {
+      if (value === null || value === undefined) return fallback;
+      return String(value).trim();
+    },
+    normalizeGpsPayload,
+    normalizeRealtimeTenantId(value) {
+      return String(value || "").trim().toLowerCase() || "default";
+    },
+    requireWebWriteRole() {},
+    async readJsonOrThrowBadRequest(request) {
+      return request.json();
+    },
+    async logAuditEvent() {},
+    getClientIpForRateLimit() {
+      return "127.0.0.1";
+    },
+    nowIso() {
+      return "2026-03-26T10:00:00.000Z";
+    },
+    async loadInstallationConformityContext() {
+      return {
+        installation: { id: 42, client_name: "Acme", status: "done", notes: "", driver_brand: "Intel", driver_version: "1.0.0" },
+        asset: null,
+        incidents: [],
+        photos: [],
+      };
+    },
+    async loadLatestInstallationConformity() {
+      return null;
+    },
+    async loadInstallationConformityPdfById() {
+      return null;
+    },
+    async loadLatestApprovedInstallationBudget() {
+      return {
+        id: 120,
+        installation_id: 42,
+        tenant_id: "default",
+        budget_number: "P-20260326-42-OK01",
+        approval_status: "approved",
+        approved_by_name: "Cliente",
+        approved_by_channel: "email",
+        approved_at: "2026-03-26T09:00:00.000Z",
+      };
+    },
+    async loadInstallationBudgetById(_env, installationId, budgetId, tenantId) {
+      if (Number(installationId) !== 42 || Number(budgetId) !== 120 || String(tenantId) !== "default") {
+        return null;
+      }
+      return {
+        id: 120,
+        installation_id: 42,
+        tenant_id: "default",
+        budget_number: "P-20260326-42-OK01",
+        approval_status: "approved",
+        approved_by_name: "Cliente",
+        approved_by_channel: "email",
+        approved_at: "2026-03-26T09:00:00.000Z",
+      };
+    },
+    async persistInstallationConformity(_env, input) {
+      persistedInput = input;
+      return {
+        id: 500,
+        installation_id: 42,
+        tenant_id: input.tenantId,
+        status: input.status,
+        metadata_json: input.metadataJson,
+      };
+    },
+    async storeSignatureAsset() {
+      return { r2Key: "signature.png", bytes: new Uint8Array([137, 80, 78, 71]) };
+    },
+    async generateConformityPdf() {
+      return new Uint8Array([1, 2, 3]);
+    },
+    async storeConformityPdf() {
+      return { r2Key: "conformity.pdf" };
+    },
+    async sendConformityEmail() {
+      return { delivered: false, skipped: true, error: null };
+    },
+    async syncPublicTrackingSnapshotForInstallation() {},
+  });
+
+  const response = await handleInstallationConformityRoute(
+    new Request("https://worker.example/web/installations/42/conformity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        signed_by_name: "Juan Perez",
+        email_to: "cliente@example.com",
+        signature_data_url: "data:image/png;base64,iVBORw0KGgo=",
+        budget_id: 120,
+        send_email: false,
+      }),
+    }),
+    {},
+    {},
+    ["installations", "42", "conformity"],
+    true,
+    {
+      tenant_id: "default",
+      role: "admin",
+      sub: "tech1",
+      user_id: 7,
+      session_version: 3,
+    },
+  );
+
+  assert.equal(response.status, 201);
+  assert.equal(persistedInput?.budgetId, 120);
 });

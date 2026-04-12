@@ -417,6 +417,24 @@
                     body: JSON.stringify(payload || {}),
                 });
             },
+            getInstallationBudgets(installationId) {
+                return request(`/web/installations/${installationId}/budgets`);
+            },
+            getInstallationBudgetLatest(installationId) {
+                return request(`/web/installations/${installationId}/budgets/latest`);
+            },
+            createInstallationBudget(installationId, payload) {
+                return request(`/web/installations/${installationId}/budgets`, {
+                    method: 'POST',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
+            approveInstallationBudget(installationId, budgetId, payload) {
+                return request(`/web/installations/${installationId}/budgets/${budgetId}/approve`, {
+                    method: 'POST',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
             getInstallationPublicTrackingLink(installationId) {
                 return request(`/web/installations/${installationId}/public-tracking-link`);
             },

@@ -3326,7 +3326,7 @@ test("PUT /installations/:id updates notes and installation time", async () => {
   assert.deepEqual(updateCall.bound, ["Actualizado", 150, 42, "default"]);
 });
 
-test("PUT /installations/:id with missing fields binds null values", async () => {
+test("PUT /installations/:id with missing fields returns 400", async () => {
   const db = createMockDB({
     installations: [{ id: 77, notes: "", installation_time_seconds: 0 }],
   });
@@ -3339,42 +3339,11 @@ test("PUT /installations/:id with missing fields binds null values", async () =>
   const response = await workerFetch(request, { DB: db });
   const body = await response.json();
 
-  assert.equal(response.status, 200);
-  assert.deepEqual(body, {
-    success: true,
-    updated: "77",
-    installation: {
-      id: 77,
-      notes: null,
-      installation_time_seconds: null,
-      gps_lat: null,
-      gps_lng: null,
-      gps_accuracy_m: null,
-      gps_captured_at: null,
-      gps_capture_source: "none",
-      gps_capture_status: "pending",
-      gps_capture_note: "",
-      site_lat: null,
-      site_lng: null,
-      site_radius_m: null,
-      tenant_id: "default",
-      incident_open_count: 0,
-      incident_in_progress_count: 0,
-      incident_paused_count: 0,
-      incident_resolved_count: 0,
-      incident_active_count: 0,
-      incident_critical_active_count: 0,
-      incident_estimated_duration_seconds_total: 0,
-      incident_estimated_duration_count: 0,
-      incident_actual_duration_seconds_total: 0,
-      incident_actual_duration_count: 0,
-      attention_state: "clear",
-    },
-  });
+  assert.equal(response.status, 400);
+  assert.match(String(body?.error?.message || ""), /no hay campos validos para actualizar/i);
 
   const updateCall = db.calls.find((c) => c.sql.startsWith("UPDATE installations"));
-  assert.ok(updateCall);
-  assert.deepEqual(updateCall.bound, [null, null, 77, "default"]);
+  assert.equal(updateCall, undefined);
 });
 
 test("PUT /installations/:id rejects invalid installation id", async () => {

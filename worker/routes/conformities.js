@@ -1,6 +1,26 @@
 import { HttpError } from "../lib/core.js";
 
 const CONFORMITY_CREATE_MAX_JSON_BYTES = 512 * 1024;
+const DEFAULT_COMMERCIAL_CLOSURE_MODE = "budget_required";
+const ALLOWED_COMMERCIAL_CLOSURE_MODES = new Set([
+  "budget_required",
+  "warranty_included",
+  "plan_included",
+  "courtesy_included",
+]);
+
+function normalizeCommercialClosureMode(value) {
+  const normalized = String(value ?? DEFAULT_COMMERCIAL_CLOSURE_MODE)
+    .trim()
+    .toLowerCase();
+  if (!normalized) {
+    return DEFAULT_COMMERCIAL_CLOSURE_MODE;
+  }
+  if (!ALLOWED_COMMERCIAL_CLOSURE_MODES.has(normalized)) {
+    return DEFAULT_COMMERCIAL_CLOSURE_MODE;
+  }
+  return normalized;
+}
 
 export function createConformitiesRouteHandlers({
   buildGpsMapsUrl,
@@ -24,6 +44,8 @@ export function createConformitiesRouteHandlers({
   generateConformityPdf,
   storeConformityPdf,
   sendConformityEmail,
+  loadLatestApprovedInstallationBudget,
+  loadInstallationBudgetById,
   syncPublicTrackingSnapshotForInstallation,
 }) {
   function buildPdfDownloadPath(installationId, conformityId) {
@@ -47,6 +69,15 @@ export function createConformitiesRouteHandlers({
     const includeAllIncidentPhotos = body?.include_all_incident_photos === true || photoIds.length === 0;
     const sendEmail = body?.send_email === true;
     const gps = normalizeGpsPayload(body?.gps, { allowOverride: true });
+    const budgetIdRaw = body?.budget_id;
+    let budgetId = null;
+    if (budgetIdRaw !== null && budgetIdRaw !== undefined && budgetIdRaw !== "") {
+      const parsedBudgetId = Number.parseInt(String(budgetIdRaw), 10);
+      if (!Number.isInteger(parsedBudgetId) || parsedBudgetId <= 0) {
+        throw new HttpError(400, "Campo 'budget_id' invalido.");
+      }
+      budgetId = parsedBudgetId;
+    }
 
     if (!signedByName) {
       throw new HttpError(400, "Campo 'signed_by_name' es obligatorio.");
@@ -73,6 +104,7 @@ export function createConformitiesRouteHandlers({
       photoIds,
       sendEmail,
       gps,
+      budgetId,
     };
   }
 
@@ -176,6 +208,57 @@ export function createConformitiesRouteHandlers({
         throw new HttpError(404, "Instalacion no encontrada.");
       }
 
+      const commercialClosureMode = normalizeCommercialClosureMode(
+        context.installation?.commercial_closure_mode,
+      );
+      const commercialClosureNote = normalizeOptionalString(
+        context.installation?.commercial_closure_note,
+        "",
+      ).trim();
+      const requiresApprovedBudget = commercialClosureMode === "budget_required";
+
+      let resolvedBudget = null;
+      if (requiresApprovedBudget) {
+        const latestApprovedBudget = await loadLatestApprovedInstallationBudget(
+          env,
+          installationId,
+          tenantId,
+        );
+        if (!latestApprovedBudget) {
+          throw new HttpError(
+            409,
+            "No hay un presupuesto aprobado para este caso. Apruebalo antes de generar la conformidad.",
+          );
+        }
+        resolvedBudget = latestApprovedBudget;
+        if (payload.budgetId !== null) {
+          const providedBudget = await loadInstallationBudgetById(
+            env,
+            installationId,
+            payload.budgetId,
+            tenantId,
+          );
+          if (!providedBudget) {
+            throw new HttpError(404, "Presupuesto no encontrado para este caso.");
+          }
+          if (
+            Number(providedBudget.id) !== Number(latestApprovedBudget.id) ||
+            String(providedBudget.approval_status).trim().toLowerCase() !== "approved"
+          ) {
+            throw new HttpError(
+              409,
+              "La conformidad solo puede emitirse con el ultimo presupuesto aprobado.",
+            );
+          }
+          resolvedBudget = providedBudget;
+        }
+      } else if (!commercialClosureNote) {
+        throw new HttpError(
+          409,
+          "El caso permite cierre sin presupuesto, pero falta documentar el motivo comercial.",
+        );
+      }
+
       const signatureAsset = await storeSignatureAsset(env, {
         tenantId,
         installationId,
@@ -257,6 +340,7 @@ export function createConformitiesRouteHandlers({
         platform: "web",
         status,
         photoCount: context.photos.length,
+        budgetId: resolvedBudget?.id || null,
         metadataJson: JSON.stringify({
           asset_id: context.asset?.id ?? null,
           incident_ids: context.incidents.map((item) => item.id),
@@ -265,6 +349,20 @@ export function createConformitiesRouteHandlers({
           email_requested: payload.sendEmail,
           email_result: emailResult,
           technician_name: resolvedTechnicianName,
+          budget: resolvedBudget
+            ? {
+                budget_id: resolvedBudget.id,
+                budget_number: resolvedBudget.budget_number || "",
+                approved_at: resolvedBudget.approved_at || "",
+                approved_by_name: resolvedBudget.approved_by_name || "",
+                approved_by_channel: resolvedBudget.approved_by_channel || "",
+              }
+            : null,
+          commercial_closure: {
+            mode: commercialClosureMode,
+            note: commercialClosureNote,
+            requires_budget: requiresApprovedBudget,
+          },
           gps: {
             ...gpsMetadata,
             maps_url: mapsUrl || "",
@@ -285,6 +383,11 @@ export function createConformitiesRouteHandlers({
           email_requested: payload.sendEmail,
           email_result: emailResult,
           technician_name: resolvedTechnicianName,
+          budget_id: resolvedBudget?.id || null,
+          budget_number: resolvedBudget?.budget_number || "",
+          commercial_closure_mode: commercialClosureMode,
+          commercial_closure_note: commercialClosureNote,
+          commercial_closure_requires_budget: requiresApprovedBudget,
           gps_capture_status: gpsMetadata.status,
           gps_capture_source: gpsMetadata.source,
           gps_maps_url: mapsUrl || "",

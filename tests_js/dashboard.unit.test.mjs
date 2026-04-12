@@ -3378,6 +3378,28 @@ test("conformity creation includes captured geolocation payload", async () => {
       resolver: async () => createJsonResponse({ success: true, conformity: null }),
     },
     {
+      method: "GET",
+      match: "/web/installations/45/budgets/latest",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          latest_budget: {
+            id: 71,
+            budget_number: "P-20260326-45-ABCD",
+            approval_status: "approved",
+            total_amount_cents: 10000,
+            currency_code: "UYU",
+          },
+          latest_approved_budget: {
+            id: 71,
+            budget_number: "P-20260326-45-ABCD",
+            approval_status: "approved",
+            total_amount_cents: 10000,
+            currency_code: "UYU",
+          },
+        }),
+    },
+    {
       method: "POST",
       match: "/web/installations/45/conformity",
       resolver: async ({ request }) => {
@@ -3432,6 +3454,7 @@ test("conformity creation includes captured geolocation payload", async () => {
   await flushDashboardTasks();
 
   assert.equal(conformityPayloads.length, 1);
+  assert.equal(conformityPayloads[0].budget_id, 71);
   assert.equal(conformityPayloads[0].gps.status, "captured");
   assert.equal(conformityPayloads[0].gps.source, "browser");
   assert.equal(conformityPayloads[0].gps.lat, -34.9011);
@@ -3460,6 +3483,28 @@ test("conformity creation includes captured gps payload without geofence overrid
       method: "GET",
       match: "/web/installations/45/conformity",
       resolver: async () => createJsonResponse({ success: true, conformity: null }),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/budgets/latest",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          latest_budget: {
+            id: 72,
+            budget_number: "P-20260326-45-EFGH",
+            approval_status: "approved",
+            total_amount_cents: 12000,
+            currency_code: "UYU",
+          },
+          latest_approved_budget: {
+            id: 72,
+            budget_number: "P-20260326-45-EFGH",
+            approval_status: "approved",
+            total_amount_cents: 12000,
+            currency_code: "UYU",
+          },
+        }),
     },
     {
       method: "POST",
@@ -3520,6 +3565,7 @@ test("conformity creation includes captured gps payload without geofence overrid
   await flushDashboardTasks();
 
   assert.equal(conformityPayloads.length, 1);
+  assert.equal(conformityPayloads[0].budget_id, 72);
   assert.equal(conformityPayloads[0].gps.status, "captured");
   assert.equal(conformityPayloads[0].geofence_override_note, undefined);
 });
@@ -3536,6 +3582,28 @@ test("conformity creation requires override note when geolocation is not usable"
       method: "GET",
       match: "/web/installations/45/conformity",
       resolver: async () => createJsonResponse({ success: true, conformity: null }),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/budgets/latest",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          latest_budget: {
+            id: 73,
+            budget_number: "P-20260326-45-IJKL",
+            approval_status: "approved",
+            total_amount_cents: 15000,
+            currency_code: "UYU",
+          },
+          latest_approved_budget: {
+            id: 73,
+            budget_number: "P-20260326-45-IJKL",
+            approval_status: "approved",
+            total_amount_cents: 15000,
+            currency_code: "UYU",
+          },
+        }),
     },
     {
       method: "POST",
@@ -3589,11 +3657,317 @@ test("conformity creation requires override note when geolocation is not usable"
   await flushDashboardTasks();
 
   assert.equal(conformityPayloads.length, 1);
+  assert.equal(conformityPayloads[0].budget_id, 73);
   assert.deepEqual(conformityPayloads[0].gps, {
     status: "override",
     source: "override",
     note: "Sin senal dentro de la sala tecnica.",
   });
+});
+
+test("conformity button stays disabled when there is no approved budget", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/conformity",
+      resolver: async () => createJsonResponse({ success: true, conformity: null }),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/budgets/latest",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          latest_budget: {
+            id: 801,
+            budget_number: "P-20260412-45-TEST",
+            approval_status: "pending",
+            total_amount_cents: 10000,
+            currency_code: "UYU",
+          },
+          latest_approved_budget: null,
+        }),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+  await window.renderIncidents([], 45);
+  await flushDashboardTasks();
+
+  const conformityButton = document.querySelector('[data-role="conformity-trigger"]');
+  assert.ok(conformityButton instanceof window.HTMLButtonElement);
+  assert.equal(conformityButton.disabled, true);
+  assert.match(conformityButton.title || "", /aprobar el ultimo presupuesto/i);
+});
+
+test("conformity allows closing without approved budget when commercial coverage does not require it", async () => {
+  const conformityPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/installations",
+      resolver: async () => createJsonResponse([
+        {
+          id: 45,
+          client_name: "Acme",
+          driver_brand: "Intel",
+          commercial_closure_mode: "warranty_included",
+          commercial_closure_note: "Reparacion dentro de garantia.",
+        },
+      ]),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/conformity",
+      resolver: async () => createJsonResponse({ success: true, conformity: null }),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/budgets/latest",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          latest_budget: null,
+          latest_approved_budget: null,
+        }),
+    },
+    {
+      method: "POST",
+      match: "/web/installations/45/conformity",
+      resolver: async ({ request }) => {
+        conformityPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({
+          success: true,
+          conformity: { id: 1201, status: "generated" },
+        }, { status: 201 });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+  installGeolocationMock(window, (success) => {
+    success({
+      coords: {
+        latitude: -34.9011,
+        longitude: -56.1645,
+        accuracy: 18,
+      },
+      timestamp: Date.parse("2026-04-12T10:01:00.000Z"),
+    });
+  });
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+  if (typeof window.loadInstallations === "function") {
+    await window.loadInstallations();
+    await flushDashboardTasks();
+  }
+  await window.renderIncidents([], 45);
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const conformityButton = document.querySelector('[data-role="conformity-trigger"]');
+  assert.ok(conformityButton instanceof window.HTMLButtonElement);
+  assert.equal(conformityButton.disabled, false);
+
+  conformityButton.click();
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const canvas = document.getElementById("actionConformitySignatureCanvas");
+  canvas.onpointerdown?.({
+    preventDefault() {},
+    clientX: 10,
+    clientY: 10,
+    pointerId: 1,
+  });
+  canvas.onpointermove?.({
+    preventDefault() {},
+    clientX: 40,
+    clientY: 24,
+  });
+  canvas.onpointerup?.({});
+
+  document.getElementById("actionConformityEmailTo").value = "cliente@example.com";
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(conformityPayloads.length, 1);
+  assert.equal(Object.prototype.hasOwnProperty.call(conformityPayloads[0], "budget_id"), false);
+  assert.equal(conformityPayloads[0].gps.status, "captured");
+});
+
+test("budget creation posts expected payload", async () => {
+  const budgetPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/conformity",
+      resolver: async () => createJsonResponse({ success: true, conformity: null }),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/budgets/latest",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          latest_budget: null,
+          latest_approved_budget: null,
+        }),
+    },
+    {
+      method: "POST",
+      match: "/web/installations/45/budgets",
+      resolver: async ({ request }) => {
+        budgetPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({
+          success: true,
+          budget: {
+            id: 901,
+            budget_number: "P-20260412-45-NEW1",
+            approval_status: "pending",
+            delivery_status: "generated",
+          },
+        }, { status: 201 });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+  await window.renderIncidents([], 45);
+  await flushDashboardTasks();
+
+  document.querySelector('[data-role="budget-trigger"]').click();
+  await flushDashboardTasks();
+
+  document.getElementById("actionBudgetIncidenceSummary").value = "Falla en modulo";
+  document.getElementById("actionBudgetScopeIncluded").value = "Cambio y calibracion";
+  document.getElementById("actionBudgetScopeExcluded").value = "No incluye cableado";
+  document.getElementById("actionBudgetLaborAmount").value = "120.50";
+  document.getElementById("actionBudgetPartsAmount").value = "80";
+  document.getElementById("actionBudgetTaxAmount").value = "44.10";
+  document.getElementById("actionBudgetCurrencyCode").value = "UYU";
+  document.getElementById("actionBudgetEstimatedDays").value = "2";
+  document.getElementById("actionBudgetValidUntil").value = "2026-04-20";
+  document.getElementById("actionBudgetEmailTo").value = "cliente@example.com";
+  document.getElementById("actionBudgetSendEmail").checked = true;
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(budgetPayloads.length, 1);
+  assert.equal(budgetPayloads[0].incidence_summary, "Falla en modulo");
+  assert.equal(budgetPayloads[0].scope_included, "Cambio y calibracion");
+  assert.equal(budgetPayloads[0].scope_excluded, "No incluye cableado");
+  assert.equal(budgetPayloads[0].labor_amount_cents, 12050);
+  assert.equal(budgetPayloads[0].parts_amount_cents, 8000);
+  assert.equal(budgetPayloads[0].tax_amount_cents, 4410);
+  assert.equal(budgetPayloads[0].send_email, true);
+});
+
+test("budget approval posts expected payload", async () => {
+  const approvalPayloads = [];
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () => createJsonResponse(buildWebSessionPayload({ username: "ops-admin", role: "admin" })),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/conformity",
+      resolver: async () => createJsonResponse({ success: true, conformity: null }),
+    },
+    {
+      method: "GET",
+      match: "/web/installations/45/budgets/latest",
+      resolver: async () =>
+        createJsonResponse({
+          success: true,
+          latest_budget: {
+            id: 902,
+            budget_number: "P-20260412-45-PEND",
+            approval_status: "pending",
+            total_amount_cents: 25000,
+            currency_code: "UYU",
+          },
+          latest_approved_budget: null,
+        }),
+    },
+    {
+      method: "POST",
+      match: "/web/installations/45/budgets/902/approve",
+      resolver: async ({ request }) => {
+        approvalPayloads.push(JSON.parse(await request.text()));
+        return createJsonResponse({
+          success: true,
+          budget: {
+            id: 902,
+            budget_number: "P-20260412-45-PEND",
+            approval_status: "approved",
+          },
+        });
+      },
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document, Event } = window;
+
+  await loginThroughForm(dom, { username: "ops-admin", password: "StrongPass#2026" });
+  await window.renderIncidents([], 45);
+  await flushDashboardTasks();
+
+  const approveButton = document.querySelector('[data-role="budget-approve-trigger"]');
+  assert.ok(approveButton instanceof window.HTMLButtonElement);
+  assert.equal(approveButton.hidden, false);
+
+  approveButton.click();
+  await flushDashboardTasks();
+
+  document.getElementById("actionBudgetApprovedByName").value = "Cliente Demo";
+  document.getElementById("actionBudgetApprovedByChannel").value = "whatsapp";
+  document.getElementById("actionBudgetApprovalNote").value = "Aprobado por chat";
+  document.getElementById("actionModalForm").dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  assert.equal(approvalPayloads.length, 1);
+  assert.equal(approvalPayloads[0].approved_by_name, "Cliente Demo");
+  assert.equal(approvalPayloads[0].approved_by_channel, "whatsapp");
+  assert.equal(approvalPayloads[0].approval_note, "Aprobado por chat");
 });
 
 test("installations table surfaces gps state without geofence badges or site actions", async () => {

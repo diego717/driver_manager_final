@@ -685,6 +685,10 @@ function normalizeConformityRow(row) {
         ? null
         : Number(row.session_version),
     photo_count: Number(row.photo_count) || 0,
+    budget_id:
+      row.budget_id === null || row.budget_id === undefined
+        ? null
+        : Number(row.budget_id),
   };
 }
 
@@ -697,27 +701,72 @@ export async function loadInstallationConformityContext(
     photoIds = [],
   },
 ) {
-  const { results: installationRows } = await env.DB.prepare(`
-    SELECT
-      id,
-      tenant_id,
-      timestamp,
-      driver_brand,
-      driver_version,
-      status,
-      client_name,
-      driver_description,
-      installation_time_seconds,
-      os_info,
-      notes
-    FROM installations
-    WHERE id = ?
-      AND tenant_id = ?
-    LIMIT 1
-  `)
-    .bind(installationId, tenantId)
-    .all();
-  const installation = installationRows?.[0] || null;
+  let installation = null;
+  try {
+    const { results: installationRows } = await env.DB.prepare(`
+      SELECT
+        id,
+        tenant_id,
+        timestamp,
+        driver_brand,
+        driver_version,
+        status,
+        client_name,
+        driver_description,
+        installation_time_seconds,
+        os_info,
+        notes,
+        commercial_closure_mode,
+        commercial_closure_note,
+        commercial_closure_set_at,
+        commercial_closure_set_by
+      FROM installations
+      WHERE id = ?
+        AND tenant_id = ?
+      LIMIT 1
+    `)
+      .bind(installationId, tenantId)
+      .all();
+    installation = installationRows?.[0] || null;
+  } catch (error) {
+    const message = normalizeOptionalString(error?.message, "").toLowerCase();
+    const missingCommercialClosureColumn =
+      (message.includes("no such column") || message.includes("has no column named")) &&
+      message.includes("commercial_closure_mode");
+    if (!missingCommercialClosureColumn) {
+      throw error;
+    }
+    const { results: installationRows } = await env.DB.prepare(`
+      SELECT
+        id,
+        tenant_id,
+        timestamp,
+        driver_brand,
+        driver_version,
+        status,
+        client_name,
+        driver_description,
+        installation_time_seconds,
+        os_info,
+        notes
+      FROM installations
+      WHERE id = ?
+        AND tenant_id = ?
+      LIMIT 1
+    `)
+      .bind(installationId, tenantId)
+      .all();
+    const legacyInstallation = installationRows?.[0] || null;
+    installation = legacyInstallation
+      ? {
+          ...legacyInstallation,
+          commercial_closure_mode: "budget_required",
+          commercial_closure_note: "",
+          commercial_closure_set_at: "",
+          commercial_closure_set_by: "",
+        }
+      : null;
+  }
   if (!installation) return null;
 
   let asset = null;
@@ -1401,6 +1450,7 @@ export async function persistInstallationConformity(
     platform = CONFORMITY_PLATFORM,
     status = "generated",
     photoCount = 0,
+    budgetId = null,
     metadataJson = "{}",
   },
 ) {
@@ -1424,9 +1474,10 @@ export async function persistInstallationConformity(
       platform,
       status,
       photo_count,
+      budget_id,
       metadata_json
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
     .bind(
       installationId,
@@ -1447,6 +1498,7 @@ export async function persistInstallationConformity(
       platform,
       status,
       Math.max(0, Number(photoCount) || 0),
+      budgetId,
       metadataJson || "{}",
     )
     .run();

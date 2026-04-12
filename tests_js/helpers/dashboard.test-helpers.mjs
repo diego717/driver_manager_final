@@ -107,6 +107,21 @@ function defaultFetchFallback({ request, url }) {
     return createJsonResponse([]);
   }
 
+  if (method === "GET" && /^\/web\/installations\/\d+\/budgets\/latest$/.test(url.pathname)) {
+    return createJsonResponse({
+      success: true,
+      latest_budget: null,
+      latest_approved_budget: null,
+    });
+  }
+
+  if (method === "GET" && /^\/web\/installations\/\d+\/budgets$/.test(url.pathname)) {
+    return createJsonResponse({
+      success: true,
+      budgets: [],
+    });
+  }
+
   if (method === "GET" && url.pathname === "/web/audit-logs") {
     return createJsonResponse([]);
   }

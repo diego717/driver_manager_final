@@ -20,7 +20,7 @@
     "test:dashboard-embed": "node --test tests_js/dashboard.embed.test.mjs",
     "test:dashboard:raw": "node --test tests_js/dashboard.embed.test.mjs tests_js/dashboard.accessibility.test.mjs tests_js/dashboard.xss.unit.test.mjs tests_js/dashboard.unit.test.mjs",
     "test:dashboard": "npm run dashboard:sync-assets && npm run test:dashboard:raw",
-    "test:worker:raw": "node --test tests_js/worker.contract.test.mjs tests_js/worker/incidents.service.test.mjs tests_js/worker/pagination.test.mjs tests_js/worker/http.test.mjs tests_js/worker/auth-routes.test.mjs tests_js/worker/auth-security.test.mjs tests_js/worker/auth-session.test.mjs tests_js/worker/auth-legacy.test.mjs tests_js/worker/auth-users.test.mjs tests_js/worker/routes.test.mjs tests_js/worker/conformities.test.mjs",
+    "test:worker:raw": "node --test tests_js/worker.contract.test.mjs tests_js/worker/incidents.service.test.mjs tests_js/worker/pagination.test.mjs tests_js/worker/http.test.mjs tests_js/worker/auth-routes.test.mjs tests_js/worker/auth-security.test.mjs tests_js/worker/auth-session.test.mjs tests_js/worker/auth-legacy.test.mjs tests_js/worker/auth-users.test.mjs tests_js/worker/routes.test.mjs tests_js/worker/conformities.test.mjs tests_js/worker/budgets.test.mjs",
     "test:worker": "npm run dashboard:sync-assets && npm run test:worker:raw",
     "e2e:state:reset": "node scripts/e2e/reset-local-state.mjs",
     "e2e:db:migrate": "npx wrangler d1 migrations apply driver-manager-db --local --persist-to .wrangler/state/e2e",

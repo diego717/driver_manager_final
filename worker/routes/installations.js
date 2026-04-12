@@ -229,6 +229,8 @@ export function createInstallationsRouteHandlers({
         const payload = normalizeInstallationUpdatePayload(data);
         const updateAssignments = [];
         const bindings = [];
+        const hasCommercialClosureMode = Object.prototype.hasOwnProperty.call(payload, "commercial_closure_mode");
+        const hasCommercialClosureNote = Object.prototype.hasOwnProperty.call(payload, "commercial_closure_note");
 
         if (Object.prototype.hasOwnProperty.call(payload, "notes")) {
           updateAssignments.push("notes = ?");
@@ -237,6 +239,20 @@ export function createInstallationsRouteHandlers({
         if (Object.prototype.hasOwnProperty.call(payload, "installation_time_seconds")) {
           updateAssignments.push("installation_time_seconds = ?");
           bindings.push(payload.installation_time_seconds);
+        }
+        if (hasCommercialClosureMode) {
+          updateAssignments.push("commercial_closure_mode = ?");
+          bindings.push(payload.commercial_closure_mode);
+        }
+        if (hasCommercialClosureNote) {
+          updateAssignments.push("commercial_closure_note = ?");
+          bindings.push(payload.commercial_closure_note);
+        }
+        if (hasCommercialClosureMode || hasCommercialClosureNote) {
+          updateAssignments.push("commercial_closure_set_at = ?");
+          bindings.push(new Date().toISOString());
+          updateAssignments.push("commercial_closure_set_by = ?");
+          bindings.push(normalizeOptionalString(webSession?.sub, isWebRoute ? "web" : "api"));
         }
         if (!updateAssignments.length) {
           throw new HttpError(400, "No hay campos validos para actualizar.");
@@ -277,6 +293,8 @@ export function createInstallationsRouteHandlers({
               id: installationId,
               notes: payload.notes,
               installation_time_seconds: payload.installation_time_seconds,
+              commercial_closure_mode: payload.commercial_closure_mode,
+              commercial_closure_note: payload.commercial_closure_note,
             };
 
         await publishRealtimeEvent(env, {

@@ -345,10 +345,11 @@ test("incidents header action labels keep material icons and readable copy", asy
   assert.ok(conformityButton);
   assert.ok(backButton);
   assert.equal(createButton.querySelector(".material-symbols-outlined")?.textContent.trim(), "add_alert");
-  assert.equal(conformityButton.querySelector(".material-symbols-outlined")?.textContent.trim(), "mark_email_read");
+  assert.equal(conformityButton.querySelector(".material-symbols-outlined")?.textContent.trim(), "rule");
   assert.equal(backButton.querySelector(".material-symbols-outlined")?.textContent.trim(), "arrow_back");
   assert.match(createButton.textContent, /Abrir nueva incidencia/);
   assert.match(conformityButton.textContent, /Enviar conformidad final/);
+  assert.equal(conformityButton.disabled, true);
   assert.match(backButton.textContent, /Volver/);
   assert.equal(backButton.textContent.includes("?"), false);
 });

@@ -5,11 +5,11 @@
     "jsqr": "bc40c8a151",
     "xlsx": "1c7abf2993",
     "qr": "961179b0a2",
-    "api": "0c3f98fae4",
+    "api": "42eff6ba06",
     "geolocation": "a99f19d896",
     "scan": "eee9eb93aa",
     "modals": "6976cff499",
-    "incidents": "b9e761e562",
+    "incidents": "fb320d1bf9",
     "assets": "595d145605",
     "drivers": "107284fd17",
     "audit": "cb0cf05086",
@@ -24,6 +24,6 @@
     "manifest": "9130a5f920",
     "sw": "4c87568cf6",
     "materialSymbolsFont": "ee7248184b",
-    "build": "ce13eca341"
+    "build": "c30278a1bc"
   }
 }

@@ -2,6 +2,11 @@ export type IncidentSeverity = "low" | "medium" | "high" | "critical";
 export type IncidentSource = "desktop" | "mobile" | "web";
 export type IncidentStatus = "open" | "in_progress" | "paused" | "resolved";
 export type InstallationConformityStatus = "generated" | "emailed" | "email_failed";
+export type CommercialClosureMode =
+  | "budget_required"
+  | "warranty_included"
+  | "plan_included"
+  | "courtesy_included";
 export type GpsCaptureStatus =
   | "pending"
   | "captured"
@@ -149,6 +154,10 @@ export interface InstallationRecord {
   installation_time_seconds?: number;
   os_info?: string;
   notes?: string;
+  commercial_closure_mode?: CommercialClosureMode | string;
+  commercial_closure_note?: string;
+  commercial_closure_set_at?: string;
+  commercial_closure_set_by?: string;
   incident_open_count?: number;
   incident_in_progress_count?: number;
   incident_paused_count?: number;
@@ -168,6 +177,7 @@ export interface InstallationRecord {
 export interface InstallationConformity {
   id: number;
   installation_id: number;
+  budget_id?: number | null;
   tenant_id: string;
   signed_by_name: string;
   signed_by_document: string;
@@ -195,6 +205,7 @@ export interface CreateInstallationConformityInput {
   signed_by_name: string;
   signed_by_document?: string;
   email_to: string;
+  budget_id?: number;
   signature_data_url: string;
   summary_note?: string;
   technician_name?: string;
@@ -250,6 +261,8 @@ export interface CreateRecordResponse {
 export interface UpdateInstallationInput {
   notes?: string;
   installation_time_seconds?: number;
+  commercial_closure_mode?: CommercialClosureMode | string;
+  commercial_closure_note?: string;
 }
 
 export interface UpdateInstallationResponse {

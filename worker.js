@@ -49,6 +49,7 @@ import { createWebAuthRouteHandlers } from "./worker/auth/web.js";
 import { createWebSessionHelpers } from "./worker/auth/web-session.js";
 import { createAuditLogsRouteHandlers } from "./worker/routes/audit-logs.js";
 import { createDevicesRouteHandlers } from "./worker/routes/devices.js";
+import { createBudgetsRouteHandlers } from "./worker/routes/budgets.js";
 import { createConformitiesRouteHandlers } from "./worker/routes/conformities.js";
 import { createIncidentsRouteHandlers } from "./worker/routes/incidents.js";
 import { createInstallationsRouteHandlers } from "./worker/routes/installations.js";
@@ -98,6 +99,24 @@ import {
   resolvePublicTrackingRequest,
   revokePublicTrackingLink,
 } from "./worker/lib/public-tracking.js";
+import {
+  buildBudgetNumber,
+  buildBudgetPdfDownloadPath,
+  generateInstallationBudgetPdf,
+  listInstallationBudgets,
+  loadInstallationBudgetById,
+  loadInstallationBudgetContext,
+  loadInstallationBudgetPdfById,
+  loadLatestApprovedInstallationBudget,
+  loadLatestInstallationBudget,
+  normalizeBudgetApprovePayload,
+  normalizeBudgetCreatePayload,
+  persistInstallationBudget,
+  approveInstallationBudget,
+  updateInstallationBudgetPdfReference,
+  sendBudgetEmail,
+  storeInstallationBudgetPdf,
+} from "./worker/services/budgets.js";
 import {
   generateConformityPdf,
   loadInstallationConformityContext,
@@ -164,6 +183,12 @@ const ASSET_CLIENT_NAME_MAX_LENGTH = 180;
 const ASSET_NOTES_MAX_LENGTH = 2000;
 const ALLOWED_ASSET_STATUSES = new Set(["active", "inactive", "retired", "maintenance"]);
 const ALLOWED_INCIDENT_STATUSES = new Set(["open", "in_progress", "paused", "resolved"]);
+const ALLOWED_COMMERCIAL_CLOSURE_MODES = new Set([
+  "budget_required",
+  "warranty_included",
+  "plan_included",
+  "courtesy_included",
+]);
 const DRIVER_BRAND_MAX_LENGTH = 120;
 const DRIVER_VERSION_MAX_LENGTH = 120;
 const DRIVER_DESCRIPTION_MAX_LENGTH = 500;
@@ -510,6 +535,9 @@ function normalizeInstallationUpdatePayload(data) {
   const source = data && typeof data === "object" ? data : {};
   const hasNotes = Object.prototype.hasOwnProperty.call(source, "notes");
   const hasInstallationTime = Object.prototype.hasOwnProperty.call(source, "installation_time_seconds");
+  const hasCommercialClosureMode = Object.prototype.hasOwnProperty.call(source, "commercial_closure_mode");
+  const hasCommercialClosureNote = Object.prototype.hasOwnProperty.call(source, "commercial_closure_note");
+  const payload = {};
 
   let notes = null;
   if (hasNotes) {
@@ -522,6 +550,7 @@ function normalizeInstallationUpdatePayload(data) {
     } else {
       notes = source.notes;
     }
+    payload.notes = notes;
   }
 
   let installationTimeSeconds = null;
@@ -541,12 +570,44 @@ function normalizeInstallationUpdatePayload(data) {
         installationTimeSeconds = parsed;
       }
     }
+    payload.installation_time_seconds = installationTimeSeconds;
   }
 
-  return {
-    notes,
-    installation_time_seconds: installationTimeSeconds,
-  };
+  let commercialClosureMode = null;
+  if (hasCommercialClosureMode) {
+    const normalizedMode = normalizeOptionalString(source.commercial_closure_mode, "")
+      .trim()
+      .toLowerCase();
+    if (!normalizedMode) {
+      throw new HttpError(400, "Campo 'commercial_closure_mode' es obligatorio.");
+    }
+    if (!ALLOWED_COMMERCIAL_CLOSURE_MODES.has(normalizedMode)) {
+      throw new HttpError(400, "Campo 'commercial_closure_mode' invalido.");
+    }
+    commercialClosureMode = normalizedMode;
+    payload.commercial_closure_mode = commercialClosureMode;
+  }
+
+  let commercialClosureNote = null;
+  if (hasCommercialClosureNote) {
+    const normalizedNote = normalizeOptionalString(source.commercial_closure_note, "");
+    if (normalizedNote.length > 2000) {
+      throw new HttpError(400, "Campo 'commercial_closure_note' excede el maximo permitido (2000 caracteres).");
+    }
+    commercialClosureNote = normalizedNote;
+    payload.commercial_closure_note = commercialClosureNote;
+  }
+
+  const effectiveMode = commercialClosureMode || "budget_required";
+  const effectiveNote = commercialClosureNote === null ? "" : commercialClosureNote.trim();
+  if (effectiveMode !== "budget_required" && !effectiveNote) {
+    throw new HttpError(
+      400,
+      "Campo 'commercial_closure_note' es obligatorio cuando 'commercial_closure_mode' no requiere presupuesto.",
+    );
+  }
+
+  return payload;
 }
 
 function normalizeIncidentLifecycleStatus(value) {
@@ -5977,6 +6038,35 @@ const installationsRouteHandlers = createInstallationsRouteHandlers({
   deleteInstallationCascade,
 });
 
+const budgetsRouteHandlers = createBudgetsRouteHandlers({
+  jsonResponse,
+  corsHeaders,
+  parsePositiveInt,
+  normalizeOptionalString,
+  normalizeRealtimeTenantId,
+  requireWebWriteRole,
+  readJsonOrThrowBadRequest,
+  logAuditEvent,
+  getClientIpForRateLimit,
+  nowIso,
+  normalizeBudgetCreatePayload,
+  normalizeBudgetApprovePayload,
+  buildBudgetPdfDownloadPath,
+  buildBudgetNumber,
+  loadInstallationBudgetContext,
+  generateInstallationBudgetPdf,
+  storeInstallationBudgetPdf,
+  persistInstallationBudget,
+  listInstallationBudgets,
+  loadLatestInstallationBudget,
+  loadLatestApprovedInstallationBudget,
+  loadInstallationBudgetPdfById,
+  loadInstallationBudgetById,
+  approveInstallationBudget,
+  updateInstallationBudgetPdfReference,
+  sendBudgetEmail,
+});
+
 const conformitiesRouteHandlers = createConformitiesRouteHandlers({
   buildGpsMapsUrl,
   buildGpsMetadataSnapshot,
@@ -5999,6 +6089,8 @@ const conformitiesRouteHandlers = createConformitiesRouteHandlers({
   generateConformityPdf,
   storeConformityPdf,
   sendConformityEmail,
+  loadLatestApprovedInstallationBudget,
+  loadInstallationBudgetById,
   syncPublicTrackingSnapshotForInstallation,
 });
 
@@ -6415,6 +6507,18 @@ export default {
       );
       if (incidentPhotosResponse) {
         return incidentPhotosResponse;
+      }
+      const installationBudgetsResponse =
+        await budgetsRouteHandlers.handleInstallationBudgetsRoute(
+          request,
+          env,
+          corsPolicy,
+          routeParts,
+          isWebRoute,
+          webSession,
+        );
+      if (installationBudgetsResponse) {
+        return installationBudgetsResponse;
       }
       const installationConformityResponse =
         await conformitiesRouteHandlers.handleInstallationConformityRoute(

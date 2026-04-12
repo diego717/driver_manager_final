@@ -28,6 +28,13 @@
         const PUBLIC_TRACKING_REVOKE_ID = 'actionPublicTrackingRevokeBtn';
         const CONFORMITY_SIGNATURE_CANVAS_ID = 'actionConformitySignatureCanvas';
         const CONFORMITY_SIGNATURE_CLEAR_ID = 'actionConformitySignatureClearBtn';
+        const DEFAULT_COMMERCIAL_CLOSURE_MODE = 'budget_required';
+        const COMMERCIAL_CLOSURE_MODE_LABELS = {
+            budget_required: 'Requiere presupuesto',
+            warranty_included: 'Garantia incluida',
+            plan_included: 'Servicio mensual incluido',
+            courtesy_included: 'Cortesia comercial',
+        };
         let currentConformitySignaturePad = null;
         const INCIDENT_MAP_DEFAULT_DAYS = '30';
         const INCIDENT_MAP_DEFAULT_LIMIT = 240;
@@ -2063,6 +2070,73 @@
             return date.toLocaleString('es-ES');
         }
 
+        function formatBudgetGeneratedAt(value) {
+            const date = value ? new Date(value) : null;
+            if (!date || Number.isNaN(date.getTime())) return 'Sin fecha';
+            return date.toLocaleString('es-ES');
+        }
+
+        function formatBudgetApprovalStatusLabel(status) {
+            const normalized = String(status || '').trim().toLowerCase();
+            if (normalized === 'approved') return 'Aprobado';
+            if (normalized === 'superseded') return 'Reemplazado';
+            if (normalized === 'rejected') return 'Rechazado';
+            return 'Pendiente';
+        }
+
+        function formatBudgetDeliveryStatusLabel(status) {
+            const normalized = String(status || '').trim().toLowerCase();
+            if (normalized === 'emailed') return 'Email enviado';
+            if (normalized === 'email_failed') return 'Email con error';
+            return 'Generado';
+        }
+
+        function normalizeCommercialClosureMode(value) {
+            const normalized = String(value || DEFAULT_COMMERCIAL_CLOSURE_MODE).trim().toLowerCase();
+            if (!normalized) return DEFAULT_COMMERCIAL_CLOSURE_MODE;
+            if (Object.prototype.hasOwnProperty.call(COMMERCIAL_CLOSURE_MODE_LABELS, normalized)) {
+                return normalized;
+            }
+            return DEFAULT_COMMERCIAL_CLOSURE_MODE;
+        }
+
+        function isBudgetRequiredForCommercialClosure(mode) {
+            return normalizeCommercialClosureMode(mode) === DEFAULT_COMMERCIAL_CLOSURE_MODE;
+        }
+
+        function formatCommercialClosureModeLabel(mode) {
+            const normalized = normalizeCommercialClosureMode(mode);
+            return COMMERCIAL_CLOSURE_MODE_LABELS[normalized] || COMMERCIAL_CLOSURE_MODE_LABELS[DEFAULT_COMMERCIAL_CLOSURE_MODE];
+        }
+
+        function resolveInstallationCommercialClosure(installation) {
+            const mode = normalizeCommercialClosureMode(installation?.commercial_closure_mode);
+            return {
+                mode,
+                label: formatCommercialClosureModeLabel(mode),
+                note: String(installation?.commercial_closure_note || '').trim(),
+                setAt: String(installation?.commercial_closure_set_at || '').trim(),
+                setBy: String(installation?.commercial_closure_set_by || '').trim(),
+                requiresApprovedBudget: isBudgetRequiredForCommercialClosure(mode),
+            };
+        }
+
+        function formatCurrencyFromCents(centsCandidate, currencyCode = 'UYU') {
+            const cents = Number.parseInt(String(centsCandidate ?? '0'), 10);
+            const safeCents = Number.isInteger(cents) ? cents : 0;
+            const normalizedCurrency = String(currencyCode || 'UYU').trim().toUpperCase() || 'UYU';
+            try {
+                return new Intl.NumberFormat('es-UY', {
+                    style: 'currency',
+                    currency: normalizedCurrency,
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                }).format(safeCents / 100);
+            } catch {
+                return `${normalizedCurrency} ${(safeCents / 100).toFixed(2)}`;
+            }
+        }
+
         function createConformityStatusChip(label, tone = 'neutral') {
             const chip = document.createElement('span');
             chip.className = 'incident-highlight-chip';
@@ -2078,7 +2152,12 @@
                 : `${count} incidencia${count === 1 ? '' : 's'} activa${count === 1 ? '' : 's'}`;
         }
 
-        function resolveClosureBannerState(activeIncidentCount, latestConformityStatus = '') {
+        function resolveClosureBannerState(
+            activeIncidentCount,
+            latestConformityStatus = '',
+            hasApprovedBudget = false,
+            requiresApprovedBudget = true,
+        ) {
             const count = Math.max(0, Number(activeIncidentCount) || 0);
             const latestStatus = String(latestConformityStatus || '').trim().toLowerCase();
             if (count > 0) {
@@ -2087,6 +2166,14 @@
                     eyebrow: 'En atencion',
                     title: 'Caso en atencion operativa',
                     description: 'Todavia hay incidencias activas. Resuelvelas antes de emitir la conformidad final.',
+                };
+            }
+            if (requiresApprovedBudget && !hasApprovedBudget) {
+                return {
+                    tone: 'warning',
+                    eyebrow: 'Presupuesto pendiente',
+                    title: 'Falta presupuesto aprobado',
+                    description: 'No quedan incidencias activas, pero debes aprobar el ultimo presupuesto antes de emitir la conformidad final.',
                 };
             }
             if (latestStatus === 'emailed') {
@@ -2117,13 +2204,26 @@
                 tone: 'resolved',
                 eyebrow: 'Listo para cierre',
                 title: 'Caso listo para conformidad',
-                description: 'No quedan incidencias activas. Genera la conformidad final y envia el PDF desde aqui.',
+                description: requiresApprovedBudget
+                    ? 'No quedan incidencias activas. Genera la conformidad final y envia el PDF desde aqui.'
+                    : 'No quedan incidencias activas. Este caso tiene cobertura comercial y puede cerrarse sin presupuesto.',
             };
         }
 
-        function applyClosureBannerState(banner, activeIncidentCount, latestConformityStatus = '') {
+        function applyClosureBannerState(
+            banner,
+            activeIncidentCount,
+            latestConformityStatus = '',
+            hasApprovedBudget = false,
+            requiresApprovedBudget = true,
+        ) {
             if (!(banner instanceof HTMLElement)) return;
-            const state = resolveClosureBannerState(activeIncidentCount, latestConformityStatus);
+            const state = resolveClosureBannerState(
+                activeIncidentCount,
+                latestConformityStatus,
+                hasApprovedBudget,
+                requiresApprovedBudget,
+            );
             banner.dataset.tone = state.tone;
 
             const eyebrow = banner.querySelector('[data-role="closure-banner-eyebrow"]');
@@ -2142,15 +2242,30 @@
             }
         }
 
-        function applyConformityButtonState(button, activeIncidentCount) {
+        function applyConformityButtonState(
+            button,
+            activeIncidentCount,
+            hasApprovedBudget = false,
+            requiresApprovedBudget = true,
+        ) {
             if (!(button instanceof HTMLButtonElement)) return;
             const count = Math.max(0, Number(activeIncidentCount) || 0);
+            const canSendConformity = count === 0 && (requiresApprovedBudget !== true || hasApprovedBudget === true);
+            const shouldDisable = count === 0 && requiresApprovedBudget === true && hasApprovedBudget !== true;
             button.dataset.activeIncidentCount = String(count);
-            button.className = count === 0 ? 'btn-primary' : 'btn-secondary';
-            const iconName = count === 0 ? 'mark_email_read' : 'rule';
+            button.className = canSendConformity ? 'btn-primary' : 'btn-secondary';
+            const iconName = canSendConformity ? 'mark_email_read' : 'rule';
             const label = count === 0
                 ? 'Enviar conformidad final'
                 : 'Revisar incidencias antes de cerrar';
+            button.disabled = shouldDisable;
+            if (count > 0) {
+                button.title = 'Debes resolver todas las incidencias activas antes de emitir la conformidad.';
+            } else if (requiresApprovedBudget && !hasApprovedBudget) {
+                button.title = 'Debes aprobar el ultimo presupuesto para emitir la conformidad.';
+            } else {
+                button.removeAttribute('title');
+            }
             const icon = options.createMaterialIconNode(iconName);
             if (icon) {
                 button.replaceChildren(icon, document.createTextNode(` ${label}`));
@@ -2194,6 +2309,8 @@
 
             header.dataset.activeIncidentCount = String(activeIncidentCount);
             const latestConformityStatus = String(header.dataset.latestConformityStatus || '').trim().toLowerCase();
+            const hasApprovedBudget = String(header.dataset.hasApprovedBudget || '').trim() === '1';
+            const requiresApprovedBudget = String(header.dataset.requiresApprovedBudget || '').trim() !== '0';
 
             const summaryChip = header.querySelector('[data-role="active-incidents-chip"]');
             if (summaryChip instanceof HTMLElement) {
@@ -2203,12 +2320,23 @@
 
             const closureBanner = header.querySelector('[data-role="closure-banner"]');
             if (closureBanner instanceof HTMLElement) {
-                applyClosureBannerState(closureBanner, activeIncidentCount, latestConformityStatus);
+                applyClosureBannerState(
+                    closureBanner,
+                    activeIncidentCount,
+                    latestConformityStatus,
+                    hasApprovedBudget,
+                    requiresApprovedBudget,
+                );
             }
 
             const conformityButton = header.querySelector('[data-role="conformity-trigger"]');
             if (conformityButton instanceof HTMLButtonElement) {
-                applyConformityButtonState(conformityButton, activeIncidentCount);
+                applyConformityButtonState(
+                    conformityButton,
+                    activeIncidentCount,
+                    hasApprovedBudget,
+                    requiresApprovedBudget,
+                );
             }
 
             const createIncidentButton = header.querySelector('[data-role="create-incident-trigger"]');
@@ -2221,6 +2349,10 @@
             installationId,
             activeIncidentCount,
             latestConformity,
+            latestApprovedBudget,
+            requiresApprovedBudget = true,
+            commercialClosureMode = DEFAULT_COMMERCIAL_CLOSURE_MODE,
+            commercialClosureNote = '',
         }) {
             const fragment = document.createDocumentFragment();
             const grid = document.createElement('div');
@@ -2232,7 +2364,9 @@
             summaryTitle.textContent = `Registro #${installationId}`;
             const summaryBody = document.createElement('p');
             summaryBody.textContent = activeIncidentCount === 0
-                ? 'No quedan incidencias activas. El caso esta listo para emitir la conformidad final y enviar el PDF por email.'
+                ? requiresApprovedBudget
+                    ? 'No quedan incidencias activas. El caso esta listo para emitir la conformidad final y enviar el PDF por email.'
+                    : 'No quedan incidencias activas. Este caso tiene cobertura comercial y puede cerrarse sin presupuesto.'
                 : `Todavia hay ${activeIncidentCount} incidencia${activeIncidentCount === 1 ? '' : 's'} activa${activeIncidentCount === 1 ? '' : 's'}.`;
             const summaryMeta = document.createElement('div');
             summaryMeta.className = 'conformity-modal-meta';
@@ -2247,6 +2381,21 @@
                     createConformityStatusChip(
                         `Ultima: ${formatConformityStatusLabel(latestConformity.status)}`,
                         latestConformity.status === 'emailed' ? 'resolved' : latestConformity.status === 'email_failed' ? 'high' : 'info',
+                    ),
+                );
+            }
+            if (latestApprovedBudget) {
+                summaryMeta.appendChild(
+                    createConformityStatusChip(
+                        `Presupuesto: ${latestApprovedBudget.budget_number || `#${latestApprovedBudget.id}`}`,
+                        'info',
+                    ),
+                );
+            } else if (!requiresApprovedBudget) {
+                summaryMeta.appendChild(
+                    createConformityStatusChip(
+                        `Cobertura: ${formatCommercialClosureModeLabel(commercialClosureMode)}`,
+                        'resolved',
                     ),
                 );
             }
@@ -2271,6 +2420,44 @@
                     latestWrap.appendChild(latestLink);
                 }
                 grid.appendChild(latestWrap);
+            }
+
+            if (latestApprovedBudget) {
+                const budgetWrap = document.createElement('div');
+                budgetWrap.className = 'conformity-modal-latest';
+                const budgetTitle = document.createElement('strong');
+                budgetTitle.textContent = 'Presupuesto asociado';
+                const budgetBody = document.createElement('p');
+                budgetBody.textContent = [
+                    latestApprovedBudget.budget_number || `#${latestApprovedBudget.id}`,
+                    formatBudgetApprovalStatusLabel(latestApprovedBudget.approval_status),
+                    formatCurrencyFromCents(
+                        latestApprovedBudget.total_amount_cents,
+                        latestApprovedBudget.currency_code || 'UYU',
+                    ),
+                ].filter(Boolean).join(' · ');
+                budgetWrap.append(budgetTitle, budgetBody);
+                if (latestApprovedBudget.pdf_download_path) {
+                    const budgetLink = document.createElement('a');
+                    budgetLink.href = latestApprovedBudget.pdf_download_path;
+                    budgetLink.target = '_blank';
+                    budgetLink.rel = 'noreferrer';
+                    budgetLink.className = 'conformity-modal-link';
+                    budgetLink.textContent = 'Ver presupuesto aprobado';
+                    budgetWrap.appendChild(budgetLink);
+                }
+                grid.appendChild(budgetWrap);
+            } else if (!requiresApprovedBudget) {
+                const coverageWrap = document.createElement('div');
+                coverageWrap.className = 'conformity-modal-latest';
+                const coverageTitle = document.createElement('strong');
+                coverageTitle.textContent = 'Cobertura comercial';
+                const coverageBody = document.createElement('p');
+                const modeLabel = formatCommercialClosureModeLabel(commercialClosureMode);
+                const note = String(commercialClosureNote || '').trim();
+                coverageBody.textContent = note ? `${modeLabel} Â· ${note}` : modeLabel;
+                coverageWrap.append(coverageTitle, coverageBody);
+                grid.appendChild(coverageWrap);
             }
 
             const nameInput = document.createElement('input');
@@ -2512,6 +2699,14 @@
             }
 
             const activeIncidentCount = Math.max(0, Number(config.activeIncidentCount) || 0);
+            const commercialClosureMode = normalizeCommercialClosureMode(
+                config.commercialClosureMode || DEFAULT_COMMERCIAL_CLOSURE_MODE,
+            );
+            const commercialClosureNote = String(config.commercialClosureNote || '').trim();
+            const requiresApprovedBudget =
+                config.requiresApprovedBudget === true
+                    || (config.requiresApprovedBudget !== false
+                        && isBudgetRequiredForCommercialClosure(commercialClosureMode));
             if (activeIncidentCount > 0) {
                 options.showNotification('Primero resuelve las incidencias activas antes de emitir la conformidad.', 'warning');
                 return;
@@ -2526,10 +2721,24 @@
                     latestConformity = null;
                 }
             }
+            let latestApprovedBudget = config.latestApprovedBudget || null;
+            if (!latestApprovedBudget) {
+                try {
+                    const budgetState = await options.api.getInstallationBudgetLatest(targetInstallationId);
+                    latestApprovedBudget = budgetState?.latest_approved_budget || null;
+                } catch {
+                    latestApprovedBudget = null;
+                }
+            }
+            if (!latestApprovedBudget) {
+                if (requiresApprovedBudget) {
+                    options.showNotification('Debes aprobar el ultimo presupuesto para emitir la conformidad.', 'warning');
+                    return;
+                }
+            }
 
             let gpsController = null;
             let latestGpsSnapshot = null;
-            const targetInstallation = options.getInstallationById?.(targetInstallationId) || null;
 
             function syncConformityGpsOverrideUi(snapshot, state = {}) {
                 latestGpsSnapshot = snapshot && typeof snapshot === 'object'
@@ -2565,6 +2774,10 @@
                     installationId: targetInstallationId,
                     activeIncidentCount,
                     latestConformity,
+                    latestApprovedBudget,
+                    requiresApprovedBudget,
+                    commercialClosureMode,
+                    commercialClosureNote,
                 }),
                 onSubmit: async () => {
                     const signedByName = String(document.getElementById('actionConformitySignedByName')?.value || '').trim();
@@ -2607,7 +2820,7 @@
                         };
                     }
 
-                    const result = await options.api.createInstallationConformity(targetInstallationId, {
+                    const conformityPayload = {
                         signed_by_name: signedByName,
                         signed_by_document: signedByDocument,
                         email_to: emailTo,
@@ -2618,7 +2831,15 @@
                         include_all_incident_photos: true,
                         send_email: sendEmail,
                         gps: gpsPayload,
-                    });
+                    };
+                    if (requiresApprovedBudget && latestApprovedBudget?.id) {
+                        conformityPayload.budget_id = latestApprovedBudget.id;
+                    }
+
+                    const result = await options.api.createInstallationConformity(
+                        targetInstallationId,
+                        conformityPayload,
+                    );
 
                     options.closeActionModal(true);
                     const conformityId = options.parseStrictInteger(result?.conformity?.id);
@@ -2669,6 +2890,488 @@
                     }
                 });
             }
+        }
+
+        function parseCurrencyAmountToCents(rawValue) {
+            const normalized = String(rawValue || '')
+                .trim()
+                .replace(/\s+/g, '')
+                .replace(',', '.');
+            if (!normalized) return 0;
+            if (!/^-?\d+(\.\d{1,2})?$/.test(normalized)) {
+                return NaN;
+            }
+            const numericValue = Number(normalized);
+            if (!Number.isFinite(numericValue)) return NaN;
+            return Math.round(numericValue * 100);
+        }
+
+        function buildInstallationBudgetFields({
+            installationId,
+            latestBudget,
+            latestApprovedBudget,
+        }) {
+            const fragment = document.createDocumentFragment();
+            const grid = document.createElement('div');
+            grid.className = 'action-modal-grid';
+
+            const summaryWrap = document.createElement('div');
+            summaryWrap.className = 'conformity-modal-summary';
+            const summaryTitle = document.createElement('strong');
+            summaryTitle.textContent = `Registro #${installationId}`;
+            const summaryBody = document.createElement('p');
+            summaryBody.textContent = 'Define alcance y costos del presupuesto antes de la conformidad final.';
+            const summaryMeta = document.createElement('div');
+            summaryMeta.className = 'conformity-modal-meta';
+            if (latestBudget) {
+                summaryMeta.appendChild(
+                    createConformityStatusChip(
+                        `Ultimo: ${latestBudget.budget_number || `#${latestBudget.id}`}`,
+                        'info',
+                    ),
+                );
+                summaryMeta.appendChild(
+                    createConformityStatusChip(
+                        formatBudgetApprovalStatusLabel(latestBudget.approval_status),
+                        latestBudget.approval_status === 'approved' ? 'resolved' : 'warning',
+                    ),
+                );
+            } else {
+                summaryMeta.appendChild(createConformityStatusChip('Sin presupuesto previo', 'neutral'));
+            }
+            if (latestApprovedBudget) {
+                summaryMeta.appendChild(
+                    createConformityStatusChip(
+                        `Aprobado: ${latestApprovedBudget.budget_number || `#${latestApprovedBudget.id}`}`,
+                        'resolved',
+                    ),
+                );
+            }
+            summaryWrap.append(summaryTitle, summaryBody, summaryMeta);
+            grid.appendChild(summaryWrap);
+
+            const incidenceInput = document.createElement('textarea');
+            incidenceInput.id = 'actionBudgetIncidenceSummary';
+            incidenceInput.rows = 3;
+            incidenceInput.value = String(latestBudget?.incidence_summary || '').trim();
+            incidenceInput.placeholder = 'Descripcion de la incidencia detectada';
+            grid.appendChild(createInputGroup('Incidencia', incidenceInput, {
+                htmlFor: incidenceInput.id,
+                className: 'full-width',
+            }));
+
+            const includedInput = document.createElement('textarea');
+            includedInput.id = 'actionBudgetScopeIncluded';
+            includedInput.rows = 4;
+            includedInput.value = String(latestBudget?.scope_included || '').trim();
+            includedInput.placeholder = 'Tareas incluidas';
+            grid.appendChild(createInputGroup('Alcance incluido', includedInput, {
+                htmlFor: includedInput.id,
+                className: 'full-width',
+            }));
+
+            const excludedInput = document.createElement('textarea');
+            excludedInput.id = 'actionBudgetScopeExcluded';
+            excludedInput.rows = 3;
+            excludedInput.value = String(latestBudget?.scope_excluded || '').trim();
+            excludedInput.placeholder = 'Exclusiones del presupuesto';
+            grid.appendChild(createInputGroup('Exclusiones', excludedInput, {
+                htmlFor: excludedInput.id,
+                className: 'full-width',
+            }));
+
+            const laborInput = document.createElement('input');
+            laborInput.type = 'text';
+            laborInput.id = 'actionBudgetLaborAmount';
+            laborInput.value = String(
+                Number.isFinite((Number(latestBudget?.labor_amount_cents) || 0) / 100)
+                    ? ((Number(latestBudget?.labor_amount_cents) || 0) / 100).toFixed(2)
+                    : '0.00',
+            );
+            laborInput.placeholder = '0.00';
+            grid.appendChild(createInputGroup('Mano de obra', laborInput, { htmlFor: laborInput.id }));
+
+            const partsInput = document.createElement('input');
+            partsInput.type = 'text';
+            partsInput.id = 'actionBudgetPartsAmount';
+            partsInput.value = String(
+                Number.isFinite((Number(latestBudget?.parts_amount_cents) || 0) / 100)
+                    ? ((Number(latestBudget?.parts_amount_cents) || 0) / 100).toFixed(2)
+                    : '0.00',
+            );
+            partsInput.placeholder = '0.00';
+            grid.appendChild(createInputGroup('Repuestos/insumos', partsInput, { htmlFor: partsInput.id }));
+
+            const taxInput = document.createElement('input');
+            taxInput.type = 'text';
+            taxInput.id = 'actionBudgetTaxAmount';
+            taxInput.value = String(
+                Number.isFinite((Number(latestBudget?.tax_amount_cents) || 0) / 100)
+                    ? ((Number(latestBudget?.tax_amount_cents) || 0) / 100).toFixed(2)
+                    : '0.00',
+            );
+            taxInput.placeholder = '0.00';
+            grid.appendChild(createInputGroup('Impuestos', taxInput, { htmlFor: taxInput.id }));
+
+            const currencyInput = document.createElement('input');
+            currencyInput.type = 'text';
+            currencyInput.id = 'actionBudgetCurrencyCode';
+            currencyInput.maxLength = 3;
+            currencyInput.autocomplete = 'off';
+            currencyInput.value = String(latestBudget?.currency_code || 'UYU').trim().toUpperCase() || 'UYU';
+            grid.appendChild(createInputGroup('Moneda', currencyInput, { htmlFor: currencyInput.id }));
+
+            const estimatedDaysInput = document.createElement('input');
+            estimatedDaysInput.type = 'number';
+            estimatedDaysInput.id = 'actionBudgetEstimatedDays';
+            estimatedDaysInput.min = '0';
+            estimatedDaysInput.step = '1';
+            estimatedDaysInput.value =
+                latestBudget?.estimated_days === null || latestBudget?.estimated_days === undefined
+                    ? ''
+                    : String(latestBudget.estimated_days);
+            estimatedDaysInput.placeholder = 'Dias estimados';
+            grid.appendChild(createInputGroup('Plazo (dias)', estimatedDaysInput, { htmlFor: estimatedDaysInput.id }));
+
+            const validUntilInput = document.createElement('input');
+            validUntilInput.type = 'date';
+            validUntilInput.id = 'actionBudgetValidUntil';
+            validUntilInput.value = String(latestBudget?.valid_until || '').trim();
+            grid.appendChild(createInputGroup('Validez hasta', validUntilInput, { htmlFor: validUntilInput.id }));
+
+            const emailInput = document.createElement('input');
+            emailInput.type = 'email';
+            emailInput.id = 'actionBudgetEmailTo';
+            emailInput.autocomplete = 'email';
+            emailInput.value = String(latestBudget?.email_to || '').trim();
+            emailInput.placeholder = 'cliente@empresa.com';
+            grid.appendChild(createInputGroup('Email destino', emailInput, {
+                htmlFor: emailInput.id,
+                className: 'full-width',
+            }));
+
+            const sendEmailWrap = document.createElement('label');
+            sendEmailWrap.className = 'action-checkbox full-width';
+            const sendEmailInput = document.createElement('input');
+            sendEmailInput.type = 'checkbox';
+            sendEmailInput.id = 'actionBudgetSendEmail';
+            sendEmailInput.checked = true;
+            const sendEmailText = document.createElement('span');
+            sendEmailText.textContent = 'Enviar email al generar el presupuesto';
+            sendEmailWrap.append(sendEmailInput, sendEmailText);
+            grid.appendChild(sendEmailWrap);
+
+            fragment.appendChild(grid);
+            return fragment;
+        }
+
+        function buildInstallationBudgetApprovalFields({ budget }) {
+            const fragment = document.createDocumentFragment();
+            const grid = document.createElement('div');
+            grid.className = 'action-modal-grid';
+
+            const summaryWrap = document.createElement('div');
+            summaryWrap.className = 'conformity-modal-summary';
+            const summaryTitle = document.createElement('strong');
+            summaryTitle.textContent = `Presupuesto ${budget?.budget_number || `#${budget?.id || '-'}`}`;
+            const summaryBody = document.createElement('p');
+            summaryBody.textContent = [
+                formatBudgetApprovalStatusLabel(budget?.approval_status),
+                formatBudgetDeliveryStatusLabel(budget?.delivery_status),
+                formatCurrencyFromCents(budget?.total_amount_cents, budget?.currency_code || 'UYU'),
+            ].filter(Boolean).join(' · ');
+            summaryWrap.append(summaryTitle, summaryBody);
+            grid.appendChild(summaryWrap);
+
+            const approvedByInput = document.createElement('input');
+            approvedByInput.type = 'text';
+            approvedByInput.id = 'actionBudgetApprovedByName';
+            approvedByInput.autocomplete = 'off';
+            approvedByInput.value = String(options.getCurrentUser?.()?.username || '').trim();
+            approvedByInput.placeholder = 'Nombre de quien aprueba';
+            grid.appendChild(createInputGroup('Aprobado por', approvedByInput, { htmlFor: approvedByInput.id }));
+
+            const channelSelect = document.createElement('select');
+            channelSelect.id = 'actionBudgetApprovedByChannel';
+            channelSelect.appendChild(new Option('Email', 'email'));
+            channelSelect.appendChild(new Option('WhatsApp', 'whatsapp'));
+            channelSelect.appendChild(new Option('Firma', 'firma'));
+            channelSelect.appendChild(new Option('Telefono', 'telefono'));
+            channelSelect.appendChild(new Option('Otro', 'otro'));
+            grid.appendChild(createInputGroup('Canal', channelSelect, { htmlFor: channelSelect.id }));
+
+            const noteInput = document.createElement('textarea');
+            noteInput.id = 'actionBudgetApprovalNote';
+            noteInput.rows = 3;
+            noteInput.placeholder = 'Nota opcional de aprobacion';
+            grid.appendChild(createInputGroup('Nota', noteInput, {
+                htmlFor: noteInput.id,
+                className: 'full-width',
+            }));
+
+            fragment.appendChild(grid);
+            return fragment;
+        }
+
+        async function openInstallationBudgetModal(installationId, config = {}) {
+            if (!options.requireActiveSession()) return;
+            const targetInstallationId = options.parseStrictInteger(installationId);
+            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
+                options.showNotification('installation_id invalido para crear presupuesto.', 'error');
+                return;
+            }
+
+            let budgetState = config.budgetState || null;
+            if (!budgetState) {
+                try {
+                    budgetState = await options.api.getInstallationBudgetLatest(targetInstallationId);
+                } catch {
+                    budgetState = null;
+                }
+            }
+            const latestBudget = budgetState?.latest_budget || null;
+            const latestApprovedBudget = budgetState?.latest_approved_budget || null;
+
+            options.openActionModal({
+                title: `Presupuesto del registro #${targetInstallationId}`,
+                subtitle: 'Genera un presupuesto separado y dejalo listo para aprobacion del cliente.',
+                submitLabel: 'Generar presupuesto',
+                focusId: 'actionBudgetIncidenceSummary',
+                fields: buildInstallationBudgetFields({
+                    installationId: targetInstallationId,
+                    latestBudget,
+                    latestApprovedBudget,
+                }),
+                onSubmit: async () => {
+                    const incidenceSummary = String(document.getElementById('actionBudgetIncidenceSummary')?.value || '').trim();
+                    const scopeIncluded = String(document.getElementById('actionBudgetScopeIncluded')?.value || '').trim();
+                    const scopeExcluded = String(document.getElementById('actionBudgetScopeExcluded')?.value || '').trim();
+                    const laborAmountCents = parseCurrencyAmountToCents(document.getElementById('actionBudgetLaborAmount')?.value);
+                    const partsAmountCents = parseCurrencyAmountToCents(document.getElementById('actionBudgetPartsAmount')?.value);
+                    const taxAmountCents = parseCurrencyAmountToCents(document.getElementById('actionBudgetTaxAmount')?.value);
+                    const currencyCode = String(document.getElementById('actionBudgetCurrencyCode')?.value || 'UYU')
+                        .trim()
+                        .toUpperCase();
+                    const estimatedDaysRaw = String(document.getElementById('actionBudgetEstimatedDays')?.value || '').trim();
+                    const validUntil = String(document.getElementById('actionBudgetValidUntil')?.value || '').trim();
+                    const emailTo = String(document.getElementById('actionBudgetEmailTo')?.value || '').trim();
+                    const sendEmail = document.getElementById('actionBudgetSendEmail')?.checked === true;
+
+                    if (!incidenceSummary) {
+                        options.setActionModalError('Debes describir la incidencia.');
+                        return;
+                    }
+                    if (!scopeIncluded) {
+                        options.setActionModalError('Debes describir el alcance incluido.');
+                        return;
+                    }
+                    if (!Number.isInteger(laborAmountCents) || laborAmountCents < 0) {
+                        options.setActionModalError('Monto invalido en mano de obra.');
+                        return;
+                    }
+                    if (!Number.isInteger(partsAmountCents) || partsAmountCents < 0) {
+                        options.setActionModalError('Monto invalido en repuestos/insumos.');
+                        return;
+                    }
+                    if (!Number.isInteger(taxAmountCents) || taxAmountCents < 0) {
+                        options.setActionModalError('Monto invalido en impuestos.');
+                        return;
+                    }
+                    if (!/^[A-Z]{3}$/.test(currencyCode)) {
+                        options.setActionModalError('Moneda invalida. Usa codigo ISO de 3 letras (ej: UYU).');
+                        return;
+                    }
+                    let estimatedDays = null;
+                    if (estimatedDaysRaw) {
+                        estimatedDays = Number.parseInt(estimatedDaysRaw, 10);
+                        if (!Number.isInteger(estimatedDays) || estimatedDays < 0) {
+                            options.setActionModalError('Plazo invalido. Usa un numero entero de dias.');
+                            return;
+                        }
+                    }
+
+                    const result = await options.api.createInstallationBudget(targetInstallationId, {
+                        incidence_summary: incidenceSummary,
+                        scope_included: scopeIncluded,
+                        scope_excluded: scopeExcluded,
+                        labor_amount_cents: laborAmountCents,
+                        parts_amount_cents: partsAmountCents,
+                        tax_amount_cents: taxAmountCents,
+                        currency_code: currencyCode,
+                        estimated_days: estimatedDays,
+                        valid_until: validUntil || null,
+                        email_to: emailTo,
+                        send_email: sendEmail,
+                    });
+
+                    options.closeActionModal(true);
+                    const budgetNumber = String(result?.budget?.budget_number || `#${result?.budget?.id || '-'}`).trim();
+                    options.showNotification(`Presupuesto ${budgetNumber} generado.`, 'success');
+                    runIncidentRefreshInBackground(
+                        { installationId: targetInstallationId },
+                        'El presupuesto se genero, pero no pudimos refrescar la vista.',
+                    );
+                },
+            });
+        }
+
+        async function openInstallationBudgetApprovalModal(installationId, budget) {
+            if (!options.requireActiveSession()) return;
+            const targetInstallationId = options.parseStrictInteger(installationId);
+            const targetBudgetId = options.parseStrictInteger(budget?.id);
+            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
+                options.showNotification('installation_id invalido para aprobar presupuesto.', 'error');
+                return;
+            }
+            if (!Number.isInteger(targetBudgetId) || targetBudgetId <= 0) {
+                options.showNotification('budget_id invalido para aprobar presupuesto.', 'error');
+                return;
+            }
+
+            options.openActionModal({
+                title: `Aprobar presupuesto #${targetBudgetId}`,
+                subtitle: 'Registra aprobacion del cliente para habilitar la conformidad final.',
+                submitLabel: 'Registrar aprobacion',
+                focusId: 'actionBudgetApprovedByName',
+                fields: buildInstallationBudgetApprovalFields({ budget }),
+                onSubmit: async () => {
+                    const approvedByName = String(document.getElementById('actionBudgetApprovedByName')?.value || '').trim();
+                    const approvedByChannel = String(document.getElementById('actionBudgetApprovedByChannel')?.value || '').trim().toLowerCase();
+                    const approvalNote = String(document.getElementById('actionBudgetApprovalNote')?.value || '').trim();
+
+                    if (!approvedByName) {
+                        options.setActionModalError('El nombre de quien aprueba es obligatorio.');
+                        return;
+                    }
+                    if (!approvedByChannel) {
+                        options.setActionModalError('Debes indicar un canal de aprobacion.');
+                        return;
+                    }
+
+                    const result = await options.api.approveInstallationBudget(
+                        targetInstallationId,
+                        targetBudgetId,
+                        {
+                            approved_by_name: approvedByName,
+                            approved_by_channel: approvedByChannel,
+                            approval_note: approvalNote,
+                        },
+                    );
+                    options.closeActionModal(true);
+                    const budgetNumber = String(result?.budget?.budget_number || `#${targetBudgetId}`).trim();
+                    options.showNotification(`Presupuesto ${budgetNumber} aprobado.`, 'success');
+                    runIncidentRefreshInBackground(
+                        { installationId: targetInstallationId },
+                        'La aprobacion se registro, pero no pudimos refrescar la vista.',
+                    );
+                },
+            });
+        }
+
+        function buildInstallationCommercialClosureFields({ installationId, commercialClosure }) {
+            const fragment = document.createDocumentFragment();
+            const grid = document.createElement('div');
+            grid.className = 'action-modal-grid';
+
+            const summaryWrap = document.createElement('div');
+            summaryWrap.className = 'conformity-modal-summary';
+            const summaryTitle = document.createElement('strong');
+            summaryTitle.textContent = `Registro #${installationId}`;
+            const summaryBody = document.createElement('p');
+            summaryBody.textContent = 'Define si este caso requiere presupuesto aprobado antes de la conformidad final.';
+            const summaryMeta = document.createElement('div');
+            summaryMeta.className = 'conformity-modal-meta';
+            summaryMeta.appendChild(
+                createConformityStatusChip(
+                    `Actual: ${commercialClosure.label}`,
+                    commercialClosure.requiresApprovedBudget ? 'warning' : 'resolved',
+                ),
+            );
+            if (commercialClosure.setBy || commercialClosure.setAt) {
+                const setByText = commercialClosure.setBy ? `por ${commercialClosure.setBy}` : '';
+                const setAtText = commercialClosure.setAt
+                    ? `el ${new Date(commercialClosure.setAt).toLocaleString('es-ES')}`
+                    : '';
+                summaryMeta.appendChild(
+                    createConformityStatusChip(
+                        [setByText, setAtText].filter(Boolean).join(' ') || 'Configuracion registrada',
+                        'neutral',
+                    ),
+                );
+            }
+            summaryWrap.append(summaryTitle, summaryBody, summaryMeta);
+            grid.appendChild(summaryWrap);
+
+            const modeSelect = document.createElement('select');
+            modeSelect.id = 'actionCommercialClosureMode';
+            Object.entries(COMMERCIAL_CLOSURE_MODE_LABELS).forEach(([value, label]) => {
+                modeSelect.appendChild(new Option(label, value, value === commercialClosure.mode, value === commercialClosure.mode));
+            });
+            grid.appendChild(createInputGroup('Cobertura comercial', modeSelect, { htmlFor: modeSelect.id }));
+
+            const noteInput = document.createElement('textarea');
+            noteInput.id = 'actionCommercialClosureNote';
+            noteInput.rows = 3;
+            noteInput.placeholder = 'Justificacion comercial (obligatoria cuando no requiere presupuesto).';
+            noteInput.value = commercialClosure.note || '';
+            grid.appendChild(createInputGroup('Motivo comercial', noteInput, {
+                htmlFor: noteInput.id,
+                className: 'full-width',
+            }));
+
+            fragment.appendChild(grid);
+            return fragment;
+        }
+
+        async function openInstallationCommercialClosureModal(installationId, config = {}) {
+            if (!options.requireActiveSession()) return;
+            const targetInstallationId = options.parseStrictInteger(installationId);
+            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
+                options.showNotification('installation_id invalido para configurar cobertura.', 'error');
+                return;
+            }
+
+            const targetInstallation = config.installation || options.getInstallationById?.(targetInstallationId) || null;
+            const commercialClosure = resolveInstallationCommercialClosure(targetInstallation);
+
+            options.openActionModal({
+                title: `Cobertura comercial #${targetInstallationId}`,
+                subtitle: 'Controla si la conformidad final requiere presupuesto aprobado.',
+                submitLabel: 'Guardar cobertura',
+                focusId: 'actionCommercialClosureMode',
+                fields: buildInstallationCommercialClosureFields({
+                    installationId: targetInstallationId,
+                    commercialClosure,
+                }),
+                onSubmit: async () => {
+                    const mode = normalizeCommercialClosureMode(
+                        document.getElementById('actionCommercialClosureMode')?.value,
+                    );
+                    const note = String(document.getElementById('actionCommercialClosureNote')?.value || '').trim();
+                    if (mode !== DEFAULT_COMMERCIAL_CLOSURE_MODE && !note) {
+                        options.setActionModalError('Debes registrar el motivo comercial para cerrar sin presupuesto.');
+                        return;
+                    }
+
+                    await options.api.updateInstallation(targetInstallationId, {
+                        commercial_closure_mode: mode,
+                        commercial_closure_note: mode === DEFAULT_COMMERCIAL_CLOSURE_MODE ? '' : note,
+                    });
+
+                    options.closeActionModal(true);
+                    options.showNotification(
+                        mode === DEFAULT_COMMERCIAL_CLOSURE_MODE
+                            ? 'El caso vuelve a requerir presupuesto aprobado para la conformidad.'
+                            : `Cobertura comercial actualizada: ${formatCommercialClosureModeLabel(mode)}.`,
+                        'success',
+                    );
+                    runIncidentRefreshInBackground(
+                        { installationId: targetInstallationId },
+                        'La cobertura se guardo, pero no pudimos refrescar la vista.',
+                    );
+                    void options.loadInstallations?.();
+                },
+            });
         }
 
         function buildIncidentCreateFields({
@@ -3753,21 +4456,35 @@
             const fragment = document.createDocumentFragment();
             const activeIncidentCount = countActiveIncidents(incidents);
             let latestConformity = null;
+            let latestBudget = null;
+            let latestApprovedBudget = null;
             try {
-                const result = await options.api.getInstallationConformity(installationId);
-                latestConformity = result?.conformity || null;
+                const [conformityResult, budgetResult] = await Promise.all([
+                    options.api.getInstallationConformity(installationId).catch(() => null),
+                    options.api.getInstallationBudgetLatest(installationId).catch(() => null),
+                ]);
+                latestConformity = conformityResult?.conformity || null;
+                latestBudget = budgetResult?.latest_budget || null;
+                latestApprovedBudget = budgetResult?.latest_approved_budget || null;
             } catch {
                 latestConformity = null;
+                latestBudget = null;
+                latestApprovedBudget = null;
             }
             if (renderSequence !== incidentsRenderSequence) {
                 return;
             }
+            const targetInstallation = options.getInstallationById?.(installationId) || null;
+            const commercialClosure = resolveInstallationCommercialClosure(targetInstallation);
+            const requiresApprovedBudget = commercialClosure.requiresApprovedBudget;
 
             const header = document.createElement('div');
             header.className = 'incidents-header';
             header.dataset.installationId = String(options.parseStrictInteger(installationId) || '');
             header.dataset.activeIncidentCount = String(activeIncidentCount);
             header.dataset.latestConformityStatus = String(latestConformity?.status || '').trim().toLowerCase();
+            header.dataset.hasApprovedBudget = latestApprovedBudget ? '1' : '';
+            header.dataset.requiresApprovedBudget = requiresApprovedBudget ? '1' : '0';
             const headerMain = document.createElement('div');
             headerMain.className = 'incidents-header-main';
 
@@ -3788,6 +4505,12 @@
             );
             activeIncidentsChip.dataset.role = 'active-incidents-chip';
             headerMeta.appendChild(activeIncidentsChip);
+            headerMeta.appendChild(
+                createConformityStatusChip(
+                    `Cobertura: ${commercialClosure.label}`,
+                    requiresApprovedBudget ? 'neutral' : 'resolved',
+                ),
+            );
             if (latestConformity) {
                 headerMeta.appendChild(
                     createConformityStatusChip(
@@ -3803,6 +4526,29 @@
                     createConformityStatusChip(
                         formatConformityGeneratedAt(latestConformity.generated_at),
                         'neutral',
+                    ),
+                );
+            }
+            if (latestBudget) {
+                headerMeta.appendChild(
+                    createConformityStatusChip(
+                        `Presupuesto: ${latestBudget.budget_number || `#${latestBudget.id}`}`,
+                        'info',
+                    ),
+                );
+                headerMeta.appendChild(
+                    createConformityStatusChip(
+                        `${formatBudgetApprovalStatusLabel(latestBudget.approval_status)} · ${formatBudgetDeliveryStatusLabel(latestBudget.delivery_status)}`,
+                        latestBudget.approval_status === 'approved' ? 'resolved' : 'warning',
+                    ),
+                );
+            } else {
+                headerMeta.appendChild(
+                    createConformityStatusChip(
+                        requiresApprovedBudget
+                            ? 'Sin presupuesto'
+                            : 'Sin presupuesto (no requerido)',
+                        requiresApprovedBudget ? 'warning' : 'resolved',
                     ),
                 );
             }
@@ -3884,7 +4630,68 @@
                 closureBanner.appendChild(latestSummary);
             }
 
-            applyClosureBannerState(closureBanner, activeIncidentCount, latestConformity?.status);
+            if (latestBudget || latestApprovedBudget) {
+                const budgetSummary = document.createElement('div');
+                budgetSummary.className = 'incidents-conformity-summary';
+
+                const budgetSummaryLabel = document.createElement('small');
+                budgetSummaryLabel.className = 'incidents-conformity-summary-label';
+                budgetSummaryLabel.textContent = 'Estado de presupuesto';
+
+                const budgetSummaryPrimary = document.createElement('strong');
+                budgetSummaryPrimary.className = 'incidents-conformity-summary-primary';
+                budgetSummaryPrimary.textContent = latestBudget
+                    ? `${latestBudget.budget_number || `#${latestBudget.id}`} · ${formatBudgetApprovalStatusLabel(latestBudget.approval_status)}`
+                    : 'Sin presupuesto generado';
+
+                const budgetSummaryMeta = document.createElement('div');
+                budgetSummaryMeta.className = 'incidents-conformity-summary-meta';
+                if (latestBudget) {
+                    budgetSummaryMeta.appendChild(
+                        createConformityStatusChip(
+                            formatBudgetGeneratedAt(latestBudget.created_at),
+                            'neutral',
+                        ),
+                    );
+                    budgetSummaryMeta.appendChild(
+                        createConformityStatusChip(
+                            formatCurrencyFromCents(latestBudget.total_amount_cents, latestBudget.currency_code || 'UYU'),
+                            'info',
+                        ),
+                    );
+                }
+                if (latestApprovedBudget) {
+                    budgetSummaryMeta.appendChild(
+                        createConformityStatusChip(
+                            `Aprobado: ${latestApprovedBudget.budget_number || `#${latestApprovedBudget.id}`}`,
+                            'resolved',
+                        ),
+                    );
+                }
+                budgetSummary.append(
+                    budgetSummaryLabel,
+                    budgetSummaryPrimary,
+                    budgetSummaryMeta,
+                );
+                if (latestBudget?.pdf_download_path) {
+                    const budgetSummaryLink = document.createElement('a');
+                    budgetSummaryLink.href = latestBudget.pdf_download_path;
+                    budgetSummaryLink.target = '_blank';
+                    budgetSummaryLink.rel = 'noreferrer';
+                    budgetSummaryLink.className = 'conformity-modal-link';
+                    budgetSummaryLink.textContent = 'Descargar ultimo presupuesto';
+                    budgetSummary.appendChild(budgetSummaryLink);
+                }
+                closureBanner.appendChild(budgetSummary);
+            }
+
+            applyClosureBannerState(
+                closureBanner,
+                activeIncidentCount,
+                latestConformity?.status,
+                Boolean(latestApprovedBudget),
+                requiresApprovedBudget,
+            );
             headerMain.appendChild(closureBanner);
 
             const backButton = document.createElement('button');
@@ -3926,10 +4733,70 @@
                 createIncidentFromWeb(installationId);
             });
 
+            const budgetBtn = document.createElement('button');
+            budgetBtn.type = 'button';
+            budgetBtn.className = 'btn-secondary';
+            budgetBtn.dataset.role = 'budget-trigger';
+            const budgetIcon = options.createMaterialIconNode('request_quote');
+            if (budgetIcon) {
+                budgetBtn.replaceChildren(budgetIcon, document.createTextNode(' Presupuesto'));
+            } else {
+                budgetBtn.textContent = 'Presupuesto';
+            }
+            budgetBtn.addEventListener('click', () => {
+                void openInstallationBudgetModal(installationId, {
+                    budgetState: {
+                        latest_budget: latestBudget,
+                        latest_approved_budget: latestApprovedBudget,
+                    },
+                });
+            });
+
+            const approveBudgetBtn = document.createElement('button');
+            approveBudgetBtn.type = 'button';
+            approveBudgetBtn.className = 'btn-secondary';
+            approveBudgetBtn.dataset.role = 'budget-approve-trigger';
+            const approveBudgetIcon = options.createMaterialIconNode('task_alt');
+            if (approveBudgetIcon) {
+                approveBudgetBtn.replaceChildren(approveBudgetIcon, document.createTextNode(' Aprobar presupuesto'));
+            } else {
+                approveBudgetBtn.textContent = 'Aprobar presupuesto';
+            }
+            approveBudgetBtn.hidden = !(latestBudget && String(latestBudget?.approval_status || '').toLowerCase() !== 'approved');
+            approveBudgetBtn.addEventListener('click', () => {
+                if (!latestBudget) {
+                    options.showNotification('Primero genera un presupuesto para poder aprobarlo.', 'warning');
+                    return;
+                }
+                void openInstallationBudgetApprovalModal(installationId, latestBudget);
+            });
+
+            const commercialClosureBtn = document.createElement('button');
+            commercialClosureBtn.type = 'button';
+            commercialClosureBtn.className = 'btn-secondary';
+            commercialClosureBtn.dataset.role = 'commercial-closure-trigger';
+            const closureIcon = options.createMaterialIconNode('policy');
+            if (closureIcon) {
+                commercialClosureBtn.replaceChildren(closureIcon, document.createTextNode(' Cobertura'));
+            } else {
+                commercialClosureBtn.textContent = 'Cobertura';
+            }
+            commercialClosureBtn.addEventListener('click', () => {
+                void openInstallationCommercialClosureModal(installationId, {
+                    installation: targetInstallation,
+                });
+            });
+            commercialClosureBtn.hidden = !canCurrentUserWriteOperationalData();
+
             const conformityBtn = document.createElement('button');
             conformityBtn.type = 'button';
             conformityBtn.dataset.role = 'conformity-trigger';
-            applyConformityButtonState(conformityBtn, activeIncidentCount);
+            applyConformityButtonState(
+                conformityBtn,
+                activeIncidentCount,
+                Boolean(latestApprovedBudget),
+                requiresApprovedBudget,
+            );
             conformityBtn.addEventListener('click', () => {
                 const currentActiveIncidentCount = Math.max(
                     0,
@@ -3942,9 +4809,17 @@
                     );
                     return;
                 }
+                if (requiresApprovedBudget && !latestApprovedBudget) {
+                    options.showNotification('Debes aprobar el ultimo presupuesto para emitir la conformidad.', 'warning');
+                    return;
+                }
                 void openInstallationConformityModal(installationId, {
                     activeIncidentCount: currentActiveIncidentCount,
                     latestConformity,
+                    latestApprovedBudget,
+                    requiresApprovedBudget,
+                    commercialClosureMode: commercialClosure.mode,
+                    commercialClosureNote: commercialClosure.note,
                 });
             });
 
@@ -4010,7 +4885,13 @@
             if (canCurrentUserManagePublicTracking()) {
                 shareActions.appendChild(shareTrackingBtn);
             }
-            secondaryActions.append(createIncidentBtn, backButton);
+            secondaryActions.append(
+                createIncidentBtn,
+                budgetBtn,
+                approveBudgetBtn,
+                commercialClosureBtn,
+                backButton,
+            );
             primaryActions.appendChild(conformityBtn);
             actions.append(secondaryActions, utilityActions, shareActions, primaryActions);
 
