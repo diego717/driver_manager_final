@@ -1,4 +1,6 @@
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, rgb } from "pdf-lib";
+
+import { embedSiteOpsPdfFonts } from "./pdf-fonts.js";
 
 import { HttpError, normalizeOptionalString } from "../lib/core.js";
 import { buildGpsMapsUrl, buildGpsMetadataSnapshot } from "../lib/gps.js";
@@ -16,16 +18,27 @@ const PDF_PAGE = {
 const PDF_LINE_HEIGHT = 15;
 const PDF_TEXT_MAX_WIDTH = PDF_PAGE.width - PDF_PAGE.margin * 2;
 const PDF_COLORS = {
-  ink: rgb(0.09, 0.14, 0.18),
-  muted: rgb(0.36, 0.41, 0.46),
-  soft: rgb(0.95, 0.97, 0.98),
-  border: rgb(0.82, 0.86, 0.89),
-  accent: rgb(0.06, 0.5, 0.47),
-  accentSoft: rgb(0.88, 0.95, 0.94),
-  accentDark: rgb(0.12, 0.22, 0.27),
+  backdrop: rgb(0.133, 0.118, 0.188),
+  canvas: rgb(0.094, 0.11, 0.17),
+  card: rgb(0.125, 0.149, 0.208),
+  cardSoft: rgb(0.1, 0.184, 0.153),
+  ink: rgb(0.949, 0.953, 0.969),
+  muted: rgb(0.72, 0.761, 0.824),
+  soft: rgb(0.09, 0.122, 0.184),
+  border: rgb(0.62, 0.863, 0.675),
+  accent: rgb(0.788, 0.949, 0.392),
+  accentSoft: rgb(0.106, 0.173, 0.153),
+  accentDark: rgb(0.086, 0.11, 0.161),
+  accentGlow: rgb(0.953, 0.784, 0.365),
+  accentLine: rgb(0.62, 0.863, 0.675),
+  warning: rgb(0.953, 0.784, 0.365),
+  info: rgb(0.396, 0.788, 1),
 };
 const BRAND_NAME = "SiteOps";
 const BRAND_TAG = "Field Control Console";
+const EMAIL_FONT_DISPLAY = "'Bebas Neue','IBM Plex Sans Condensed','Arial Narrow','Franklin Gothic Condensed','Impact',sans-serif";
+const EMAIL_FONT_BODY = "'Source Sans 3','Segoe UI',sans-serif";
+const EMAIL_FONT_MONO = "'JetBrains Mono','IBM Plex Mono','Cascadia Mono','Consolas',monospace";
 
 function requireConformitiesBucketOperation(env, operation) {
   const bucket = env?.INCIDENTS_BUCKET;
@@ -254,7 +267,9 @@ function wrapText(text, maxChars = 92) {
 }
 
 function addNewPage(pdfDoc) {
-  return pdfDoc.addPage([PDF_PAGE.width, PDF_PAGE.height]);
+  const page = pdfDoc.addPage([PDF_PAGE.width, PDF_PAGE.height]);
+  drawPageBackdrop(page);
+  return page;
 }
 
 function createPageState(pdfDoc) {
@@ -262,6 +277,49 @@ function createPageState(pdfDoc) {
     page: addNewPage(pdfDoc),
     y: PDF_PAGE.height - PDF_PAGE.margin,
   };
+}
+
+function drawPageBackdrop(page) {
+  page.drawRectangle({
+    x: 0,
+    y: 0,
+    width: PDF_PAGE.width,
+    height: PDF_PAGE.height,
+    color: PDF_COLORS.backdrop,
+  });
+  page.drawRectangle({
+    x: 16,
+    y: 16,
+    width: PDF_PAGE.width - 32,
+    height: PDF_PAGE.height - 32,
+    borderColor: PDF_COLORS.border,
+    borderWidth: 1,
+    opacity: 0.55,
+  });
+  page.drawRectangle({
+    x: PDF_PAGE.margin,
+    y: PDF_PAGE.height - PDF_PAGE.margin - 6,
+    width: PDF_TEXT_MAX_WIDTH,
+    height: 2,
+    color: PDF_COLORS.accentLine,
+    opacity: 0.45,
+  });
+  page.drawRectangle({
+    x: 88,
+    y: 0,
+    width: 1,
+    height: PDF_PAGE.height,
+    color: PDF_COLORS.border,
+    opacity: 0.16,
+  });
+  page.drawRectangle({
+    x: PDF_PAGE.width - 164,
+    y: 0,
+    width: 148,
+    height: PDF_PAGE.height,
+    color: rgb(1, 0.55, 0.1),
+    opacity: 0.045,
+  });
 }
 
 function drawPdfBrandLockup(page, titleFont, bodyFont, {
@@ -356,20 +414,21 @@ function buildEmailBrandLockupHtml() {
     "<tr>",
     "<td style=\"padding:0;\">",
     "<div style=\"display:inline-block;padding:0;background:transparent;\">",
-    "<div style=\"height:2px;width:86px;background:linear-gradient(90deg,#53b6ae,rgba(83,182,174,0));margin:0 0 12px 0;\"></div>",
+    "<div style=\"height:2px;width:104px;background:linear-gradient(90deg,#bff264,rgba(191,242,100,0));margin:0 0 12px 0;\"></div>",
     "<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">",
     "<tr>",
     "<td style=\"vertical-align:middle;padding:0 14px 0 0;\">",
-    "<div style=\"width:36px;height:36px;border-radius:12px;background:#1a2125;border:1px solid #35555a;box-shadow:0 8px 18px rgba(0,0,0,.14);position:relative;\">",
-    "<div style=\"position:absolute;left:8px;top:7px;width:14px;height:14px;border:2px solid #53b6ae;border-right-color:transparent;border-bottom-color:#91dcd5;border-radius:999px;transform:rotate(-18deg);\"></div>",
-    "<div style=\"position:absolute;left:7px;right:7px;top:18px;height:1px;background:linear-gradient(90deg,rgba(83,182,174,.95),rgba(83,182,174,.4));\"></div>",
-    "<div style=\"position:absolute;top:8px;bottom:8px;left:17px;width:1px;background:rgba(145,220,213,.45);\"></div>",
-    "<div style=\"position:absolute;right:7px;top:8px;width:7px;height:7px;border-radius:999px;background:#53b6ae;box-shadow:0 0 0 3px rgba(83,182,174,.12);\"></div>",
+    "<div style=\"width:42px;height:42px;border-radius:14px;background:linear-gradient(150deg,rgba(191,242,100,.16),rgba(32,38,53,.96));border:1px solid #9edcae;box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 10px 22px rgba(0,0,0,.26);position:relative;\">",
+    "<div style=\"position:absolute;left:8px;top:8px;right:8px;height:1px;background:linear-gradient(90deg,#bff264,rgba(191,242,100,0));\"></div>",
+    "<div style=\"position:absolute;left:9px;top:9px;width:15px;height:15px;border:2px solid #bff264;border-right-color:transparent;border-radius:999px;\"></div>",
+    "<div style=\"position:absolute;left:9px;right:10px;top:20px;height:1px;background:#9edcae;\"></div>",
+    "<div style=\"position:absolute;top:10px;bottom:10px;left:19px;width:1px;background:rgba(158,220,174,.45);\"></div>",
+    "<div style=\"position:absolute;right:8px;top:8px;width:8px;height:8px;border-radius:999px;background:#bff264;box-shadow:0 0 0 3px rgba(191,242,100,.12);\"></div>",
     "</div>",
     "</td>",
     "<td style=\"vertical-align:middle;\">",
-    `<div style=\"font-family:'IBM Plex Sans Condensed','Segoe UI',sans-serif;font-size:20px;line-height:1;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#53b6ae;\">${escapeHtml(BRAND_NAME)}</div>`,
-    `<div style=\"font-family:'IBM Plex Mono','Courier New',monospace;font-size:9px;line-height:1.4;letter-spacing:.24em;text-transform:uppercase;color:#95a8b2;margin-top:5px;\">${escapeHtml(BRAND_TAG)}</div>`,
+    `<div style=\"font-family:${EMAIL_FONT_DISPLAY};font-size:30px;line-height:.92;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#eef2f7;\">${escapeHtml(BRAND_NAME)}</div>`,
+    `<div style=\"font-family:${EMAIL_FONT_MONO};font-size:9px;line-height:1.4;letter-spacing:.24em;text-transform:uppercase;color:#b7c0cf;margin-top:4px;\">${escapeHtml(BRAND_TAG)}</div>`,
     "</td>",
     "</tr>",
     "</table>",
@@ -380,15 +439,53 @@ function buildEmailBrandLockupHtml() {
   ].join("");
 }
 
+function buildEmailInfoCardHtml(label, value, options = {}) {
+  const tone = options.tone === "accent" ? "#f3c85d" : "#eef2f7";
+  const size = options.size || 24;
+  return [
+    "<td style=\"width:50%;padding:0 8px 16px 0;vertical-align:top;\">",
+    "<div style=\"position:relative;background:linear-gradient(145deg,rgba(26,33,49,.98),rgba(21,28,43,.98));border:1px solid #9edcae;border-radius:18px;padding:16px 16px 14px 16px;overflow:hidden;box-shadow:0 12px 24px rgba(0,0,0,.2);\">",
+    "<div style=\"position:absolute;left:0;top:14px;bottom:14px;width:3px;background:linear-gradient(180deg,#bff264,#65c9ff);opacity:.92;\"></div>",
+    "<div style=\"height:1px;background:rgba(158,220,174,.4);margin:0 0 12px 14px;\"></div>",
+    `<div style=\"font-family:${EMAIL_FONT_MONO};font-size:10px;line-height:1.3;letter-spacing:.16em;text-transform:uppercase;color:#b7c0cf;margin:0 0 10px 0;\">${escapeHtml(label)}</div>`,
+    `<div style=\"font-family:${EMAIL_FONT_BODY};font-size:${escapeHtml(String(size))}px;line-height:1.35;font-weight:700;color:${tone};word-break:break-word;\">${escapeHtml(value || "-")}</div>`,
+    "</div>",
+    "</td>",
+  ].join("");
+}
+
+function buildEmailHeroStatHtml(label, value, options = {}) {
+  const tone = options.tone === "accent" ? "#f3c85d" : "#eef2f7";
+  return [
+    "<div style=\"margin:0 0 10px 0;padding:12px 12px 10px 12px;border:1px solid rgba(158,220,174,.56);border-radius:14px;background:rgba(18,24,38,.72);\">",
+    `<div style=\"font-family:${EMAIL_FONT_MONO};font-size:9px;line-height:1.3;letter-spacing:.16em;text-transform:uppercase;color:#b7c0cf;margin:0 0 6px 0;\">${escapeHtml(label)}</div>`,
+    `<div style=\"font-family:${EMAIL_FONT_DISPLAY};font-size:22px;line-height:1.02;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${tone};word-break:break-word;\">${escapeHtml(value || "-")}</div>`,
+    "</div>",
+  ].join("");
+}
+
+function buildEmailHeroChipHtml(value) {
+  return `<span style=\"display:inline-block;margin:0 8px 8px 0;padding:7px 10px;border:1px dashed rgba(158,220,174,.72);border-radius:999px;background:rgba(18,24,38,.92);font-family:${EMAIL_FONT_MONO};font-size:10px;line-height:1;letter-spacing:.14em;text-transform:uppercase;color:#dce7f0;\">${escapeHtml(value)}</span>`;
+}
+
 function drawSectionTitle(state, font, text) {
+  state.page.drawRectangle({
+    x: PDF_PAGE.margin,
+    y: state.y - 3,
+    width: 46,
+    height: 3,
+    color: PDF_COLORS.accentLine,
+    opacity: 0.95,
+  });
   state.page.drawText(normalizePdfText(text), {
     x: PDF_PAGE.margin,
-    y: state.y,
-    size: 15,
+    y: state.y - 14,
+    size: 12.5,
     font,
-    color: rgb(0.1, 0.15, 0.19),
+    color: PDF_COLORS.accentGlow,
+    characterSpacing: 0.55,
   });
-  state.y -= 22;
+  state.y -= 30;
 }
 
 function ensurePageSpace(pdfDoc, state, requiredHeight = PDF_LINE_HEIGHT * 2) {
@@ -451,32 +548,59 @@ function drawPdfCard(page, titleFont, bodyFont, {
     y: y - height,
     width,
     height,
-    color: rgb(0.985, 0.989, 0.991),
-    borderColor: rgb(0.84, 0.88, 0.9),
+    color: PDF_COLORS.card,
+    borderColor: PDF_COLORS.border,
     borderWidth: 1,
+    opacity: 0.98,
+  });
+  page.drawRectangle({
+    x: x + 14,
+    y: y - 10,
+    width: width - 28,
+    height: 1,
+    color: PDF_COLORS.border,
+    opacity: 0.36,
   });
   page.drawRectangle({
     x,
-    y: y - 2,
+    y: y - height + 14,
+    width: 2,
+    height: height - 28,
+    color: PDF_COLORS.accentLine,
+    opacity: 0.9,
+  });
+  page.drawRectangle({
+    x,
+    y: y - 3,
     width,
-    height: 2,
-    color: PDF_COLORS.accent,
+    height: 3,
+    color: PDF_COLORS.accentLine,
+    opacity: 0.95,
+  });
+  page.drawRectangle({
+    x: x + 1,
+    y: y - height + 1,
+    width: width - 2,
+    height: 20,
+    color: PDF_COLORS.cardSoft,
+    opacity: 0.3,
   });
 
   page.drawText(normalizePdfText(label), {
     x: x + 14,
-    y: y - 22,
-    size: 9,
+    y: y - 18,
+    size: 8.6,
     font: titleFont,
     color: PDF_COLORS.muted,
+    characterSpacing: 0.5,
   });
 
   const valueLines = wrapText(value, Math.max(18, Math.floor((width - 28) / 7))).slice(0, 3);
   drawLinesInBox(page, bodyFont, valueLines, {
     x: x + 14,
-    y: y - 42,
-    size: 13,
-    lineHeight: 16,
+    y: y - 37,
+    size: 12.2,
+    lineHeight: 15,
     color: PDF_COLORS.ink,
   });
 }
@@ -499,6 +623,14 @@ function drawPdfTextPanel(pdfDoc, state, bodyFont, text, {
   const nextState = ensurePageSpace(pdfDoc, state, boxHeight + 8);
 
   nextState.page.drawRectangle({
+    x: PDF_PAGE.margin + 2,
+    y: nextState.y - boxHeight - 3,
+    width: PDF_TEXT_MAX_WIDTH,
+    height: boxHeight,
+    color: rgb(0.2, 0.32, 0.4),
+    opacity: 0.06,
+  });
+  nextState.page.drawRectangle({
     x: PDF_PAGE.margin,
     y: nextState.y - boxHeight,
     width: PDF_TEXT_MAX_WIDTH,
@@ -506,6 +638,30 @@ function drawPdfTextPanel(pdfDoc, state, bodyFont, text, {
     color: fillColor,
     borderColor,
     borderWidth: 1,
+  });
+  nextState.page.drawRectangle({
+    x: PDF_PAGE.margin + 14,
+    y: nextState.y - 10,
+    width: PDF_TEXT_MAX_WIDTH - 28,
+    height: 1,
+    color: PDF_COLORS.border,
+    opacity: 0.3,
+  });
+  nextState.page.drawRectangle({
+    x: PDF_PAGE.margin,
+    y: nextState.y - boxHeight + 14,
+    width: 2,
+    height: Math.max(18, boxHeight - 28),
+    color: PDF_COLORS.accentLine,
+    opacity: 0.9,
+  });
+  nextState.page.drawRectangle({
+    x: PDF_PAGE.margin,
+    y: nextState.y - 3,
+    width: Math.min(82, PDF_TEXT_MAX_WIDTH),
+    height: 3,
+    color: PDF_COLORS.accentLine,
+    opacity: 0.9,
   });
 
   const bottomY = drawLinesInBox(nextState.page, bodyFont, lines, {
@@ -973,8 +1129,7 @@ export async function generateConformityPdf({
   pdfDoc.setCreationDate(new Date(generatedAt));
   pdfDoc.setModificationDate(new Date(generatedAt));
 
-  const titleFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const bodyFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const { titleFont, bodyFont } = await embedSiteOpsPdfFonts(pdfDoc);
   const assetReference =
     normalizeOptionalString(context.asset?.external_code, "") ||
     normalizeOptionalString(context.asset?.serial_number, "") ||
@@ -990,117 +1145,154 @@ export async function generateConformityPdf({
     normalizeOptionalString(generatedByUsername, "SiteOps");
 
   let state = createPageState(pdfDoc);
-  const heroHeight = 146;
+  const heroHeight = 162;
   const heroBottomY = state.y - heroHeight;
-  const metaColumnWidth = 154;
+  const metaColumnWidth = 164;
+  const heroLeftWidth = PDF_TEXT_MAX_WIDTH - metaColumnWidth - 14;
+  const heroMetaX = PDF_PAGE.margin + heroLeftWidth + 14;
   state.page.drawRectangle({
     x: PDF_PAGE.margin,
     y: heroBottomY,
     width: PDF_TEXT_MAX_WIDTH,
     height: heroHeight,
-    color: rgb(0.982, 0.987, 0.989),
-    borderColor: rgb(0.83, 0.88, 0.9),
+    color: PDF_COLORS.canvas,
+    borderColor: PDF_COLORS.border,
     borderWidth: 1,
   });
   state.page.drawRectangle({
     x: PDF_PAGE.margin,
-    y: state.y - 3,
+    y: state.y - 4,
     width: PDF_TEXT_MAX_WIDTH,
-    height: 3,
-    color: PDF_COLORS.accent,
+    height: 4,
+    color: PDF_COLORS.accentLine,
+    opacity: 0.96,
   });
   state.page.drawRectangle({
-    x: PDF_PAGE.margin + PDF_TEXT_MAX_WIDTH - metaColumnWidth,
+    x: PDF_PAGE.margin,
+    y: heroBottomY,
+    width: heroLeftWidth,
+    height: heroHeight,
+    color: PDF_COLORS.accentDark,
+  });
+  state.page.drawRectangle({
+    x: PDF_PAGE.margin,
+    y: heroBottomY + 10,
+    width: heroLeftWidth,
+    height: heroHeight - 20,
+    color: rgb(0.2, 0.38, 0.44),
+    opacity: 0.14,
+  });
+  state.page.drawRectangle({
+    x: heroMetaX,
     y: heroBottomY,
     width: metaColumnWidth,
     height: heroHeight,
-    color: rgb(0.95, 0.975, 0.973),
+    color: PDF_COLORS.cardSoft,
   });
   state.page.drawRectangle({
-    x: PDF_PAGE.margin + PDF_TEXT_MAX_WIDTH - metaColumnWidth,
+    x: heroMetaX,
     y: heroBottomY,
     width: 1,
     height: heroHeight,
-    color: rgb(0.84, 0.88, 0.9),
+    color: PDF_COLORS.border,
   });
 
   drawPdfBrandLockup(state.page, titleFont, bodyFont, {
     x: PDF_PAGE.margin + 20,
-    y: state.y - 18,
-    scale: 0.84,
-    light: false,
+    y: state.y - 20,
+    scale: 0.88,
+    light: true,
   });
 
   state.page.drawRectangle({
     x: PDF_PAGE.margin + 20,
-    y: state.y - 72,
-    width: 112,
-    height: 17,
-    color: rgb(0.89, 0.952, 0.945),
+    y: state.y - 74,
+    width: 122,
+    height: 18,
+    color: PDF_COLORS.accentGlow,
+    opacity: 0.9,
   });
-  state.page.drawText("CIERRE OPERATIVO", {
-    x: PDF_PAGE.margin + 28,
-    y: state.y - 66,
-    size: 7.9,
+  state.page.drawText("CONFORMIDAD FINAL", {
+    x: PDF_PAGE.margin + 26,
+    y: state.y - 67,
+    size: 7.5,
     font: titleFont,
-    color: PDF_COLORS.accent,
+    color: PDF_COLORS.accentDark,
+    characterSpacing: 0.7,
   });
 
-  state.page.drawText("Constancia de conformidad", {
+  state.page.drawText("Constancia Operativa", {
     x: PDF_PAGE.margin + 20,
-    y: state.y - 112,
-    size: 22,
+    y: state.y - 114,
+    size: 23,
     font: titleFont,
-    color: PDF_COLORS.ink,
+    color: rgb(0.965, 0.986, 0.992),
   });
   state.page.drawText(`Registro #${normalizePdfText(String(context.installation.id))}`, {
     x: PDF_PAGE.margin + 20,
-    y: state.y - 132,
+    y: state.y - 133,
     size: 12.5,
     font: bodyFont,
-    color: rgb(0.28, 0.35, 0.4),
+    color: rgb(0.79, 0.9, 0.93),
   });
-  state.page.drawText("Documento de cierre emitido por SiteOps", {
+  state.page.drawText("Documento operativo emitido por SiteOps", {
     x: PDF_PAGE.margin + 20,
-    y: state.y - 144,
-    size: 8.5,
+    y: state.y - 147,
+    size: 8.6,
     font: bodyFont,
-    color: rgb(0.43, 0.51, 0.56),
+    color: rgb(0.66, 0.79, 0.83),
   });
 
-  const metaX = PDF_PAGE.margin + PDF_TEXT_MAX_WIDTH - metaColumnWidth + 16;
   state.page.drawText("Generado", {
-    x: metaX,
-    y: state.y - 42,
-    size: 8.5,
+    x: heroMetaX + 14,
+    y: state.y - 34,
+    size: 8.2,
     font: titleFont,
-    color: rgb(0.4, 0.48, 0.53),
+    color: PDF_COLORS.muted,
+    characterSpacing: 0.6,
   });
   state.page.drawText(normalizePdfText(formatEmailDate(generatedAt)), {
-    x: metaX,
-    y: state.y - 58,
-    size: 10.5,
+    x: heroMetaX + 14,
+    y: state.y - 49,
+    size: 10,
     font: bodyFont,
-    color: rgb(0.32, 0.4, 0.45),
+    color: PDF_COLORS.ink,
+    maxWidth: metaColumnWidth - 28,
+  });
+  state.page.drawText("Firmante", {
+    x: heroMetaX + 14,
+    y: state.y - 74,
+    size: 8.2,
+    font: titleFont,
+    color: PDF_COLORS.muted,
+    characterSpacing: 0.6,
+  });
+  state.page.drawText(normalizePdfText(signedByName || "Sin firmante"), {
+    x: heroMetaX + 14,
+    y: state.y - 89,
+    size: 10,
+    font: bodyFont,
+    color: PDF_COLORS.ink,
     maxWidth: metaColumnWidth - 28,
   });
   state.page.drawText("Tecnico", {
-    x: metaX,
-    y: state.y - 92,
-    size: 8.5,
+    x: heroMetaX + 14,
+    y: state.y - 114,
+    size: 8.2,
     font: titleFont,
-    color: rgb(0.4, 0.48, 0.53),
+    color: PDF_COLORS.muted,
+    characterSpacing: 0.6,
   });
   state.page.drawText(normalizePdfText(resolvedTechnicianName), {
-    x: metaX,
-    y: state.y - 108,
-    size: 10.5,
+    x: heroMetaX + 14,
+    y: state.y - 129,
+    size: 10,
     font: bodyFont,
-    color: rgb(0.32, 0.4, 0.45),
+    color: PDF_COLORS.ink,
     maxWidth: metaColumnWidth - 28,
   });
 
-  state.y = heroBottomY - 18;
+  state.y = heroBottomY - 20;
 
   const cardGap = 12;
   const cardWidth = (PDF_TEXT_MAX_WIDTH - cardGap) / 2;
@@ -1162,11 +1354,11 @@ export async function generateConformityPdf({
 
   drawSectionTitle(state, titleFont, "Resumen del cierre");
   state = drawPdfTextPanel(pdfDoc, state, bodyFont, summaryLines, {
-    fillColor: rgb(0.982, 0.987, 0.989),
-    borderColor: rgb(0.84, 0.88, 0.9),
-    textColor: rgb(0.22, 0.3, 0.35),
+    fillColor: PDF_COLORS.card,
+    borderColor: PDF_COLORS.border,
+    textColor: PDF_COLORS.ink,
     maxChars: 88,
-    fontSize: 11,
+    fontSize: 10.8,
     paddingX: 16,
     paddingTop: 16,
     paddingBottom: 14,
@@ -1194,10 +1386,11 @@ export async function generateConformityPdf({
     gpsLines.push(`Motivo: ${gpsSnapshot.note}`);
   }
   state = drawPdfTextPanel(pdfDoc, state, bodyFont, gpsLines, {
-    fillColor: rgb(0.95, 0.98, 0.99),
-    borderColor: PDF_COLORS.border,
+    fillColor: PDF_COLORS.soft,
+    borderColor: PDF_COLORS.info,
     textColor: PDF_COLORS.ink,
     maxChars: 84,
+    fontSize: 10.6,
   });
 
   const staticMapAsset = await loadStaticMapAssetForPdf(env, gps);
@@ -1226,7 +1419,7 @@ export async function generateConformityPdf({
       y: frameTopY - frameHeight - 10,
       width: frameWidth,
       height: frameHeight + 10,
-      color: rgb(0.98, 0.99, 1),
+      color: PDF_COLORS.card,
       borderWidth: 1,
       borderColor: PDF_COLORS.border,
     });
@@ -1242,7 +1435,7 @@ export async function generateConformityPdf({
       state,
       bodyFont,
       `Mapa estatico best-effort generado desde provider externo. Zoom ${staticMapAsset.zoom}.`,
-      { maxChars: 82, size: 9, color: rgb(0.38, 0.41, 0.46) },
+      { maxChars: 82, size: 9, color: PDF_COLORS.muted },
     );
   }
 
@@ -1250,9 +1443,9 @@ export async function generateConformityPdf({
     state.y -= 8;
     drawSectionTitle(state, titleFont, "Nota de cierre");
     state = drawPdfTextPanel(pdfDoc, state, bodyFont, summaryNote, {
-      fillColor: rgb(0.97, 0.984, 0.983),
-      borderColor: rgb(0.82, 0.87, 0.89),
-      textColor: rgb(0.16, 0.24, 0.28),
+      fillColor: PDF_COLORS.accentSoft,
+      borderColor: PDF_COLORS.accentLine,
+      textColor: PDF_COLORS.ink,
       maxChars: 88,
       fontSize: 12,
       paddingX: 18,
@@ -1268,7 +1461,7 @@ export async function generateConformityPdf({
     pushWrappedPdfLines(noteLines, "Tecnico", technicianNote, 88);
     pushWrappedPdfLines(noteLines, "Instalacion", context.installation.notes, 88);
     state = drawPdfTextPanel(pdfDoc, state, bodyFont, noteLines, {
-      fillColor: rgb(0.95, 0.98, 0.99),
+      fillColor: PDF_COLORS.soft,
       borderColor: PDF_COLORS.border,
       textColor: PDF_COLORS.ink,
       maxChars: 88,
@@ -1292,7 +1485,7 @@ export async function generateConformityPdf({
       y: state.y - height - 10,
       width: Math.max(width + 20, 180),
       height: height + 20,
-      color: rgb(0.98, 0.99, 1),
+      color: PDF_COLORS.card,
       borderWidth: 1,
       borderColor: PDF_COLORS.border,
     });
@@ -1309,24 +1502,44 @@ export async function generateConformityPdf({
     state.y -= 8;
     drawSectionTitle(state, titleFont, "Incidencias");
     for (const incident of context.incidents) {
-      state = ensurePageSpace(pdfDoc, state, 48);
+      const incidentLineItems = wrapText(
+        `#${incident.id} | ${normalizeOptionalString(incident.severity, "medium")} | ${normalizeOptionalString(incident.incident_status, "open")} | ${normalizeOptionalString(incident.note, "")}`,
+        82,
+      );
+      const incidentPaddingTop = 11;
+      const incidentPaddingBottom = 9;
+      const incidentTextSize = 10.6;
+      const incidentLineHeight = PDF_LINE_HEIGHT;
+      const incidentBoxHeight = Math.max(
+        27,
+        incidentPaddingTop + incidentPaddingBottom + (incidentLineItems.length * incidentLineHeight) - 3,
+      );
+      state = ensurePageSpace(pdfDoc, state, incidentBoxHeight + 12);
       state.page.drawRectangle({
         x: PDF_PAGE.margin,
-        y: state.y - 30,
+        y: state.y - incidentBoxHeight,
         width: PDF_TEXT_MAX_WIDTH,
-        height: 26,
-        color: PDF_COLORS.soft,
+        height: incidentBoxHeight,
+        color: PDF_COLORS.card,
         borderColor: PDF_COLORS.border,
         borderWidth: 1,
       });
-      state = drawWrappedLines(
-        pdfDoc,
-        state,
-        bodyFont,
-        `#${incident.id} | ${normalizeOptionalString(incident.severity, "medium")} | ${normalizeOptionalString(incident.incident_status, "open")} | ${normalizeOptionalString(incident.note, "")}`,
-        { maxChars: 86, color: PDF_COLORS.ink },
-      );
-      state.y -= 2;
+      state.page.drawRectangle({
+        x: PDF_PAGE.margin,
+        y: state.y - 3,
+        width: 64,
+        height: 3,
+        color: PDF_COLORS.accentLine,
+        opacity: 0.92,
+      });
+      drawLinesInBox(state.page, bodyFont, incidentLineItems, {
+        x: PDF_PAGE.margin + 10,
+        y: state.y - incidentPaddingTop - incidentTextSize,
+        size: incidentTextSize,
+        color: PDF_COLORS.ink,
+        lineHeight: incidentLineHeight,
+      });
+      state.y -= incidentBoxHeight + 8;
     }
   }
 
@@ -1343,20 +1556,37 @@ export async function generateConformityPdf({
     const photoHeaderHeight = 48;
     page.drawRectangle({
       x: PDF_PAGE.margin,
+      y: PDF_PAGE.margin,
+      width: PDF_TEXT_MAX_WIDTH,
+      height: PDF_PAGE.height - (PDF_PAGE.margin * 2),
+      color: PDF_COLORS.canvas,
+      borderColor: PDF_COLORS.border,
+      borderWidth: 1,
+    });
+    page.drawRectangle({
+      x: PDF_PAGE.margin,
       y: PDF_PAGE.height - PDF_PAGE.margin - photoHeaderHeight,
       width: PDF_TEXT_MAX_WIDTH,
       height: photoHeaderHeight,
       color: PDF_COLORS.accentDark,
     });
-    page.drawText("Evidencia fotografica", {
+    page.drawRectangle({
       x: PDF_PAGE.margin,
+      y: PDF_PAGE.height - PDF_PAGE.margin - 4,
+      width: PDF_TEXT_MAX_WIDTH,
+      height: 4,
+      color: PDF_COLORS.accentLine,
+      opacity: 0.96,
+    });
+    page.drawText("Evidencia fotografica", {
+      x: PDF_PAGE.margin + 12,
       y: PDF_PAGE.height - PDF_PAGE.margin - 18,
-      size: 18,
+      size: 16.5,
       font: titleFont,
       color: rgb(1, 1, 1),
     });
     page.drawText(`Registro #${normalizePdfText(String(context.installation.id))}`, {
-      x: PDF_PAGE.margin,
+      x: PDF_PAGE.margin + 12,
       y: PDF_PAGE.height - PDF_PAGE.margin - 34,
       size: 9,
       font: bodyFont,
@@ -1619,12 +1849,12 @@ export async function sendConformityEmail(
   const summary = normalizeOptionalString(summaryNote, "");
   const normalizedIncidentCount = Math.max(0, Number(incidentCount) || 0);
   const normalizedPhotoCount = Math.max(0, Number(photoCount) || 0);
-  const subject = `Conformidad de instalacion #${installationId}`;
+  const subject = `SiteOps | Documento operativo | instalacion #${installationId}`;
   const filename = `conformidad_instalacion_${installationId}.pdf`;
   const attachmentBase64 = encodeBytesToBase64(pdfBytes);
   const attachmentSize = formatAttachmentSize(pdfBytes.byteLength);
   const text = [
-    "Adjuntamos la conformidad de instalacion generada desde SiteOps.",
+    "Adjuntamos la conformidad de servicio emitida desde SiteOps.",
     `Instalacion: #${installationId}`,
     `${clientPresentation.label}: ${clientPresentation.value}`,
     `Activo: ${asset}`,
@@ -1638,8 +1868,8 @@ export async function sendConformityEmail(
     `Adjunto: ${filename} (${attachmentSize})`,
   ].join("\n");
   const html = [
-    "<div style=\"margin:0;padding:28px 14px;background:#111518;font-family:Georgia,'Times New Roman',serif;color:#edf4f4;\">",
-    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width:620px;margin:0 auto;border-collapse:collapse;\">",
+    `<div style="margin:0;padding:30px 16px;background:#211c2e;background-image:linear-gradient(90deg,rgba(94,122,255,.1) 1px,transparent 1px),linear-gradient(0deg,rgba(94,122,255,.08) 1px,transparent 1px),radial-gradient(circle at 8% -10%,rgba(243,200,93,.18),transparent 34%),radial-gradient(circle at 98% 2%,rgba(167,243,107,.14),transparent 34%),linear-gradient(125deg,#211c2e,#162231 42%,#173127);background-size:120px 120px,120px 120px,auto,auto,auto;font-family:${EMAIL_FONT_BODY};color:#eef2f7;">`,
+    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width:760px;margin:0 auto;border-collapse:collapse;\">",
     "<tr><td style=\"padding:0 0 16px 0;\">",
     buildEmailBrandLockupHtml(),
     "</td></tr>",
@@ -1647,43 +1877,64 @@ export async function sendConformityEmail(
     "<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">",
     "<tr>",
     "<td style=\"padding:0 12px 0 0;vertical-align:middle;\">",
-    "<div style=\"display:inline-block;padding:7px 11px;border:1px solid #35555a;border-radius:999px;background:#1c262b;color:#93ddd6;font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;font-family:'IBM Plex Mono','Courier New',monospace;\">Cierre operativo</div>",
+    `<div style="display:inline-block;padding:7px 11px;border:1px dashed rgba(158,220,174,.78);border-radius:999px;background:rgba(22,28,43,.9);color:#dce7f0;font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;font-family:${EMAIL_FONT_MONO};">Documento operativo</div>`,
     "</td>",
     "<td style=\"vertical-align:middle;\">",
-    "<div style=\"height:1px;width:120px;background:linear-gradient(90deg,rgba(147,221,214,.55),rgba(147,221,214,0));\"></div>",
+    "<div style=\"height:1px;width:120px;background:linear-gradient(90deg,rgba(191,242,100,.62),rgba(101,201,255,0));\"></div>",
     "</td>",
     "</tr>",
     "</table>",
     "</td></tr>",
-    "<tr><td style=\"background:#171d20;border:1px solid #344046;border-radius:24px;padding:24px 22px 24px 22px;box-shadow:0 18px 34px rgba(0,0,0,.24);\">",
-    "<div style=\"font-size:10px;font-weight:800;letter-spacing:.2em;text-transform:uppercase;color:#a8bcc4;margin:0 0 14px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">Conformidad de instalacion</div>",
-    `<div style=\"font-size:28px;line-height:1.02;font-weight:700;color:#f4fbfb;margin:0 0 10px 0;font-family:'IBM Plex Sans Condensed','Segoe UI',sans-serif;letter-spacing:.04em;text-transform:uppercase;\">Registro #${escapeHtml(String(installationId))}</div>`,
-    "<div style=\"width:72px;height:2px;background:linear-gradient(90deg,#53b6ae,rgba(83,182,174,0));margin:0 0 16px 0;\"></div>",
-    "<div style=\"font-size:16px;line-height:1.78;color:#e1ecee;max-width:520px;font-family:Georgia,'Times New Roman',serif;\">La constancia final ya fue emitida desde <strong>SiteOps</strong>. El documento adjunto consolida el cierre operativo, la firma del responsable y la evidencia asociada en una sola pieza.</div>",
-    "<div style=\"height:1px;background:linear-gradient(90deg,rgba(147,221,214,.24),rgba(147,221,214,0));margin:22px 0 18px 0;\"></div>",
-    `<div style=\"font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#9ab0b8;margin:0 0 6px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">${escapeHtml(clientPresentation.label)}</div>`,
-    `<div style=\"font-size:17px;line-height:1.5;font-weight:700;color:#ffffff;margin:0 0 14px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;\">${escapeHtml(clientPresentation.value)}</div>`,
-    "<div style=\"font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#9ab0b8;margin:0 0 6px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">Activo</div>",
-    `<div style=\"font-size:17px;line-height:1.5;font-weight:700;color:#ffffff;margin:0 0 14px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;\">${escapeHtml(asset)}</div>`,
-    "<div style=\"font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#9ab0b8;margin:0 0 6px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">Firmado por</div>",
-    `<div style=\"font-size:15px;line-height:1.55;color:#edf4f4;margin:0 0 14px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;\">${escapeHtml(signer)}</div>`,
-    "<div style=\"font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#9ab0b8;margin:0 0 6px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">Tecnico responsable</div>",
-    `<div style=\"font-size:15px;line-height:1.55;color:#edf4f4;margin:0 0 16px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;\">${escapeHtml(technician)}</div>`,
-    `<div style=\"font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#53b6ae;margin:0 0 8px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">PDF adjunto</div>`,
-    `<div style=\"font-size:10px;line-height:1.75;color:#b0c1c8;font-family:'IBM Plex Mono','Courier New',monospace;text-transform:uppercase;letter-spacing:.12em;\">${escapeHtml(generatedLabel)}&nbsp;&nbsp;|&nbsp;&nbsp;${escapeHtml(String(normalizedIncidentCount))} incidencia(s)&nbsp;&nbsp;|&nbsp;&nbsp;${escapeHtml(String(normalizedPhotoCount))} foto(s)</div>`,
-    summary
-      ? `<div style=\"margin:22px 0 20px 0;padding:18px 18px;border:1px solid #344046;background:#1d2428;border-radius:16px;\"><div style=\"font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#a8bcc4;margin:0 0 10px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">Nota de cierre</div><div style=\"font-size:16px;line-height:1.75;color:#f2f8f8;font-family:Georgia,'Times New Roman',serif;\">${escapeHtml(summary)}</div></div>`
-      : "",
-    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;border:1px solid #315765;border-radius:18px;\">",
+    "<tr><td style=\"background:linear-gradient(180deg,rgba(24,28,43,.98),rgba(18,24,38,.98));border:1px solid rgba(158,220,174,.72);border-radius:26px;padding:0;box-shadow:0 20px 44px rgba(0,0,0,.28);overflow:hidden;\">",
+    "<div style=\"height:3px;background:linear-gradient(90deg,#bff264 0%,#65c9ff 52%,rgba(101,201,255,.12) 100%);\"></div>",
+    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">",
     "<tr>",
-    "<td style=\"padding:18px 18px;background:linear-gradient(180deg,#17303a 0%,#214450 100%);border-radius:18px;\">",
-    "<div style=\"font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#9bded8;margin:0 0 10px 0;font-family:'IBM Plex Mono','Courier New',monospace;\">Documento adjunto</div>",
-    `<div style=\"font-size:20px;line-height:1.25;font-weight:700;color:#ffffff;margin:0 0 10px 0;font-family:'IBM Plex Sans Condensed','Segoe UI',sans-serif;letter-spacing:.03em;text-transform:uppercase;word-break:break-word;\">${escapeHtml(filename)}</div>`,
-    `<div style=\"font-size:13px;line-height:1.75;color:#e2ecef;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;\">La descarga inmediata viaja incluida en este correo. Tamano aproximado del archivo: <strong>${escapeHtml(attachmentSize)}</strong>.</div>`,
+    "<td style=\"padding:22px 22px 20px 22px;vertical-align:top;background:linear-gradient(90deg,rgba(72,33,38,.26) 0%,rgba(25,35,49,.98) 36%,rgba(18,24,38,.98) 100%);border-right:1px solid rgba(158,220,174,.36);\">",
+    `<div style="display:inline-block;padding:8px 12px;border:1px solid rgba(158,220,174,.78);border-radius:999px;background:rgba(18,24,38,.46);color:#dce7f0;font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;font-family:${EMAIL_FONT_MONO};">Conformidad final</div>`,
+    `<div style="font-size:40px;line-height:.94;font-weight:700;color:#eef2f7;margin:18px 0 10px 0;font-family:${EMAIL_FONT_DISPLAY};letter-spacing:.06em;text-transform:uppercase;">Registro #${escapeHtml(String(installationId))}</div>`,
+    "<div style=\"width:108px;height:2px;background:linear-gradient(90deg,#bff264,#65c9ff 72%,rgba(101,201,255,0));margin:0 0 16px 0;\"></div>",
+    `<div style="font-size:15px;line-height:1.72;color:#b7c0cf;max-width:420px;font-family:${EMAIL_FONT_BODY};">La conformidad final ya fue emitida desde <strong>SiteOps</strong>. El documento adjunto consolida cierre operativo, firma del responsable y evidencia asociada dentro del mismo contexto del registro.</div>`,
+    "</td>",
+    "<td style=\"width:220px;padding:18px 18px 12px 18px;vertical-align:top;background:linear-gradient(180deg,rgba(27,39,59,.82),rgba(18,24,38,.96));\">",
+    buildEmailHeroStatHtml("Generado", generatedLabel),
+    buildEmailHeroStatHtml("Incidencias", String(normalizedIncidentCount), { tone: "accent" }),
+    buildEmailHeroStatHtml("Fotos", String(normalizedPhotoCount)),
+    buildEmailHeroStatHtml("Documento", "Operativo"),
+    "</td>",
+    "</tr>",
+    "<tr><td colspan=\"2\" style=\"padding:14px 22px 18px 22px;border-top:1px solid rgba(158,220,174,.3);background:rgba(18,24,38,.72);\">",
+    buildEmailHeroChipHtml("cierre operativo"),
+    buildEmailHeroChipHtml("constancia emitida"),
+    buildEmailHeroChipHtml("siteops"),
+    "</td></tr>",
+    "</table>",
+    "<div style=\"padding:20px 22px 4px 22px;\">",
+    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">",
+    "<tr>",
+    buildEmailInfoCardHtml(clientPresentation.label, clientPresentation.value),
+    buildEmailInfoCardHtml("Activo", asset, { size: 18 }),
+    "</tr>",
+    "<tr>",
+    buildEmailInfoCardHtml("Firmado por", signer, { size: 18 }),
+    buildEmailInfoCardHtml("Tecnico responsable", technician, { size: 18 }),
+    "</tr>",
+    "</table>",
+    `<div style="font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#b7c0cf;margin:0 0 8px 0;font-family:${EMAIL_FONT_MONO};">PDF adjunto</div>`,
+    `<div style="font-size:10px;line-height:1.75;color:#b7c0cf;font-family:${EMAIL_FONT_MONO};text-transform:uppercase;letter-spacing:.12em;">${escapeHtml(generatedLabel)}&nbsp;&nbsp;|&nbsp;&nbsp;${escapeHtml(String(normalizedIncidentCount))} incidencia(s)&nbsp;&nbsp;|&nbsp;&nbsp;${escapeHtml(String(normalizedPhotoCount))} foto(s)</div>`,
+    summary
+      ? `<div style="margin:22px 0 20px 0;padding:18px 18px;border:1px solid rgba(158,220,174,.56);background:linear-gradient(180deg,rgba(26,33,49,.96),rgba(18,24,38,.96));border-radius:18px;box-shadow:inset 0 1px 0 rgba(255,255,255,.08);"><div style="font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#b7c0cf;margin:0 0 10px 0;font-family:${EMAIL_FONT_MONO};">Nota de cierre</div><div style="font-size:15px;line-height:1.72;color:#eef2f7;font-family:${EMAIL_FONT_BODY};">${escapeHtml(summary)}</div></div>`
+      : "",
+    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;border:1px solid rgba(158,220,174,.56);border-radius:18px;\">",
+    "<tr>",
+    "<td style=\"padding:18px 18px;background:linear-gradient(180deg,rgba(24,28,43,.92) 0%,rgba(27,39,59,.94) 100%);border-radius:18px;\">",
+    `<div style="font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#b7c0cf;margin:0 0 10px 0;font-family:${EMAIL_FONT_MONO};">Documento adjunto</div>`,
+    `<div style="font-size:26px;line-height:1.02;font-weight:700;color:#eef2f7;margin:0 0 10px 0;font-family:${EMAIL_FONT_DISPLAY};letter-spacing:.05em;text-transform:uppercase;word-break:break-word;">${escapeHtml(filename)}</div>`,
+    `<div style="font-size:13px;line-height:1.75;color:#d7e8f6;font-family:${EMAIL_FONT_BODY};">El PDF viaja adjunto en este correo como constancia operativa del cierre. Tamano aproximado del archivo: <strong>${escapeHtml(attachmentSize)}</strong>.</div>`,
     "</td>",
     "</tr>",
     "</table>",
-    "<div style=\"font-size:13px;line-height:1.85;color:#b2c2c9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:18px 0 0 0;\">Si necesitas reenviar la constancia o validar el cierre, el equipo tecnico puede regenerarla desde la instalacion correspondiente.</div>",
+    `<div style="font-size:13px;line-height:1.8;color:#b7c0cf;font-family:${EMAIL_FONT_BODY};margin:18px 0 0 0;">Si necesitas reenviar la conformidad o validar el cierre, el equipo puede regenerarla desde la misma instalacion sin perder el contexto operativo.</div>`,
+    "</div>",
     "</td></tr>",
     "</table>",
     "</div>",

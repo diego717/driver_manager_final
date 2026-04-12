@@ -75,7 +75,7 @@ test("sendConformityEmail sends the PDF through Resend", async (t) => {
   assert.equal(capturedRequest?.headers?.Authorization, "Bearer re_test_123");
   assert.equal(capturedRequest?.body?.from, "SiteOps <ops@example.com>");
   assert.deepEqual(capturedRequest?.body?.to, ["cliente@example.com"]);
-  assert.equal(capturedRequest?.body?.subject, "Conformidad de instalacion #42");
+  assert.equal(capturedRequest?.body?.subject, "SiteOps | Documento operativo | instalacion #42");
   assert.equal(capturedRequest?.body?.attachments?.[0]?.filename, "conformidad_instalacion_42.pdf");
   assert.equal(capturedRequest?.body?.attachments?.[0]?.content, "AQID");
   assert.match(capturedRequest?.body?.html || "", /Acme/);

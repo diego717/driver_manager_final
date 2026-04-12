@@ -1,4 +1,6 @@
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, rgb } from "pdf-lib";
+
+import { embedSiteOpsPdfFonts } from "./pdf-fonts.js";
 
 import { HttpError, normalizeOptionalString } from "../lib/core.js";
 
@@ -13,6 +15,26 @@ const PDF_PAGE = {
 };
 const PDF_TEXT_MAX_WIDTH = PDF_PAGE.width - PDF_PAGE.margin * 2;
 const PDF_LINE_HEIGHT = 15;
+const PDF_COLORS = {
+  backdrop: rgb(0.133, 0.118, 0.188),
+  canvas: rgb(0.094, 0.11, 0.17),
+  card: rgb(0.125, 0.149, 0.208),
+  cardSoft: rgb(0.1, 0.184, 0.153),
+  ink: rgb(0.949, 0.953, 0.969),
+  muted: rgb(0.72, 0.761, 0.824),
+  soft: rgb(0.09, 0.122, 0.184),
+  border: rgb(0.62, 0.863, 0.675),
+  accent: rgb(0.788, 0.949, 0.392),
+  accentSoft: rgb(0.106, 0.173, 0.153),
+  accentDark: rgb(0.086, 0.11, 0.161),
+  accentGlow: rgb(0.953, 0.784, 0.365),
+  accentLine: rgb(0.62, 0.863, 0.675),
+};
+const BRAND_NAME = "SiteOps";
+const BRAND_TAG = "Field Control Console";
+const EMAIL_FONT_DISPLAY = "'Bebas Neue','IBM Plex Sans Condensed','Arial Narrow','Franklin Gothic Condensed','Impact',sans-serif";
+const EMAIL_FONT_BODY = "'Source Sans 3','Segoe UI',sans-serif";
+const EMAIL_FONT_MONO = "'JetBrains Mono','IBM Plex Mono','Cascadia Mono','Consolas',monospace";
 
 function requireBudgetsBucketOperation(env, operation) {
   const bucket = env?.INCIDENTS_BUCKET;
@@ -54,6 +76,15 @@ function normalizePdfText(value) {
     .replace(/[^\x20-\x7E\n]/g, " ")
     .replace(/\r/g, "")
     .trim();
+}
+
+function escapeHtml(value) {
+  return normalizeOptionalString(value, "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function normalizeMoneyCents(value, fieldName) {
@@ -105,7 +136,9 @@ function wrapText(text, maxChars = 90) {
 }
 
 function addPage(pdfDoc) {
-  return pdfDoc.addPage([PDF_PAGE.width, PDF_PAGE.height]);
+  const page = pdfDoc.addPage([PDF_PAGE.width, PDF_PAGE.height]);
+  drawPageBackdrop(page);
+  return page;
 }
 
 function ensurePageSpace(pdfDoc, state, requiredHeight = PDF_LINE_HEIGHT * 3) {
@@ -118,14 +151,23 @@ function ensurePageSpace(pdfDoc, state, requiredHeight = PDF_LINE_HEIGHT * 3) {
 
 function drawSectionTitle(pdfDoc, state, font, text) {
   const nextState = ensurePageSpace(pdfDoc, state, 26);
+  nextState.page.drawRectangle({
+    x: PDF_PAGE.margin,
+    y: nextState.y - 3,
+    width: 46,
+    height: 3,
+    color: PDF_COLORS.accentLine,
+    opacity: 0.95,
+  });
   nextState.page.drawText(normalizePdfText(text), {
     x: PDF_PAGE.margin,
-    y: nextState.y,
-    size: 13,
+    y: nextState.y - 14,
+    size: 12.5,
     font,
-    color: rgb(0.12, 0.2, 0.26),
+    color: PDF_COLORS.accentGlow,
+    characterSpacing: 0.55,
   });
-  nextState.y -= 20;
+  nextState.y -= 30;
   return nextState;
 }
 
@@ -139,12 +181,360 @@ function drawLines(pdfDoc, state, font, lines, options = {}) {
       y: nextState.y,
       size: options.size || 11,
       font,
-      color: options.color || rgb(0.14, 0.14, 0.14),
+      color: options.color || PDF_COLORS.ink,
       maxWidth: options.maxWidth || PDF_TEXT_MAX_WIDTH,
     });
     nextState.y -= PDF_LINE_HEIGHT;
   }
   return nextState;
+}
+
+function drawPageBackdrop(page) {
+  page.drawRectangle({
+    x: 0,
+    y: 0,
+    width: PDF_PAGE.width,
+    height: PDF_PAGE.height,
+    color: PDF_COLORS.backdrop,
+  });
+  page.drawRectangle({
+    x: 16,
+    y: 16,
+    width: PDF_PAGE.width - 32,
+    height: PDF_PAGE.height - 32,
+    borderColor: PDF_COLORS.border,
+    borderWidth: 1,
+    opacity: 0.55,
+  });
+  page.drawRectangle({
+    x: PDF_PAGE.margin,
+    y: PDF_PAGE.height - PDF_PAGE.margin - 6,
+    width: PDF_TEXT_MAX_WIDTH,
+    height: 2,
+    color: PDF_COLORS.accentLine,
+    opacity: 0.45,
+  });
+  page.drawRectangle({
+    x: 88,
+    y: 0,
+    width: 1,
+    height: PDF_PAGE.height,
+    color: PDF_COLORS.border,
+    opacity: 0.16,
+  });
+  page.drawRectangle({
+    x: PDF_PAGE.width - 164,
+    y: 0,
+    width: 148,
+    height: PDF_PAGE.height,
+    color: rgb(1, 0.55, 0.1),
+    opacity: 0.045,
+  });
+}
+
+function drawBrandLockup(page, titleFont, bodyFont, {
+  x,
+  y,
+  scale = 1,
+  light = false,
+} = {}) {
+  const frameWidth = 126 * scale;
+  const frameHeight = 38 * scale;
+  const markSize = 22 * scale;
+  const strokeColor = light ? rgb(0.78, 0.9, 0.92) : PDF_COLORS.accent;
+  const tagColor = light ? rgb(0.72, 0.84, 0.87) : PDF_COLORS.muted;
+
+  page.drawRectangle({
+    x,
+    y: y - frameHeight,
+    width: frameWidth,
+    height: frameHeight,
+    color: light ? rgb(0.1, 0.2, 0.24) : rgb(0.978, 0.989, 0.992),
+    borderColor: light ? rgb(0.22, 0.41, 0.44) : PDF_COLORS.border,
+    borderWidth: 1,
+    borderRadius: 10 * scale,
+  });
+  page.drawRectangle({
+    x: x + 8 * scale,
+    y: y - 8 * scale,
+    width: 52 * scale,
+    height: 1.5,
+    color: strokeColor,
+    opacity: 0.72,
+  });
+
+  const markX = x + 10 * scale;
+  const markY = y - 8 * scale;
+  page.drawRectangle({
+    x: markX,
+    y: markY - markSize,
+    width: markSize,
+    height: markSize,
+    color: light ? rgb(0.14, 0.29, 0.31) : PDF_COLORS.accentSoft,
+    borderColor: strokeColor,
+    borderWidth: 1,
+    borderRadius: 8 * scale,
+  });
+  page.drawCircle({
+    x: markX + markSize * 0.42,
+    y: markY - markSize * 0.52,
+    size: markSize * 0.26,
+    borderColor: strokeColor,
+    borderWidth: 1.5,
+  });
+  page.drawLine({
+    start: { x: markX + markSize * 0.22, y: markY - markSize * 0.52 },
+    end: { x: markX + markSize * 0.72, y: markY - markSize * 0.52 },
+    thickness: 1,
+    color: strokeColor,
+  });
+  page.drawLine({
+    start: { x: markX + markSize * 0.42, y: markY - markSize * 0.22 },
+    end: { x: markX + markSize * 0.42, y: markY - markSize * 0.76 },
+    thickness: 1,
+    color: rgb(strokeColor.red, strokeColor.green, strokeColor.blue),
+    opacity: 0.55,
+  });
+  page.drawCircle({
+    x: markX + markSize * 0.7,
+    y: markY - markSize * 0.3,
+    size: markSize * 0.09,
+    color: strokeColor,
+  });
+
+  page.drawText(BRAND_NAME.toUpperCase(), {
+    x: x + 40 * scale,
+    y: y - 16 * scale,
+    size: 11.5 * scale,
+    font: titleFont,
+    color: strokeColor,
+  });
+  page.drawText(BRAND_TAG.toUpperCase(), {
+    x: x + 40 * scale,
+    y: y - 26 * scale,
+    size: 5.2 * scale,
+    font: bodyFont,
+    color: tagColor,
+  });
+}
+
+function drawInfoCard(page, titleFont, bodyFont, {
+  x,
+  y,
+  width,
+  height,
+  label,
+  value,
+} = {}) {
+  page.drawRectangle({
+    x,
+    y: y - height,
+    width,
+    height,
+    color: PDF_COLORS.card,
+    borderColor: PDF_COLORS.border,
+    borderWidth: 1,
+    opacity: 0.98,
+  });
+  page.drawRectangle({
+    x: x + 14,
+    y: y - 10,
+    width: width - 28,
+    height: 1,
+    color: PDF_COLORS.border,
+    opacity: 0.36,
+  });
+  page.drawRectangle({
+    x,
+    y: y - height + 14,
+    width: 2,
+    height: height - 28,
+    color: PDF_COLORS.accentLine,
+    opacity: 0.9,
+  });
+  page.drawRectangle({
+    x,
+    y: y - 3,
+    width,
+    height: 3,
+    color: PDF_COLORS.accentLine,
+    opacity: 0.95,
+  });
+  page.drawRectangle({
+    x: x + 1,
+    y: y - height + 1,
+    width: width - 2,
+    height: 20,
+    color: PDF_COLORS.cardSoft,
+    opacity: 0.3,
+  });
+  page.drawText(normalizePdfText(label), {
+    x: x + 14,
+    y: y - 18,
+    size: 8.6,
+    font: titleFont,
+    color: PDF_COLORS.muted,
+    characterSpacing: 0.5,
+  });
+
+  const valueLines = wrapText(value, Math.max(18, Math.floor((width - 28) / 7))).slice(0, 3);
+  let lineY = y - 37;
+  for (const line of valueLines) {
+    page.drawText(normalizePdfText(line), {
+      x: x + 14,
+      y: lineY,
+      size: 12.2,
+      font: bodyFont,
+      color: PDF_COLORS.ink,
+    });
+    lineY -= 15;
+  }
+}
+
+function drawTextPanel(pdfDoc, state, bodyFont, text, {
+  fillColor = PDF_COLORS.accentSoft,
+  borderColor = PDF_COLORS.border,
+  textColor = PDF_COLORS.ink,
+  maxChars = 88,
+  fontSize = 11,
+  paddingX = 14,
+  paddingTop = 16,
+  paddingBottom = 14,
+} = {}) {
+  const lines = Array.isArray(text) ? text : wrapText(text, maxChars);
+  if (!lines.length) return state;
+
+  const lineHeight = fontSize + 4;
+  const boxHeight = paddingTop + paddingBottom + (lines.length * lineHeight);
+  const nextState = ensurePageSpace(pdfDoc, state, boxHeight + 8);
+
+  nextState.page.drawRectangle({
+    x: PDF_PAGE.margin + 2,
+    y: nextState.y - boxHeight - 3,
+    width: PDF_TEXT_MAX_WIDTH,
+    height: boxHeight,
+    color: rgb(0.2, 0.32, 0.4),
+    opacity: 0.06,
+  });
+  nextState.page.drawRectangle({
+    x: PDF_PAGE.margin,
+    y: nextState.y - boxHeight,
+    width: PDF_TEXT_MAX_WIDTH,
+    height: boxHeight,
+    color: fillColor,
+    borderColor,
+    borderWidth: 1,
+  });
+  nextState.page.drawRectangle({
+    x: PDF_PAGE.margin + 14,
+    y: nextState.y - 10,
+    width: PDF_TEXT_MAX_WIDTH - 28,
+    height: 1,
+    color: PDF_COLORS.border,
+    opacity: 0.3,
+  });
+  nextState.page.drawRectangle({
+    x: PDF_PAGE.margin,
+    y: nextState.y - boxHeight + 14,
+    width: 2,
+    height: Math.max(18, boxHeight - 28),
+    color: PDF_COLORS.accentLine,
+    opacity: 0.9,
+  });
+  nextState.page.drawRectangle({
+    x: PDF_PAGE.margin,
+    y: nextState.y - 3,
+    width: Math.min(82, PDF_TEXT_MAX_WIDTH),
+    height: 3,
+    color: PDF_COLORS.accentLine,
+    opacity: 0.9,
+  });
+
+  let cursorY = nextState.y - paddingTop - fontSize;
+  for (const line of lines) {
+    nextState.page.drawText(normalizePdfText(line), {
+      x: PDF_PAGE.margin + paddingX,
+      y: cursorY,
+      size: fontSize,
+      font: bodyFont,
+      color: textColor,
+      maxWidth: PDF_TEXT_MAX_WIDTH - (paddingX * 2),
+    });
+    cursorY -= lineHeight;
+  }
+  nextState.y = cursorY - paddingBottom;
+  return nextState;
+}
+
+function buildEmailBrandLockupHtml() {
+  return [
+    "<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">",
+    "<tr>",
+    "<td style=\"padding:0;\">",
+    "<div style=\"display:inline-block;padding:0;background:transparent;\">",
+    "<div style=\"height:2px;width:104px;background:linear-gradient(90deg,#bff264,rgba(191,242,100,0));margin:0 0 12px 0;\"></div>",
+    "<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">",
+    "<tr>",
+    "<td style=\"vertical-align:middle;padding:0 14px 0 0;\">",
+    "<div style=\"width:42px;height:42px;border-radius:14px;background:linear-gradient(150deg,rgba(191,242,100,.16),rgba(32,38,53,.96));border:1px solid #9edcae;box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 10px 22px rgba(0,0,0,.26);position:relative;\">",
+    "<div style=\"position:absolute;left:8px;top:8px;right:8px;height:1px;background:linear-gradient(90deg,rgba(191,242,100,.9),rgba(191,242,100,0));\"></div>",
+    "<div style=\"position:absolute;left:9px;top:9px;width:15px;height:15px;border:2px solid #bff264;border-right-color:transparent;border-radius:999px;\"></div>",
+    "<div style=\"position:absolute;left:9px;right:10px;top:20px;height:1px;background:#9edcae;\"></div>",
+    "<div style=\"position:absolute;top:10px;bottom:10px;left:19px;width:1px;background:rgba(158,220,174,.45);\"></div>",
+    "<div style=\"position:absolute;right:8px;top:8px;width:8px;height:8px;border-radius:999px;background:#bff264;box-shadow:0 0 0 3px rgba(191,242,100,.12);\"></div>",
+    "</div>",
+    "</td>",
+    "<td style=\"vertical-align:middle;\">",
+    `<div style=\"font-family:${EMAIL_FONT_DISPLAY};font-size:30px;line-height:.92;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#eef2f7;\">${escapeHtml(BRAND_NAME)}</div>`,
+    `<div style=\"font-family:${EMAIL_FONT_MONO};font-size:9px;line-height:1.4;letter-spacing:.24em;text-transform:uppercase;color:#b7c0cf;margin-top:4px;\">${escapeHtml(BRAND_TAG)}</div>`,
+    "</td>",
+    "</tr>",
+    "</table>",
+    "</div>",
+    "</td>",
+    "</tr>",
+    "</table>",
+  ].join("");
+}
+
+function buildEmailInfoCardHtml(label, value, options = {}) {
+  const tone = options.tone === "accent" ? "#f3c85d" : "#eef2f7";
+  const size = options.size || 24;
+  return [
+    "<td style=\"width:50%;padding:0 8px 16px 0;vertical-align:top;\">",
+    "<div style=\"position:relative;background:linear-gradient(145deg,rgba(26,33,49,.98),rgba(21,28,43,.98));border:1px solid #9edcae;border-radius:18px;padding:16px 16px 14px 16px;overflow:hidden;box-shadow:0 12px 24px rgba(0,0,0,.2);\">",
+    "<div style=\"position:absolute;left:0;top:14px;bottom:14px;width:3px;background:linear-gradient(180deg,#bff264,#65c9ff);opacity:.92;\"></div>",
+    "<div style=\"height:1px;background:rgba(158,220,174,.4);margin:0 0 12px 14px;\"></div>",
+    `<div style=\"font-family:${EMAIL_FONT_MONO};font-size:10px;line-height:1.3;letter-spacing:.16em;text-transform:uppercase;color:#b7c0cf;margin:0 0 10px 0;\">${escapeHtml(label)}</div>`,
+    `<div style=\"font-family:${EMAIL_FONT_BODY};font-size:${escapeHtml(String(size))}px;line-height:1.35;font-weight:700;color:${tone};word-break:break-word;\">${escapeHtml(value || "-")}</div>`,
+    "</div>",
+    "</td>",
+  ].join("");
+}
+
+function buildEmailHeroStatHtml(label, value, options = {}) {
+  const tone = options.tone === "accent" ? "#f3c85d" : "#eef2f7";
+  return [
+    "<div style=\"margin:0 0 10px 0;padding:12px 12px 10px 12px;border:1px solid rgba(158,220,174,.56);border-radius:14px;background:rgba(18,24,38,.72);\">",
+    `<div style=\"font-family:${EMAIL_FONT_MONO};font-size:9px;line-height:1.3;letter-spacing:.16em;text-transform:uppercase;color:#b7c0cf;margin:0 0 6px 0;\">${escapeHtml(label)}</div>`,
+    `<div style=\"font-family:${EMAIL_FONT_DISPLAY};font-size:22px;line-height:1.02;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${tone};word-break:break-word;\">${escapeHtml(value || "-")}</div>`,
+    "</div>",
+  ].join("");
+}
+
+function buildEmailHeroChipHtml(value) {
+  return `<span style=\"display:inline-block;margin:0 8px 8px 0;padding:7px 10px;border:1px dashed rgba(158,220,174,.72);border-radius:999px;background:rgba(18,24,38,.92);font-family:${EMAIL_FONT_MONO};font-size:10px;line-height:1;letter-spacing:.14em;text-transform:uppercase;color:#dce7f0;\">${escapeHtml(value)}</span>`;
+}
+
+function formatAttachmentSize(bytes) {
+  const safeBytes = Math.max(0, Number(bytes) || 0);
+  if (safeBytes >= 1024 * 1024) {
+    return `${(safeBytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
+  if (safeBytes >= 1024) {
+    return `${Math.round(safeBytes / 1024)} KB`;
+  }
+  return `${safeBytes} bytes`;
 }
 
 function toBase64(bytes) {
@@ -334,112 +724,319 @@ export async function generateInstallationBudgetPdf({
   pdfDoc.setCreationDate(new Date(createdAt));
   pdfDoc.setModificationDate(new Date(createdAt));
 
-  const titleFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const bodyFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const { titleFont, bodyFont } = await embedSiteOpsPdfFonts(pdfDoc);
+  const assetReference =
+    normalizeOptionalString(context.asset?.external_code, "") ||
+    normalizeOptionalString(context.asset?.serial_number, "") ||
+    normalizeOptionalString(context.asset?.model, "") ||
+    "Sin activo vinculado";
+  const clientLabel =
+    normalizeOptionalString(context.installation.client_name, "Sin cliente") ||
+    "Sin cliente";
   const page = addPage(pdfDoc);
   let state = {
     page,
     y: PDF_PAGE.height - PDF_PAGE.margin,
   };
-
-  state.page.drawRectangle({
-    x: PDF_PAGE.margin,
-    y: state.y - 78,
-    width: PDF_TEXT_MAX_WIDTH,
-    height: 78,
-    color: rgb(0.96, 0.98, 0.99),
-    borderColor: rgb(0.83, 0.88, 0.9),
-    borderWidth: 1,
-  });
-  state.page.drawText("Presupuesto de servicio", {
-    x: PDF_PAGE.margin + 14,
-    y: state.y - 28,
-    size: 21,
-    font: titleFont,
-    color: rgb(0.1, 0.16, 0.2),
-  });
-  state.page.drawText(`Numero: ${normalizePdfText(budget.budgetNumber)}`, {
-    x: PDF_PAGE.margin + 14,
-    y: state.y - 48,
-    size: 11,
-    font: bodyFont,
-    color: rgb(0.2, 0.27, 0.33),
-  });
-  state.page.drawText(`Generado: ${formatDateTime(createdAt)}`, {
-    x: PDF_PAGE.margin + 14,
-    y: state.y - 62,
-    size: 10,
-    font: bodyFont,
-    color: rgb(0.3, 0.36, 0.41),
-  });
-  state.y -= 98;
-
-  const referenceLines = [
-    `Registro: #${context.installation.id}`,
-    `Cliente: ${normalizeOptionalString(context.installation.client_name, "Sin cliente") || "Sin cliente"}`,
-    `Activo: ${normalizeOptionalString(context.asset?.external_code, "") || normalizeOptionalString(context.asset?.serial_number, "") || "Sin activo vinculado"}`,
-    `Moneda: ${budget.currencyCode}`,
-  ];
-  state = drawLines(pdfDoc, state, bodyFont, referenceLines, {
-    size: 10.5,
-    color: rgb(0.28, 0.35, 0.4),
-  });
-  state.y -= 8;
-
-  state = drawSectionTitle(pdfDoc, state, titleFont, "Incidencia");
-  state = drawLines(pdfDoc, state, bodyFont, wrapText(budget.incidenceSummary, 92));
-  state.y -= 8;
-
-  state = drawSectionTitle(pdfDoc, state, titleFont, "Alcance");
-  state = drawLines(pdfDoc, state, bodyFont, wrapText(budget.scopeIncluded, 92));
-  state.y -= 8;
-
-  state = drawSectionTitle(pdfDoc, state, titleFont, "Exclusiones");
-  state = drawLines(
-    pdfDoc,
-    state,
-    bodyFont,
-    wrapText(budget.scopeExcluded || "Sin exclusiones declaradas.", 92),
-  );
-  state.y -= 8;
-
-  state = drawSectionTitle(pdfDoc, state, titleFont, "Costos");
-  state = drawLines(pdfDoc, state, bodyFont, [
-    `Mano de obra: ${formatMoney(budget.laborAmountCents, budget.currencyCode)}`,
-    `Repuestos e insumos: ${formatMoney(budget.partsAmountCents, budget.currencyCode)}`,
-    `Impuestos: ${formatMoney(budget.taxAmountCents, budget.currencyCode)}`,
-    `TOTAL: ${formatMoney(budget.totalAmountCents, budget.currencyCode)}`,
-  ]);
-  state.y -= 8;
-
-  state = drawSectionTitle(pdfDoc, state, titleFont, "Plazo");
-  state = drawLines(pdfDoc, state, bodyFont, [
-    budget.estimatedDays === null
-      ? "Plazo estimado: No informado."
-      : `Plazo estimado: ${budget.estimatedDays} dia(s).`,
-  ]);
-  state.y -= 8;
-
-  state = drawSectionTitle(pdfDoc, state, titleFont, "Validez");
-  state = drawLines(pdfDoc, state, bodyFont, [
-    budget.validUntil ? `Valido hasta: ${budget.validUntil}` : "Validez: No informada.",
-  ]);
-  state.y -= 8;
-
-  state = drawSectionTitle(pdfDoc, state, titleFont, "Aprobacion");
+  const generatedLabel = formatDateTime(createdAt);
   const approvalStatusLabel =
     budget.approvalStatus === "approved"
       ? "Aprobado"
       : budget.approvalStatus === "superseded"
         ? "Reemplazado"
         : "Pendiente";
-  state = drawLines(pdfDoc, state, bodyFont, [
+
+  const heroHeight = 168;
+  const heroBottomY = state.y - heroHeight;
+  const metaColumnWidth = 170;
+  const heroLeftWidth = PDF_TEXT_MAX_WIDTH - metaColumnWidth - 14;
+  const heroMetaX = PDF_PAGE.margin + heroLeftWidth + 14;
+  state.page.drawRectangle({
+    x: PDF_PAGE.margin,
+    y: heroBottomY,
+    width: PDF_TEXT_MAX_WIDTH,
+    height: heroHeight,
+    color: PDF_COLORS.canvas,
+    borderColor: PDF_COLORS.border,
+    borderWidth: 1,
+  });
+  state.page.drawRectangle({
+    x: PDF_PAGE.margin,
+    y: state.y - 4,
+    width: PDF_TEXT_MAX_WIDTH,
+    height: 4,
+    color: PDF_COLORS.accentLine,
+    opacity: 0.96,
+  });
+  state.page.drawRectangle({
+    x: PDF_PAGE.margin,
+    y: heroBottomY,
+    width: heroLeftWidth,
+    height: heroHeight,
+    color: PDF_COLORS.accentDark,
+  });
+  state.page.drawRectangle({
+    x: PDF_PAGE.margin,
+    y: heroBottomY + 10,
+    width: heroLeftWidth,
+    height: heroHeight - 20,
+    color: rgb(0.2, 0.38, 0.44),
+    opacity: 0.14,
+  });
+  state.page.drawRectangle({
+    x: heroMetaX,
+    y: heroBottomY,
+    width: metaColumnWidth,
+    height: heroHeight,
+    color: PDF_COLORS.cardSoft,
+  });
+  state.page.drawRectangle({
+    x: heroMetaX,
+    y: heroBottomY,
+    width: 1,
+    height: heroHeight,
+    color: PDF_COLORS.border,
+  });
+
+  drawBrandLockup(state.page, titleFont, bodyFont, {
+    x: PDF_PAGE.margin + 20,
+    y: state.y - 20,
+    scale: 0.88,
+    light: true,
+  });
+
+  state.page.drawRectangle({
+    x: PDF_PAGE.margin + 20,
+    y: state.y - 74,
+    width: 140,
+    height: 18,
+    color: PDF_COLORS.accentGlow,
+    opacity: 0.9,
+  });
+  state.page.drawText("PRESUPUESTO OPERATIVO", {
+    x: PDF_PAGE.margin + 26,
+    y: state.y - 67,
+    size: 7.5,
+    font: titleFont,
+    color: PDF_COLORS.accentDark,
+    characterSpacing: 0.72,
+  });
+  state.page.drawText("Presupuesto de servicio", {
+    x: PDF_PAGE.margin + 20,
+    y: state.y - 114,
+    size: 22.4,
+    font: titleFont,
+    color: rgb(0.965, 0.986, 0.992),
+  });
+  state.page.drawText(`Numero ${normalizePdfText(budget.budgetNumber)}`, {
+    x: PDF_PAGE.margin + 20,
+    y: state.y - 133,
+    size: 12.3,
+    font: bodyFont,
+    color: rgb(0.79, 0.9, 0.93),
+  });
+  state.page.drawText("Documento comercial emitido por SiteOps", {
+    x: PDF_PAGE.margin + 20,
+    y: state.y - 147,
+    size: 8.6,
+    font: bodyFont,
+    color: rgb(0.66, 0.79, 0.83),
+  });
+
+  state.page.drawText("Generado", {
+    x: heroMetaX + 14,
+    y: state.y - 34,
+    size: 8.2,
+    font: titleFont,
+    color: PDF_COLORS.muted,
+    characterSpacing: 0.6,
+  });
+  state.page.drawText(normalizePdfText(generatedLabel), {
+    x: heroMetaX + 14,
+    y: state.y - 49,
+    size: 9.8,
+    font: bodyFont,
+    color: PDF_COLORS.ink,
+    maxWidth: metaColumnWidth - 28,
+  });
+  state.page.drawText("Moneda", {
+    x: heroMetaX + 14,
+    y: state.y - 74,
+    size: 8.2,
+    font: titleFont,
+    color: PDF_COLORS.muted,
+    characterSpacing: 0.6,
+  });
+  state.page.drawText(normalizePdfText(budget.currencyCode), {
+    x: heroMetaX + 14,
+    y: state.y - 89,
+    size: 10.2,
+    font: bodyFont,
+    color: PDF_COLORS.ink,
+    maxWidth: metaColumnWidth - 28,
+  });
+  state.page.drawText("Estado", {
+    x: heroMetaX + 14,
+    y: state.y - 114,
+    size: 8.2,
+    font: titleFont,
+    color: PDF_COLORS.muted,
+    characterSpacing: 0.6,
+  });
+  state.page.drawText(normalizePdfText(approvalStatusLabel), {
+    x: heroMetaX + 14,
+    y: state.y - 129,
+    size: 10.2,
+    font: bodyFont,
+    color: PDF_COLORS.ink,
+    maxWidth: metaColumnWidth - 28,
+  });
+  state.page.drawText("Total", {
+    x: heroMetaX + 14,
+    y: state.y - 149,
+    size: 8.2,
+    font: titleFont,
+    color: PDF_COLORS.muted,
+    characterSpacing: 0.6,
+  });
+  state.page.drawText(
+    normalizePdfText(formatMoney(budget.totalAmountCents, budget.currencyCode)),
+    {
+      x: heroMetaX + 14,
+      y: state.y - 163,
+      size: 10.8,
+      font: titleFont,
+      color: PDF_COLORS.accentDark,
+      maxWidth: metaColumnWidth - 28,
+    },
+  );
+  state.y = heroBottomY - 20;
+
+  const cardGap = 12;
+  const cardWidth = (PDF_TEXT_MAX_WIDTH - cardGap) / 2;
+  const cardHeight = 72;
+  state = ensurePageSpace(pdfDoc, state, cardHeight * 2 + 24);
+  drawInfoCard(state.page, titleFont, bodyFont, {
+    x: PDF_PAGE.margin,
+    y: state.y,
+    width: cardWidth,
+    height: cardHeight,
+    label: "Cliente",
+    value: clientLabel,
+  });
+  drawInfoCard(state.page, titleFont, bodyFont, {
+    x: PDF_PAGE.margin + cardWidth + cardGap,
+    y: state.y,
+    width: cardWidth,
+    height: cardHeight,
+    label: "Activo",
+    value: assetReference,
+  });
+  state.y -= cardHeight + 12;
+  drawInfoCard(state.page, titleFont, bodyFont, {
+    x: PDF_PAGE.margin,
+    y: state.y,
+    width: cardWidth,
+    height: cardHeight,
+    label: "Validez",
+    value: budget.validUntil ? `Hasta ${budget.validUntil}` : "No informada",
+  });
+  drawInfoCard(state.page, titleFont, bodyFont, {
+    x: PDF_PAGE.margin + cardWidth + cardGap,
+    y: state.y,
+    width: cardWidth,
+    height: cardHeight,
+    label: "Plazo",
+    value:
+      budget.estimatedDays === null
+        ? "No informado"
+        : `${budget.estimatedDays} dia(s) estimados`,
+  });
+  state.y -= cardHeight + 18;
+
+  state = drawSectionTitle(pdfDoc, state, titleFont, "Incidencia");
+  state = drawTextPanel(pdfDoc, state, bodyFont, wrapText(budget.incidenceSummary, 88), {
+    fillColor: PDF_COLORS.card,
+    borderColor: PDF_COLORS.border,
+    textColor: PDF_COLORS.ink,
+    maxChars: 88,
+    fontSize: 10.8,
+    paddingX: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+  });
+  state.y -= 8;
+
+  state = drawSectionTitle(pdfDoc, state, titleFont, "Alcance");
+  state = drawTextPanel(pdfDoc, state, bodyFont, wrapText(budget.scopeIncluded, 88), {
+    fillColor: PDF_COLORS.soft,
+    borderColor: PDF_COLORS.border,
+    textColor: PDF_COLORS.ink,
+    maxChars: 88,
+    fontSize: 10.8,
+    paddingX: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+  });
+  state.y -= 8;
+
+  state = drawSectionTitle(pdfDoc, state, titleFont, "Exclusiones");
+  state = drawTextPanel(
+    pdfDoc,
+    state,
+    bodyFont,
+    wrapText(budget.scopeExcluded || "Sin exclusiones declaradas.", 88),
+    {
+      fillColor: PDF_COLORS.accentSoft,
+      borderColor: PDF_COLORS.accentLine,
+      textColor: PDF_COLORS.ink,
+      maxChars: 88,
+      fontSize: 10.8,
+      paddingX: 16,
+      paddingTop: 16,
+      paddingBottom: 14,
+    },
+  );
+  state.y -= 8;
+
+  state = drawSectionTitle(pdfDoc, state, titleFont, "Costos");
+  state = drawTextPanel(pdfDoc, state, bodyFont, [
+    `Mano de obra: ${formatMoney(budget.laborAmountCents, budget.currencyCode)}`,
+    `Repuestos e insumos: ${formatMoney(budget.partsAmountCents, budget.currencyCode)}`,
+    `Impuestos: ${formatMoney(budget.taxAmountCents, budget.currencyCode)}`,
+    `TOTAL: ${formatMoney(budget.totalAmountCents, budget.currencyCode)}`,
+  ], {
+    fillColor: PDF_COLORS.card,
+    borderColor: PDF_COLORS.border,
+    textColor: PDF_COLORS.ink,
+    maxChars: 88,
+    fontSize: 10.8,
+    paddingX: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+  });
+  state.y -= 8;
+
+  state = drawSectionTitle(pdfDoc, state, titleFont, "Aprobacion");
+  state = drawTextPanel(pdfDoc, state, bodyFont, [
     `Estado: ${approvalStatusLabel}`,
     `Aprobado por: ${budget.approvedByName || "Pendiente"}`,
     `Canal: ${budget.approvedByChannel || "Pendiente"}`,
     `Fecha: ${budget.approvedAt ? formatDateTime(budget.approvedAt) : "Pendiente"}`,
     budget.approvalNote ? `Nota: ${budget.approvalNote}` : "Nota: -",
-  ]);
+    `Emitido por: ${normalizeOptionalString(createdByUsername, "SiteOps") || "SiteOps"}`,
+  ], {
+    fillColor:
+      budget.approvalStatus === "approved" ? PDF_COLORS.accentSoft : PDF_COLORS.soft,
+    borderColor:
+      budget.approvalStatus === "approved" ? PDF_COLORS.accentLine : PDF_COLORS.border,
+    textColor: PDF_COLORS.ink,
+    maxChars: 88,
+    fontSize: 10.8,
+    paddingX: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+  });
 
   return pdfDoc.save();
 }
@@ -777,32 +1374,101 @@ export async function sendBudgetEmail(
     };
   }
 
-  const subject = `Presupuesto ${budgetNumber} - instalacion #${installationId}`;
+  const subject = `SiteOps | Documento comercial ${budgetNumber} | instalacion #${installationId}`;
   const filename = `presupuesto_instalacion_${installationId}_${normalizeOptionalString(budgetNumber, "budget")}.pdf`;
+  const client = normalizeOptionalString(clientName, "Sin cliente") || "Sin cliente";
+  const asset = normalizeOptionalString(assetLabel, "Sin activo vinculado") || "Sin activo vinculado";
+  const total = formatMoney(totalAmountCents, currencyCode);
+  const validity = normalizeOptionalString(validUntil, "No informada") || "No informada";
+  const summary = normalizeOptionalString(incidenceSummary, "");
+  const attachmentBase64 = toBase64(pdfBytes);
+  const attachmentSize = formatAttachmentSize(pdfBytes.byteLength);
   const text = [
-    "Adjuntamos el presupuesto generado desde SiteOps.",
+    "Adjuntamos el presupuesto de servicio emitido desde SiteOps.",
     `Registro: #${installationId}`,
     `Numero: ${budgetNumber}`,
-    `Cliente: ${normalizeOptionalString(clientName, "Sin cliente") || "Sin cliente"}`,
-    `Activo: ${normalizeOptionalString(assetLabel, "Sin activo vinculado") || "Sin activo vinculado"}`,
-    `Total: ${formatMoney(totalAmountCents, currencyCode)}`,
-    validUntil ? `Validez: ${validUntil}` : "Validez: No informada",
-    incidenceSummary ? `Incidencia: ${normalizeOptionalString(incidenceSummary, "")}` : "",
+    `Cliente: ${client}`,
+    `Activo: ${asset}`,
+    `Total: ${total}`,
+    `Validez: ${validity}`,
+    summary ? `Incidencia: ${summary}` : "",
+    "",
+    `Adjunto: ${filename} (${attachmentSize})`,
   ]
     .filter(Boolean)
     .join("\n");
   const html = [
-    "<div style=\"font-family:Arial,sans-serif;background:#111;color:#f4f4f4;padding:18px;\">",
-    `<h2 style=\"margin:0 0 10px 0;\">Presupuesto ${normalizePdfText(budgetNumber)}</h2>`,
-    `<p style=\"margin:0 0 8px 0;\">Registro <strong>#${installationId}</strong></p>`,
-    `<p style=\"margin:0 0 8px 0;\">Cliente: ${normalizePdfText(clientName || "Sin cliente")}</p>`,
-    `<p style=\"margin:0 0 8px 0;\">Activo: ${normalizePdfText(assetLabel || "Sin activo vinculado")}</p>`,
-    `<p style=\"margin:0 0 8px 0;\">Total: ${normalizePdfText(formatMoney(totalAmountCents, currencyCode))}</p>`,
-    `<p style=\"margin:0 0 8px 0;\">Validez: ${normalizePdfText(validUntil || "No informada")}</p>`,
-    incidenceSummary
-      ? `<p style=\"margin:0 0 8px 0;\">Incidencia: ${normalizePdfText(incidenceSummary)}</p>`
+    `<div style="margin:0;padding:30px 16px;background:#211c2e;background-image:linear-gradient(90deg,rgba(94,122,255,.1) 1px,transparent 1px),linear-gradient(0deg,rgba(94,122,255,.08) 1px,transparent 1px),radial-gradient(circle at 8% -10%,rgba(243,200,93,.18),transparent 34%),radial-gradient(circle at 98% 2%,rgba(167,243,107,.14),transparent 34%),linear-gradient(125deg,#211c2e,#162231 42%,#173127);background-size:120px 120px,120px 120px,auto,auto,auto;font-family:${EMAIL_FONT_BODY};color:#eef2f7;">`,
+    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width:760px;margin:0 auto;border-collapse:collapse;\">",
+    "<tr><td style=\"padding:0 0 16px 0;\">",
+    buildEmailBrandLockupHtml(),
+    "</td></tr>",
+    "<tr><td style=\"padding:0 0 16px 0;\">",
+    "<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">",
+    "<tr>",
+    "<td style=\"padding:0 12px 0 0;vertical-align:middle;\">",
+    `<div style="display:inline-block;padding:7px 11px;border:1px dashed rgba(158,220,174,.78);border-radius:999px;background:rgba(22,28,43,.9);color:#dce7f0;font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;font-family:${EMAIL_FONT_MONO};">Documento comercial</div>`,
+    "</td>",
+    "<td style=\"vertical-align:middle;\">",
+    "<div style=\"height:1px;width:120px;background:linear-gradient(90deg,rgba(147,221,214,.55),rgba(147,221,214,0));\"></div>",
+    "</td>",
+    "</tr>",
+    "</table>",
+    "</td></tr>",
+    "<tr><td style=\"background:linear-gradient(180deg,rgba(24,28,43,.98),rgba(18,24,38,.98));border:1px solid rgba(158,220,174,.72);border-radius:26px;padding:0;box-shadow:0 20px 44px rgba(0,0,0,.28);overflow:hidden;\">",
+    "<div style=\"height:3px;background:linear-gradient(90deg,#bff264 0%,#65c9ff 52%,rgba(101,201,255,.12) 100%);\"></div>",
+    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">",
+    "<tr>",
+    "<td style=\"padding:22px 22px 20px 22px;vertical-align:top;background:linear-gradient(90deg,rgba(72,33,38,.26) 0%,rgba(25,35,49,.98) 36%,rgba(18,24,38,.98) 100%);border-right:1px solid rgba(158,220,174,.36);\">",
+    `<div style="display:inline-block;padding:8px 12px;border:1px solid rgba(158,220,174,.78);border-radius:999px;background:rgba(18,24,38,.46);color:#dce7f0;font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;font-family:${EMAIL_FONT_MONO};">Presupuesto de servicio</div>`,
+    `<div style="font-size:40px;line-height:.94;font-weight:700;color:#eef2f7;margin:18px 0 10px 0;font-family:${EMAIL_FONT_DISPLAY};letter-spacing:.06em;text-transform:uppercase;">Registro #${escapeHtml(String(installationId))}</div>`,
+    "<div style=\"width:108px;height:2px;background:linear-gradient(90deg,#bff264,#65c9ff 72%,rgba(101,201,255,0));margin:0 0 16px 0;\"></div>",
+    `<div style="font-size:15px;line-height:1.72;color:#b7c0cf;max-width:420px;font-family:${EMAIL_FONT_BODY};">El presupuesto de servicio ya fue emitido desde <strong>SiteOps</strong>. El documento adjunto resume alcance tecnico, detalle economico, plazos y validez comercial dentro del mismo contexto operativo del registro.</div>`,
+    "</td>",
+    "<td style=\"width:220px;padding:18px 18px 12px 18px;vertical-align:top;background:linear-gradient(180deg,rgba(27,39,59,.82),rgba(18,24,38,.96));\">",
+    buildEmailHeroStatHtml("Numero", budgetNumber),
+    buildEmailHeroStatHtml("Total", total, { tone: "accent" }),
+    buildEmailHeroStatHtml("Validez", validity),
+    buildEmailHeroStatHtml("Documento", "Comercial"),
+    "</td>",
+    "</tr>",
+    "<tr><td colspan=\"2\" style=\"padding:14px 22px 18px 22px;border-top:1px solid rgba(158,220,174,.3);background:rgba(18,24,38,.72);\">",
+    buildEmailHeroChipHtml("registro operativo"),
+    buildEmailHeroChipHtml("presupuesto listo"),
+    buildEmailHeroChipHtml(currencyCode || "UYU"),
+    "</td></tr>",
+    "</table>",
+    "<div style=\"padding:20px 22px 4px 22px;\">",
+    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">",
+    "<tr>",
+    buildEmailInfoCardHtml("Numero", budgetNumber),
+    buildEmailInfoCardHtml("Cliente", client),
+    "</tr>",
+    "<tr>",
+    buildEmailInfoCardHtml("Activo", asset, { size: 18 }),
+    buildEmailInfoCardHtml("Total", total, { tone: "accent", size: 20 }),
+    "</tr>",
+    "<tr>",
+    buildEmailInfoCardHtml("Validez", validity, { size: 18 }),
+    buildEmailInfoCardHtml("Documento", "Comercial", { size: 18 }),
+    "</tr>",
+    "</table>",
+    summary
+      ? `<div style="margin:8px 0 20px 0;padding:18px 18px;border:1px solid rgba(158,220,174,.56);background:linear-gradient(180deg,rgba(26,33,49,.96),rgba(18,24,38,.96));border-radius:18px;box-shadow:inset 0 1px 0 rgba(255,255,255,.08);"><div style="font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#b7c0cf;margin:0 0 10px 0;font-family:${EMAIL_FONT_MONO};">Resumen de incidencia</div><div style="font-size:15px;line-height:1.72;color:#eef2f7;font-family:${EMAIL_FONT_BODY};">${escapeHtml(summary)}</div></div>`
       : "",
-    "<p style=\"margin:14px 0 0 0;\">El PDF viaja adjunto en este correo.</p>",
+    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;border:1px solid rgba(158,220,174,.56);border-radius:18px;\">",
+    "<tr>",
+    "<td style=\"padding:18px 18px;background:linear-gradient(180deg,rgba(24,28,43,.92) 0%,rgba(27,39,59,.94) 100%);border-radius:18px;\">",
+    `<div style="font-size:10px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#b7c0cf;margin:0 0 10px 0;font-family:${EMAIL_FONT_MONO};">Documento adjunto</div>`,
+    `<div style="font-size:26px;line-height:1.02;font-weight:700;color:#eef2f7;margin:0 0 10px 0;font-family:${EMAIL_FONT_DISPLAY};letter-spacing:.05em;text-transform:uppercase;word-break:break-word;">${escapeHtml(filename)}</div>`,
+    `<div style="font-size:13px;line-height:1.75;color:#d7e8f6;font-family:${EMAIL_FONT_BODY};">El PDF viaja adjunto en este correo para revision comercial. Tamano aproximado del archivo: <strong>${escapeHtml(attachmentSize)}</strong>.</div>`,
+    "</td>",
+    "</tr>",
+    "</table>",
+    `<div style="font-size:13px;line-height:1.8;color:#b7c0cf;font-family:${EMAIL_FONT_BODY};margin:18px 0 0 0;">Si necesitas ajustar alcance, costos o condiciones comerciales, el equipo puede emitir una nueva version desde la misma instalacion.</div>`,
+    "</div>",
+    "</td></tr>",
+    "</table>",
     "</div>",
   ].join("");
 
@@ -823,7 +1489,7 @@ export async function sendBudgetEmail(
         attachments: [
           {
             filename,
-            content: toBase64(pdfBytes),
+            content: attachmentBase64,
           },
         ],
       }),
