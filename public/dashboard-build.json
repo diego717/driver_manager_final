@@ -19,11 +19,11 @@
     "auth": "342e9830f4",
     "navigation": "74eb06359c",
     "bootstrap": "65dba6e7cf",
-    "js": "3379b5648d",
+    "js": "73c58430b0",
     "pwa": "55b84aa40e",
     "manifest": "9130a5f920",
     "sw": "4c87568cf6",
     "materialSymbolsFont": "ee7248184b",
-    "build": "1203d51e36"
+    "build": "ce13eca341"
   }
 }

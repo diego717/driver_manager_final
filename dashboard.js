@@ -4246,7 +4246,8 @@ async function exportToExcel(data, filename = 'registros.xls') {
     };
     const buildExportFilename = () => {
         if (filename && filename !== 'registros.xls') {
-            return String(filename).replace(/\.xls$/i, '.xlsx');
+            const baseName = String(filename).replace(/\.(xls|xlsx)$/i, '');
+            return `${baseName}.xlsx`;
         }
         const segments = ['registros'];
         if (filters.startDate && filters.endDate) segments.push(`${filters.startDate}_a_${filters.endDate}`);
@@ -4263,6 +4264,28 @@ async function exportToExcel(data, filename = 'registros.xls') {
         fill: { fgColor: { rgb: fillColor } },
         alignment: { horizontal: 'center' },
     });
+    const parseDateOrNull = (value) => {
+        if (!value) return null;
+        const parsed = new Date(value);
+        return parsed instanceof Date && !Number.isNaN(parsed.getTime()) ? parsed : null;
+    };
+    const resolveExportTimestamp = (installation) => (
+        parseDateOrNull(installation?.timestamp)
+        || parseDateOrNull(installation?.created_at)
+        || parseDateOrNull(installation?.updated_at)
+        || parseDateOrNull(installation?.gps_captured_at)
+        || null
+    );
+    const gpsStatusLabel = (value) => {
+        const normalized = String(value || '').trim().toLowerCase();
+        if (normalized === 'captured') return 'Capturado';
+        if (normalized === 'denied') return 'Denegado';
+        if (normalized === 'timeout') return 'Timeout';
+        if (normalized === 'unavailable') return 'No disponible';
+        if (normalized === 'unsupported') return 'Sin soporte';
+        if (normalized === 'override') return 'Override';
+        return 'Pendiente';
+    };
 
     const workbook = XLSX.utils.book_new();
     const generatedAt = new Date();
@@ -4273,60 +4296,113 @@ async function exportToExcel(data, filename = 'registros.xls') {
         'Cliente',
         'Marca',
         'Version',
-        'PC',
-        'Tecnico',
+        'Equipo / OS',
+        'Tecnico / Usuario',
         'Atencion',
-        'Tiempo (s)',
-        'Tiempo visible',
-        'GPS',
+        'Incidencias activas',
+        'Incidencias resueltas',
+        'Tiempo registro (s)',
+        'Tiempo registro',
+        'Tiempo estimado incidencias (s)',
+        'Tiempo estimado incidencias',
+        'Tiempo real incidencias (s)',
+        'Tiempo real incidencias',
+        'GPS estado',
         'Precision GPS (m)',
+        'Coordenadas GPS',
+        'Fuente GPS',
         'Notas',
         'Fecha/Hora',
     ];
     const details = data.map((inst) => {
-        const timestamp = inst?.timestamp ? new Date(inst.timestamp) : null;
+        const timestamp = resolveExportTimestamp(inst);
         const gpsStatusRaw = String(inst?.gps_capture_status || 'pending').trim().toLowerCase() || 'pending';
         const gpsAccuracy = Number(inst?.gps_accuracy_m);
+        const gpsLat = Number(inst?.gps_lat);
+        const gpsLng = Number(inst?.gps_lng);
         const attention = buildRecordAttentionBadge(inst);
+        const estimatedCount = Math.max(0, Number(inst?.incident_estimated_duration_count) || 0);
+        const actualCount = Math.max(0, Number(inst?.incident_actual_duration_count) || 0);
+        const estimatedSeconds = Math.max(0, Number(inst?.incident_estimated_duration_seconds_total) || 0);
+        const actualSeconds = Math.max(0, Number(inst?.incident_actual_duration_seconds_total) || 0);
         return {
             id: Number(inst?.id) || inst?.id || '',
             clientName: sanitizeSpreadsheetCell(inst?.client_name || 'N/A'),
             brand: sanitizeSpreadsheetCell(inst?.driver_brand || 'N/A'),
             version: sanitizeSpreadsheetCell(inst?.driver_version || 'N/A'),
-            pcName: sanitizeSpreadsheetCell(inst?.client_pc_name || 'N/A'),
-            technician: sanitizeSpreadsheetCell(inst?.technician_name || 'N/A'),
+            pcName: sanitizeSpreadsheetCell(inst?.client_pc_name || inst?.os_info || 'N/A'),
+            technician: sanitizeSpreadsheetCell(inst?.technician_name || inst?.reporter_username || inst?.created_by || 'N/A'),
             attentionLabel: sanitizeSpreadsheetCell(attention.label),
-            attentionState: attention.stateClass,
+            attentionState: normalizeRecordAttentionState(inst?.attention_state),
+            incidentActiveCount: Math.max(0, Number(inst?.incident_active_count) || 0),
+            incidentResolvedCount: Math.max(0, Number(inst?.incident_resolved_count) || 0),
             durationSeconds: Math.max(0, Number(inst?.installation_time_seconds) || 0),
+            estimatedSeconds,
+            actualSeconds,
             notes: sanitizeSpreadsheetCell(extractInstallationRecordNote(inst?.notes)),
             timestamp: timestamp instanceof Date && !Number.isNaN(timestamp.getTime()) ? timestamp : null,
-            gpsStatus: sanitizeSpreadsheetCell(gpsStatusRaw),
+            gpsStatus: sanitizeSpreadsheetCell(gpsStatusLabel(gpsStatusRaw)),
             gpsStatusRaw,
             gpsAccuracy: Number.isFinite(gpsAccuracy) ? Math.max(0, gpsAccuracy) : null,
+            gpsCoordinates: Number.isFinite(gpsLat) && Number.isFinite(gpsLng)
+                ? sanitizeSpreadsheetCell(`${gpsLat.toFixed(6)}, ${gpsLng.toFixed(6)}`)
+                : 'N/A',
+            gpsSource: sanitizeSpreadsheetCell(inst?.gps_capture_source || 'N/A'),
+            estimatedDurationVisible: estimatedCount > 0 ? formatDuration(estimatedSeconds) : '-',
+            actualDurationVisible: actualCount > 0 ? formatDuration(actualSeconds) : '-',
         };
     });
 
+    const attentionDistribution = Array.from(details.reduce((accumulator, item) => {
+        accumulator.set(item.attentionLabel, (accumulator.get(item.attentionLabel) || 0) + 1);
+        return accumulator;
+    }, new Map()).entries()).sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]), 'es'));
+    const gpsDistribution = Array.from(details.reduce((accumulator, item) => {
+        accumulator.set(item.gpsStatus, (accumulator.get(item.gpsStatus) || 0) + 1);
+        return accumulator;
+    }, new Map()).entries()).sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]), 'es'));
+    const totalDurationSeconds = details.reduce((sum, item) => sum + item.durationSeconds, 0);
+    const totalEstimatedSeconds = details.reduce((sum, item) => sum + item.estimatedSeconds, 0);
+    const totalActualSeconds = details.reduce((sum, item) => sum + item.actualSeconds, 0);
+    const totalActiveIncidents = details.reduce((sum, item) => sum + item.incidentActiveCount, 0);
+    const totalResolvedIncidents = details.reduce((sum, item) => sum + item.incidentResolvedCount, 0);
+    const capturedAccuracies = details
+        .filter(item => item.gpsStatusRaw === 'captured' && Number.isFinite(item.gpsAccuracy))
+        .map(item => Number(item.gpsAccuracy));
+    const averageGpsAccuracy = capturedAccuracies.length
+        ? Math.round((capturedAccuracies.reduce((sum, value) => sum + value, 0) / capturedAccuracies.length) * 10) / 10
+        : null;
+    const metricRows = [
+        ['Total de registros', details.length],
+        ['Clientes unicos', new Set(details.map(item => item.clientName)).size],
+        ['Marcas unicas', new Set(details.map(item => item.brand)).size],
+        ['Tecnicos / usuarios unicos', new Set(details.map(item => item.technician)).size],
+        ['Tiempo promedio de registro (s)', details.length ? Math.round(totalDurationSeconds / details.length) : 0],
+        ['Tiempo promedio estimado de incidencias (s)', details.length ? Math.round(totalEstimatedSeconds / details.length) : 0],
+        ['Tiempo promedio real de incidencias (s)', details.length ? Math.round(totalActualSeconds / details.length) : 0],
+        ['Incidencias activas acumuladas', totalActiveIncidents],
+        ['Incidencias resueltas acumuladas', totalResolvedIncidents],
+        ['GPS capturado', details.filter(item => item.gpsStatusRaw === 'captured').length],
+        ['GPS pendiente', details.filter(item => item.gpsStatusRaw === 'pending').length],
+        ['GPS con falla', details.filter(item => isGpsFailureStatus(item.gpsStatusRaw)).length],
+        ['Precision GPS promedio (capturado)', averageGpsAccuracy !== null ? `${averageGpsAccuracy} m` : 'N/A'],
+    ];
     const summaryRows = [
         ['Reporte de registros'],
         [`Generado el ${generatedAt.toLocaleString('es-ES')}`],
         [filterSummary],
         [],
         ['Metrica', 'Valor'],
-        ['Total de registros', details.length],
-        ['Clientes unicos', new Set(details.map(item => item.clientName)).size],
-        ['Marcas unicas', new Set(details.map(item => item.brand)).size],
-        ['Tiempo promedio (s)', details.length ? Math.round(details.reduce((sum, item) => sum + item.durationSeconds, 0) / details.length) : 0],
-        ['GPS capturado', details.filter(item => item.gpsStatusRaw === 'captured').length],
-        ['GPS con falla', details.filter(item => isGpsFailureStatus(item.gpsStatusRaw)).length],
+        ...metricRows,
         [],
         ['Atencion', 'Cantidad'],
-        ...Array.from(details.reduce((accumulator, item) => {
-            accumulator.set(item.attentionLabel, (accumulator.get(item.attentionLabel) || 0) + 1);
-            return accumulator;
-        }, new Map()).entries()),
+        ...attentionDistribution,
+        [],
+        ['Estado GPS', 'Cantidad'],
+        ...gpsDistribution,
     ];
     const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
-    summarySheet['!cols'] = [{ wch: 28 }, { wch: 18 }];
+    summarySheet['!cols'] = [{ wch: 44 }, { wch: 20 }];
     summarySheet['!merges'] = [
         { s: { r: 0, c: 0 }, e: { r: 0, c: 1 } },
         { s: { r: 1, c: 0 }, e: { r: 1, c: 1 } },
@@ -4348,26 +4424,42 @@ async function exportToExcel(data, filename = 'registros.xls') {
             item.pcName,
             item.technician,
             item.attentionLabel,
+            item.incidentActiveCount,
+            item.incidentResolvedCount,
             item.durationSeconds,
             formatDuration(item.durationSeconds),
+            item.estimatedSeconds,
+            item.estimatedDurationVisible,
+            item.actualSeconds,
+            item.actualDurationVisible,
             item.gpsStatus,
             item.gpsAccuracy,
+            item.gpsCoordinates,
+            item.gpsSource,
             item.notes,
             item.timestamp,
         ]),
     ];
     const detailSheet = XLSX.utils.aoa_to_sheet(detailRows, { cellDates: true });
     detailSheet['!cols'] = [
-        { wch: 10 },
+        { wch: 8 },
         { wch: 24 },
-        { wch: 18 },
+        { wch: 16 },
         { wch: 14 },
+        { wch: 20 },
         { wch: 18 },
         { wch: 18 },
         { wch: 16 },
-        { wch: 12 },
-        { wch: 14 },
         { wch: 16 },
+        { wch: 17 },
+        { wch: 15 },
+        { wch: 21 },
+        { wch: 20 },
+        { wch: 19 },
+        { wch: 18 },
+        { wch: 15 },
+        { wch: 16 },
+        { wch: 23 },
         { wch: 16 },
         { wch: 48 },
         { wch: 20 },
@@ -4384,24 +4476,33 @@ async function exportToExcel(data, filename = 'registros.xls') {
         'Cliente',
         'Total',
         'Marcas',
-        'Tiempo promedio (s)',
+        'Tecnicos / Usuarios',
+        'Registros criticos',
+        'Incidencias activas',
         'GPS capturado',
+        'Tiempo prom. registro (s)',
+        'Tiempo prom. incidencias real (s)',
         'Ultima fecha',
-        'Tecnicos',
     ];
     const clientSummaries = Array.from(details.reduce((accumulator, item) => {
         const bucket = accumulator.get(item.clientName) || {
             clientName: item.clientName,
             total: 0,
             durationSeconds: 0,
+            actualSeconds: 0,
             gpsCaptured: 0,
+            criticalRecords: 0,
+            activeIncidents: 0,
             brands: new Set(),
             technicians: new Set(),
             lastTimestamp: null,
         };
         bucket.total += 1;
         bucket.durationSeconds += item.durationSeconds;
+        bucket.actualSeconds += item.actualSeconds;
+        bucket.activeIncidents += item.incidentActiveCount;
         if (item.gpsStatusRaw === 'captured') bucket.gpsCaptured += 1;
+        if (item.attentionState === 'critical') bucket.criticalRecords += 1;
         if (item.brand && item.brand !== 'N/A') bucket.brands.add(item.brand);
         if (item.technician && item.technician !== 'N/A') bucket.technicians.add(item.technician);
         if (item.timestamp && (!bucket.lastTimestamp || item.timestamp > bucket.lastTimestamp)) bucket.lastTimestamp = item.timestamp;
@@ -4418,21 +4519,27 @@ async function exportToExcel(data, filename = 'registros.xls') {
             item.clientName,
             item.total,
             Array.from(item.brands).join(', ') || 'N/A',
-            item.total ? Math.round(item.durationSeconds / item.total) : 0,
-            item.gpsCaptured,
-            item.lastTimestamp,
             Array.from(item.technicians).join(', ') || 'N/A',
+            item.criticalRecords,
+            item.activeIncidents,
+            item.gpsCaptured,
+            item.total ? Math.round(item.durationSeconds / item.total) : 0,
+            item.total ? Math.round(item.actualSeconds / item.total) : 0,
+            item.lastTimestamp,
         ]),
     ];
     const clientsSheet = XLSX.utils.aoa_to_sheet(clientsRows, { cellDates: true });
     clientsSheet['!cols'] = [
         { wch: 24 },
         { wch: 10 },
+        { wch: 24 },
         { wch: 28 },
+        { wch: 16 },
         { wch: 18 },
         { wch: 14 },
         { wch: 20 },
-        { wch: 24 },
+        { wch: 26 },
+        { wch: 20 },
     ];
     clientsSheet['!merges'] = [
         { s: { r: 0, c: 0 }, e: { r: 0, c: clientsHeaders.length - 1 } },
@@ -4440,6 +4547,81 @@ async function exportToExcel(data, filename = 'registros.xls') {
         { s: { r: 2, c: 0 }, e: { r: 2, c: clientsHeaders.length - 1 } },
     ];
     clientsSheet['!autofilter'] = { ref: `A${clientsHeaderRowNumber}:${XLSX.utils.encode_col(clientsHeaders.length - 1)}${clientsRows.length}` };
+
+    const techniciansHeaderRowNumber = 5;
+    const techniciansHeaders = [
+        'Tecnico / Usuario',
+        'Total',
+        'Clientes',
+        'Marcas',
+        'GPS capturado',
+        'Incidencias activas',
+        'Tiempo prom. registro (s)',
+        'Tiempo prom. incidencias real (s)',
+        'Ultima fecha',
+    ];
+    const technicianSummaries = Array.from(details.reduce((accumulator, item) => {
+        const key = item.technician || 'N/A';
+        const bucket = accumulator.get(key) || {
+            technician: key,
+            total: 0,
+            durationSeconds: 0,
+            actualSeconds: 0,
+            activeIncidents: 0,
+            gpsCaptured: 0,
+            clients: new Set(),
+            brands: new Set(),
+            lastTimestamp: null,
+        };
+        bucket.total += 1;
+        bucket.durationSeconds += item.durationSeconds;
+        bucket.actualSeconds += item.actualSeconds;
+        bucket.activeIncidents += item.incidentActiveCount;
+        if (item.gpsStatusRaw === 'captured') bucket.gpsCaptured += 1;
+        if (item.clientName && item.clientName !== 'N/A') bucket.clients.add(item.clientName);
+        if (item.brand && item.brand !== 'N/A') bucket.brands.add(item.brand);
+        if (item.timestamp && (!bucket.lastTimestamp || item.timestamp > bucket.lastTimestamp)) bucket.lastTimestamp = item.timestamp;
+        accumulator.set(key, bucket);
+        return accumulator;
+    }, new Map()).values()).sort((a, b) => b.total - a.total || a.technician.localeCompare(b.technician));
+    const techniciansRows = [
+        ['Resumen por tecnico'],
+        [`Generado el ${generatedAt.toLocaleString('es-ES')}`],
+        [filterSummary],
+        [],
+        techniciansHeaders,
+        ...technicianSummaries.map(item => [
+            item.technician,
+            item.total,
+            Array.from(item.clients).join(', ') || 'N/A',
+            Array.from(item.brands).join(', ') || 'N/A',
+            item.gpsCaptured,
+            item.activeIncidents,
+            item.total ? Math.round(item.durationSeconds / item.total) : 0,
+            item.total ? Math.round(item.actualSeconds / item.total) : 0,
+            item.lastTimestamp,
+        ]),
+    ];
+    const techniciansSheet = XLSX.utils.aoa_to_sheet(techniciansRows, { cellDates: true });
+    techniciansSheet['!cols'] = [
+        { wch: 26 },
+        { wch: 10 },
+        { wch: 26 },
+        { wch: 24 },
+        { wch: 14 },
+        { wch: 18 },
+        { wch: 22 },
+        { wch: 26 },
+        { wch: 20 },
+    ];
+    techniciansSheet['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: techniciansHeaders.length - 1 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: techniciansHeaders.length - 1 } },
+        { s: { r: 2, c: 0 }, e: { r: 2, c: techniciansHeaders.length - 1 } },
+    ];
+    techniciansSheet['!autofilter'] = {
+        ref: `A${techniciansHeaderRowNumber}:${XLSX.utils.encode_col(techniciansHeaders.length - 1)}${techniciansRows.length}`,
+    };
 
     function applyCellStyle(sheet, address, style) {
         if (!sheet[address]) return;
@@ -4451,8 +4633,15 @@ async function exportToExcel(data, filename = 'registros.xls') {
     applyCellStyle(summarySheet, 'A3', subtitleStyle);
     applyCellStyle(summarySheet, 'A5', sectionHeaderStyle);
     applyCellStyle(summarySheet, 'B5', sectionHeaderStyle);
-    applyCellStyle(summarySheet, 'A14', sectionHeaderStyle);
-    applyCellStyle(summarySheet, 'B14', sectionHeaderStyle);
+    const attentionHeaderRowNumber = 7 + metricRows.length;
+    const gpsHeaderRowNumber = 9 + metricRows.length + attentionDistribution.length;
+    applyCellStyle(summarySheet, `A${attentionHeaderRowNumber}`, sectionHeaderStyle);
+    applyCellStyle(summarySheet, `B${attentionHeaderRowNumber}`, sectionHeaderStyle);
+    applyCellStyle(summarySheet, `A${gpsHeaderRowNumber}`, sectionHeaderStyle);
+    applyCellStyle(summarySheet, `B${gpsHeaderRowNumber}`, sectionHeaderStyle);
+    for (let rowIndex = 6; rowIndex <= summaryRows.length; rowIndex += 1) {
+        applyCellStyle(summarySheet, `B${rowIndex}`, centeredStyle);
+    }
 
     applyCellStyle(detailSheet, 'A1', titleStyle);
     applyCellStyle(detailSheet, 'A2', subtitleStyle);
@@ -4468,53 +4657,68 @@ async function exportToExcel(data, filename = 'registros.xls') {
         applyCellStyle(clientsSheet, `${XLSX.utils.encode_col(columnIndex)}${clientsHeaderRowNumber}`, headerStyle);
     }
 
+    const detailCenteredColumns = ['H', 'I', 'J', 'L', 'N', 'Q'];
     for (let rowIndex = detailHeaderRowNumber + 1; rowIndex <= detailRows.length; rowIndex += 1) {
-        applyCellStyle(detailSheet, `N${rowIndex}`, noteStyle);
-        applyCellStyle(detailSheet, `O${rowIndex}`, dateStyle);
-        applyCellStyle(detailSheet, `H${rowIndex}`, centeredStyle);
-        applyCellStyle(detailSheet, `J${rowIndex}`, centeredStyle);
-        applyCellStyle(detailSheet, `K${rowIndex}`, centeredStyle);
-        applyCellStyle(detailSheet, `L${rowIndex}`, noteStyle);
-        applyCellStyle(detailSheet, `M${rowIndex}`, dateStyle);
+        const detailItem = details[rowIndex - detailHeaderRowNumber - 1];
+        if (!detailItem) continue;
+
+        detailCenteredColumns.forEach((columnName) => {
+            applyCellStyle(detailSheet, `${columnName}${rowIndex}`, centeredStyle);
+        });
+        applyCellStyle(detailSheet, `T${rowIndex}`, noteStyle);
+        applyCellStyle(detailSheet, `U${rowIndex}`, dateStyle);
 
         const attentionCell = detailSheet[`G${rowIndex}`];
         if (attentionCell) {
-            const normalizedAttention = String(attentionCell.v || '').toLowerCase();
-            let fillColor = 'E2E8F0';
-            let fontColor = '334155';
-            if (normalizedAttention.includes('crit')) {
-                fillColor = 'FECACA';
-                fontColor = '991B1B';
-            } else if (normalizedAttention.includes('alert') || normalizedAttention.includes('segu')) {
-                fillColor = 'FDE68A';
-                fontColor = '92400E';
-            } else if (normalizedAttention.includes('ok') || normalizedAttention.includes('normal')) {
-                fillColor = 'BBF7D0';
-                fontColor = '166534';
+            if (detailItem.attentionState === 'critical') {
+                attentionCell.s = buildStatusStyle('FECACA', '991B1B');
+            } else if (detailItem.attentionState === 'in_progress' || detailItem.attentionState === 'paused' || detailItem.attentionState === 'open') {
+                attentionCell.s = buildStatusStyle('FDE68A', '92400E');
+            } else if (detailItem.attentionState === 'resolved') {
+                attentionCell.s = buildStatusStyle('BBF7D0', '166534');
+            } else {
+                attentionCell.s = buildStatusStyle('E2E8F0', '334155');
             }
-            attentionCell.s = buildStatusStyle(fillColor, fontColor);
         }
 
-        const gpsCell = detailSheet[`J${rowIndex}`];
+        const gpsCell = detailSheet[`P${rowIndex}`];
         if (gpsCell) {
-            const gpsValue = String(gpsCell.v || '').toLowerCase();
-            if (gpsValue === 'captured') gpsCell.s = buildStatusStyle('BBF7D0', '166534');
-            else if (gpsValue === 'pending') gpsCell.s = buildStatusStyle('E2E8F0', '334155');
-            else if (gpsValue === 'override') gpsCell.s = buildStatusStyle('FDE68A', '92400E');
+            if (detailItem.gpsStatusRaw === 'captured') gpsCell.s = buildStatusStyle('BBF7D0', '166534');
+            else if (detailItem.gpsStatusRaw === 'pending') gpsCell.s = buildStatusStyle('E2E8F0', '334155');
+            else if (detailItem.gpsStatusRaw === 'override') gpsCell.s = buildStatusStyle('FDE68A', '92400E');
             else gpsCell.s = buildStatusStyle('FECACA', '991B1B');
         }
-
     }
 
     for (let rowIndex = clientsHeaderRowNumber + 1; rowIndex <= clientsRows.length; rowIndex += 1) {
         applyCellStyle(clientsSheet, `D${rowIndex}`, centeredStyle);
         applyCellStyle(clientsSheet, `E${rowIndex}`, centeredStyle);
-        applyCellStyle(clientsSheet, `F${rowIndex}`, dateStyle);
+        applyCellStyle(clientsSheet, `F${rowIndex}`, centeredStyle);
+        applyCellStyle(clientsSheet, `G${rowIndex}`, centeredStyle);
+        applyCellStyle(clientsSheet, `H${rowIndex}`, centeredStyle);
+        applyCellStyle(clientsSheet, `I${rowIndex}`, centeredStyle);
+        applyCellStyle(clientsSheet, `J${rowIndex}`, dateStyle);
+    }
+
+    applyCellStyle(techniciansSheet, 'A1', titleStyle);
+    applyCellStyle(techniciansSheet, 'A2', subtitleStyle);
+    applyCellStyle(techniciansSheet, 'A3', subtitleStyle);
+    for (let columnIndex = 0; columnIndex < techniciansHeaders.length; columnIndex += 1) {
+        applyCellStyle(techniciansSheet, `${XLSX.utils.encode_col(columnIndex)}${techniciansHeaderRowNumber}`, headerStyle);
+    }
+    for (let rowIndex = techniciansHeaderRowNumber + 1; rowIndex <= techniciansRows.length; rowIndex += 1) {
+        applyCellStyle(techniciansSheet, `B${rowIndex}`, centeredStyle);
+        applyCellStyle(techniciansSheet, `E${rowIndex}`, centeredStyle);
+        applyCellStyle(techniciansSheet, `F${rowIndex}`, centeredStyle);
+        applyCellStyle(techniciansSheet, `G${rowIndex}`, centeredStyle);
+        applyCellStyle(techniciansSheet, `H${rowIndex}`, centeredStyle);
+        applyCellStyle(techniciansSheet, `I${rowIndex}`, dateStyle);
     }
 
     XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumen');
     XLSX.utils.book_append_sheet(workbook, detailSheet, 'Registros');
     XLSX.utils.book_append_sheet(workbook, clientsSheet, 'Por cliente');
+    XLSX.utils.book_append_sheet(workbook, techniciansSheet, 'Por tecnico');
     XLSX.writeFile(workbook, normalizedFilename, {
         bookType: 'xlsx',
         compression: true,
