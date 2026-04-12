@@ -1,12 +1,12 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0f756d">
-    <meta name="description" content="Dashboard de gestión de registros de drivers">
+    <meta name="description" content="Dashboard de gestiÃ³n de registros de drivers">
     <title>SiteOps Dashboard</title>
-    <link rel="stylesheet" href="/dashboard.css?v=a6af40695a">
+    <link rel="stylesheet" href="/dashboard.css?v=d9e514a1e9">
     <link rel="manifest" href="/manifest.json?v=9130a5f920">
     <link rel="icon" href="/icons/icon-192x192.png">
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
@@ -14,16 +14,16 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
         rel="preload"
-        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700;800&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@500;700;800&family=Source+Sans+3:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;700&display=swap"
         as="style"
     >
     <link
-        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700;800&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@500;700;800&family=Source+Sans+3:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;700&display=swap"
         rel="stylesheet"
         media="all"
     >
     <noscript>
-        <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@500;700;800&family=Source+Sans+3:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
     </noscript>
 </head>
 
@@ -46,7 +46,7 @@
             </div>
             <div class="nav-links">
                 <div class="nav-group">
-                    <span class="nav-group-label">Operación</span>
+                    <span class="nav-group-label">OperaciÃ³n</span>
                     <ul class="nav-group-list">
                         <li><a href="#" class="active" data-section="dashboard"><span class="material-symbols-outlined">today</span> Hoy</a></li>
                         <li><a href="#" data-section="myCases"><span class="material-symbols-outlined">assignment</span> Mis casos</a></li>
@@ -66,8 +66,9 @@
                     <span class="nav-group-label">Control</span>
                     <ul class="nav-group-list">
                         <li class="mobile-overflow-item"><a href="#" data-section="tenants" id="navTenantsLink"><span class="material-symbols-outlined">domain</span> Tenants</a></li>
-                        <li class="mobile-overflow-item"><a href="#" data-section="audit"><span class="material-symbols-outlined">description</span> Auditoría</a></li>
-                        <li class="mobile-overflow-item"><a href="#" data-section="settings"><span class="material-symbols-outlined">tune</span> Configuración</a></li>
+                        <li class="mobile-overflow-item"><a href="#" data-section="audit"><span class="material-symbols-outlined">description</span> AuditorÃ­a</a></li>
+                        <li class="mobile-overflow-item"><a href="#" data-section="visualLab"><span class="material-symbols-outlined">auto_awesome</span> Visual Lab</a></li>
+                        <li class="mobile-overflow-item"><a href="#" data-section="settings"><span class="material-symbols-outlined">tune</span> ConfiguraciÃ³n</a></li>
                     </ul>
                 </div>
                 <div class="nav-group nav-group-mobile-more">
@@ -82,13 +83,13 @@
                                 aria-controls="mobileNavPanel"
                             >
                                 <span class="material-symbols-outlined">more_horiz</span>
-                                Más
+                                MÃ¡s
                             </button>
                         </li>
                     </ul>
                 </div>
             </div>
-            <div id="mobileNavPanel" class="mobile-nav-panel" role="dialog" aria-modal="false" aria-label="Más secciones" aria-hidden="true">
+            <div id="mobileNavPanel" class="mobile-nav-panel" role="dialog" aria-modal="false" aria-label="MÃ¡s secciones" aria-hidden="true">
                 <div class="mobile-nav-panel-head">
                     <div class="mobile-nav-user">
                         <span id="mobileNavInitial" class="avatar-circle mobile-nav-avatar">U</span>
@@ -97,7 +98,7 @@
                             <span id="mobileNavRole" class="role-badge">admin</span>
                         </div>
                     </div>
-                    <button id="mobileNavCloseBtn" class="btn-icon mobile-nav-close-btn" type="button" aria-label="Cerrar más secciones">
+                    <button id="mobileNavCloseBtn" class="btn-icon mobile-nav-close-btn" type="button" aria-label="Cerrar mÃ¡s secciones">
                         <span class="material-symbols-outlined">close</span>
                     </button>
                 </div>
@@ -124,11 +125,15 @@
                     </button>
                     <button id="mobileNavAuditBtn" type="button" class="mobile-nav-menu-item" data-mobile-section="audit">
                         <span class="material-symbols-outlined">description</span>
-                        <span>Auditoría</span>
+                        <span>AuditorÃ­a</span>
+                    </button>
+                    <button type="button" class="mobile-nav-menu-item" data-mobile-section="visualLab">
+                        <span class="material-symbols-outlined">auto_awesome</span>
+                        <span>Visual Lab</span>
                     </button>
                     <button type="button" class="mobile-nav-menu-item" data-mobile-section="settings">
                         <span class="material-symbols-outlined">tune</span>
-                        <span>Configuración</span>
+                        <span>ConfiguraciÃ³n</span>
                     </button>
                 </div>
             </div>
@@ -140,7 +145,7 @@
                         <span id="userRole" class="role-badge">admin</span>
                     </div>
                 </div>
-                <button id="logoutBtn" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">logout</span> Cerrar sesión</button>
+                <button id="logoutBtn" class="btn-secondary"><span class="material-symbols-outlined icon-inline-sm">logout</span> Cerrar sesiÃ³n</button>
             </div>
         </nav>
         
@@ -174,12 +179,12 @@
                             aria-haspopup="menu"
                             aria-expanded="false"
                             aria-controls="headerOverflowMenu"
-                            title="Más acciones"
-                            aria-label="Más acciones"
+                            title="MÃ¡s acciones"
+                            aria-label="MÃ¡s acciones"
                         >
                             <span class="material-symbols-outlined">more_vert</span>
                         </button>
-                        <div id="headerOverflowMenu" class="header-overflow-menu" role="menu" aria-label="Acciones rápidas">
+                        <div id="headerOverflowMenu" class="header-overflow-menu" role="menu" aria-label="Acciones rÃ¡pidas">
                             <button id="overflowCreateIncidentBtn" class="header-overflow-item" type="button" role="menuitem">
                                 <span class="material-symbols-outlined icon-inline-sm" aria-hidden="true">warning</span>
                                 <span>Nueva incidencia</span>
@@ -211,7 +216,7 @@
                 <div class="dashboard-layout">
                     <div class="kpi-band">
                         <div class="kpi-primary critical">
-                            <p class="kpi-title">Incidencias críticas activas</p>
+                            <p class="kpi-title">Incidencias crÃ­ticas activas</p>
                             <p id="kpiCriticalIncidentsValue" class="kpi-value">-</p>
                             <p id="kpiCriticalMeta" class="kpi-sub">Sin cambios</p>
                         </div>
@@ -229,7 +234,7 @@
                         </div>
                     </div>
                     <p class="kpi-sync-inline">
-                        <span class="kpi-sync-label">Última sincronización</span>
+                        <span class="kpi-sync-label">Ãšltima sincronizaciÃ³n</span>
                         <strong id="kpiLastSyncTimeValue">-</strong>
                         <span id="kpiSyncMeta">OK</span>
                     </p>
@@ -240,13 +245,13 @@
                                 <p class="gps-ops-eyebrow">Observabilidad GPS</p>
                                 <h3 id="gpsOpsTitle">Salud de captura y contexto GPS</h3>
                             </div>
-                            <p class="gps-ops-description">Se consolida desde registros, incidencias y auditoría operativa.</p>
+                            <p class="gps-ops-description">Se consolida desde registros, incidencias y auditorÃ­a operativa.</p>
                         </div>
                         <div class="gps-ops-grid">
                             <article class="gps-ops-card gps-ops-card-success">
-                                <p class="gps-ops-label">Capturas útiles</p>
+                                <p class="gps-ops-label">Capturas Ãºtiles</p>
                                 <p id="gpsOpsCapturedValue" class="gps-ops-value">-</p>
-                                <p id="gpsOpsCapturedMeta" class="gps-ops-meta">Sin datos todavía</p>
+                                <p id="gpsOpsCapturedMeta" class="gps-ops-meta">Sin datos todavÃ­a</p>
                             </article>
                             <article class="gps-ops-card gps-ops-card-warning">
                                 <p class="gps-ops-label">Fallas GPS</p>
@@ -268,7 +273,7 @@
                     <div id="actividadChart" class="chart-card dashboard-chart-focus">
                         <div class="dashboard-chart-head">
                             <h3><span class="material-symbols-outlined">trending_up</span> Tendencia de registros</h3>
-                            <div class="chart-toggle" role="group" aria-label="Rango del gráfico">
+                            <div class="chart-toggle" role="group" aria-label="Rango del grÃ¡fico">
                                 <button type="button" data-trend-range="1" aria-pressed="false">24h</button>
                                 <button type="button" data-trend-range="7" class="active" aria-pressed="true">7d</button>
                             </div>
@@ -298,7 +303,7 @@
                         <p id="trendChartTitle" class="sr-only">Tendencia de registros</p>
                         <p id="trendChartSummary" class="sr-only">Cargando resumen de tendencia.</p>
                         <p id="successChartSummary" class="sr-only">Cargando resumen de resultado de registros.</p>
-                        <p id="brandChartSummary" class="sr-only">Cargando resumen de distribución por marca.</p>
+                        <p id="brandChartSummary" class="sr-only">Cargando resumen de distribuciÃ³n por marca.</p>
                         <div class="dashboard-hidden-canvases" aria-hidden="true">
                             <canvas id="successChart"></canvas>
                             <canvas id="brandChart"></canvas>
@@ -306,10 +311,10 @@
                     </div>
 
                     <div id="attentionPanel" class="recent-section">
-                        <h3><span class="material-symbols-outlined">priority_high</span> Atención ahora</h3>
+                        <h3><span class="material-symbols-outlined">priority_high</span> AtenciÃ³n ahora</h3>
                         <div id="attentionList" class="attention-list">
                             <div class="attention-item">
-                                <span class="severity-badge critical">Crítico</span>
+                                <span class="severity-badge critical">CrÃ­tico</span>
                                 <div id="recentInstallations" class="table-container">
                                     <p class="loading">Cargando...</p>
                                 </div>
@@ -333,11 +338,11 @@
                         </div>
                     </div>
                     <div id="myCasesSummary" class="my-cases-summary">
-                        <p class="loading">Inicia sesion para ver tus casos.</p>
+                        <p class="loading">Tus casos apareceran aqui cuando tengas asignaciones activas.</p>
                     </div>
                     <p id="myCasesContext" class="settings-actions-note">Tus incidencias asignadas apareceran aqui cuando el usuario tenga un tecnico vinculado.</p>
                     <div id="myCasesList" class="my-cases-list">
-                        <p class="loading">Inicia sesion para ver tus casos.</p>
+                        <p class="loading">Sin casos asignados por ahora.</p>
                     </div>
                 </div>
             </div>
@@ -347,7 +352,7 @@
                     <!-- Real-time search -->
                     <div class="search-wrapper">
                         <label for="searchInput" class="sr-only">Buscar registros</label>
-                        <input type="search" id="searchInput" name="records_search" class="search-input" placeholder="Búsqueda en tiempo real..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                        <input type="search" id="searchInput" name="records_search" class="search-input" placeholder="BÃºsqueda en tiempo real..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
                         <span class="search-icon"><span class="material-symbols-outlined icon-inline-md">search</span></span>
                     </div>
                     
@@ -420,7 +425,7 @@
                             <label for="incidentMapSeverityFilter" class="sr-only">Filtrar mapa por severidad</label>
                             <select id="incidentMapSeverityFilter" class="incident-map-select">
                                 <option value="">Severidad: todas</option>
-                                <option value="critical">Crítica</option>
+                                <option value="critical">CrÃ­tica</option>
                                 <option value="high">Alta</option>
                                 <option value="medium">Media</option>
                                 <option value="low">Baja</option>
@@ -436,7 +441,7 @@
                         <div class="incident-map-stage">
                             <div id="incidentMapCanvas" class="incident-map-canvas" role="region" aria-label="Mapa de incidencias geolocalizadas"></div>
                             <div class="incident-map-legend" aria-hidden="true">
-                                <span class="incident-map-legend-item"><i class="incident-map-legend-dot severity-critical"></i> Crítica</span>
+                                <span class="incident-map-legend-item"><i class="incident-map-legend-dot severity-critical"></i> CrÃ­tica</span>
                                 <span class="incident-map-legend-item"><i class="incident-map-legend-dot severity-high"></i> Alta</span>
                                 <span class="incident-map-legend-item"><i class="incident-map-legend-dot severity-medium"></i> Media</span>
                                 <span class="incident-map-legend-item"><i class="incident-map-legend-dot severity-low"></i> Baja</span>
@@ -470,7 +475,7 @@
                 <div class="filters">
                     <div class="search-wrapper">
                         <label for="assetsSearchInput" class="sr-only">Buscar equipos</label>
-                        <input type="search" id="assetsSearchInput" name="assets_search" class="search-input" placeholder="Buscar equipo por código, marca, modelo, serie o cliente..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                        <input type="search" id="assetsSearchInput" name="assets_search" class="search-input" placeholder="Buscar equipo por cÃ³digo, marca, modelo, serie o cliente..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
                         <span class="search-icon"><span class="material-symbols-outlined icon-inline-md">search</span></span>
                     </div>
 
@@ -505,12 +510,12 @@
                             <input type="text" id="driverBrandInput" placeholder="Marca (ej: Zebra)">
                         </div>
                         <div class="driver-input-group">
-                            <label for="driverVersionInput">Versión</label>
-                            <input type="text" id="driverVersionInput" placeholder="Versión (ej: v1.2.3)">
+                            <label for="driverVersionInput">VersiÃ³n</label>
+                            <input type="text" id="driverVersionInput" placeholder="VersiÃ³n (ej: v1.2.3)">
                         </div>
                         <div class="driver-input-group">
-                            <label for="driverDescriptionInput">Descripción</label>
-                            <input type="text" id="driverDescriptionInput" placeholder="Descripción (opcional)">
+                            <label for="driverDescriptionInput">DescripciÃ³n</label>
+                            <input type="text" id="driverDescriptionInput" placeholder="DescripciÃ³n (opcional)">
                         </div>
                     </div>
                     <div class="filter-actions">
@@ -543,7 +548,7 @@
              
             <div id="auditSection" class="section">
                 <div class="filters">
-                    <label for="auditActionFilter" class="sr-only">Filtrar auditoría por acción</label>
+                    <label for="auditActionFilter" class="sr-only">Filtrar auditorÃ­a por acciÃ³n</label>
                     <select id="auditActionFilter">
                         <option value="">Todas las acciones</option>
                         <option value="web_login_success">Login exitoso</option>
@@ -563,7 +568,7 @@
 
             <div id="settingsSection" class="section">
                 <div class="recent-section">
-                    <h3><span class="material-symbols-outlined">tune</span> Configuración</h3>
+                    <h3><span class="material-symbols-outlined">tune</span> ConfiguraciÃ³n</h3>
                     <div class="table-container">
                         <div class="asset-meta-grid">
                             <div class="asset-meta-item">
@@ -575,17 +580,17 @@
                                 <strong id="settingsRole">-</strong>
                             </div>
                             <div class="asset-meta-item">
-                                <small>Sincronización</small>
+                                <small>SincronizaciÃ³n</small>
                                 <strong id="settingsSyncStatus">En pausa</strong>
                             </div>
                         </div>
-                        <p class="settings-actions-note">Atajos de cuenta. Las acciones operativas están en el botón <strong>Más acciones</strong> del encabezado.</p>
+                        <p class="settings-actions-note">Atajos de cuenta. Las acciones operativas estÃ¡n en el botÃ³n <strong>MÃ¡s acciones</strong> del encabezado.</p>
                         <div class="incident-actions settings-actions">
                             <button id="settingsOpenAuditBtn" class="btn-secondary" type="button">
-                                <span class="material-symbols-outlined icon-inline-sm">description</span> Abrir auditoría
+                                <span class="material-symbols-outlined icon-inline-sm">description</span> Abrir auditorÃ­a
                             </button>
                             <button id="settingsLogoutBtn" class="btn-secondary" type="button">
-                                <span class="material-symbols-outlined icon-inline-sm">logout</span> Cerrar sesión
+                                <span class="material-symbols-outlined icon-inline-sm">logout</span> Cerrar sesiÃ³n
                             </button>
                         </div>
                     </div>
@@ -593,15 +598,15 @@
                 <div id="settingsTechniciansPanel" class="recent-section settings-panel-card">
                     <div class="settings-panel-head">
                         <div>
-                            <h3><span class="material-symbols-outlined">engineering</span> Técnicos</h3>
-                            <p class="settings-panel-copy">Catálogo operativo por tenant, con vínculo opcional a usuario web y asignaciones activas.</p>
+                            <h3><span class="material-symbols-outlined">engineering</span> TÃ©cnicos</h3>
+                            <p class="settings-panel-copy">CatÃ¡logo operativo por tenant, con vÃ­nculo opcional a usuario web y asignaciones activas.</p>
                         </div>
                         <div class="incident-actions settings-actions">
                             <button id="settingsRefreshTechniciansBtn" class="btn-secondary" type="button">
                                 <span class="material-symbols-outlined icon-inline-sm">refresh</span> Actualizar
                             </button>
                             <button id="settingsCreateTechnicianBtn" class="btn-primary" type="button">
-                                <span class="material-symbols-outlined icon-inline-sm">person_add</span> Nuevo técnico
+                                <span class="material-symbols-outlined icon-inline-sm">person_add</span> Nuevo tÃ©cnico
                             </button>
                         </div>
                     </div>
@@ -625,9 +630,89 @@
                     </div>
                     <p id="settingsTechniciansPermissions" class="settings-actions-note"></p>
                     <div id="settingsTechniciansList" class="settings-technicians-list">
-                        <p class="loading">Inicia sesión para ver técnicos.</p>
+                        <p class="loading">Sin tecnicos para mostrar por ahora.</p>
                     </div>
                 </div>
+            </div>
+            <div id="visualLabSection" class="section visual-lab-section">
+                <section id="visualLabHero" class="visual-lab-hero" aria-labelledby="visualLabTitle">
+                    <p class="visual-lab-eyebrow">Specimen mode // alt direction</p>
+                    <h3 id="visualLabTitle"><span>Neon</span> Control Deck</h3>
+                    <p class="visual-lab-lead">Esta version rompe la linea actual: mezcla display typography, paleta energica y composicion asimetrica para explorar un look mucho mas expresivo.</p>
+                    <div class="visual-lab-marquee" aria-hidden="true">
+                        <span>visual lab // wild variant // editorial rhythm // signal-rich motion // color-first interface // visual lab // wild variant //</span>
+                    </div>
+                </section>
+
+                <div id="visualLabMotion" class="visual-lab-compare" role="list" aria-label="Comparador de variantes visuales">
+                    <article id="visualLabFlow" class="visual-lab-skin visual-lab-skin-neon" role="listitem">
+                        <p class="visual-lab-skin-kicker">Variant A</p>
+                        <h4><span class="material-symbols-outlined">flare</span> Neon Editorial</h4>
+                        <p>Ritmo alto, tipografia display y color energetico para una presencia visual protagonista.</p>
+                        <div class="visual-lab-skin-swatches" aria-hidden="true">
+                            <span class="visual-lab-chip chip-sun">Solar</span>
+                            <span class="visual-lab-chip chip-lime">Lime</span>
+                            <span class="visual-lab-chip chip-cyan">Cyan</span>
+                            <span class="visual-lab-chip chip-ink">Ink</span>
+                        </div>
+                        <ul class="visual-lab-skin-points">
+                            <li>Display headline dominante</li>
+                            <li>Layout organico en capas</li>
+                            <li>Micro motion expresivo</li>
+                        </ul>
+                        <div class="visual-lab-meter" aria-hidden="true">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                    </article>
+
+                    <article id="visualLabTheme" class="visual-lab-skin visual-lab-skin-brutalist" role="listitem">
+                        <p class="visual-lab-skin-kicker">Variant B</p>
+                        <h4><span class="material-symbols-outlined">memory</span> Brutalist Tech</h4>
+                        <p>Paneles densos, grilla marcada y contraste duro para una lectura mas de consola operativa.</p>
+                        <div class="visual-lab-skin-swatches" aria-hidden="true">
+                            <span class="visual-lab-chip chip-steel">Steel</span>
+                            <span class="visual-lab-chip chip-laser">Laser</span>
+                            <span class="visual-lab-chip chip-slate">Slate</span>
+                            <span class="visual-lab-chip chip-black">Graphite</span>
+                        </div>
+                        <ul class="visual-lab-skin-points">
+                            <li>Tipografia condensada tecnica</li>
+                            <li>Superficies con reticula</li>
+                            <li>Feedback visual sobrio</li>
+                        </ul>
+                        <div class="visual-lab-meter" aria-hidden="true">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                    </article>
+
+                    <article id="visualLabFuture" class="visual-lab-skin visual-lab-skin-future" role="listitem">
+                        <p class="visual-lab-skin-kicker">Variant C</p>
+                        <h4><span class="material-symbols-outlined">rocket_launch</span> Quantum Flux</h4>
+                        <p>Apuesta futurista: tipografia techno, tonos electricos y capas holograficas para una presencia mas radical.</p>
+                        <div class="visual-lab-skin-swatches" aria-hidden="true">
+                            <span class="visual-lab-chip chip-ultraviolet">Ultraviolet</span>
+                            <span class="visual-lab-chip chip-hypercyan">Hypercyan</span>
+                            <span class="visual-lab-chip chip-plasma">Plasma</span>
+                            <span class="visual-lab-chip chip-void">Void</span>
+                        </div>
+                        <ul class="visual-lab-skin-points">
+                            <li>Titulares geometrico-futuristas</li>
+                            <li>Contraste frio con glow controlado</li>
+                            <li>Paneles con atmosfera holografica</li>
+                        </ul>
+                        <div class="visual-lab-meter" aria-hidden="true">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                    </article>
+                </div>
+
+                <p class="visual-lab-compare-note">Comparacion de 3 variantes: valida cual se acerca mas al tono que queres llevar a mobile.</p>
             </div>
 
             <div id="tenantsSection" class="section">
@@ -635,7 +720,7 @@
                     <div class="settings-panel-head">
                         <div>
                             <h3><span class="material-symbols-outlined">domain</span> Tenant Admin Center</h3>
-                            <p id="tenantsPermissionCopy" class="settings-panel-copy">Administración de tenants disponible solo para super admin.</p>
+                            <p id="tenantsPermissionCopy" class="settings-panel-copy">AdministraciÃ³n de tenants disponible solo para super admin.</p>
                         </div>
                         <div class="incident-actions settings-actions">
                             <button id="tenantsRefreshBtn" class="btn-secondary" type="button">
@@ -665,14 +750,14 @@
                         </div>
                     </div>
                     <div class="settings-technicians-list" id="tenantsList">
-                        <p class="loading">Inicia sesión como super admin para ver tenants.</p>
+                        <p class="loading">Sin tenants para mostrar por ahora.</p>
                     </div>
                 </div>
                 <div class="recent-section settings-panel-card">
                     <div class="settings-panel-head">
                         <div>
                             <h3><span class="material-symbols-outlined">apartment</span> Detalle del tenant</h3>
-                            <p class="settings-panel-copy">Admins, métricas rápidas y estado operativo del tenant seleccionado.</p>
+                            <p class="settings-panel-copy">Admins, mÃ©tricas rÃ¡pidas y estado operativo del tenant seleccionado.</p>
                         </div>
                         <div class="incident-actions settings-actions">
                             <button id="tenantsEditBtn" class="btn-secondary" type="button">
@@ -695,7 +780,7 @@
         <div class="modal-content">
             <div class="login-header">
                 <h2 id="loginModalTitle"><span class="material-symbols-outlined icon-inline-lg icon-middle">lock</span> SiteOps</h2>
-                <p id="loginModalDescription">Iniciar sesión</p>
+                <p id="loginModalDescription">Iniciar sesiÃ³n</p>
             </div>
             <form id="loginForm">
                 <div class="input-group">
@@ -703,7 +788,7 @@
                     <input type="text" id="loginUsername" placeholder="nombre_usuario" autocomplete="username" required>
                 </div>
                 <div class="input-group">
-                    <label for="loginPassword">Contraseña</label>
+                    <label for="loginPassword">ContraseÃ±a</label>
                     <input type="password" id="loginPassword" placeholder="********" autocomplete="current-password" required>
                 </div>
                 <button type="submit" class="btn-primary btn-full">Ingresar</button>
@@ -716,7 +801,7 @@
         <div class="modal-content photo-modal">
             <button type="button" class="close" aria-label="Cerrar visor de foto">&times;</button>
             <h3 id="photoModalTitle" class="sr-only">Visor de foto</h3>
-            <p id="photoModalDescription" class="sr-only">Muestra la evidencia fotográfica ampliada.</p>
+            <p id="photoModalDescription" class="sr-only">Muestra la evidencia fotogrÃ¡fica ampliada.</p>
             <div class="photo-modal-shell">
                 <button type="button" id="photoPrevBtn" class="photo-nav-btn" aria-label="Foto anterior">
                     <span class="material-symbols-outlined">chevron_left</span>
@@ -739,9 +824,9 @@
         <div class="modal-content qr-modal flow-panel-content">
             <button type="button" class="close" aria-label="Cerrar generador QR">&times;</button>
             <h3 id="qrModalTitle">Alta de equipo y QR</h3>
-            <p id="qrModalDescription" class="qr-modal-subtitle">Genera códigos compatibles con mobile y guarda el equipo (marca/modelo/serie/cliente) para asociarlo luego a registros o incidencias.</p>
+            <p id="qrModalDescription" class="qr-modal-subtitle">Genera cÃ³digos compatibles con mobile y guarda el equipo (marca/modelo/serie/cliente) para asociarlo luego a registros o incidencias.</p>
             <div class="flow-panel-onboard">
-                <p class="flow-panel-onboard-title">Inicio rápido</p>
+                <p class="flow-panel-onboard-title">Inicio rÃ¡pido</p>
                 <p class="flow-panel-onboard-text">Completa datos clave, genera el QR y luego guarda o comparte.</p>
             </div>
 
@@ -752,13 +837,13 @@
                 </label>
                 <label>
                     <input type="radio" name="qrType" value="installation">
-                    Instalación
+                    InstalaciÃ³n
                 </label>
             </div>
 
             <div id="qrInstallationFields" class="qr-section-fields is-hidden">
                 <div class="input-group">
-                    <label for="qrValueInput" id="qrValueLabel">ID de instalación</label>
+                    <label for="qrValueInput" id="qrValueLabel">ID de instalaciÃ³n</label>
                     <input type="text" id="qrValueInput" placeholder="Ej: 245" autocomplete="off">
                     <small id="qrHelperText" class="qr-helper">Formato recomendado para mobile: dm://installation/{id}.</small>
                 </div>
@@ -767,7 +852,7 @@
             <div id="qrAssetFields" class="qr-section-fields">
                 <div class="qr-asset-grid">
                     <div class="input-group">
-                        <label for="qrAssetCodeInput">Código externo (opcional)</label>
+                        <label for="qrAssetCodeInput">CÃ³digo externo (opcional)</label>
                         <input type="text" id="qrAssetCodeInput" placeholder="Ej: EQ-SL3-001" autocomplete="off">
                     </div>
                     <div class="input-group">
@@ -791,13 +876,13 @@
                         <textarea id="qrAssetNotesInput" rows="3" placeholder="Observaciones para este equipo"></textarea>
                     </div>
                 </div>
-                <small id="qrAssetHelper" class="qr-helper">Requisitos: marca o modelo, y número de serie. El código externo se genera automáticamente desde serie si queda vacío.</small>
+                <small id="qrAssetHelper" class="qr-helper">Requisitos: marca o modelo, y nÃºmero de serie. El cÃ³digo externo se genera automÃ¡ticamente desde serie si queda vacÃ­o.</small>
             </div>
 
             <div id="qrLabelPresetContainer" class="input-group">
                 <label for="qrLabelPresetSelect">Formato de etiqueta</label>
                 <select id="qrLabelPresetSelect">
-                    <option value="small">Sticker pequeño (50x30 mm)</option>
+                    <option value="small">Sticker pequeÃ±o (50x30 mm)</option>
                     <option value="medium" selected>Sticker mediano (70x40 mm)</option>
                 </select>
                 <small class="qr-helper">Aplica a "Descargar imagen" e "Imprimir etiqueta".</small>
@@ -806,7 +891,7 @@
             <div class="qr-actions qr-actions-primary">
                 <button type="button" id="qrGenerateBtn" class="btn-primary">Generar QR</button>
                 <button type="button" id="qrSaveAssetBtn" class="btn-secondary">Guardar equipo</button>
-                <button type="button" id="qrEnableEditBtn" class="btn-secondary is-hidden">Habilitar edición</button>
+                <button type="button" id="qrEnableEditBtn" class="btn-secondary is-hidden">Habilitar ediciÃ³n</button>
             </div>
             <details class="qr-advanced-tools">
                 <summary>Herramientas avanzadas</summary>
@@ -829,11 +914,11 @@
 
     <div id="qrPasswordModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="qrPasswordModalTitle" aria-describedby="qrPasswordModalDescription">
         <div class="modal-content qr-password-modal">
-            <button type="button" class="close" aria-label="Cerrar confirmación de contraseña">&times;</button>
-            <h3 id="qrPasswordModalTitle">Confirmar edición</h3>
-            <p id="qrPasswordModalDescription" class="qr-modal-subtitle">Ingresa tu contraseña para habilitar edición de este equipo.</p>
+            <button type="button" class="close" aria-label="Cerrar confirmaciÃ³n de contraseÃ±a">&times;</button>
+            <h3 id="qrPasswordModalTitle">Confirmar ediciÃ³n</h3>
+            <p id="qrPasswordModalDescription" class="qr-modal-subtitle">Ingresa tu contraseÃ±a para habilitar ediciÃ³n de este equipo.</p>
             <div class="input-group">
-                <label for="qrPasswordInput">Contraseña</label>
+                <label for="qrPasswordInput">ContraseÃ±a</label>
                 <input type="password" id="qrPasswordInput" autocomplete="current-password" placeholder="********">
             </div>
             <p id="qrPasswordError" class="error"></p>
@@ -877,11 +962,11 @@
     <div id="actionModal" class="modal flow-panel" role="dialog" aria-modal="false" aria-labelledby="actionModalTitle" aria-describedby="actionModalDescription actionModalSubtitle">
         <div class="modal-content action-modal flow-panel-content">
             <button type="button" class="close" aria-label="Cerrar formulario">&times;</button>
-            <h3 id="actionModalTitle">Acción</h3>
-            <p id="actionModalDescription" class="sr-only">Completa y confirma el formulario para guardar la acción.</p>
+            <h3 id="actionModalTitle">AcciÃ³n</h3>
+            <p id="actionModalDescription" class="sr-only">Completa y confirma el formulario para guardar la acciÃ³n.</p>
             <p id="actionModalSubtitle" class="qr-modal-subtitle is-hidden"></p>
             <div class="flow-panel-onboard">
-                <p class="flow-panel-onboard-title">Guía rápida</p>
+                <p class="flow-panel-onboard-title">GuÃ­a rÃ¡pida</p>
                 <p class="flow-panel-onboard-text">Completa los campos esenciales y guarda. Las confirmaciones sensibles siguen en modal breve.</p>
             </div>
             <form id="actionModalForm" novalidate>
@@ -902,16 +987,20 @@
     <script src="/dashboard-scan.js?v=eee9eb93aa" defer></script>
     <script src="/dashboard-modals.js?v=6976cff499" defer></script>
     <script src="/dashboard-incidents.js?v=b9e761e562" defer></script>
-    <script src="/dashboard-assets.js?v=ee6f012fdc" defer></script>
+    <script src="/dashboard-assets.js?v=595d145605" defer></script>
     <script src="/dashboard-drivers.js?v=107284fd17" defer></script>
     <script src="/dashboard-audit.js?v=cb0cf05086" defer></script>
     <script src="/dashboard-overview.js?v=c278d46315" defer></script>
     <script src="/dashboard-my-cases.js?v=12d40c4c92" defer></script>
     <script src="/dashboard-realtime.js?v=d763a18c75" defer></script>
-    <script src="/dashboard-auth.js?v=3c47463a40" defer></script>
-    <script src="/dashboard-navigation.js?v=0db5e4304a" defer></script>
+    <script src="/dashboard-auth.js?v=342e9830f4" defer></script>
+    <script src="/dashboard-navigation.js?v=74eb06359c" defer></script>
     <script src="/dashboard-bootstrap.js?v=65dba6e7cf" defer></script>
-    <script src="/dashboard.js?v=47436c066c" defer></script>
+    <script src="/dashboard.js?v=3379b5648d" defer></script>
     <script src="/dashboard-pwa.js?v=55b84aa40e" defer></script>
 </body>
 </html>
+
+
+
+

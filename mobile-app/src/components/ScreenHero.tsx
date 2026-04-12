@@ -27,6 +27,14 @@ export default function ScreenHero(props: ScreenHeroProps) {
         },
       ]}
     >
+      <View
+        pointerEvents="none"
+        style={[styles.chromeGlow, { backgroundColor: palette.ambientPrimary }]}
+      />
+      <View
+        pointerEvents="none"
+        style={[styles.chromeLine, { borderColor: palette.heroBorder }]}
+      />
       <View style={styles.topRow}>
         {eyebrow ? (
           <View
@@ -56,8 +64,9 @@ export default function ScreenHero(props: ScreenHeroProps) {
 
 const styles = StyleSheet.create({
   card: {
+    position: "relative",
     borderWidth: 1,
-    borderRadius: 20,
+    borderRadius: 22,
     paddingHorizontal: 18,
     paddingVertical: 18,
     gap: 10,
@@ -65,6 +74,24 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 8 },
     elevation: 4,
+    overflow: "hidden",
+  },
+  chromeGlow: {
+    position: "absolute",
+    width: 180,
+    height: 180,
+    borderRadius: 999,
+    right: -62,
+    top: -88,
+    opacity: 0.34,
+  },
+  chromeLine: {
+    position: "absolute",
+    left: 14,
+    right: 14,
+    top: 12,
+    borderTopWidth: 1,
+    opacity: 0.34,
   },
   topRow: {
     minHeight: 30,
@@ -87,14 +114,15 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   title: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 30,
-    lineHeight: 32,
-    letterSpacing: -0.8,
+    fontFamily: fontFamilies.display,
+    fontSize: 32,
+    lineHeight: 34,
+    letterSpacing: -0.5,
+    textTransform: "uppercase",
   },
   description: {
-    fontFamily: fontFamilies.regular,
-    fontSize: 14.5,
+    fontFamily: fontFamilies.medium,
+    fontSize: 14,
     lineHeight: 20,
     maxWidth: 520,
   },

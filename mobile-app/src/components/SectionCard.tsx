@@ -54,8 +54,10 @@ export default function SectionCard(props: SectionCardProps) {
           shadowColor: palette.shadowColor,
         },
       ]}
-      >
-        <View style={styles.header}>
+    >
+      <View pointerEvents="none" style={[styles.accentRail, { backgroundColor: palette.accent }]} />
+      <View pointerEvents="none" style={[styles.frameLine, { borderColor: palette.heroBorder }]} />
+      <View style={styles.header}>
         <View style={styles.headerText}>
           <Text style={[styles.title, { color: palette.textPrimary }]}>{title}</Text>
           {description ? (
@@ -71,14 +73,32 @@ export default function SectionCard(props: SectionCardProps) {
 
 const styles = StyleSheet.create({
   card: {
+    position: "relative",
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 16,
+    borderRadius: 20,
+    padding: 17,
     gap: 12,
     shadowOpacity: 0.06,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 8 },
     elevation: 4,
+    overflow: "hidden",
+  },
+  accentRail: {
+    position: "absolute",
+    left: 0,
+    top: 16,
+    bottom: 16,
+    width: 2,
+    opacity: 0.9,
+  },
+  frameLine: {
+    position: "absolute",
+    left: 14,
+    right: 14,
+    top: 10,
+    borderTopWidth: 1,
+    opacity: 0.26,
   },
   header: {
     flexDirection: "row",
@@ -91,14 +111,15 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   title: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 18,
+    fontFamily: fontFamilies.display,
+    fontSize: 19,
     lineHeight: 22,
-    letterSpacing: -0.2,
+    letterSpacing: -0.1,
+    textTransform: "uppercase",
   },
   description: {
-    fontFamily: fontFamilies.regular,
-    fontSize: 13.5,
-    lineHeight: 19,
+    fontFamily: fontFamilies.medium,
+    fontSize: 13,
+    lineHeight: 18,
   },
 });

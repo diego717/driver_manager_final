@@ -3,14 +3,15 @@ import { Platform, Text, TextInput } from "react-native";
 export const fontFamilies = {
   regular: "SourceSans3_400Regular",
   medium: "SourceSans3_500Medium",
-  semibold: "SourceSans3_600SemiBold",
-  bold: "SourceSans3_700Bold",
-  mono: "SpaceMono",
+  semibold: "IBMPlexSansCondensed_600SemiBold",
+  bold: "IBMPlexSansCondensed_600SemiBold",
+  mono: "IBMPlexMono_400Regular",
+  display: "IBMPlexSansCondensed_600SemiBold",
 } as const;
 
 export const inputFontFamily =
   Platform.OS === "android" ? "sans-serif" : fontFamilies.regular;
-export const textInputAccentColor = "#0f8b84";
+export const textInputAccentColor = "#0ba6a6";
 
 let defaultsApplied = false;
 

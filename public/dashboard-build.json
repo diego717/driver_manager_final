@@ -1,6 +1,6 @@
 {
   "versions": {
-    "css": "a6af40695a",
+    "css": "d9e514a1e9",
     "chart": "74401d738d",
     "jsqr": "bc40c8a151",
     "xlsx": "1c7abf2993",
@@ -10,20 +10,20 @@
     "scan": "eee9eb93aa",
     "modals": "6976cff499",
     "incidents": "b9e761e562",
-    "assets": "ee6f012fdc",
+    "assets": "595d145605",
     "drivers": "107284fd17",
     "audit": "cb0cf05086",
     "overview": "c278d46315",
     "myCases": "12d40c4c92",
     "realtime": "d763a18c75",
-    "auth": "3c47463a40",
-    "navigation": "0db5e4304a",
+    "auth": "342e9830f4",
+    "navigation": "74eb06359c",
     "bootstrap": "65dba6e7cf",
-    "js": "47436c066c",
+    "js": "3379b5648d",
     "pwa": "55b84aa40e",
     "manifest": "9130a5f920",
     "sw": "4c87568cf6",
     "materialSymbolsFont": "ee7248184b",
-    "build": "3d71d0981b"
+    "build": "1203d51e36"
   }
 }

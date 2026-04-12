@@ -214,7 +214,7 @@ export default function MapTabScreenWeb() {
           {loading ? (
             <ActivityIndicator size="small" color={palette.refreshText} />
           ) : (
-            <Text style={[styles.filterChipText, { color: palette.refreshText }]}>Actualizar</Text>
+            <Text style={[styles.filterChipText, { color: palette.refreshText }]}>Actualizar lista</Text>
           )}
         </Pressable>
       </View>
@@ -294,12 +294,12 @@ export default function MapTabScreenWeb() {
                   onPress={() => {
                     void openExternalUrl(
                       selectedNavigationTargets.google || selectedNavigationTargets.waze,
-                      "navegacion",
+                      "Google Maps o Waze",
                     );
                   }}
                 >
                   <Text style={[styles.secondaryActionText, { color: palette.secondaryButtonText }]}>
-                    Ir
+                    Abrir en Maps
                   </Text>
                 </Pressable>
               </View>

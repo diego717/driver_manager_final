@@ -10,6 +10,7 @@ import { readStoredWebSession } from "@/src/api/webAuth";
 import { canViewAssetCatalog } from "@/src/auth/roles";
 import AppHeaderTitle from "@/src/components/AppHeaderTitle";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
+import { triggerSelectionHaptic } from "@/src/services/haptics";
 import { useAppPalette } from "@/src/theme/palette";
 import { useThemePreference } from "@/src/theme/theme-preference";
 import { fontFamilies } from "@/src/theme/typography";
@@ -18,7 +19,7 @@ function TabBarIcon(props: {
   name: React.ComponentProps<typeof FontAwesome>["name"];
   color: string;
 }) {
-  return <FontAwesome size={24} style={{ marginBottom: -2 }} {...props} />;
+  return <FontAwesome size={21} style={{ marginBottom: -1 }} {...props} />;
 }
 
 function ThemeToggleButton() {
@@ -52,6 +53,7 @@ function ThemeToggleButton() {
       accessibilityHint="Alterna entre tema claro y oscuro"
       android_ripple={{ color: palette.hoverBg, borderless: true }}
       onPress={() => {
+        triggerSelectionHaptic();
         void setMode(resolvedScheme === "dark" ? "light" : "dark");
       }}
       style={({ pressed }) => [
@@ -85,6 +87,9 @@ function SettingsButton() {
         accessibilityRole="button"
         accessibilityLabel="Abrir acceso y configuracion"
         android_ripple={{ color: palette.hoverBg, borderless: true }}
+        onPress={() => {
+          triggerSelectionHaptic();
+        }}
         style={({ pressed }) => [
           styles.headerButton,
           {
@@ -108,6 +113,7 @@ function SettingsButton() {
 function AppTabBarButton(props: BottomTabBarButtonProps) {
   const palette = useAppPalette();
   const selected = Boolean(props.accessibilityState?.selected);
+  const selectionAnim = useRef(new Animated.Value(selected ? 1 : 0)).current;
   const {
     accessibilityState,
     accessibilityLabel,
@@ -123,6 +129,23 @@ function AppTabBarButton(props: BottomTabBarButtonProps) {
     style,
     testID,
   } = props;
+  const markerScale = selectionAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.35, 1],
+  });
+  const itemLift = selectionAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -2],
+  });
+
+  useEffect(() => {
+    Animated.timing(selectionAnim, {
+      toValue: selected ? 1 : 0,
+      duration: selected ? 220 : 150,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [selected, selectionAnim]);
 
   return (
     <Pressable
@@ -135,7 +158,10 @@ function AppTabBarButton(props: BottomTabBarButtonProps) {
       hitSlop={hitSlop}
       onLayout={onLayout}
       onLongPress={onLongPress}
-      onPress={onPress}
+      onPress={(event) => {
+        triggerSelectionHaptic();
+        onPress?.(event);
+      }}
       testID={testID}
       style={({ pressed }) => [
         styles.tabButton,
@@ -149,7 +175,28 @@ function AppTabBarButton(props: BottomTabBarButtonProps) {
       ]}
       android_ripple={{ color: palette.hoverBg }}
     >
-      {children}
+      <Animated.View
+        style={[
+          styles.tabButtonInner,
+          {
+            opacity: selected ? 1 : 0.94,
+            transform: [{ translateY: itemLift }],
+          },
+        ]}
+      >
+        {children}
+      </Animated.View>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.tabActiveMarker,
+          {
+            backgroundColor: palette.accent,
+            opacity: selectionAnim,
+            transform: [{ scaleX: markerScale }],
+          },
+        ]}
+      />
     </Pressable>
   );
 }
@@ -160,7 +207,7 @@ export default function TabLayout() {
   const { hasActiveSession } = useSharedWebSessionState();
   const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
   const tabBarBottomInset = Math.max(insets.bottom, Platform.OS === "android" ? 12 : 6);
-  const tabBarHeight = 52 + tabBarBottomInset + 8;
+  const tabBarHeight = 60 + tabBarBottomInset + 10;
   const shouldHideInventoryTab =
     hasActiveSession && webSessionRole !== null && !canViewAssetCatalog(webSessionRole);
 
@@ -197,27 +244,32 @@ export default function TabLayout() {
         tabBarHideOnKeyboard: true,
         tabBarStyle: {
           backgroundColor: palette.tabBarSurface,
-          borderTopColor: palette.heroBorder,
-          borderTopWidth: 1,
+          borderColor: palette.heroBorder,
+          borderWidth: 1,
+          borderTopWidth: 1.2,
           height: tabBarHeight,
           paddingTop: 8,
+          paddingHorizontal: 8,
           paddingBottom: tabBarBottomInset,
+          marginHorizontal: 10,
+          marginBottom: 6,
+          borderRadius: 18,
           shadowColor: palette.shadowColor,
-          shadowOpacity: 0.12,
+          shadowOpacity: 0.24,
           shadowOffset: { width: 0, height: -3 },
-          shadowRadius: 14,
-          elevation: 12,
+          shadowRadius: 18,
+          elevation: 14,
         },
         tabBarButton: (props) => <AppTabBarButton {...props} />,
         tabBarItemStyle: {
-          marginHorizontal: 2,
+          marginHorizontal: 3,
           marginTop: 2,
           minHeight: 44,
           paddingVertical: 2,
         },
         tabBarLabelStyle: {
           fontFamily: fontFamilies.mono,
-          fontSize: 11.5,
+          fontSize: 11,
           letterSpacing: 0.5,
           textTransform: "uppercase",
         },
@@ -301,7 +353,21 @@ const styles = StyleSheet.create({
   },
   tabButton: {
     minHeight: 44,
-    borderRadius: 12,
+    borderRadius: 13,
     borderWidth: 1,
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  tabButtonInner: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tabActiveMarker: {
+    position: "absolute",
+    left: "20%",
+    right: "20%",
+    bottom: 2,
+    height: 3,
+    borderRadius: 999,
   },
 });

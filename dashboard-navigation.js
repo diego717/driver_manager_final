@@ -5,6 +5,27 @@
             : 150;
         let sectionTransitionVersion = 0;
 
+        function sectionNameFromNode(node) {
+            if (!(node instanceof HTMLElement) || !node.id) return '';
+            return node.id.replace(/Section$/, '');
+        }
+
+        function emitSectionTransitionStart(fromSection, toSection) {
+            if (typeof options.onSectionTransitionStart !== 'function') return;
+            options.onSectionTransitionStart({
+                fromSection: String(fromSection || ''),
+                toSection: String(toSection || ''),
+            });
+        }
+
+        function emitSectionTransitionEnd(fromSection, toSection) {
+            if (typeof options.onSectionTransitionEnd !== 'function') return;
+            options.onSectionTransitionEnd({
+                fromSection: String(fromSection || ''),
+                toSection: String(toSection || ''),
+            });
+        }
+
         function getActiveSectionName() {
             const activeSection = document.querySelector('.section.active');
             if (!activeSection?.id) return '';
@@ -33,26 +54,44 @@
             return false;
         }
 
+        function triggerSectionEntrance(sectionNode) {
+            if (!(sectionNode instanceof HTMLElement) || options.prefersReducedMotion()) return;
+            sectionNode.classList.remove('section-animate-in');
+            void sectionNode.offsetWidth;
+            sectionNode.classList.add('section-animate-in');
+            window.setTimeout(() => {
+                sectionNode.classList.remove('section-animate-in');
+            }, 720);
+        }
+
         async function activateSection(section) {
             const nextSection = document.getElementById(section + 'Section');
             if (!nextSection) return;
 
             const currentSection = document.querySelector('.section.active');
             const transitionId = ++sectionTransitionVersion;
+            const fromSection = sectionNameFromNode(currentSection);
+            const shouldEmitTransition = fromSection !== section;
+            if (shouldEmitTransition) {
+                emitSectionTransitionStart(fromSection, section);
+            }
 
             if (!currentSection || currentSection === nextSection || options.prefersReducedMotion()) {
                 document.querySelectorAll('.section').forEach((sectionNode) => {
                     sectionNode.classList.remove('active', 'is-transitioning-out');
                 });
                 nextSection.classList.add('active');
+                triggerSectionEntrance(nextSection);
                 options.updatePageTitleForSection(section);
                 runSectionLoaders(section);
                 options.syncSSEForCurrentContext();
+                if (shouldEmitTransition) {
+                    emitSectionTransitionEnd(fromSection, section);
+                }
                 return;
             }
 
             currentSection.classList.add('is-transitioning-out');
-            currentSection.classList.remove('active');
 
             await new Promise((resolve) => {
                 setTimeout(resolve, transitionOutMs);
@@ -62,16 +101,20 @@
                 return;
             }
 
-            currentSection.classList.remove('is-transitioning-out');
+            currentSection.classList.remove('is-transitioning-out', 'active');
             document.querySelectorAll('.section').forEach((sectionNode) => {
                 if (sectionNode !== nextSection) {
                     sectionNode.classList.remove('active', 'is-transitioning-out');
                 }
             });
             nextSection.classList.add('active');
+            triggerSectionEntrance(nextSection);
             options.updatePageTitleForSection(section);
             runSectionLoaders(section);
             options.syncSSEForCurrentContext();
+            if (shouldEmitTransition) {
+                emitSectionTransitionEnd(fromSection, section);
+            }
         }
 
         return {

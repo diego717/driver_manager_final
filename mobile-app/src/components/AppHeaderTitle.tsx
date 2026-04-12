@@ -18,8 +18,8 @@ export default function AppHeaderTitle(_: AppHeaderTitleProps) {
       style={[
         styles.container,
         {
-          backgroundColor: isDark ? palette.heroBg : "transparent",
-          borderColor: isDark ? palette.heroBorder : "transparent",
+          backgroundColor: isDark ? palette.heroBg : palette.heroEyebrowBg,
+          borderColor: palette.heroBorder,
         },
       ]}
     >
@@ -34,7 +34,7 @@ export default function AppHeaderTitle(_: AppHeaderTitleProps) {
 
 const styles = StyleSheet.create({
   container: {
-    width: 124,
+    width: 132,
     height: 42,
     borderWidth: 1,
     borderRadius: 16,

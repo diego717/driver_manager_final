@@ -10,6 +10,8 @@ Indice resumido de cambios relevantes del proyecto.
 
 ## Entradas
 
+- `2026-04-10` - Fase completa de polish motion/claridad en mobile y web: transicion operativa entre secciones, haptics consistentes en tabs/pantallas clave y copy de CTA mas accionable. Ver `docs/changes/2026-04-10-mobile-web-motion-phase-complete.md`.
+- `2026-04-09` - Polish de experiencia mobile/web con animacion de secciones, navegacion mobile mas expresiva y feedback haptico en tabs/CTA de la app. Ver `docs/changes/2026-04-09-mobile-web-motion-and-navigation-polish.md`.
 - `2026-04-08` - Alineacion RBAC en UI web/mobile, `Mis casos` desacoplado del catalogo de tecnicos y mapa personal del tecnico con incidencias asignadas visibles otra vez. Ver `docs/changes/2026-04-08-rbac-ui-technician-map-and-my-cases-alignment.md`.
 - `2026-04-03` - Destino operativo en incidencias, toggle `dispatch_required`, push por asignacion, mapa mobile y cola offline por tecnico con indicadores de snapshot local. Ver `docs/changes/2026-04-03-mobile-incident-dispatch-map-offline-rollout.md`.
 - `2026-04-02` - Creacion offline de casos con outbox `create_case` y resolucion basica de incidencias dependientes de casos locales. Ver `docs/changes/2026-04-02-mobile-case-offline-outbox.md`.

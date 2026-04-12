@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Easing, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 
 import { getAssetIncidents, linkAssetToInstallation, listAssets, type AssetRecord } from "@/src/api/assets";
 import { extractApiError } from "@/src/api/client";
@@ -14,6 +14,7 @@ import SectionCard from "@/src/components/SectionCard";
 import TechnicianAssignmentsPanel from "@/src/components/TechnicianAssignmentsPanel";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
+import { triggerSelectionHaptic } from "@/src/services/haptics";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -40,6 +41,7 @@ export default function ExploreTabScreen() {
   const [linkInstallationId, setLinkInstallationId] = useState("");
   const [linking, setLinking] = useState(false);
   const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
+  const screenEnterAnim = useRef(new Animated.Value(0)).current;
 
   const resolveIntent =
     normalizeString(Array.isArray(params.intent) ? params.intent[0] : params.intent).toLowerCase() === "resolve";
@@ -154,6 +156,26 @@ export default function ExploreTabScreen() {
     }, [hasActiveSession, loadAssets]),
   );
 
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasActiveSession) {
+        screenEnterAnim.setValue(1);
+        return;
+      }
+      screenEnterAnim.setValue(0);
+      const animation = Animated.timing(screenEnterAnim, {
+        toValue: 1,
+        duration: 260,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      });
+      animation.start();
+      return () => {
+        animation.stop();
+      };
+    }, [hasActiveSession, screenEnterAnim]),
+  );
+
   useEffect(() => {
     if (!hasActiveSession || !selectedAssetId) return;
     void loadAssetDetail(selectedAssetId);
@@ -201,8 +223,22 @@ export default function ExploreTabScreen() {
     );
   }
 
+  const screenEnterTranslate = screenEnterAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [12, 0],
+  });
+
   return (
     <ScreenScaffold contentContainerStyle={styles.container} scrollViewProps={{ keyboardShouldPersistTaps: "handled" }}>
+      <Animated.View
+        style={[
+          styles.screenEnterWrap,
+          {
+            opacity: screenEnterAnim,
+            transform: [{ translateY: screenEnterTranslate }],
+          },
+        ]}
+      >
       <ScreenHero
         eyebrow={resolveIntent ? "Resolver equipo" : "Inventario"}
         title={resolveIntent ? "Elegir equipo para iniciar trabajo" : "Inventario y equipos"}
@@ -224,6 +260,7 @@ export default function ExploreTabScreen() {
         <TouchableOpacity
           style={[styles.smallButton, { backgroundColor: palette.primaryButtonBg }]}
           onPress={() => {
+            void triggerSelectionHaptic();
             void loadAssets();
           }}
           disabled={loadingAssets}
@@ -237,15 +274,19 @@ export default function ExploreTabScreen() {
         <TouchableOpacity
           style={[styles.ghostButton, { backgroundColor: palette.surface, borderColor: palette.inputBorder }]}
           onPress={() => {
+            void triggerSelectionHaptic();
             void loadAssets();
           }}
           accessibilityRole="button"
         >
-          <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>Actualizar</Text>
+          <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>Actualizar lista</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.ghostButton, { backgroundColor: palette.surface, borderColor: palette.inputBorder }]}
-          onPress={() => router.push("/qr?mode=scan")}
+          onPress={() => {
+            void triggerSelectionHaptic();
+            router.push("/qr?mode=scan");
+          }}
           accessibilityRole="button"
         >
           <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>Escanear</Text>
@@ -253,7 +294,10 @@ export default function ExploreTabScreen() {
         {resolveIntent ? (
           <TouchableOpacity
             style={[styles.ghostButton, { backgroundColor: palette.secondaryButtonBg }]}
-            onPress={() => router.push("/case/manual" as never)}
+            onPress={() => {
+              void triggerSelectionHaptic();
+              router.push("/case/manual" as never);
+            }}
             accessibilityRole="button"
           >
             <Text style={[styles.ghostButtonText, { color: palette.secondaryButtonText }]}>Caso manual</Text>
@@ -274,7 +318,10 @@ export default function ExploreTabScreen() {
               <View key={asset.id} style={[styles.assetRow, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
                 <TouchableOpacity
                   style={styles.assetInfo}
-                  onPress={() => setSelectedAssetId(asset.id)}
+                  onPress={() => {
+                    void triggerSelectionHaptic();
+                    setSelectedAssetId(asset.id);
+                  }}
                   accessibilityRole="button"
                 >
                   <Text style={[styles.assetCode, { color: palette.textPrimary }]}>#{asset.id} {asset.external_code}</Text>
@@ -287,7 +334,14 @@ export default function ExploreTabScreen() {
                     styles.inlineAction,
                     { backgroundColor: selected ? palette.chipSelectedBg : palette.secondaryButtonBg, borderColor: palette.inputBorder },
                   ]}
-                  onPress={() => (selected ? openPrimaryAction(asset) : setSelectedAssetId(asset.id))}
+                  onPress={() => {
+                    void triggerSelectionHaptic();
+                    if (selected) {
+                      openPrimaryAction(asset);
+                      return;
+                    }
+                    setSelectedAssetId(asset.id);
+                  }}
                   accessibilityRole="button"
                 >
                   <Text style={[styles.inlineActionText, { color: selected ? palette.chipSelectedText : palette.secondaryButtonText }]}>
@@ -303,7 +357,7 @@ export default function ExploreTabScreen() {
       {loadingDetail ? (
         <View style={styles.loadingRow}>
           <ActivityIndicator size="small" color={palette.loadingSpinner} />
-          <Text style={[styles.loadingText, { color: palette.textSecondary }]}>Cargando detalle...</Text>
+          <Text style={[styles.loadingText, { color: palette.textSecondary }]}>Cargando detalle del equipo...</Text>
         </View>
       ) : null}
 
@@ -317,7 +371,7 @@ export default function ExploreTabScreen() {
             {selectedAsset.brand || "-"} / {selectedAsset.model || "-"} / serie {selectedAsset.serial_number || "-"}
           </Text>
           <Text style={[styles.detailLine, { color: palette.textSecondary }]}>
-            Cliente {selectedAsset.client_name || "-"} · estado {selectedAsset.status || "active"}
+            Cliente {selectedAsset.client_name || "-"} - estado {selectedAsset.status || "active"}
           </Text>
           <Text style={[styles.detailLine, { color: palette.textMuted }]}>
             {assetDetail?.active_link ? `Caso activo #${assetDetail.active_link.installation_id}` : "Sin caso activo vinculado"}
@@ -331,7 +385,10 @@ export default function ExploreTabScreen() {
           <View style={styles.detailActions}>
             <TouchableOpacity
               style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
-              onPress={() => openPrimaryAction(selectedAsset)}
+              onPress={() => {
+                void triggerSelectionHaptic();
+                openPrimaryAction(selectedAsset);
+              }}
               accessibilityRole="button"
             >
               <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
@@ -341,10 +398,13 @@ export default function ExploreTabScreen() {
             {!resolveIntent ? (
               <TouchableOpacity
                 style={[styles.secondaryButton, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
-                onPress={() => setShowLinkForm((current) => !current)}
+                onPress={() => {
+                  void triggerSelectionHaptic();
+                  setShowLinkForm((current) => !current);
+                }}
                 accessibilityRole="button"
               >
-                <Text style={[styles.secondaryButtonText, { color: palette.refreshText }]}>Vincular caso</Text>
+                <Text style={[styles.secondaryButtonText, { color: palette.refreshText }]}>Vincular a caso</Text>
               </TouchableOpacity>
             ) : null}
           </View>
@@ -365,6 +425,7 @@ export default function ExploreTabScreen() {
               <TouchableOpacity
                 style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
                 onPress={() => {
+                  void triggerSelectionHaptic();
                   void onLinkAsset();
                 }}
                 disabled={linking}
@@ -399,6 +460,7 @@ export default function ExploreTabScreen() {
           />
         </SectionCard>
       ) : null}
+      </Animated.View>
     </ScreenScaffold>
   );
 }
@@ -412,6 +474,8 @@ const styles = StyleSheet.create({
   },
   container: {
     padding: 20,
+  },
+  screenEnterWrap: {
     gap: 12,
   },
   searchRow: {

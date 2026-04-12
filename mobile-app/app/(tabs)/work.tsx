@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
+  Animated,
   Alert,
+  Easing,
   Linking,
   Share,
   StyleSheet,
@@ -42,6 +44,12 @@ import StatusChip from "@/src/components/StatusChip";
 import SyncStatusBanner from "@/src/components/SyncStatusBanner";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
+import {
+  triggerLightImpactHaptic,
+  triggerSelectionHaptic,
+  triggerSuccessHaptic,
+  triggerWarningHaptic,
+} from "@/src/services/haptics";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 import {
@@ -123,6 +131,7 @@ export default function WorkTabScreen() {
   const [usingOfflineIncidentSnapshot, setUsingOfflineIncidentSnapshot] = useState(false);
   const [usingOfflineQueueSnapshot, setUsingOfflineQueueSnapshot] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const screenEnterAnim = useRef(new Animated.Value(0)).current;
   const { checkingSession, hasActiveSession } = useSharedWebSessionState();
 
   const loadIncidents = useCallback(
@@ -317,6 +326,7 @@ export default function WorkTabScreen() {
 
       const runChange = async () => {
         try {
+          void triggerLightImpactHaptic();
           setUpdatingIncidentId(incident.id);
           await updateIncidentStatus(incident.id, {
             incident_status: nextStatus,
@@ -393,6 +403,26 @@ export default function WorkTabScreen() {
     }, [hasActiveSession, installationId, loadIncidents, loadTechnicianQueue, loadTrackingLink]),
   );
 
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasActiveSession) {
+        screenEnterAnim.setValue(1);
+        return;
+      }
+      screenEnterAnim.setValue(0);
+      const animation = Animated.timing(screenEnterAnim, {
+        toValue: 1,
+        duration: 280,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      });
+      animation.start();
+      return () => {
+        animation.stop();
+      };
+    }, [hasActiveSession, screenEnterAnim]),
+  );
+
   useEffect(() => {
     if (!incidents.some((incident) => normalizeIncidentStatus(incident.incident_status) === "in_progress")) {
       return;
@@ -444,14 +474,17 @@ export default function WorkTabScreen() {
     : "";
 
   const handleCreateTrackingLink = useCallback(async () => {
+    void triggerSelectionHaptic();
     const parsedInstallationId = Number.parseInt(installationId, 10);
     if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) return;
     try {
       setTrackingActionBusy(true);
       const link = await createInstallationPublicTrackingLink(parsedInstallationId);
       setTrackingLink(link);
+      void triggerSuccessHaptic();
       Alert.alert("Tracking publico", "Enlace publico listo para compartir.");
     } catch (error) {
+      void triggerWarningHaptic();
       Alert.alert("Tracking publico", extractApiError(error));
     } finally {
       setTrackingActionBusy(false);
@@ -459,6 +492,7 @@ export default function WorkTabScreen() {
   }, [installationId]);
 
   const handleRevokeTrackingLink = useCallback(async () => {
+    void triggerSelectionHaptic();
     const parsedInstallationId = Number.parseInt(installationId, 10);
     if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) return;
     try {
@@ -470,8 +504,10 @@ export default function WorkTabScreen() {
         status: "revoked",
         tracking_url: null,
       } : null);
+      void triggerSuccessHaptic();
       Alert.alert("Tracking publico", "Enlace publico revocado.");
     } catch (error) {
+      void triggerWarningHaptic();
       Alert.alert("Tracking publico", extractApiError(error));
     } finally {
       setTrackingActionBusy(false);
@@ -479,6 +515,7 @@ export default function WorkTabScreen() {
   }, [installationId]);
 
   const handleOpenTrackingLink = useCallback(async () => {
+    void triggerSelectionHaptic();
     if (!activeTrackingUrl) return;
     const supported = await Linking.canOpenURL(activeTrackingUrl);
     if (!supported) {
@@ -489,6 +526,7 @@ export default function WorkTabScreen() {
   }, [activeTrackingUrl]);
 
   const handleShareTrackingLink = useCallback(async () => {
+    void triggerSelectionHaptic();
     if (!activeTrackingUrl) return;
     try {
       await Share.share({
@@ -499,6 +537,10 @@ export default function WorkTabScreen() {
       Alert.alert("Tracking publico", extractApiError(error));
     }
   }, [activeTrackingUrl]);
+  const screenEnterTranslate = screenEnterAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [12, 0],
+  });
 
   const renderIncidentCard = useCallback((incident: Incident | QueueIncident, options?: {
     showInstallationTag?: boolean;
@@ -540,14 +582,17 @@ export default function WorkTabScreen() {
       status === "in_progress"
         ? {
             label: "Abrir seguimiento",
-            onPress: () =>
+            onPress: () => {
+              void triggerSelectionHaptic();
               router.push(
                 `/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
-              ),
+              );
+            },
           }
         : {
             label: status === "paused" ? "Reanudar ahora" : "Empezar ahora",
             onPress: () => {
+              void triggerSelectionHaptic();
               void onChangeStatus(incident, "in_progress");
             },
           };
@@ -556,6 +601,7 @@ export default function WorkTabScreen() {
         ? {
             label: "Pausar",
             onPress: () => {
+              void triggerSelectionHaptic();
               void onChangeStatus(incident, "paused");
             },
           }
@@ -563,6 +609,7 @@ export default function WorkTabScreen() {
           ? {
               label: "Resolver",
               onPress: () => {
+                void triggerSelectionHaptic();
                 void onChangeStatus(incident, "resolved");
               },
             }
@@ -687,13 +734,16 @@ export default function WorkTabScreen() {
               { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
             ]}
             onPress={() =>
-              router.push(
-                `/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
-              )
+              {
+                void triggerSelectionHaptic();
+                router.push(
+                  `/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
+                );
+              }
             }
           >
             <Text style={[styles.detailButtonText, { color: palette.refreshText }]}>
-              {options?.detailButtonLabel || "Ver detalle"}
+              {options?.detailButtonLabel || "Abrir detalle"}
             </Text>
           </TouchableOpacity>
           {options?.showInstallationTag ? (
@@ -703,6 +753,7 @@ export default function WorkTabScreen() {
                 { backgroundColor: palette.secondaryButtonBg, borderColor: palette.inputBorder },
               ]}
               onPress={() => {
+                void triggerSelectionHaptic();
                 void onSelectInstallation(incident.installation_id);
               }}
             >
@@ -717,9 +768,12 @@ export default function WorkTabScreen() {
               { backgroundColor: palette.uploadButtonBg, borderColor: palette.uploadButtonBg },
             ]}
             onPress={() =>
-              router.push(
-                `/incident/upload?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
-              )
+              {
+                void triggerSelectionHaptic();
+                router.push(
+                  `/incident/upload?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
+                );
+              }
             }
           >
             <Text style={[styles.uploadButtonText, { color: palette.uploadButtonText }]}>
@@ -757,6 +811,15 @@ export default function WorkTabScreen() {
 
   return (
     <ScreenScaffold contentContainerStyle={styles.container}>
+      <Animated.View
+        style={[
+          styles.screenEnterWrap,
+          {
+            opacity: screenEnterAnim,
+            transform: [{ translateY: screenEnterTranslate }],
+          },
+        ]}
+      >
       <ScreenHero
         eyebrow={linkedTechnician ? "Mi cola" : "Casos"}
         title={linkedTechnician ? "Trabajo asignado" : "Backlog operativo"}
@@ -961,7 +1024,10 @@ export default function WorkTabScreen() {
             styles.topActionPrimary,
             { backgroundColor: palette.primaryButtonBg, borderColor: palette.primaryButtonBg },
           ]}
-          onPress={() => router.push(`/case/context?installationId=${encodeURIComponent(installationId || "1")}` as never)}
+          onPress={() => {
+            void triggerSelectionHaptic();
+            router.push(`/case/context?installationId=${encodeURIComponent(installationId || "1")}` as never);
+          }}
         >
           <Text style={[styles.topActionKicker, { color: palette.primaryButtonText }]}>
             Iniciar trabajo
@@ -976,7 +1042,10 @@ export default function WorkTabScreen() {
               styles.topActionUtility,
               { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
             ]}
-            onPress={() => router.push("/qr?mode=scan")}
+            onPress={() => {
+              void triggerSelectionHaptic();
+              router.push("/qr?mode=scan");
+            }}
           >
             <Text style={[styles.utilityLabel, { color: palette.textMuted }]}>Entrada</Text>
             <Text style={[styles.topActionText, { color: palette.refreshText }]}>Escanear QR</Text>
@@ -987,6 +1056,7 @@ export default function WorkTabScreen() {
               { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
             ]}
             onPress={() => {
+              void triggerSelectionHaptic();
               void refreshCurrentInstallation();
             }}
             disabled={loading}
@@ -995,7 +1065,7 @@ export default function WorkTabScreen() {
             {loading ? (
               <ActivityIndicator size="small" color={palette.refreshText} />
             ) : (
-              <Text style={[styles.topActionText, { color: palette.refreshText }]}>Refrescar</Text>
+              <Text style={[styles.topActionText, { color: palette.refreshText }]}>Actualizar caso</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -1073,6 +1143,7 @@ export default function WorkTabScreen() {
                   { backgroundColor: palette.primaryButtonBg, borderColor: palette.primaryButtonBg },
                 ]}
                 onPress={() => {
+                  void triggerSelectionHaptic();
                   const status = normalizeIncidentStatus(missionIncident.incident_status);
                   if (status === "in_progress") {
                     router.push(
@@ -1100,9 +1171,12 @@ export default function WorkTabScreen() {
                   { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
                 ]}
                 onPress={() =>
-                  router.push(
-                    `/incident/detail?incidentId=${missionIncident.id}&installationId=${missionIncident.installation_id}` as never,
-                  )
+                  {
+                    void triggerSelectionHaptic();
+                    router.push(
+                      `/incident/detail?incidentId=${missionIncident.id}&installationId=${missionIncident.installation_id}` as never,
+                    );
+                  }
                 }
               >
                 <Text style={[styles.missionSecondaryText, { color: palette.refreshText }]}>
@@ -1140,9 +1214,10 @@ export default function WorkTabScreen() {
             </Text>
             <TouchableOpacity
               style={[styles.primaryAction, { backgroundColor: palette.primaryButtonBg }]}
-              onPress={() =>
-                router.push(`/case/conformity?installationId=${currentInstallationRecord.id}` as never)
-              }
+              onPress={() => {
+                void triggerSelectionHaptic();
+                router.push(`/case/conformity?installationId=${currentInstallationRecord.id}` as never);
+              }}
               accessibilityRole="button"
               accessibilityLabel={`Abrir conformidad final del caso ${currentInstallationRecord.id}`}
             >
@@ -1299,7 +1374,7 @@ export default function WorkTabScreen() {
           }),
         )
       )}
-
+      </Animated.View>
 
     </ScreenScaffold>
   );
@@ -1314,6 +1389,8 @@ const styles = StyleSheet.create({
   },
   container: {
     padding: 20,
+  },
+  screenEnterWrap: {
     gap: 14,
   },
   authHintText: {

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Animated, Easing, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 import { extractApiError } from "@/src/api/client";
 import { listInstallations } from "@/src/api/incidents";
@@ -17,6 +17,7 @@ import StatusChip from "@/src/components/StatusChip";
 import SyncStatusBanner from "@/src/components/SyncStatusBanner";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
+import { triggerSelectionHaptic } from "@/src/services/haptics";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 import { type DashboardStatistics, type InstallationRecord } from "@/src/types/api";
@@ -73,6 +74,8 @@ export default function TodayScreen() {
   const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<FeedbackState>(null);
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const heroEnterAnim = useRef(new Animated.Value(0)).current;
+  const cardsEnterAnim = useRef(new Animated.Value(0)).current;
 
   const qrInstallationId = normalizeRouteParam(queryParams.installationId).trim();
   const qrAssetExternalCode = normalizeRouteParam(queryParams.assetExternalCode).trim();
@@ -122,6 +125,32 @@ export default function TodayScreen() {
     }, [hasActiveSession, loadOverview]),
   );
 
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasActiveSession) return;
+      heroEnterAnim.setValue(0);
+      cardsEnterAnim.setValue(0);
+      const enterSequence = Animated.stagger(85, [
+        Animated.timing(heroEnterAnim, {
+          toValue: 1,
+          duration: 280,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(cardsEnterAnim, {
+          toValue: 1,
+          duration: 320,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]);
+      enterSequence.start();
+      return () => {
+        enterSequence.stop();
+      };
+    }, [cardsEnterAnim, hasActiveSession, heroEnterAnim]),
+  );
+
   useEffect(() => {
     return () => {
       if (feedbackTimeoutRef.current) {
@@ -154,6 +183,14 @@ export default function TodayScreen() {
   );
   const canManageTechnicians = canManageTechnicianDirectory(webSessionRole);
   const focusRecord = prioritizedInstallations[0] || null;
+  const heroTranslate = heroEnterAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [10, 0],
+  });
+  const cardsTranslate = cardsEnterAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [16, 0],
+  });
   const focusSummary = useMemo(
     () => deriveRecordIncidentSummary(focusRecord),
     [focusRecord],
@@ -200,16 +237,29 @@ export default function TodayScreen() {
 
   return (
     <ScreenScaffold contentContainerStyle={styles.container}>
+      <Animated.View
+        style={{
+          opacity: heroEnterAnim,
+          transform: [{ translateY: heroTranslate }],
+        }}
+      >
       <ScreenHero
         eyebrow="Hoy"
         title="Centro del turno"
         description="Empieza por la accion prioritaria. Si no aplica QR, abre un caso manual o entra por inventario."
       >
         <Text style={[styles.heroMetaText, { color: palette.textSecondary }]}>
-          {statistics?.incident_in_progress_count ?? 0} en curso · {installations.length} casos
+          {statistics?.incident_in_progress_count ?? 0} en curso - {installations.length} casos
         </Text>
       </ScreenHero>
+      </Animated.View>
 
+      <Animated.View
+        style={{
+          opacity: cardsEnterAnim,
+          transform: [{ translateY: cardsTranslate }],
+        }}
+      >
       {feedbackMessage ? (
         <InlineFeedback message={feedbackMessage.message} tone={feedbackMessage.tone} />
       ) : null}
@@ -228,7 +278,10 @@ export default function TodayScreen() {
               borderColor: palette.heroBorder,
             },
           ]}
-          onPress={() => router.push("/scan" as never)}
+            onPress={() => {
+              void triggerSelectionHaptic();
+              router.push("/scan" as never);
+            }}
           accessibilityRole="button"
           accessibilityLabel="Escanear equipo para iniciar trabajo"
         >
@@ -246,7 +299,10 @@ export default function TodayScreen() {
               styles.utilityButton,
               { backgroundColor: palette.surface, borderColor: palette.inputBorder },
             ]}
-            onPress={() => router.push("/case/manual" as never)}
+            onPress={() => {
+              void triggerSelectionHaptic();
+              router.push("/case/manual" as never);
+            }}
             accessibilityRole="button"
             accessibilityLabel="Iniciar caso manual"
           >
@@ -259,7 +315,10 @@ export default function TodayScreen() {
               styles.utilityButton,
               { backgroundColor: palette.surface, borderColor: palette.inputBorder },
             ]}
-            onPress={() => router.push("/explore" as never)}
+            onPress={() => {
+              void triggerSelectionHaptic();
+              router.push("/explore" as never);
+            }}
             accessibilityRole="button"
             accessibilityLabel="Abrir inventario"
           >
@@ -280,7 +339,10 @@ export default function TodayScreen() {
               styles.utilityButton,
               { backgroundColor: palette.surface, borderColor: palette.inputBorder },
             ]}
-            onPress={() => router.push("/technicians" as never)}
+            onPress={() => {
+              void triggerSelectionHaptic();
+              router.push("/technicians" as never);
+            }}
             accessibilityRole="button"
             accessibilityLabel="Abrir directorio de tecnicos"
           >
@@ -301,6 +363,7 @@ export default function TodayScreen() {
               { backgroundColor: palette.surface, borderColor: palette.inputBorder },
             ]}
             onPress={() => {
+              void triggerSelectionHaptic();
               void loadOverview({ forceRefresh: true });
             }}
             disabled={loadingOverview}
@@ -343,13 +406,16 @@ export default function TodayScreen() {
             </View>
 
             <Text style={[styles.focusMeta, { color: palette.textMuted }]}>
-              {focusSummary.active} activas · {focusSummary.inProgress} en curso · {focusSummary.paused} pausadas
+              {focusSummary.active} activas - {focusSummary.inProgress} en curso - {focusSummary.paused} pausadas
             </Text>
 
             <View style={styles.focusActions}>
               <TouchableOpacity
                 style={[styles.primaryAction, { backgroundColor: palette.primaryButtonBg }]}
-                onPress={() => openCaseContext(focusRecord)}
+                onPress={() => {
+                  void triggerSelectionHaptic();
+                  openCaseContext(focusRecord);
+                }}
                 accessibilityRole="button"
                 accessibilityLabel={`Abrir el caso ${focusRecord.id}`}
               >
@@ -362,7 +428,10 @@ export default function TodayScreen() {
                   styles.secondaryAction,
                   { backgroundColor: palette.surface, borderColor: palette.inputBorder },
                 ]}
-                onPress={() => openBacklog(focusRecord)}
+                onPress={() => {
+                  void triggerSelectionHaptic();
+                  openBacklog(focusRecord);
+                }}
                 accessibilityRole="button"
                 accessibilityLabel={`Abrir backlog del caso ${focusRecord.id}`}
               >
@@ -374,6 +443,7 @@ export default function TodayScreen() {
           </View>
         )}
       </SectionCard>
+      </Animated.View>
     </ScreenScaffold>
   );
 }

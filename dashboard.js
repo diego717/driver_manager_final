@@ -1,4 +1,4 @@
-// API base URL:
+﻿// API base URL:
 // - By default uses same-origin (recommended and safest).
 // - Optional override via window.__DM_API_BASE__ or localStorage.dm_api_base_url.
 // - Cross-origin overrides are blocked unless explicitly enabled for debug.
@@ -284,6 +284,7 @@ let qrModalEditUnlockUntil = 0;
 const QR_EDIT_UNLOCK_TTL_MS = 10 * 60 * 1000;
 const KPI_NUMBER_ANIMATION_MS = 620;
 const SECTION_TRANSITION_OUT_MS = 150;
+const SECTION_TRANSITION_VISUAL_MS = 360;
 const TOAST_DURATION_MS = 3100;
 const MODAL_FOCUSABLE_SELECTOR = [
     'button:not([disabled])',
@@ -301,21 +302,23 @@ const SECTION_TITLES = {
     drivers: 'Drivers',
     incidents: 'Incidencias',
     incidentMap: 'Mapa operativo',
+    visualLab: 'Visual Lab',
     tenants: 'Tenants',
-    audit: 'Auditoría',
-    settings: 'Configuración',
+    audit: 'AuditorÃ­a',
+    settings: 'ConfiguraciÃ³n',
 };
 const SECTION_SUBTITLES = {
     dashboard: 'Prioriza incidencias, registros activos y desvio de SLA',
     myCases: 'Tu bandeja personal de incidencias asignadas, agrupada por estado operativo',
-    installations: 'Historial técnico para consultar contexto y registros',
+    installations: 'Historial tÃ©cnico para consultar contexto y registros',
     assets: 'Equipos con acceso directo a incidencias y contexto',
     drivers: 'Versionado centralizado de controladores',
     incidents: 'Atiende eventos sin perder el contexto operativo',
     incidentMap: 'Vista geolocalizada para explorar incidencias sin sobrecargar la bandeja',
+    visualLab: 'Preview web de estilo, contraste y ritmo de motion para futuras iteraciones',
     tenants: 'Administra empresas, admins y estado de plataforma',
-    audit: 'Trazas críticas y cumplimiento',
-    settings: 'Preferencias operativas y atajos de gestión',
+    audit: 'Trazas crÃ­ticas y cumplimiento',
+    settings: 'Preferencias operativas y atajos de gestiÃ³n',
 };
 const TECHNICIAN_ENTITY_LABELS = Object.freeze({
     installation: 'Registro',
@@ -326,7 +329,7 @@ const TECHNICIAN_ENTITY_LABELS = Object.freeze({
 const TECHNICIAN_ASSIGNMENT_ROLE_LABELS = Object.freeze({
     owner: 'Responsable',
     assistant: 'Apoyo',
-    reviewer: 'Revisión',
+    reviewer: 'RevisiÃ³n',
 });
 const SECTION_REQUIRED_BINDINGS = Object.freeze({
     dashboard: [
@@ -389,6 +392,13 @@ const SECTION_REQUIRED_BINDINGS = Object.freeze({
         'refreshAudit',
         'auditLogs',
     ],
+    visualLab: [
+        'visualLabHero',
+        'visualLabFlow',
+        'visualLabTheme',
+        'visualLabFuture',
+        'visualLabMotion',
+    ],
     tenants: [
         'tenantsList',
         'tenantDetail',
@@ -403,21 +413,22 @@ const SECTION_REQUIRED_BINDINGS = Object.freeze({
         'settingsLogoutBtn',
     ],
 });
-const MOBILE_NAV_OVERFLOW_SECTIONS = new Set(['drivers', 'tenants', 'audit', 'settings']);
+const MOBILE_NAV_OVERFLOW_SECTIONS = new Set(['drivers', 'tenants', 'audit', 'visualLab', 'settings']);
 const HEADER_PRIMARY_ACTIONS = {
     dashboard: { icon: 'add_circle', label: 'Nuevo registro', action: 'createRecord' },
     myCases: { icon: 'refresh', label: 'Actualizar mis casos', action: 'refreshMyCases' },
-    installations: { icon: 'add_circle', label: 'Nuevo registro', action: 'createRecord' },
-    assets: { icon: 'qr_code_2', label: 'Nuevo equipo + QR', action: 'createAsset' },
-    drivers: { icon: 'cloud_upload', label: 'Subir driver', action: 'pickDriverFile' },
+    installations: { icon: 'add_circle', label: 'Nuevo registro', action: 'createRecord', hidden: true },
+    assets: { icon: 'qr_code_2', label: 'Nuevo equipo + QR', action: 'createAsset', hidden: true },
+    drivers: { icon: 'cloud_upload', label: 'Subir driver', action: 'pickDriverFile', hidden: true },
     incidents: { icon: 'warning', label: 'Nueva incidencia', action: 'createIncident' },
     incidentMap: { icon: 'warning', label: 'Nueva incidencia', action: 'createIncident' },
+    visualLab: { icon: 'contrast', label: 'Alternar tema', action: 'toggleTheme' },
     tenants: { icon: 'add_business', label: 'Nuevo tenant', action: 'createTenant', hidden: true },
-    audit: { icon: 'refresh', label: 'Actualizar auditoría', action: 'refreshAudit' },
-    settings: { icon: 'description', label: 'Abrir auditoría', action: 'openAudit' },
+    audit: { icon: 'refresh', label: 'Actualizar auditorÃ­a', action: 'refreshAudit' },
+    settings: { icon: 'description', label: 'Abrir auditorÃ­a', action: 'openAudit' },
 };
 const TOAST_TYPE_ICONS = {
-    success: '✓',
+    success: 'âœ“',
     error: '!',
     warning: '!',
     info: 'i',
@@ -435,6 +446,7 @@ let dashboardMyCases = null;
 let dashboardRealtime = null;
 let dashboardScan = null;
 let dashboardGeolocation = null;
+let pageHeadingTransitionTimer = null;
 
 function openAccessibleModal(modalId, options = {}) {
     return dashboardModals.openAccessibleModal(modalId, options);
@@ -508,7 +520,7 @@ function findExistingLazyScript(src) {
 
 function waitForExistingScript(script, normalizedSrc) {
     if (!script) {
-        return Promise.reject(new Error(`No se encontró el script ${normalizedSrc}.`));
+        return Promise.reject(new Error(`No se encontrÃ³ el script ${normalizedSrc}.`));
     }
 
     if (script.dataset.loadState === 'loaded') {
@@ -516,7 +528,7 @@ function waitForExistingScript(script, normalizedSrc) {
     }
 
     if (script.dataset.loadState === 'failed') {
-        return Promise.reject(new Error(`El script ${normalizedSrc} quedó en estado fallido.`));
+        return Promise.reject(new Error(`El script ${normalizedSrc} quedÃ³ en estado fallido.`));
     }
 
     return new Promise((resolve, reject) => {
@@ -597,7 +609,7 @@ async function ensureChartLibrary() {
             await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
         }
         if (!isChartAvailable()) {
-            throw new Error('Chart.js terminó de cargar, pero no expuso la API global esperada.');
+            throw new Error('Chart.js terminÃ³ de cargar, pero no expuso la API global esperada.');
         }
         applyChartDefaults(document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
         lazyAssetWarnings.delete(LAZY_ASSET_PATHS.chart);
@@ -611,7 +623,7 @@ async function ensureChartLibrary() {
         console.error('No se pudo cargar Chart.js:', error);
         if (!lazyAssetWarnings.has(LAZY_ASSET_PATHS.chart)) {
             lazyAssetWarnings.add(LAZY_ASSET_PATHS.chart);
-            showNotification('No pudimos cargar los gráficos del dashboard.', 'warning');
+            showNotification('No pudimos cargar los grÃ¡ficos del dashboard.', 'warning');
         }
         return false;
     }
@@ -1147,7 +1159,7 @@ function setupMobileNavPanel() {
             const section = String(button.dataset.mobileSection || '').trim();
             if (!section) return;
             if (section === 'audit' && !canCurrentUserAccessAudit()) {
-                showNotification('No tienes permisos para acceder a Auditoría.', 'error');
+                showNotification('No tienes permisos para acceder a AuditorÃ­a.', 'error');
                 return;
             }
             closeMobileNavPanel();
@@ -1304,32 +1316,188 @@ function formatDateTime(value) {
     }).format(parsed);
 }
 
-function normalizeMojibakeText(value) {
+const MOJIBAKE_MARKER_REGEX = /[\u00C2\u00C3\u00E2]/;
+const CP1252_REVERSE = Object.freeze({
+    '\u20AC': 0x80,
+    '\u201A': 0x82,
+    '\u0192': 0x83,
+    '\u201E': 0x84,
+    '\u2026': 0x85,
+    '\u2020': 0x86,
+    '\u2021': 0x87,
+    '\u02C6': 0x88,
+    '\u2030': 0x89,
+    '\u0160': 0x8A,
+    '\u2039': 0x8B,
+    '\u0152': 0x8C,
+    '\u017D': 0x8E,
+    '\u2018': 0x91,
+    '\u2019': 0x92,
+    '\u201C': 0x93,
+    '\u201D': 0x94,
+    '\u2022': 0x95,
+    '\u2013': 0x96,
+    '\u2014': 0x97,
+    '\u02DC': 0x98,
+    '\u2122': 0x99,
+    '\u0161': 0x9A,
+    '\u203A': 0x9B,
+    '\u0153': 0x9C,
+    '\u017E': 0x9E,
+    '\u0178': 0x9F,
+});
+const MOJIBAKE_ATTRIBUTE_NAMES = Object.freeze(['title', 'aria-label', 'placeholder', 'alt', 'content']);
+let mojibakeObserver = null;
+
+function mojibakeScore(value) {
     const normalized = String(value ?? '');
-    return normalized
-        .replaceAll('ÃƒÂ³', 'ó')
-        .replaceAll('ÃƒÂ©', 'é')
-        .replaceAll('ÃƒÂ¡', 'á')
-        .replaceAll('ÃƒÂº', 'ú')
-        .replaceAll('ÃƒÂ±', 'ñ')
-        .replaceAll('Ã‚Â·', '·')
-        .replaceAll('Â·', '·')
-        .replaceAll('sesiÃ', 'sesi')
-        .replaceAll('administraciÃ', 'administraci')
-        .replaceAll('secciÃ', 'secci')
-        .replaceAll('todavÃ', 'todaví')
-        .replaceAll('TÃ', 'Té')
-        .replaceAll('Uso mÃ', 'Uso má');
+    const markers = normalized.match(/[\u00C2\u00C3\u00E2]/g) || [];
+    const replacementChars = normalized.match(/\uFFFD/g) || [];
+    return markers.length + (replacementChars.length * 3);
+}
+
+function decodeCp1252Utf8Roundtrip(value) {
+    const source = String(value ?? '');
+    if (!source) return source;
+    const bytes = [];
+    for (const char of source) {
+        const codePoint = char.codePointAt(0);
+        if (codePoint <= 0xFF) {
+            bytes.push(codePoint);
+            continue;
+        }
+        const mapped = CP1252_REVERSE[char];
+        if (mapped === undefined) {
+            return source;
+        }
+        bytes.push(mapped);
+    }
+
+    try {
+        return new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(bytes));
+    } catch {
+        return source;
+    }
+}
+
+function applyManualMojibakeReplacements(value) {
+    return String(value ?? '')
+        .replaceAll('\u00C3\u0192\u00C2', '\u00C3')
+        .replaceAll('\u00C3\u201A\u00C2', '\u00C2')
+        .replaceAll('\u00C3\u00A1', '\u00E1')
+        .replaceAll('\u00C3\u00A9', '\u00E9')
+        .replaceAll('\u00C3\u00AD', '\u00ED')
+        .replaceAll('\u00C3\u00B3', '\u00F3')
+        .replaceAll('\u00C3\u00BA', '\u00FA')
+        .replaceAll('\u00C3\u00B1', '\u00F1')
+        .replaceAll('\u00C3\u0081', '\u00C1')
+        .replaceAll('\u00C3\u0089', '\u00C9')
+        .replaceAll('\u00C3\u008D', '\u00CD')
+        .replaceAll('\u00C3\u0093', '\u00D3')
+        .replaceAll('\u00C3\u009A', '\u00DA')
+        .replaceAll('\u00C3\u0091', '\u00D1')
+        .replaceAll('\u00C2\u00BF', '\u00BF')
+        .replaceAll('\u00C2\u00A1', '\u00A1')
+        .replaceAll('\u00C2\u00B7', '\u00B7')
+        .replaceAll('\u00E2\u0153\u201C', '\u2713');
+}
+
+function normalizeMojibakeText(value) {
+    const raw = String(value ?? '');
+    if (!raw || !MOJIBAKE_MARKER_REGEX.test(raw)) {
+        return raw;
+    }
+
+    let current = raw;
+    for (let pass = 0; pass < 2; pass += 1) {
+        const decoded = decodeCp1252Utf8Roundtrip(current);
+        const cleaned = applyManualMojibakeReplacements(decoded);
+        if (mojibakeScore(cleaned) <= mojibakeScore(current)) {
+            current = cleaned;
+        } else {
+            current = applyManualMojibakeReplacements(current);
+            break;
+        }
+    }
+    return applyManualMojibakeReplacements(current);
+}
+
+function normalizeElementAttributes(node) {
+    if (!(node instanceof Element)) return;
+    MOJIBAKE_ATTRIBUTE_NAMES.forEach((attrName) => {
+        if (!node.hasAttribute(attrName)) return;
+        const currentValue = node.getAttribute(attrName);
+        const fixedValue = normalizeMojibakeText(currentValue);
+        if (fixedValue !== currentValue) {
+            node.setAttribute(attrName, fixedValue);
+        }
+    });
+}
+
+function repairMojibakeInSubtree(root) {
+    if (!root) return;
+    if (root.nodeType === Node.TEXT_NODE) {
+        const fixedText = normalizeMojibakeText(root.textContent);
+        if (fixedText !== root.textContent) {
+            root.textContent = fixedText;
+        }
+        return;
+    }
+    if (root.nodeType !== Node.ELEMENT_NODE && root.nodeType !== Node.DOCUMENT_NODE) return;
+
+    if (root instanceof Element) {
+        normalizeElementAttributes(root);
+    }
+
+    const textWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let textNode = textWalker.nextNode();
+    while (textNode) {
+        const fixedText = normalizeMojibakeText(textNode.textContent);
+        if (fixedText !== textNode.textContent) {
+            textNode.textContent = fixedText;
+        }
+        textNode = textWalker.nextNode();
+    }
+
+    if (root instanceof Element || root instanceof Document) {
+        root.querySelectorAll?.('*').forEach((element) => {
+            normalizeElementAttributes(element);
+        });
+    }
+}
+
+function startMojibakeObserver() {
+    if (mojibakeObserver || !(window.MutationObserver && document.body)) return;
+
+    mojibakeObserver = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            if (mutation.type === 'characterData') {
+                repairMojibakeInSubtree(mutation.target);
+                return;
+            }
+
+            if (mutation.type === 'attributes') {
+                normalizeElementAttributes(mutation.target);
+                return;
+            }
+
+            mutation.addedNodes.forEach((node) => {
+                repairMojibakeInSubtree(node);
+            });
+        });
+    });
+
+    mojibakeObserver.observe(document.body, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: MOJIBAKE_ATTRIBUTE_NAMES,
+    });
 }
 
 function repairTenantSectionMojibake(root) {
-    if (!root) return;
-    if (root.nodeType === Node.TEXT_NODE) {
-        root.textContent = normalizeMojibakeText(root.textContent);
-        return;
-    }
-    if (root.nodeType !== Node.ELEMENT_NODE) return;
-    Array.from(root.childNodes || []).forEach((node) => repairTenantSectionMojibake(node));
+    repairMojibakeInSubtree(root);
 }
 
 function getTenantUserRoleOptions() {
@@ -1371,7 +1539,7 @@ function buildTenantUserFields(user = null, tenantId = '') {
         passwordInput.id = 'actionTenantUserPassword';
         passwordInput.placeholder = 'ClaveFuerte#2026';
         passwordInput.autocomplete = 'new-password';
-        grid.append(createModalInputGroup('Contraseña', passwordInput, { htmlFor: passwordInput.id }));
+        grid.append(createModalInputGroup('ContraseÃ±a', passwordInput, { htmlFor: passwordInput.id }));
     }
 
     const roleSelect = document.createElement('select');
@@ -1447,7 +1615,7 @@ function openTenantUserCreateModal() {
 
     openActionModal({
         title: `Nuevo usuario para ${tenantId}`,
-        subtitle: 'El usuario quedará creado directamente dentro del tenant seleccionado.',
+        subtitle: 'El usuario quedarÃ¡ creado directamente dentro del tenant seleccionado.',
         submitLabel: 'Crear usuario',
         focusId: 'actionTenantUserUsername',
         fields: buildTenantUserFields(null, tenantId),
@@ -1462,7 +1630,7 @@ function openTenantUserCreateModal() {
                 return;
             }
             if (!password) {
-                setActionModalError('Debes indicar una contraseña inicial.');
+                setActionModalError('Debes indicar una contraseÃ±a inicial.');
                 return;
             }
 
@@ -1662,7 +1830,7 @@ function renderTenantDetail() {
     if (!detailEl || !editBtn || !deleteBtn) return;
 
     if (!hasActiveSession()) {
-        detailEl.innerHTML = '<p class="settings-empty-state">Inicia sesiÃ³n para ver detalle de tenants.</p>';
+        detailEl.innerHTML = '<p class="settings-empty-state">Selecciona un tenant para ver su detalle.</p>';
         editBtn.disabled = true;
         deleteBtn.disabled = true;
         return;
@@ -1699,7 +1867,7 @@ function renderTenantDetail() {
         ['Plan', tenant.plan_code || '-'],
         ['Estado', tenant.status || '-'],
         ['Usuarios', tenant.metrics?.users_count ?? 0],
-        ['TÃ©cnicos', tenant.metrics?.technicians_count ?? 0],
+        ['TÃƒÂ©cnicos', tenant.metrics?.technicians_count ?? 0],
         ['Registros', tenant.metrics?.installations_count ?? 0],
         ['Incidencias activas', tenant.metrics?.active_incidents_count ?? 0],
     ].forEach(([label, value]) => {
@@ -1718,7 +1886,7 @@ function renderTenantDetail() {
     adminsTitle.className = 'settings-actions-note';
     adminsTitle.textContent = admins.length
         ? `Admins del tenant (${admins.length})`
-        : 'Este tenant todavÃ­a no tiene admins dedicados.';
+        : 'Este tenant todavÃƒÂ­a no tiene admins dedicados.';
     detailEl.append(adminsTitle);
 
     if (admins.length) {
@@ -1738,7 +1906,7 @@ function renderTenantDetail() {
                 admin.role || 'admin',
                 admin.is_active ? 'activo' : 'inactivo',
                 admin.last_login_at ? `ultimo login ${formatDateTime(admin.last_login_at)}` : 'sin login',
-            ].join(' Â· ');
+            ].join(' Ã‚Â· ');
             top.append(title, meta);
             card.append(top);
             adminsList.append(card);
@@ -1750,7 +1918,7 @@ function renderTenantDetail() {
         const usageNote = document.createElement('p');
         usageNote.className = 'settings-actions-note';
         usageNote.textContent =
-            `Uso mÃ¡s reciente (${latestUsage.usage_month}): ${latestUsage.users_count} usuarios, ` +
+            `Uso mÃƒÂ¡s reciente (${latestUsage.usage_month}): ${latestUsage.users_count} usuarios, ` +
             `${latestUsage.incidents_count} incidencias, ${formatBytes(latestUsage.storage_bytes)}.`;
         detailEl.append(usageNote);
     }
@@ -1813,7 +1981,7 @@ function renderTenantDetail() {
                     user.role || 'solo_lectura',
                     user.is_active ? 'activo' : 'inactivo',
                     user.last_login_at ? `ultimo login ${formatDateTime(user.last_login_at)}` : 'sin login',
-                ].join(' Â· ');
+                ].join(' Ã‚Â· ');
                 copyWrap.append(title, meta);
 
                 const actions = document.createElement('div');
@@ -1868,8 +2036,8 @@ function renderTenantsSection() {
         setTenantSummaryValue('tenantsActive', '-');
         setTenantSummaryValue('tenantsSuspended', '-');
         setTenantSummaryValue('tenantsUsers', '-');
-        copyEl.textContent = 'Inicia sesión con un rol de plataforma para ver la administración de tenants.';
-        listEl.innerHTML = '<p class="settings-empty-state">Inicia sesiÃ³n para ver tenants.</p>';
+        copyEl.textContent = 'Panel de administracion de tenants.';
+        listEl.innerHTML = '<p class="settings-empty-state">No hay tenants para mostrar por ahora.</p>';
         createBtn.disabled = true;
         if (refreshBtn) refreshBtn.disabled = true;
         renderTenantDetail();
@@ -1881,7 +2049,7 @@ function renderTenantsSection() {
         setTenantSummaryValue('tenantsActive', '-');
         setTenantSummaryValue('tenantsSuspended', '-');
         setTenantSummaryValue('tenantsUsers', '-');
-        copyEl.textContent = 'Esta sección queda reservada para roles de plataforma.';
+        copyEl.textContent = 'Esta secciÃ³n queda reservada para roles de plataforma.';
         listEl.innerHTML = '<p class="settings-empty-state">Solo plataforma puede administrar tenants.</p>';
         createBtn.disabled = true;
         renderTenantDetail();
@@ -1901,7 +2069,7 @@ function renderTenantsSection() {
     );
 
     if (!tenants.length) {
-        listEl.innerHTML = '<p class="settings-empty-state">TodavÃ­a no hay tenants cargados.</p>';
+        listEl.innerHTML = '<p class="settings-empty-state">TodavÃƒÂ­a no hay tenants cargados.</p>';
         renderTenantDetail();
         return;
     }
@@ -1928,7 +2096,7 @@ function renderTenantsSection() {
             Array.isArray(tenant.admin_usernames) && tenant.admin_usernames.length
                 ? tenant.admin_usernames.join(', ')
                 : 'Sin admins visibles',
-        ].join(' Â· ');
+        ].join(' Ã‚Â· ');
         titleWrap.append(title, subtitle);
 
         const chips = document.createElement('div');
@@ -1944,7 +2112,7 @@ function renderTenantsSection() {
         meta.className = 'asset-meta-grid';
         [
             ['Usuarios', tenant.metrics?.users_count ?? 0],
-            ['TÃ©cnicos', tenant.metrics?.technicians_count ?? 0],
+            ['TÃƒÂ©cnicos', tenant.metrics?.technicians_count ?? 0],
             ['Registros', tenant.metrics?.installations_count ?? 0],
             ['Incidencias activas', tenant.metrics?.active_incidents_count ?? 0],
         ].forEach(([label, value]) => {
@@ -1992,27 +2160,27 @@ function updateTechniciansPermissionCopy() {
     if (!copyEl || !createBtn) return;
 
     if (!hasActiveSession()) {
-        copyEl.textContent = 'Inicia sesión para gestionar el staff técnico del tenant activo.';
+        copyEl.textContent = 'Gestion del staff tecnico del tenant activo.';
         createBtn.disabled = true;
         if (refreshBtn) refreshBtn.disabled = true;
         return;
     }
 
     if (canCurrentUserManageTechnicians()) {
-        copyEl.textContent = 'Puedes crear, editar, activar o desactivar técnicos. Las asignaciones quedan auditadas por tenant.';
+        copyEl.textContent = 'Puedes crear, editar, activar o desactivar tÃ©cnicos. Las asignaciones quedan auditadas por tenant.';
         createBtn.disabled = false;
         if (refreshBtn) refreshBtn.disabled = false;
         return;
     }
 
     if (canCurrentUserManageTechnicianAssignments()) {
-        copyEl.textContent = 'Puedes consultar técnicos y gestionar sus asignaciones operativas, pero no crear ni editar su ficha.';
+        copyEl.textContent = 'Puedes consultar tÃ©cnicos y gestionar sus asignaciones operativas, pero no crear ni editar su ficha.';
         createBtn.disabled = true;
         if (refreshBtn) refreshBtn.disabled = false;
         return;
     }
 
-    copyEl.textContent = 'Tienes acceso de consulta sobre el staff técnico del tenant.';
+    copyEl.textContent = 'Tienes acceso de consulta sobre el staff tÃ©cnico del tenant.';
     createBtn.disabled = true;
     if (refreshBtn) refreshBtn.disabled = false;
 }
@@ -2037,7 +2205,7 @@ function renderTechniciansSection() {
         setTechnicianSummaryValue('settingsTechniciansActive', '-');
         setTechnicianSummaryValue('settingsTechniciansLinked', '-');
         setTechnicianSummaryValue('settingsTechniciansAssignments', '-');
-        listEl.innerHTML = '<p class="loading">Inicia sesión para ver técnicos.</p>';
+        listEl.innerHTML = '<p class="loading">No hay tecnicos para mostrar por ahora.</p>';
         return;
     }
 
@@ -2061,7 +2229,7 @@ function renderTechniciansSection() {
     setTechnicianSummaryValue('settingsTechniciansAssignments', assignmentsCount);
 
     if (!technicians.length) {
-        listEl.innerHTML = '<p class="settings-empty-state">Todavía no hay técnicos cargados para este tenant.</p>';
+        listEl.innerHTML = '<p class="settings-empty-state">TodavÃ­a no hay tÃ©cnicos cargados para este tenant.</p>';
         return;
     }
 
@@ -2077,14 +2245,14 @@ function renderTechniciansSection() {
         const titleWrap = document.createElement('div');
         titleWrap.className = 'settings-technician-title';
         const title = document.createElement('h4');
-        title.textContent = technician.display_name || `Técnico #${technician.id}`;
+        title.textContent = technician.display_name || `TÃ©cnico #${technician.id}`;
         const subtitle = document.createElement('p');
         subtitle.className = 'settings-technician-subtitle';
         const subtitleParts = [
-            technician.employee_code ? `Código ${technician.employee_code}` : 'Sin código interno',
+            technician.employee_code ? `CÃ³digo ${technician.employee_code}` : 'Sin cÃ³digo interno',
             getTechnicianLinkedWebUserLabel(technician),
         ];
-        subtitle.textContent = subtitleParts.join(' · ');
+        subtitle.textContent = subtitleParts.join(' Â· ');
         titleWrap.append(title, subtitle);
 
         const chips = document.createElement('div');
@@ -2098,7 +2266,7 @@ function renderTechniciansSection() {
         if (technician.active_assignment_count > 0) {
             const assignmentChip = document.createElement('span');
             assignmentChip.className = 'settings-chip';
-            assignmentChip.textContent = `${technician.active_assignment_count} asignación${technician.active_assignment_count === 1 ? '' : 'es'}`;
+            assignmentChip.textContent = `${technician.active_assignment_count} asignaciÃ³n${technician.active_assignment_count === 1 ? '' : 'es'}`;
             chips.append(assignmentChip);
         }
 
@@ -2108,7 +2276,7 @@ function renderTechniciansSection() {
         meta.className = 'asset-meta-grid';
         const fields = [
             ['Email', technician.email || 'No informado'],
-            ['Teléfono', technician.phone || 'No informado'],
+            ['TelÃ©fono', technician.phone || 'No informado'],
             ['Notas', technician.notes || 'Sin notas operativas'],
         ];
         fields.forEach(([label, value]) => {
@@ -2174,13 +2342,13 @@ function renderTechniciansSection() {
                     });
                     showNotification(
                         technician.is_active
-                            ? `Técnico ${technician.display_name} desactivado.`
-                            : `Técnico ${technician.display_name} reactivado.`,
+                            ? `TÃ©cnico ${technician.display_name} desactivado.`
+                            : `TÃ©cnico ${technician.display_name} reactivado.`,
                         technician.is_active ? 'info' : 'success',
                     );
                     await loadTechniciansSection({ silent: true });
                 } catch (error) {
-                    showNotification(`No se pudo actualizar el técnico: ${error?.message || error}`, 'error');
+                    showNotification(`No se pudo actualizar el tÃ©cnico: ${error?.message || error}`, 'error');
                 }
             });
             actions.append(toggleBtn);
@@ -2203,7 +2371,7 @@ function renderTechniciansSection() {
                 if (!items.length) {
                     const empty = document.createElement('p');
                     empty.className = 'settings-empty-state';
-                    empty.textContent = 'Sin asignaciones activas para este técnico.';
+                    empty.textContent = 'Sin asignaciones activas para este tÃ©cnico.';
                     assignmentsWrap.append(empty);
                 } else {
                     const list = document.createElement('div');
@@ -2222,7 +2390,7 @@ function renderTechniciansSection() {
                         const assignmentMeta = document.createElement('p');
                         assignmentMeta.className = 'settings-assignment-meta';
                         const roleLabel = TECHNICIAN_ASSIGNMENT_ROLE_LABELS[assignment.assignment_role] || assignment.assignment_role;
-                        assignmentMeta.textContent = `${roleLabel} · asignado por ${assignment.assigned_by_username || 'sistema'}`;
+                        assignmentMeta.textContent = `${roleLabel} Â· asignado por ${assignment.assigned_by_username || 'sistema'}`;
                         textWrap.append(assignmentTitle, assignmentMeta);
                         top.append(textWrap);
 
@@ -2232,14 +2400,14 @@ function renderTechniciansSection() {
                             removeBtn.className = 'btn-secondary';
                             removeBtn.textContent = 'Quitar';
                             removeBtn.addEventListener('click', async () => {
-                                const confirmed = window.confirm(`¿Quitar la asignación ${entityLabel} ${assignment.entity_id}?`);
+                                const confirmed = window.confirm(`Â¿Quitar la asignaciÃ³n ${entityLabel} ${assignment.entity_id}?`);
                                 if (!confirmed) return;
                                 try {
                                     await api.deleteTechnicianAssignment(assignment.id);
-                                    showNotification('Asignación removida.', 'success');
+                                    showNotification('AsignaciÃ³n removida.', 'success');
                                     await loadTechnicianAssignments(technician.id, { force: true, silent: true });
                                 } catch (error) {
-                                    showNotification(`No se pudo quitar la asignación: ${error?.message || error}`, 'error');
+                                    showNotification(`No se pudo quitar la asignaciÃ³n: ${error?.message || error}`, 'error');
                                 }
                             });
                             top.append(removeBtn);
@@ -2339,7 +2507,7 @@ function getTechnicianLoadSummary() {
         .slice(0, 4)
         .map((item) => ({
             id: Number(item.id),
-            display_name: String(item.display_name || '').trim() || `Técnico #${item.id}`,
+            display_name: String(item.display_name || '').trim() || `TÃ©cnico #${item.id}`,
             employee_code: String(item.employee_code || '').trim(),
             active_assignment_count: Math.max(0, Number(item.active_assignment_count) || 0),
             linked_web_user: Number.isInteger(parseStrictInteger(item?.web_user_id)),
@@ -2377,8 +2545,8 @@ function getTechnicianLinkedWebUserLabel(technician) {
 
     const username = String(linkedUser.username || '').trim() || `Usuario #${webUserId}`;
     const role = String(linkedUser.role || '').trim();
-    const activeSuffix = linkedUser.is_active === false ? ' · inactivo' : '';
-    return role ? `${username} · ${role}${activeSuffix}` : `${username}${activeSuffix}`;
+    const activeSuffix = linkedUser.is_active === false ? ' Â· inactivo' : '';
+    return role ? `${username} Â· ${role}${activeSuffix}` : `${username}${activeSuffix}`;
 }
 
 function getSelectableWebUsersForTechnician(technician = null) {
@@ -2461,7 +2629,7 @@ async function loadTechniciansSection(options = {}) {
         renderTechniciansSection();
         dashboardOverview?.renderTechnicianLoadAttention?.();
         if (!silent) {
-            showNotification(`No se pudo cargar la gestión de técnicos: ${error?.message || error}`, 'error');
+            showNotification(`No se pudo cargar la gestiÃ³n de tÃ©cnicos: ${error?.message || error}`, 'error');
         }
         return [];
     }
@@ -2644,7 +2812,7 @@ function buildTechnicianModalFields(technician = null) {
     employeeCodeInput.id = 'actionTechnicianEmployeeCode';
     employeeCodeInput.value = String(technician?.employee_code || '');
     employeeCodeInput.placeholder = 'Ej: TEC-09';
-    grid.append(createModalInputGroup('Código interno', employeeCodeInput, { htmlFor: employeeCodeInput.id }));
+    grid.append(createModalInputGroup('CÃ³digo interno', employeeCodeInput, { htmlFor: employeeCodeInput.id }));
 
     const webUserSelect = document.createElement('select');
     webUserSelect.id = 'actionTechnicianWebUserId';
@@ -2656,9 +2824,9 @@ function buildTechnicianModalFields(technician = null) {
         const option = document.createElement('option');
         option.value = String(user.id);
         const role = String(user.role || '').trim();
-        const activeSuffix = user.is_active === false ? ' · inactivo' : '';
+        const activeSuffix = user.is_active === false ? ' Â· inactivo' : '';
         option.textContent = role
-            ? `${user.username} · ${role}${activeSuffix}`
+            ? `${user.username} Â· ${role}${activeSuffix}`
             : `${user.username}${activeSuffix}`;
         if (Number(user.id) === Number(technician?.web_user_id)) {
             option.selected = true;
@@ -2679,29 +2847,29 @@ function buildTechnicianModalFields(technician = null) {
     phoneInput.id = 'actionTechnicianPhone';
     phoneInput.value = String(technician?.phone || '');
     phoneInput.placeholder = '099 000 111';
-    grid.append(createModalInputGroup('Teléfono', phoneInput, { htmlFor: phoneInput.id }));
+    grid.append(createModalInputGroup('TelÃ©fono', phoneInput, { htmlFor: phoneInput.id }));
 
     const notesInput = document.createElement('textarea');
     notesInput.id = 'actionTechnicianNotes';
     notesInput.rows = 4;
     notesInput.value = String(technician?.notes || '');
-    notesInput.placeholder = 'Notas operativas o contexto del técnico';
+    notesInput.placeholder = 'Notas operativas o contexto del tÃ©cnico';
     fragment.append(grid, createModalInputGroup('Notas', notesInput, { htmlFor: notesInput.id }));
     return fragment;
 }
 
 function openTechnicianEditorModal(technician = null) {
     if (!canCurrentUserManageTechnicians()) {
-        showNotification('No tienes permisos para editar técnicos.', 'error');
+        showNotification('No tienes permisos para editar tÃ©cnicos.', 'error');
         return;
     }
 
     const openModal = () => openActionModal({
-        title: technician ? `Editar técnico #${technician.id}` : 'Nuevo técnico',
+        title: technician ? `Editar tÃ©cnico #${technician.id}` : 'Nuevo tÃ©cnico',
         subtitle: technician
-            ? 'Ajusta la ficha operativa del técnico dentro del tenant actual.'
-            : 'Crea un técnico reutilizable para asignaciones operativas.',
-        submitLabel: technician ? 'Guardar cambios' : 'Crear técnico',
+            ? 'Ajusta la ficha operativa del tÃ©cnico dentro del tenant actual.'
+            : 'Crea un tÃ©cnico reutilizable para asignaciones operativas.',
+        submitLabel: technician ? 'Guardar cambios' : 'Crear tÃ©cnico',
         focusId: 'actionTechnicianDisplayName',
         fields: buildTechnicianModalFields(technician),
         onSubmit: async () => {
@@ -2730,11 +2898,11 @@ function openTechnicianEditorModal(technician = null) {
             if (technician?.id) {
                 await api.updateTechnician(technician.id, payload);
                 closeActionModal(true);
-                showNotification(`Técnico ${displayName} actualizado.`, 'success');
+                showNotification(`TÃ©cnico ${displayName} actualizado.`, 'success');
             } else {
                 await api.createTechnician(payload);
                 closeActionModal(true);
-                showNotification(`Técnico ${displayName} creado.`, 'success');
+                showNotification(`TÃ©cnico ${displayName} creado.`, 'success');
             }
 
             await loadTechniciansSection({ silent: true, refreshAssignments: true });
@@ -2782,7 +2950,7 @@ function buildTechnicianAssignmentModalFields(technician) {
     [
         ['owner', 'Responsable'],
         ['assistant', 'Apoyo'],
-        ['reviewer', 'Revisión'],
+        ['reviewer', 'RevisiÃ³n'],
     ].forEach(([value, label]) => {
         const option = document.createElement('option');
         option.value = value;
@@ -2794,21 +2962,21 @@ function buildTechnicianAssignmentModalFields(technician) {
     const note = document.createElement('textarea');
     note.id = 'actionTechnicianAssignmentNote';
     note.rows = 3;
-    note.placeholder = `Contexto de asignación para ${technician?.display_name || 'el técnico'} (opcional)`;
+    note.placeholder = `Contexto de asignaciÃ³n para ${technician?.display_name || 'el tÃ©cnico'} (opcional)`;
     fragment.append(grid, createModalInputGroup('Metadata', note, { htmlFor: note.id }));
     return fragment;
 }
 
 function openTechnicianAssignmentModal(technician) {
     if (!canCurrentUserManageTechnicianAssignments()) {
-        showNotification('No tienes permisos para asignar técnicos.', 'error');
+        showNotification('No tienes permisos para asignar tÃ©cnicos.', 'error');
         return;
     }
 
     openActionModal({
-        title: `Asignar ${technician?.display_name || 'técnico'}`,
-        subtitle: 'Vincula este técnico a una entidad operativa del tenant.',
-        submitLabel: 'Guardar asignación',
+        title: `Asignar ${technician?.display_name || 'tÃ©cnico'}`,
+        subtitle: 'Vincula este tÃ©cnico a una entidad operativa del tenant.',
+        submitLabel: 'Guardar asignaciÃ³n',
         focusId: 'actionTechnicianAssignmentEntityId',
         fields: buildTechnicianAssignmentModalFields(technician),
         onSubmit: async () => {
@@ -2832,7 +3000,7 @@ function openTechnicianAssignmentModal(technician) {
             await api.createTechnicianAssignment(technician.id, payload);
             closeActionModal(true);
             expandedTechnicianAssignmentPanels.add(technician.id);
-            showNotification(`Asignación guardada para ${technician.display_name}.`, 'success');
+            showNotification(`AsignaciÃ³n guardada para ${technician.display_name}.`, 'success');
             await loadTechniciansSection({ silent: true, refreshAssignments: false });
             await loadTechnicianAssignments(technician.id, { force: true, silent: true });
         },
@@ -2846,24 +3014,24 @@ function buildEntityTechnicianAssignmentFields(entityConfig = {}) {
 
     const technicianSelect = document.createElement('select');
     technicianSelect.id = 'actionEntityAssignmentTechnicianId';
-    technicianSelect.appendChild(new Option('Selecciona un técnico', ''));
+    technicianSelect.appendChild(new Option('Selecciona un tÃ©cnico', ''));
     currentTechniciansData
         .filter((item) => item && item.is_active)
         .sort((left, right) => String(left.display_name || '').localeCompare(String(right.display_name || ''), 'es'))
         .forEach((technician) => {
             const label = technician.employee_code
-                ? `${technician.display_name} · ${technician.employee_code}`
+                ? `${technician.display_name} Â· ${technician.employee_code}`
                 : technician.display_name;
             technicianSelect.appendChild(new Option(label, String(technician.id)));
         });
-    grid.append(createModalInputGroup('Técnico', technicianSelect, { htmlFor: technicianSelect.id }));
+    grid.append(createModalInputGroup('TÃ©cnico', technicianSelect, { htmlFor: technicianSelect.id }));
 
     const assignmentRoleSelect = document.createElement('select');
     assignmentRoleSelect.id = 'actionEntityAssignmentRole';
     [
         ['owner', 'Responsable'],
         ['assistant', 'Apoyo'],
-        ['reviewer', 'Revisión'],
+        ['reviewer', 'RevisiÃ³n'],
     ].forEach(([value, label]) => {
         assignmentRoleSelect.appendChild(new Option(label, value, value === entityConfig.defaultRole, value === entityConfig.defaultRole));
     });
@@ -2872,14 +3040,14 @@ function buildEntityTechnicianAssignmentFields(entityConfig = {}) {
     const note = document.createElement('textarea');
     note.id = 'actionEntityAssignmentNote';
     note.rows = 3;
-    note.placeholder = `Contexto de asignación para ${entityConfig.entityLabel || 'esta entidad'} (opcional)`;
+    note.placeholder = `Contexto de asignaciÃ³n para ${entityConfig.entityLabel || 'esta entidad'} (opcional)`;
     fragment.append(grid, createModalInputGroup('Metadata', note, { htmlFor: note.id }));
     return fragment;
 }
 
 async function openEntityTechnicianAssignmentModal(entityConfig = {}) {
     if (!canCurrentUserManageTechnicianAssignments()) {
-        showNotification('No tienes permisos para asignar técnicos.', 'error');
+        showNotification('No tienes permisos para asignar tÃ©cnicos.', 'error');
         return;
     }
 
@@ -2892,14 +3060,14 @@ async function openEntityTechnicianAssignmentModal(entityConfig = {}) {
     }
 
     if (!currentTechniciansData.some((item) => item && item.is_active)) {
-        showNotification('Primero necesitas cargar al menos un técnico activo en el tenant.', 'warning');
+        showNotification('Primero necesitas cargar al menos un tÃ©cnico activo en el tenant.', 'warning');
         return;
     }
 
     openActionModal({
-        title: `Asignar técnico a ${entityLabel}`,
-        subtitle: 'Esta asignación quedará disponible para operación, filtros y cola del tenant.',
-        submitLabel: 'Guardar asignación',
+        title: `Asignar tÃ©cnico a ${entityLabel}`,
+        subtitle: 'Esta asignaciÃ³n quedarÃ¡ disponible para operaciÃ³n, filtros y cola del tenant.',
+        submitLabel: 'Guardar asignaciÃ³n',
         focusId: 'actionEntityAssignmentTechnicianId',
         fields: buildEntityTechnicianAssignmentFields({
             entityLabel,
@@ -2911,7 +3079,7 @@ async function openEntityTechnicianAssignmentModal(entityConfig = {}) {
             const note = String(document.getElementById('actionEntityAssignmentNote')?.value || '').trim();
 
             if (!Number.isInteger(technicianId) || technicianId <= 0) {
-                setActionModalError('Debes seleccionar un técnico.');
+                setActionModalError('Debes seleccionar un tÃ©cnico.');
                 return;
             }
 
@@ -2923,7 +3091,7 @@ async function openEntityTechnicianAssignmentModal(entityConfig = {}) {
                 Number(assignment?.technician_id) === technicianId &&
                 String(assignment?.assignment_role || '').trim().toLowerCase() === assignmentRole.toLowerCase());
             if (duplicateAssignment) {
-                setActionModalError('Ese técnico ya tiene una asignación activa con ese rol en esta entidad.');
+                setActionModalError('Ese tÃ©cnico ya tiene una asignaciÃ³n activa con ese rol en esta entidad.');
                 return;
             }
 
@@ -2936,7 +3104,7 @@ async function openEntityTechnicianAssignmentModal(entityConfig = {}) {
 
             closeActionModal(true);
             technicianAssignmentsByEntityKey.delete(buildTechnicianAssignmentEntityKey(entityType, entityId));
-            showNotification(`Asignación guardada para ${entityLabel}.`, 'success');
+            showNotification(`AsignaciÃ³n guardada para ${entityLabel}.`, 'success');
             await loadTechniciansSection({ silent: true, refreshAssignments: false });
             if (typeof entityConfig.onApplied === 'function') {
                 await entityConfig.onApplied();
@@ -2948,22 +3116,22 @@ async function openEntityTechnicianAssignmentModal(entityConfig = {}) {
 
 async function removeEntityTechnicianAssignment(assignment, entityConfig = {}) {
     if (!canCurrentUserManageTechnicianAssignments()) {
-        showNotification('No tienes permisos para desasignar técnicos.', 'error');
+        showNotification('No tienes permisos para desasignar tÃ©cnicos.', 'error');
         return;
     }
 
     const entityLabel = String(entityConfig.entityLabel || 'esta entidad').trim();
     const technicianName = String(
-        assignment?.technician_display_name || assignment?.display_name || assignment?.technician_name || 'el técnico',
+        assignment?.technician_display_name || assignment?.display_name || assignment?.technician_name || 'el tÃ©cnico',
     ).trim();
-    const confirmed = window.confirm(`¿Quitar a ${technicianName} de ${entityLabel}?`);
+    const confirmed = window.confirm(`Â¿Quitar a ${technicianName} de ${entityLabel}?`);
     if (!confirmed) return;
 
     await api.deleteTechnicianAssignment(assignment.id);
     technicianAssignmentsByEntityKey.delete(
         buildTechnicianAssignmentEntityKey(entityConfig.entityType, entityConfig.entityId),
     );
-    showNotification(`Asignación removida de ${entityLabel}.`, 'success');
+    showNotification(`AsignaciÃ³n removida de ${entityLabel}.`, 'success');
     await loadTechniciansSection({ silent: true, refreshAssignments: false });
     if (typeof entityConfig.onApplied === 'function') {
         await entityConfig.onApplied();
@@ -2975,8 +3143,8 @@ async function renderEntityTechnicianAssignmentsPanel(entityConfig = {}) {
     const entityType = String(entityConfig.entityType || '').trim().toLowerCase();
     const entityId = String(entityConfig.entityId || '').trim();
     const entityLabel = String(entityConfig.entityLabel || `${entityType} ${entityId}`).trim();
-    const title = String(entityConfig.title || 'Técnicos asignados').trim();
-    const emptyText = String(entityConfig.emptyText || 'Sin técnicos asignados todavía.').trim();
+    const title = String(entityConfig.title || 'TÃ©cnicos asignados').trim();
+    const emptyText = String(entityConfig.emptyText || 'Sin tÃ©cnicos asignados todavÃ­a.').trim();
     const compact = entityConfig.compact === true;
     const showEmptyMessage = entityConfig.showEmptyMessage !== false;
 
@@ -2993,7 +3161,7 @@ async function renderEntityTechnicianAssignmentsPanel(entityConfig = {}) {
         const assignBtn = document.createElement('button');
         assignBtn.type = 'button';
         assignBtn.className = 'btn-secondary';
-        assignBtn.textContent = 'Asignar técnico';
+        assignBtn.textContent = 'Asignar tÃ©cnico';
         assignBtn.addEventListener('click', () => {
             void openEntityTechnicianAssignmentModal({
                 entityType,
@@ -3034,15 +3202,15 @@ async function renderEntityTechnicianAssignmentsPanel(entityConfig = {}) {
         const copy = document.createElement('div');
         copy.className = 'entity-technician-copy';
         const primary = document.createElement('strong');
-        const technicianName = String(assignment?.technician_display_name || '').trim() || `Técnico #${assignment?.technician_id || '-'}`;
+        const technicianName = String(assignment?.technician_display_name || '').trim() || `TÃ©cnico #${assignment?.technician_id || '-'}`;
         primary.textContent = technicianName;
         const meta = document.createElement('small');
         const metaParts = [
             TECHNICIAN_ASSIGNMENT_ROLE_LABELS[String(assignment?.assignment_role || '').trim()] || assignment?.assignment_role || 'Responsable',
-            assignment?.technician_employee_code ? `Código ${assignment.technician_employee_code}` : '',
+            assignment?.technician_employee_code ? `CÃ³digo ${assignment.technician_employee_code}` : '',
             assignment?.assigned_by_username ? `por ${assignment.assigned_by_username}` : '',
         ].filter(Boolean);
-        meta.textContent = metaParts.join(' · ');
+        meta.textContent = metaParts.join(' Â· ');
         copy.append(primary, meta);
         item.appendChild(copy);
 
@@ -3173,7 +3341,7 @@ function buildManualRecordFields(defaultClient) {
     versionInput.id = 'actionRecordVersion';
     versionInput.value = 'N/A';
     versionInput.autocomplete = 'off';
-    grid.appendChild(createModalInputGroup('Versión/Referencia (opcional)', versionInput, { htmlFor: 'actionRecordVersion' }));
+    grid.appendChild(createModalInputGroup('VersiÃ³n/Referencia (opcional)', versionInput, { htmlFor: 'actionRecordVersion' }));
 
     const notesTextarea = document.createElement('textarea');
     notesTextarea.id = 'actionRecordNotes';
@@ -3205,7 +3373,7 @@ function buildAssetLinkFields({ defaultCode, defaultInstallationId, defaultNotes
         codeInput.value = defaultCode;
         codeInput.autocomplete = 'off';
         grid.appendChild(createModalInputGroup(
-            'Código externo del equipo (QR/serie)',
+            'CÃ³digo externo del equipo (QR/serie)',
             codeInput,
             { htmlFor: 'actionAssetCode' },
         ));
@@ -3246,7 +3414,7 @@ function buildAssetLookupFields() {
     input.autocomplete = 'off';
     input.placeholder = 'Ej: EQ-SL3-001';
     return createModalInputGroup(
-        'Código externo del equipo',
+        'CÃ³digo externo del equipo',
         input,
         { htmlFor: 'actionLookupAssetCode' },
     );
@@ -3259,7 +3427,7 @@ function createManualRecordFromWeb() {
     let gpsController = null;
     const modalOpened = openActionModal({
         title: 'Nuevo registro manual',
-        subtitle: 'Crea un registro sin depender de una instalación previa.',
+        subtitle: 'Crea un registro sin depender de una instalaciÃ³n previa.',
         submitLabel: 'Crear registro',
         focusId: 'actionRecordClient',
         fields: buildManualRecordFields(defaultClient),
@@ -3331,7 +3499,7 @@ function openAssetLinkModal(options = {}) {
     const needsExternalCode = !Number.isInteger(knownAssetId) || knownAssetId <= 0;
     const title = needsExternalCode ? 'Asociar equipo a registro' : `Vincular equipo #${knownAssetId}`;
     const subtitle = needsExternalCode
-        ? 'Ingresa el código del equipo y el registro destino.'
+        ? 'Ingresa el cÃ³digo del equipo y el registro destino.'
         : 'Asocia el equipo seleccionado a un registro destino.';
 
     openActionModal({
@@ -3361,7 +3529,7 @@ function openAssetLinkModal(options = {}) {
             if (!Number.isInteger(resolvedAssetId) || resolvedAssetId <= 0) {
                 const externalCode = String(document.getElementById('actionAssetCode')?.value || '').trim();
                 if (!externalCode) {
-                    setActionModalError('Debes ingresar un código de equipo válido.');
+                    setActionModalError('Debes ingresar un cÃ³digo de equipo vÃ¡lido.');
                     return;
                 }
                 const resolved = await api.resolveAsset({
@@ -3409,7 +3577,7 @@ async function openAssetLookupFromWeb() {
     if (!requireActiveSession()) return;
     openActionModal({
         title: 'Buscar equipo',
-        subtitle: 'Ingresa el código externo para abrir el detalle en modo lectura.',
+        subtitle: 'Ingresa el cÃ³digo externo para abrir el detalle en modo lectura.',
         submitLabel: 'Buscar',
         focusId: 'actionLookupAssetCode',
         fields: buildAssetLookupFields(),
@@ -3418,7 +3586,7 @@ async function openAssetLookupFromWeb() {
                 document.getElementById('actionLookupAssetCode')?.value || '',
             );
             if (!code) {
-                setActionModalError('Debes ingresar un código de equipo válido.');
+                setActionModalError('Debes ingresar un cÃ³digo de equipo vÃ¡lido.');
                 return;
             }
 
@@ -3428,7 +3596,7 @@ async function openAssetLookupFromWeb() {
             });
             const asset = Array.isArray(response?.items) ? response.items[0] : null;
             if (!asset) {
-                setActionModalError(`No existe equipo con código ${code}.`);
+                setActionModalError(`No existe equipo con cÃ³digo ${code}.`);
                 return;
             }
 
@@ -3981,7 +4149,7 @@ function exportToCSV(data, filename = 'registros.csv') {
         return;
     }
 
-    const headers = ['ID', 'Cliente', 'Marca', 'Atención', 'Tiempo', 'Notas', 'Fecha'];
+    const headers = ['ID', 'Cliente', 'Marca', 'AtenciÃ³n', 'Tiempo', 'Notas', 'Fecha'];
 
     const rows = data.map(inst => [
         inst.id,
@@ -4666,7 +4834,7 @@ async function loadInstallations() {
         container.replaceChildren();
         renderContextualEmptyState(container, {
             title: 'No se pudieron cargar los registros',
-            description: 'Verifica tu conexión y vuelve a intentar.',
+            description: 'Verifica tu conexiÃ³n y vuelve a intentar.',
             actionLabel: 'Reintentar',
             onAction: () => loadInstallations(),
             tone: 'warning',
@@ -4817,7 +4985,7 @@ function renderInstallationsTable(installations) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'Atención', 'Tiempo', 'Notas', 'Fecha', 'Acciones'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'AtenciÃ³n', 'Tiempo', 'Notas', 'Fecha', 'Acciones'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -4859,7 +5027,7 @@ function renderInstallationsTable(installations) {
         brandCell.appendChild(buildInstallationTextStack(inst.driver_brand || 'N/A'));
 
         const attentionCell = document.createElement('td');
-        attentionCell.dataset.label = 'Atención';
+        attentionCell.dataset.label = 'AtenciÃ³n';
         attentionCell.className = 'installation-record-cell installation-record-attention';
         const attentionBadge = document.createElement('span');
         const attentionMeta = buildRecordAttentionBadge(inst);
@@ -5199,12 +5367,12 @@ function getQrLabelPresetConfig() {
 
 function formatQrDetailsText(qrType, rawValue, assetData = null) {
     if (qrType === 'installation') {
-        return `Tipo: Instalación\nID: ${String(rawValue || '').trim()}`;
+        return `Tipo: InstalaciÃ³n\nID: ${String(rawValue || '').trim()}`;
     }
     const details = assetData || {};
     return [
         'Tipo: Equipo',
-        `Código externo: ${details.external_code || '-'}`,
+        `CÃ³digo externo: ${details.external_code || '-'}`,
         `Marca: ${details.brand || '-'}`,
         `Modelo: ${details.model || '-'}`,
         `Serie: ${details.serial_number || '-'}`,
@@ -5384,7 +5552,7 @@ function generateQrPreview(options = {}) {
 async function saveAssetFromQrModal(options = {}) {
     if (!requireActiveSession()) return;
     if (qrModalReadOnly && !qrModalEditUnlocked) {
-        setQrError('Modo solo lectura. Habilita edición y confirma tu contraseña para guardar cambios.');
+        setQrError('Modo solo lectura. Habilita ediciÃ³n y confirma tu contraseÃ±a para guardar cambios.');
         return;
     }
     const generateAfterSave = Boolean(options.generateAfterSave);
@@ -5573,7 +5741,7 @@ async function downloadQrImage() {
                 labelPreset
             );
         } catch (_error) {
-            // fallback: mantener download de QR simple si falla composición de etiqueta
+            // fallback: mantener download de QR simple si falla composiciÃ³n de etiqueta
         }
     }
 
@@ -5677,7 +5845,7 @@ function renderAuditLogs(logs) {
 
 function getCurrentShiftLabel(now = new Date()) {
     const hour = now.getHours();
-    if (hour >= 6 && hour < 12) return 'Turno mañana';
+    if (hour >= 6 && hour < 12) return 'Turno maÃ±ana';
     if (hour >= 12 && hour < 18) return 'Turno tarde';
     return 'Turno noche';
 }
@@ -5699,7 +5867,7 @@ function updatePageSubtitleForSection(section) {
     if (!subtitleEl) return;
     const normalizedSection = SECTION_SUBTITLES[section] ? section : 'dashboard';
     const subtitle = SECTION_SUBTITLES[normalizedSection];
-    subtitleEl.textContent = `${subtitle} · ${getCurrentShiftLabel()}`;
+    subtitleEl.textContent = `${subtitle} Â· ${getCurrentShiftLabel()}`;
 }
 
 function buildOpsPulseText(status, section) {
@@ -5710,9 +5878,9 @@ function buildOpsPulseText(status, section) {
 
     if (normalizedStatus === 'connected') return `${sectionLabel} en vivo`;
     if (normalizedStatus === 'reconnecting') return `Reconectando ${sectionLabel}`;
-    if (normalizedStatus === 'disconnected') return 'Conexión interrumpida';
+    if (normalizedStatus === 'disconnected') return 'ConexiÃ³n interrumpida';
     if (normalizedStatus === 'failed') return 'Sin enlace en tiempo real';
-    return 'Sincronización en pausa';
+    return 'SincronizaciÃ³n en pausa';
 }
 
 function syncHeaderDelight(section, explicitStatus = null) {
@@ -5732,10 +5900,39 @@ function syncHeaderDelight(section, explicitStatus = null) {
     updateSettingsSyncLabel(status);
 }
 
+function animatePageHeadingTransition() {
+    if (prefersReducedMotion()) return;
+    const heading = document.querySelector('.page-heading');
+    if (!(heading instanceof HTMLElement)) return;
+
+    heading.classList.remove('is-section-switching');
+    void heading.offsetWidth;
+    heading.classList.add('is-section-switching');
+
+    if (pageHeadingTransitionTimer) {
+        clearTimeout(pageHeadingTransitionTimer);
+    }
+    pageHeadingTransitionTimer = window.setTimeout(() => {
+        heading.classList.remove('is-section-switching');
+        pageHeadingTransitionTimer = null;
+    }, SECTION_TRANSITION_VISUAL_MS);
+}
+
+function setNavigationTransitionState(isTransitioning, section) {
+    document.body.dataset.navTransition = isTransitioning ? 'true' : 'false';
+    if (isTransitioning) {
+        const normalizedSection = SECTION_TITLES[section] ? section : 'dashboard';
+        document.body.dataset.navTransitionTarget = normalizedSection;
+        return;
+    }
+    delete document.body.dataset.navTransitionTarget;
+}
+
 function updatePageTitleForSection(section) {
     const pageTitle = document.getElementById('pageTitle');
     if (!pageTitle) return;
     const normalizedSection = SECTION_TITLES[section] ? section : 'dashboard';
+    animatePageHeadingTransition();
     pageTitle.textContent = SECTION_TITLES[normalizedSection];
     syncHeaderDelight(normalizedSection);
     syncHeaderPrimaryAction(normalizedSection);
@@ -5754,7 +5951,7 @@ function resolveHeaderPrimaryActionConfig(section) {
         return { icon: 'refresh', label: 'Actualizar incidencias', action: 'refreshIncidents' };
     }
     if (normalizedSection === 'settings' && !canCurrentUserAccessAudit()) {
-        return { icon: 'logout', label: 'Cerrar sesión', action: 'logout' };
+        return { icon: 'logout', label: 'Cerrar sesiÃ³n', action: 'logout' };
     }
     return HEADER_PRIMARY_ACTIONS[normalizedSection] || HEADER_PRIMARY_ACTIONS.dashboard;
 }
@@ -5799,7 +5996,7 @@ function executeHeaderPrimaryAction(actionKey) {
             return;
         case 'refreshAudit':
             if (!canCurrentUserAccessAudit()) {
-                showNotification('No tienes permisos para acceder a Auditoría.', 'error');
+                showNotification('No tienes permisos para acceder a AuditorÃ­a.', 'error');
                 return;
             }
             navigateToSectionByKey('audit');
@@ -5811,10 +6008,13 @@ function executeHeaderPrimaryAction(actionKey) {
             return;
         case 'openAudit':
             if (!canCurrentUserAccessAudit()) {
-                showNotification('No tienes permisos para acceder a Auditoría.', 'error');
+                showNotification('No tienes permisos para acceder a AuditorÃ­a.', 'error');
                 return;
             }
             navigateToSectionByKey('audit');
+            return;
+        case 'toggleTheme':
+            toggleTheme();
             return;
         case 'logout':
             document.getElementById('logoutBtn')?.click();
@@ -5858,9 +6058,46 @@ function setupHeaderOverflowMenu() {
     const overflowToggle = document.getElementById('headerOverflowBtn');
     if (!overflowMenu || !overflowToggle) return;
 
+    if (overflowMenu.parentElement !== document.body) {
+        document.body.appendChild(overflowMenu);
+    }
+
+    const positionOverflowMenu = () => {
+        if (!overflowMenu.classList.contains('is-open')) return;
+        if (window.matchMedia('(max-width: 768px)').matches) {
+            overflowMenu.style.left = '';
+            overflowMenu.style.top = '';
+            return;
+        }
+
+        const toggleRect = overflowToggle.getBoundingClientRect();
+        const menuRect = overflowMenu.getBoundingClientRect();
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+        const edgeOffset = 8;
+
+        const preferredLeft = toggleRect.right - menuRect.width;
+        const maxLeft = Math.max(edgeOffset, viewportWidth - menuRect.width - edgeOffset);
+        const clampedLeft = Math.min(maxLeft, Math.max(edgeOffset, preferredLeft));
+
+        let top = toggleRect.bottom + edgeOffset;
+        if (top + menuRect.height > viewportHeight - edgeOffset) {
+            const topAboveToggle = toggleRect.top - menuRect.height - edgeOffset;
+            top = topAboveToggle >= edgeOffset
+                ? topAboveToggle
+                : Math.max(edgeOffset, viewportHeight - menuRect.height - edgeOffset);
+        }
+
+        overflowMenu.style.left = `${Math.round(clampedLeft)}px`;
+        overflowMenu.style.top = `${Math.round(top)}px`;
+    };
+
     const setOverflowOpen = (isOpen) => {
         overflowMenu.classList.toggle('is-open', isOpen);
         overflowToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        if (isOpen) {
+            requestAnimationFrame(positionOverflowMenu);
+        }
     };
 
     overflowToggle.addEventListener('click', (event) => {
@@ -5880,6 +6117,14 @@ function setupHeaderOverflowMenu() {
             closeHeaderOverflowMenu();
         });
     });
+
+    const repositionIfOpen = () => {
+        if (!overflowMenu.classList.contains('is-open')) return;
+        positionOverflowMenu();
+    };
+
+    window.addEventListener('resize', repositionIfOpen);
+    document.addEventListener('scroll', repositionIfOpen, true);
 }
 
 function validateSectionBindings(section, options = {}) {
@@ -5926,7 +6171,7 @@ function validateSectionBindings(section, options = {}) {
     if (options.notify === true && !NOTIFIED_SECTION_BINDING_ERRORS.has(sectionKey)) {
         const sectionLabel = SECTION_TITLES[sectionKey] || sectionKey;
         showNotification(
-            `Detectamos un desajuste visual en ${sectionLabel}. Recarga la página si falta información.`,
+            `Detectamos un desajuste visual en ${sectionLabel}. Recarga la pÃ¡gina si falta informaciÃ³n.`,
             'warning',
         );
         NOTIFIED_SECTION_BINDING_ERRORS.add(sectionKey);
@@ -5950,6 +6195,12 @@ const dashboardNavigation = window.createDashboardNavigation({
     loadInstallations,
     loadMyCasesSection: (...args) => dashboardMyCases?.loadMyCasesSection(...args),
     loadTenants: loadTenantsSection,
+    onSectionTransitionEnd: ({ toSection }) => {
+        setNavigationTransitionState(false, toSection);
+    },
+    onSectionTransitionStart: ({ toSection }) => {
+        setNavigationTransitionState(true, toSection);
+    },
     prefersReducedMotion,
     sectionTransitionOutMs: SECTION_TRANSITION_OUT_MS,
     syncSSEForCurrentContext,
@@ -5997,7 +6248,7 @@ document.getElementById('notifBtn')?.addEventListener('click', () => {
     const badge = document.getElementById('notifBadge');
     const badgeCount = Number.parseInt(String(badge?.textContent || '0'), 10) || 0;
     if (badgeCount > 0) {
-        showNotification(`Tienes ${badgeCount} alertas para revisar en "Atención ahora".`, 'warning');
+        showNotification(`Tienes ${badgeCount} alertas para revisar en "AtenciÃ³n ahora".`, 'warning');
     } else {
         showNotification('No hay alertas pendientes.', 'info');
     }
@@ -6026,7 +6277,7 @@ document.querySelectorAll('.nav-links a').forEach(link => {
             return;
         }
         if (section === 'audit' && !canCurrentUserAccessAudit()) {
-            showNotification('No tienes permisos para acceder a Auditoría.', 'error');
+            showNotification('No tienes permisos para acceder a AuditorÃ­a.', 'error');
             return;
         }
         closeHeaderOverflowMenu();
@@ -6042,7 +6293,7 @@ document.querySelectorAll('.nav-links a').forEach(link => {
 document.getElementById('settingsOpenAuditBtn')?.addEventListener('click', () => {
     if (!requireActiveSession()) return;
     if (!canCurrentUserAccessAudit()) {
-        showNotification('No tienes permisos para acceder a Auditoría.', 'error');
+        showNotification('No tienes permisos para acceder a AuditorÃ­a.', 'error');
         return;
     }
     navigateToSectionByKey('audit');
@@ -6195,7 +6446,7 @@ document.getElementById('qrEnableEditBtn')?.addEventListener('click', () => {
     if (isQrEditSessionActive() && qrModalEditUnlocked) {
         applyQrModalAccessState();
         setQrError('');
-        showNotification('La edición ya está habilitada temporalmente.', 'info');
+        showNotification('La ediciÃ³n ya estÃ¡ habilitada temporalmente.', 'info');
         return;
     }
     openQrPasswordModal();
@@ -6281,7 +6532,7 @@ function showNotification(message, type = 'info') {
 
     const messageNode = document.createElement('div');
     messageNode.className = 'toast-message';
-    messageNode.textContent = String(message || '');
+    messageNode.textContent = normalizeMojibakeText(String(message || ''));
 
     body.append(icon, messageNode);
 
@@ -6468,7 +6719,19 @@ function setupThemeToggle() {
     }
 }
 
-init();
+void init()
+    .catch((error) => {
+        console.error('Error inicializando dashboard:', error);
+    })
+    .finally(() => {
+        repairMojibakeInSubtree(document.body);
+        repairMojibakeInSubtree(document.head);
+        document.title = normalizeMojibakeText(document.title);
+        startMojibakeObserver();
+    });
+
+
+
 
 
 

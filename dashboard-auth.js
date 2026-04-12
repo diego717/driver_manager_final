@@ -1,4 +1,4 @@
-(function attachDashboardAuthFactory(global) {
+﻿(function attachDashboardAuthFactory(global) {
     function createDashboardAuth(options) {
         function normalizeRoleValue(role, fallback = 'solo_lectura') {
             const normalizedRole = String(role || fallback).trim().toLowerCase();
@@ -131,10 +131,25 @@
                 'resultsCount',
                 'assetsResultsCount',
             ];
+            const placeholderById = {
+                recentInstallations: { type: 'html', message: 'Sin registros recientes por ahora.' },
+                installationsTable: { type: 'html', message: 'Usa filtros o actualiza para ver registros.' },
+                assetsTable: { type: 'html', message: 'Usa la busqueda para listar equipos.' },
+                assetDetail: { type: 'html', message: 'Selecciona un equipo para ver sus datos de contexto.' },
+                incidentsList: { type: 'html', message: 'Abre un registro o entra desde Equipos para ver incidencias con contexto.' },
+                auditLogs: { type: 'html', message: 'Selecciona filtros para ver actividad de auditoria.' },
+                resultsCount: { type: 'text', message: 'Sin registros para mostrar.' },
+                assetsResultsCount: { type: 'text', message: 'Sin equipos para mostrar.' },
+            };
             ids.forEach((id) => {
                 const el = document.getElementById(id);
                 if (!el) return;
-                el.innerHTML = '<p class="loading">Inicia sesión para ver información.</p>';
+                const placeholder = placeholderById[id] || { type: 'html', message: 'Sin informacion para mostrar.' };
+                if (placeholder.type === 'text') {
+                    el.textContent = placeholder.message;
+                    return;
+                }
+                el.innerHTML = `<p class="loading">${placeholder.message}</p>`;
             });
 
             options.resetDataViews();
@@ -239,9 +254,9 @@
                 : 'paused';
             const labels = {
                 connected: 'Conectado en tiempo real',
-                disconnected: 'Conexión interrumpida',
+                disconnected: 'ConexiÃ³n interrumpida',
                 reconnecting: 'Reconectando',
-                paused: 'Sincronización en pausa',
+                paused: 'SincronizaciÃ³n en pausa',
                 failed: 'Sin enlace en tiempo real',
             };
             labelEl.textContent = labels[normalized] || labels.paused;
@@ -302,7 +317,7 @@
             } catch (_error) {
                 const errorEl = document.getElementById('loginError');
                 if (errorEl) {
-                    errorEl.textContent = 'Credenciales inválidas';
+                    errorEl.textContent = 'Credenciales invÃ¡lidas';
                 }
                 const passwordEl = document.getElementById('loginPassword');
                 if (passwordEl) {
@@ -319,7 +334,7 @@
             }
 
             resetToLoggedOutState();
-            options.showNotification('Sesión cerrada', 'info');
+            options.showNotification('SesiÃ³n cerrada', 'info');
         }
 
         function handleRefresh() {

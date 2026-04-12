@@ -82,6 +82,9 @@ export default function RootLayout() {
     SourceSans3_600SemiBold: require("../assets/fonts/SourceSans3-Semibold.ttf"),
     SourceSans3_700Bold: require("../assets/fonts/SourceSans3-Bold.ttf"),
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
+    IBMPlexMono_400Regular: require("../assets/fonts/IBMPlexMono-Regular.ttf"),
+    IBMPlexSansCondensed_400Regular: require("../assets/fonts/IBMPlexSansCondensed-Regular.ttf"),
+    IBMPlexSansCondensed_600SemiBold: require("../assets/fonts/IBMPlexSansCondensed-SemiBold.ttf"),
     ...FontAwesome.font,
   });
   const fontsReady = loaded || Boolean(error);

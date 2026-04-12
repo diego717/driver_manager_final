@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   Linking,
   Platform,
   Pressable,
@@ -23,6 +25,7 @@ import SyncStatusBanner from "@/src/components/SyncStatusBanner";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { assignedIncidentsMapRepository } from "@/src/db/repositories/assigned-incidents-map-repository";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
+import { triggerLightImpactHaptic, triggerSelectionHaptic } from "@/src/services/haptics";
 import { captureCurrentGpsSnapshot } from "@/src/services/location";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
@@ -100,10 +103,14 @@ function buildMapZoom(
   return 11;
 }
 
-function getIncidentAccentColor(incident: AssignedIncidentMapItem, selectedIncidentId: number | null) {
-  if (incident.id === selectedIncidentId) return "#0b7a75";
-  if (incident.severity === "critical") return "#c64b39";
-  return "#44758b";
+function getIncidentAccentColor(
+  incident: AssignedIncidentMapItem,
+  selectedIncidentId: number | null,
+  colors: { accent: string; warningText: string; textSecondary: string },
+) {
+  if (incident.id === selectedIncidentId) return colors.accent;
+  if (incident.severity === "critical") return colors.warningText;
+  return colors.textSecondary;
 }
 
 function buildAndroidMarkers(
@@ -144,6 +151,7 @@ function buildAppleMarkers(
   incidents: AssignedIncidentMapItem[],
   currentLocation: { latitude: number; longitude: number } | null,
   selectedIncidentId: number | null,
+  colors: { accent: string; warningText: string; textSecondary: string; info: string },
 ) {
   const markers: AppleMaps.Marker[] = incidents
     .map((incident) => {
@@ -153,7 +161,7 @@ function buildAppleMarkers(
         id: String(incident.id),
         coordinates: coordinate,
         title: getIncidentDestinationLabel(incident),
-        tintColor: getIncidentAccentColor(incident, selectedIncidentId),
+        tintColor: getIncidentAccentColor(incident, selectedIncidentId, colors),
       } satisfies AppleMaps.Marker;
     })
     .filter(Boolean) as AppleMaps.Marker[];
@@ -164,7 +172,7 @@ function buildAppleMarkers(
       coordinates: currentLocation,
       title: "Tu ubicacion",
       systemImage: "location.fill",
-      tintColor: "#1677ff",
+      tintColor: colors.info,
     });
   }
 
@@ -183,6 +191,9 @@ export default function MapTabScreen() {
   const [locationLabel, setLocationLabel] = useState("Ubicacion pendiente");
   const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [usingOfflineCache, setUsingOfflineCache] = useState(false);
+  const pinRailScrollRef = useRef<ScrollView | null>(null);
+  const screenEnterAnim = useRef(new Animated.Value(0)).current;
+  const focusPulseAnim = useRef(new Animated.Value(1)).current;
 
   const loadMapData = useCallback(async () => {
     if (!hasActiveSession) return;
@@ -241,9 +252,23 @@ export default function MapTabScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (!hasActiveSession) return;
+      if (!hasActiveSession) {
+        screenEnterAnim.setValue(1);
+        return;
+      }
+      screenEnterAnim.setValue(0);
+      const animation = Animated.timing(screenEnterAnim, {
+        toValue: 1,
+        duration: 280,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      });
+      animation.start();
       void loadMapData();
-    }, [hasActiveSession, loadMapData]),
+      return () => {
+        animation.stop();
+      };
+    }, [hasActiveSession, loadMapData, screenEnterAnim]),
   );
 
   const filteredIncidents = useMemo(() => {
@@ -290,6 +315,10 @@ export default function MapTabScreen() {
     () => buildIncidentNavigationTargets(selectedIncident),
     [selectedIncident],
   );
+  const selectedIncidentIndex = useMemo(
+    () => incidentsWithCoordinates.findIndex((incident) => incident.id === selectedIncidentId),
+    [incidentsWithCoordinates, selectedIncidentId],
+  );
 
   const mapCenter = useMemo(
     () => buildMapCenter(incidentsWithCoordinates, currentLocation, selectedIncidentId),
@@ -312,8 +341,14 @@ export default function MapTabScreen() {
     [currentLocation, incidentsWithCoordinates, selectedIncidentId],
   );
   const appleMarkers = useMemo(
-    () => buildAppleMarkers(incidentsWithCoordinates, currentLocation, selectedIncidentId),
-    [currentLocation, incidentsWithCoordinates, selectedIncidentId],
+    () =>
+      buildAppleMarkers(incidentsWithCoordinates, currentLocation, selectedIncidentId, {
+        accent: palette.accent,
+        warningText: palette.warningText,
+        textSecondary: palette.textSecondary,
+        info: palette.infoText,
+      }),
+    [currentLocation, incidentsWithCoordinates, palette.accent, palette.infoText, palette.textSecondary, palette.warningText, selectedIncidentId],
   );
   const openExternalUrl = useCallback(async (targetUrl: string | null, targetName: string) => {
     if (!targetUrl) {
@@ -332,8 +367,37 @@ export default function MapTabScreen() {
     if (!markerId || markerId === "current-location") return;
     const incidentId = Number(markerId);
     if (!Number.isInteger(incidentId) || incidentId <= 0) return;
+    void triggerLightImpactHaptic();
     setSelectedIncidentId(incidentId);
   }, []);
+
+  useEffect(() => {
+    if (selectedIncidentIndex < 0) return;
+    pinRailScrollRef.current?.scrollTo({
+      x: Math.max(0, selectedIncidentIndex * 224 - 12),
+      animated: true,
+    });
+  }, [selectedIncidentIndex]);
+
+  useEffect(() => {
+    if (!selectedIncidentId) return;
+    focusPulseAnim.setValue(0.985);
+    const animation = Animated.spring(focusPulseAnim, {
+      toValue: 1,
+      speed: 18,
+      bounciness: 5,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => {
+      animation.stop();
+    };
+  }, [focusPulseAnim, selectedIncidentId]);
+
+  const screenEnterTranslate = screenEnterAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [12, 0],
+  });
 
   if (checkingSession) {
     return (
@@ -356,6 +420,15 @@ export default function MapTabScreen() {
 
   return (
     <ScreenScaffold scroll={false} contentContainerStyle={styles.screenContent}>
+      <Animated.View
+        style={[
+          styles.screenEnterWrap,
+          {
+            opacity: screenEnterAnim,
+            transform: [{ translateY: screenEnterTranslate }],
+          },
+        ]}
+      >
       <SyncStatusBanner />
       <ScreenHero
         eyebrow="Despacho"
@@ -410,7 +483,10 @@ export default function MapTabScreen() {
           return (
             <Pressable
               key={key}
-              onPress={() => setFilter(key as MapFilterKey)}
+              onPress={() => {
+                void triggerSelectionHaptic();
+                setFilter(key as MapFilterKey);
+              }}
               style={[
                 styles.filterChip,
                 {
@@ -432,6 +508,7 @@ export default function MapTabScreen() {
         })}
         <Pressable
           onPress={() => {
+            void triggerSelectionHaptic();
             void loadMapData();
           }}
           style={[
@@ -442,7 +519,7 @@ export default function MapTabScreen() {
           {loading ? (
             <ActivityIndicator size="small" color={palette.refreshText} />
           ) : (
-            <Text style={[styles.filterChipText, { color: palette.refreshText }]}>Actualizar</Text>
+            <Text style={[styles.filterChipText, { color: palette.refreshText }]}>Actualizar mapa</Text>
           )}
         </Pressable>
       </View>
@@ -509,6 +586,7 @@ export default function MapTabScreen() {
             </Text>
           </View>
           <ScrollView
+            ref={pinRailScrollRef}
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.pinRailContent}
@@ -518,7 +596,10 @@ export default function MapTabScreen() {
               return (
                 <Pressable
                   key={incident.id}
-                  onPress={() => setSelectedIncidentId(incident.id)}
+                  onPress={() => {
+                    void triggerLightImpactHaptic();
+                    setSelectedIncidentId(incident.id);
+                  }}
                   style={[
                     styles.pinRailItem,
                     {
@@ -533,7 +614,7 @@ export default function MapTabScreen() {
                       { color: isSelected ? palette.navActiveText : palette.textMuted },
                     ]}
                   >
-                    #{incident.id} · {getIncidentStatusLabel(incident.incident_status)}
+                    #{incident.id} - {getIncidentStatusLabel(incident.incident_status)}
                   </Text>
                   <Text
                     numberOfLines={2}
@@ -567,11 +648,17 @@ export default function MapTabScreen() {
           showsVerticalScrollIndicator={false}
         >
           {selectedIncident ? (
-            <View style={[styles.focusCard, { backgroundColor: palette.heroBg, borderColor: palette.heroBorder }]}>
+            <Animated.View
+              style={[
+                styles.focusCard,
+                { backgroundColor: palette.heroBg, borderColor: palette.heroBorder },
+                { transform: [{ scale: focusPulseAnim }] },
+              ]}
+            >
               <View style={styles.focusHeader}>
                 <View style={styles.focusHeaderText}>
                   <Text style={[styles.focusEyebrow, { color: palette.textMuted }]}>
-                    Incidencia #{selectedIncident.id} · {selectedIncident.assignment_source || "incident"}
+                    Incidencia #{selectedIncident.id} - {selectedIncident.assignment_source || "incident"}
                   </Text>
                   <Text style={[styles.focusTitle, { color: palette.textPrimary }]}>
                     {getIncidentDestinationLabel(selectedIncident)}
@@ -628,11 +715,12 @@ export default function MapTabScreen() {
               <View style={styles.actionRow}>
                 <Pressable
                   style={[styles.primaryAction, { backgroundColor: palette.primaryButtonBg }]}
-                  onPress={() =>
+                  onPress={() => {
+                    void triggerSelectionHaptic();
                     router.push(
                       `/incident/detail?incidentId=${selectedIncident.id}&installationId=${selectedIncident.installation_id}` as never,
-                    )
-                  }
+                    );
+                  }}
                 >
                   <Text style={[styles.primaryActionText, { color: palette.primaryButtonText }]}>
                     Ver incidencia
@@ -641,18 +729,19 @@ export default function MapTabScreen() {
                 <Pressable
                   style={[styles.secondaryAction, { backgroundColor: palette.secondaryButtonBg, borderColor: palette.inputBorder }]}
                   onPress={() => {
+                    void triggerSelectionHaptic();
                     void openExternalUrl(
                       selectedNavigationTargets.google || selectedNavigationTargets.waze,
-                      "navegacion",
+                      "Google Maps o Waze",
                     );
                   }}
                 >
                   <Text style={[styles.secondaryActionText, { color: palette.secondaryButtonText }]}>
-                    Ir
+                    Abrir en Maps
                   </Text>
                 </Pressable>
               </View>
-            </View>
+            </Animated.View>
           ) : (
             <EmptyStateCard
               title="Sin incidencia seleccionada"
@@ -668,11 +757,12 @@ export default function MapTabScreen() {
               {incidentsWithoutCoordinates.slice(0, 4).map((incident) => (
                 <Pressable
                   key={incident.id}
-                  onPress={() =>
+                  onPress={() => {
+                    void triggerSelectionHaptic();
                     router.push(
                       `/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
-                    )
-                  }
+                    );
+                  }}
                   style={[styles.listItem, { borderColor: palette.inputBorder }]}
                 >
                   <View style={styles.listItemText}>
@@ -690,6 +780,7 @@ export default function MapTabScreen() {
           ) : null}
         </ScrollView>
       </View>
+      </Animated.View>
     </ScreenScaffold>
   );
 }
@@ -699,6 +790,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   screenContent: {
+    flex: 1,
+  },
+  screenEnterWrap: {
     flex: 1,
     gap: 12,
   },
