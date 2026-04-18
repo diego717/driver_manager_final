@@ -24,6 +24,7 @@ import AppHeaderTitle from "@/src/components/AppHeaderTitle";
 import { useNotifications } from "@/src/hooks/useNotifications";
 import { NotificationsProvider } from "@/src/notifications/notifications-context";
 import { refreshSharedWebSessionState } from "@/src/session/web-session-store";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { getNavigationTheme, useAppPalette } from "@/src/theme/palette";
 import {
   authenticateWithBiometrics,
@@ -77,6 +78,7 @@ async function bootstrapSyncInfrastructure(): Promise<null | (() => void)> {
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
+    BebasNeue_400Regular: require("../assets/fonts/BebasNeue-Regular.ttf"),
     SourceSans3_400Regular: require("../assets/fonts/SourceSans3-Regular.ttf"),
     SourceSans3_500Medium: require("../assets/fonts/SourceSans3-Medium.ttf"),
     SourceSans3_600SemiBold: require("../assets/fonts/SourceSans3-Semibold.ttf"),
@@ -477,18 +479,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   bootCard: {
-    minWidth: 220,
+    minWidth: sizing.bootCardMinWidth,
     borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 22,
-    paddingVertical: 20,
+    borderRadius: radii.r18,
+    paddingHorizontal: spacing.s22,
+    paddingVertical: spacing.s20,
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
+    gap: spacing.s8,
   },
   bootLogo: {
-    width: 74,
-    height: 74,
+    width: sizing.bootLogoSize,
+    height: sizing.bootLogoSize,
   },
   bootTitle: {
     fontFamily: fontFamilies.bold,

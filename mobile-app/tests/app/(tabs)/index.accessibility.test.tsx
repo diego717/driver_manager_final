@@ -228,10 +228,38 @@ function createReactNativeMock() {
         },
         stop: vi.fn(),
       }),
+      sequence: (
+        animations: Array<{ start?: (callback?: (result: { finished: boolean }) => void) => void }>,
+      ) => ({
+        start: (callback?: (result: { finished: boolean }) => void) => {
+          animations.forEach((animation) => animation?.start?.());
+          callback?.({ finished: true });
+        },
+        stop: vi.fn(),
+      }),
+      loop: (animation: { start?: (callback?: (result: { finished: boolean }) => void) => void }) => ({
+        start: (callback?: (result: { finished: boolean }) => void) => {
+          animation?.start?.();
+          callback?.({ finished: true });
+        },
+        stop: vi.fn(),
+      }),
+      stagger: (
+        _delay: number,
+        animations: Array<{ start?: (callback?: (result: { finished: boolean }) => void) => void }>,
+      ) => ({
+        start: (callback?: (result: { finished: boolean }) => void) => {
+          animations.forEach((animation) => animation?.start?.());
+          callback?.({ finished: true });
+        },
+        stop: vi.fn(),
+      }),
       View: AnimatedView,
     },
     Easing: {
       out: (fn: unknown) => fn,
+      inOut: (fn: unknown) => fn,
+      linear: (value: number) => value,
       quad: vi.fn(),
       cubic: vi.fn(),
     },
@@ -252,6 +280,7 @@ function createReactNativeMock() {
     TouchableOpacity: ({ children, ...props }: any) =>
       ReactModule.createElement("TouchableOpacity", props, children),
     View: ({ children, ...props }: any) => ReactModule.createElement("View", props, children),
+    useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
   };
 }
 

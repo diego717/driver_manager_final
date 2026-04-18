@@ -137,7 +137,7 @@
                 assetsTable: { type: 'html', message: 'Usa la busqueda para listar equipos.' },
                 assetDetail: { type: 'html', message: 'Selecciona un equipo para ver sus datos de contexto.' },
                 incidentsList: { type: 'html', message: 'Abre un registro o entra desde Equipos para ver incidencias con contexto.' },
-                auditLogs: { type: 'html', message: 'Selecciona filtros para ver actividad de auditoria.' },
+                auditLogs: { type: 'html', message: 'Selecciona filtros para ver actividad de auditoría.' },
                 resultsCount: { type: 'text', message: 'Sin registros para mostrar.' },
                 assetsResultsCount: { type: 'text', message: 'Sin equipos para mostrar.' },
             };
@@ -254,9 +254,9 @@
                 : 'paused';
             const labels = {
                 connected: 'Conectado en tiempo real',
-                disconnected: 'ConexiÃ³n interrumpida',
+                disconnected: 'Conexión interrumpida',
                 reconnecting: 'Reconectando',
-                paused: 'SincronizaciÃ³n en pausa',
+                paused: 'Sincronización en pausa',
                 failed: 'Sin enlace en tiempo real',
             };
             labelEl.textContent = labels[normalized] || labels.paused;
@@ -317,7 +317,7 @@
             } catch (_error) {
                 const errorEl = document.getElementById('loginError');
                 if (errorEl) {
-                    errorEl.textContent = 'Credenciales invÃ¡lidas';
+                    errorEl.textContent = 'Credenciales inválidas';
                 }
                 const passwordEl = document.getElementById('loginPassword');
                 if (passwordEl) {
@@ -334,7 +334,7 @@
             }
 
             resetToLoggedOutState();
-            options.showNotification('SesiÃ³n cerrada', 'info');
+            options.showNotification('Sesión cerrada', 'info');
         }
 
         function handleRefresh() {

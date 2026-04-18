@@ -10,6 +10,7 @@ import ScreenScaffold from "@/src/components/ScreenScaffold";
 import TechnicianDirectoryCard from "@/src/components/TechnicianDirectoryCard";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
+import { spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -94,12 +95,12 @@ export default function TechniciansScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 20,
-    gap: 12,
+    padding: spacing.s20,
+    gap: spacing.s12,
   },
   centerContainer: {
-    padding: 20,
-    gap: 12,
+    padding: spacing.s20,
+    gap: spacing.s12,
     alignItems: "center",
     justifyContent: "center",
   },

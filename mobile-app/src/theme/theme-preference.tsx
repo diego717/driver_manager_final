@@ -20,7 +20,7 @@ const ThemePreferenceContext = createContext<ThemePreferenceContextValue | undef
 
 export function ThemePreferenceProvider({ children }: { children: ReactNode }) {
   const systemScheme = useSystemColorScheme();
-  const [mode, setModeState] = useState<ThemeMode>("light");
+  const [mode, setModeState] = useState<ThemeMode>("dark");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

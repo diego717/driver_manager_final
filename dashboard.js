@@ -232,10 +232,10 @@ const QR_PREVIEW_SIZE_PX = 320;
 const INCIDENT_CHECKLIST_PRESETS = [
     'Equipo identificado (QR/serie)',
     'Incidencia reproducida',
-    'Evidencia fotografica capturada',
-    'Diagnostico inicial registrado',
-    'Accion correctiva documentada',
-    'Validacion final con usuario/tecnico',
+    'Evidencia fotográfica capturada',
+    'Diagnóstico inicial registrado',
+    'Acción correctiva documentada',
+    'Validación final con usuario/técnico',
 ];
 const INCIDENT_ESTIMATED_DURATION_MAX_SECONDS = 7 * 24 * 60 * 60;
 const INCIDENT_ESTIMATED_DURATION_PRESETS = [
@@ -304,21 +304,21 @@ const SECTION_TITLES = {
     incidentMap: 'Mapa operativo',
     visualLab: 'Visual Lab',
     tenants: 'Tenants',
-    audit: 'AuditorÃ­a',
-    settings: 'ConfiguraciÃ³n',
+    audit: 'Auditoría',
+    settings: 'Configuración',
 };
 const SECTION_SUBTITLES = {
     dashboard: 'Prioriza incidencias, registros activos y desvio de SLA',
     myCases: 'Tu bandeja personal de incidencias asignadas, agrupada por estado operativo',
-    installations: 'Historial tÃ©cnico para consultar contexto y registros',
+    installations: 'Historial técnico para consultar contexto y registros',
     assets: 'Equipos con acceso directo a incidencias y contexto',
     drivers: 'Versionado centralizado de controladores',
     incidents: 'Atiende eventos sin perder el contexto operativo',
     incidentMap: 'Vista geolocalizada para explorar incidencias sin sobrecargar la bandeja',
     visualLab: 'Preview web de estilo, contraste y ritmo de motion para futuras iteraciones',
     tenants: 'Administra empresas, admins y estado de plataforma',
-    audit: 'Trazas crÃ­ticas y cumplimiento',
-    settings: 'Preferencias operativas y atajos de gestiÃ³n',
+    audit: 'Trazas críticas y cumplimiento',
+    settings: 'Preferencias operativas y atajos de gestión',
 };
 const TECHNICIAN_ENTITY_LABELS = Object.freeze({
     installation: 'Registro',
@@ -329,7 +329,7 @@ const TECHNICIAN_ENTITY_LABELS = Object.freeze({
 const TECHNICIAN_ASSIGNMENT_ROLE_LABELS = Object.freeze({
     owner: 'Responsable',
     assistant: 'Apoyo',
-    reviewer: 'RevisiÃ³n',
+    reviewer: 'Revisión',
 });
 const SECTION_REQUIRED_BINDINGS = Object.freeze({
     dashboard: [
@@ -413,7 +413,7 @@ const SECTION_REQUIRED_BINDINGS = Object.freeze({
         'settingsLogoutBtn',
     ],
 });
-const MOBILE_NAV_OVERFLOW_SECTIONS = new Set(['drivers', 'tenants', 'audit', 'visualLab', 'settings']);
+const MOBILE_NAV_OVERFLOW_SECTIONS = new Set(['dashboard', 'myCases', 'drivers', 'tenants', 'audit', 'visualLab', 'settings']);
 const HEADER_PRIMARY_ACTIONS = {
     dashboard: { icon: 'add_circle', label: 'Nuevo registro', action: 'createRecord' },
     myCases: { icon: 'refresh', label: 'Actualizar mis casos', action: 'refreshMyCases' },
@@ -424,11 +424,11 @@ const HEADER_PRIMARY_ACTIONS = {
     incidentMap: { icon: 'warning', label: 'Nueva incidencia', action: 'createIncident' },
     visualLab: { icon: 'contrast', label: 'Alternar tema', action: 'toggleTheme' },
     tenants: { icon: 'add_business', label: 'Nuevo tenant', action: 'createTenant', hidden: true },
-    audit: { icon: 'refresh', label: 'Actualizar auditorÃ­a', action: 'refreshAudit' },
-    settings: { icon: 'description', label: 'Abrir auditorÃ­a', action: 'openAudit' },
+    audit: { icon: 'refresh', label: 'Actualizar auditoría', action: 'refreshAudit' },
+    settings: { icon: 'description', label: 'Abrir auditoría', action: 'openAudit' },
 };
 const TOAST_TYPE_ICONS = {
-    success: 'âœ“',
+    success: '?',
     error: '!',
     warning: '!',
     info: 'i',
@@ -520,7 +520,7 @@ function findExistingLazyScript(src) {
 
 function waitForExistingScript(script, normalizedSrc) {
     if (!script) {
-        return Promise.reject(new Error(`No se encontrÃ³ el script ${normalizedSrc}.`));
+        return Promise.reject(new Error(`No se encontró el script ${normalizedSrc}.`));
     }
 
     if (script.dataset.loadState === 'loaded') {
@@ -528,7 +528,7 @@ function waitForExistingScript(script, normalizedSrc) {
     }
 
     if (script.dataset.loadState === 'failed') {
-        return Promise.reject(new Error(`El script ${normalizedSrc} quedÃ³ en estado fallido.`));
+        return Promise.reject(new Error(`El script ${normalizedSrc} quedó en estado fallido.`));
     }
 
     return new Promise((resolve, reject) => {
@@ -609,7 +609,7 @@ async function ensureChartLibrary() {
             await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
         }
         if (!isChartAvailable()) {
-            throw new Error('Chart.js terminÃ³ de cargar, pero no expuso la API global esperada.');
+            throw new Error('Chart.js terminó de cargar, pero no expuso la API global esperada.');
         }
         applyChartDefaults(document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
         lazyAssetWarnings.delete(LAZY_ASSET_PATHS.chart);
@@ -623,7 +623,7 @@ async function ensureChartLibrary() {
         console.error('No se pudo cargar Chart.js:', error);
         if (!lazyAssetWarnings.has(LAZY_ASSET_PATHS.chart)) {
             lazyAssetWarnings.add(LAZY_ASSET_PATHS.chart);
-            showNotification('No pudimos cargar los grÃ¡ficos del dashboard.', 'warning');
+            showNotification('No pudimos cargar los gráficos del dashboard.', 'warning');
         }
         return false;
     }
@@ -652,7 +652,7 @@ async function ensureXlsxLibrary() {
         return window.XLSX?.utils?.book_new && typeof window.XLSX.writeFile === 'function';
     } catch (error) {
         console.error('No se pudo cargar XLSX:', error);
-        showNotification('No pudimos activar la exportacion Excel en este momento.', 'warning');
+        showNotification('No pudimos activar la exportación Excel en este momento.', 'warning');
         return false;
     }
 }
@@ -889,13 +889,13 @@ dashboardScan = window.createDashboardScan({
             notes: normalizeAssetFormText(assetData?.notes, QR_MAX_NOTES_LENGTH),
         };
         if (!normalizedAsset.external_code) {
-            throw new Error('La etiqueta no incluye un codigo externo valido.');
+            throw new Error('La etiqueta no incluye un código externo válido.');
         }
         if (!normalizedAsset.brand && !normalizedAsset.model) {
             throw new Error('La etiqueta debe incluir marca o modelo para registrar el equipo.');
         }
         if (!normalizedAsset.serial_number) {
-            throw new Error('La etiqueta debe incluir numero de serie para registrar el equipo.');
+            throw new Error('La etiqueta debe incluir número de serie para registrar el equipo.');
         }
 
         const result = await api.resolveAsset({
@@ -1159,7 +1159,7 @@ function setupMobileNavPanel() {
             const section = String(button.dataset.mobileSection || '').trim();
             if (!section) return;
             if (section === 'audit' && !canCurrentUserAccessAudit()) {
-                showNotification('No tienes permisos para acceder a AuditorÃ­a.', 'error');
+                showNotification('No tienes permisos para acceder a Auditoría.', 'error');
                 return;
             }
             closeMobileNavPanel();
@@ -1504,7 +1504,7 @@ function getTenantUserRoleOptions() {
     const options = [
         ['admin', 'Admin'],
         ['supervisor', 'Supervisor'],
-        ['tecnico', 'Tecnico'],
+        ['tecnico', 'Técnico'],
         ['solo_lectura', 'Solo lectura'],
     ];
     if (canCurrentUserAssignPlatformSuperAdmin()) {
@@ -1539,7 +1539,7 @@ function buildTenantUserFields(user = null, tenantId = '') {
         passwordInput.id = 'actionTenantUserPassword';
         passwordInput.placeholder = 'ClaveFuerte#2026';
         passwordInput.autocomplete = 'new-password';
-        grid.append(createModalInputGroup('ContraseÃ±a', passwordInput, { htmlFor: passwordInput.id }));
+        grid.append(createModalInputGroup('Contraseña', passwordInput, { htmlFor: passwordInput.id }));
     }
 
     const roleSelect = document.createElement('select');
@@ -1615,7 +1615,7 @@ function openTenantUserCreateModal() {
 
     openActionModal({
         title: `Nuevo usuario para ${tenantId}`,
-        subtitle: 'El usuario quedarÃ¡ creado directamente dentro del tenant seleccionado.',
+        subtitle: 'El usuario quedará creado directamente dentro del tenant seleccionado.',
         submitLabel: 'Crear usuario',
         focusId: 'actionTenantUserUsername',
         fields: buildTenantUserFields(null, tenantId),
@@ -1630,7 +1630,7 @@ function openTenantUserCreateModal() {
                 return;
             }
             if (!password) {
-                setActionModalError('Debes indicar una contraseÃ±a inicial.');
+                setActionModalError('Debes indicar una contraseña inicial.');
                 return;
             }
 
@@ -1741,19 +1741,19 @@ async function confirmDeleteTenantUser(user) {
 
     openActionConfirmModal({
         title: `Eliminar ${user?.username || `usuario #${userId}`}`,
-        subtitle: 'Esta accion elimina el usuario web, invalida sus sesiones y desvincula su tecnico asociado si existe.',
+        subtitle: 'Esta acción elimina el usuario web, invalida sus sesiones y desvincula su técnico asociado si existe.',
         fields: createDeleteImpactSummaryNode(
             'Impacto previsto',
             [
                 { label: 'Sesiones a invalidar', value: impact?.impact?.sessions_invalidated ?? 1 },
-                { label: 'Vinculos con tecnico a desvincular', value: impact?.impact?.technician_links_to_clear ?? 0 },
+                { label: 'Vínculos con técnico a desvincular', value: impact?.impact?.technician_links_to_clear ?? 0 },
                 { label: 'Tokens de dispositivo a revocar', value: impact?.impact?.device_tokens_to_revoke ?? 0 },
             ],
-            'El usuario se elimina de forma definitiva y la accion queda registrada en auditoria.',
+            'El usuario se elimina de forma definitiva y la acción queda registrada en auditoría.',
         ),
         submitLabel: 'Eliminar usuario',
         acknowledgementText: `Confirmo eliminar a ${user?.username || `usuario #${userId}`}.`,
-        missingConfirmationMessage: 'Debes confirmar la eliminacion del usuario.',
+        missingConfirmationMessage: 'Debes confirmar la eliminación del usuario.',
         onSubmit: async () => {
             await api.deleteWebUser(userId);
             closeActionModal(true);
@@ -1797,17 +1797,17 @@ async function confirmDeleteTenant(tenant = null) {
             'Impacto previsto',
             [
                 { label: 'Usuarios web', value: deletedTables.web_users ?? 0 },
-                { label: 'Tecnicos', value: deletedTables.technicians ?? 0 },
+                { label: 'Técnicos', value: deletedTables.technicians ?? 0 },
                 { label: 'Instalaciones', value: deletedTables.installations ?? 0 },
                 { label: 'Incidencias', value: deletedTables.incidents ?? 0 },
                 { label: 'Otros registros tenant-scoped', value: Math.max(0, totalRows - knownRows) },
                 { label: 'Total estimado de filas', value: totalRows },
             ],
-            'Se eliminara el tenant y todos los datos asociados por tenant_id. La accion queda registrada en auditoria.',
+            'Se eliminará el tenant y todos los datos asociados por tenant_id. La acción queda registrada en auditoría.',
         ),
         submitLabel: 'Eliminar tenant',
         acknowledgementText: `Confirmo eliminar el tenant ${targetTenant?.name || tenantId}.`,
-        missingConfirmationMessage: 'Debes confirmar la eliminacion del tenant.',
+        missingConfirmationMessage: 'Debes confirmar la eliminación del tenant.',
         onSubmit: async () => {
             await api.deleteTenant(tenantId);
             closeActionModal(true);
@@ -1867,7 +1867,7 @@ function renderTenantDetail() {
         ['Plan', tenant.plan_code || '-'],
         ['Estado', tenant.status || '-'],
         ['Usuarios', tenant.metrics?.users_count ?? 0],
-        ['TÃƒÂ©cnicos', tenant.metrics?.technicians_count ?? 0],
+        ['Técnicos', tenant.metrics?.technicians_count ?? 0],
         ['Registros', tenant.metrics?.installations_count ?? 0],
         ['Incidencias activas', tenant.metrics?.active_incidents_count ?? 0],
     ].forEach(([label, value]) => {
@@ -1886,7 +1886,7 @@ function renderTenantDetail() {
     adminsTitle.className = 'settings-actions-note';
     adminsTitle.textContent = admins.length
         ? `Admins del tenant (${admins.length})`
-        : 'Este tenant todavÃƒÂ­a no tiene admins dedicados.';
+        : 'Este tenant todavía no tiene admins dedicados.';
     detailEl.append(adminsTitle);
 
     if (admins.length) {
@@ -1905,8 +1905,8 @@ function renderTenantDetail() {
             meta.textContent = [
                 admin.role || 'admin',
                 admin.is_active ? 'activo' : 'inactivo',
-                admin.last_login_at ? `ultimo login ${formatDateTime(admin.last_login_at)}` : 'sin login',
-            ].join(' Ã‚Â· ');
+                admin.last_login_at ? `último login ${formatDateTime(admin.last_login_at)}` : 'sin login',
+            ].join(' · ');
             top.append(title, meta);
             card.append(top);
             adminsList.append(card);
@@ -1918,7 +1918,7 @@ function renderTenantDetail() {
         const usageNote = document.createElement('p');
         usageNote.className = 'settings-actions-note';
         usageNote.textContent =
-            `Uso mÃƒÂ¡s reciente (${latestUsage.usage_month}): ${latestUsage.users_count} usuarios, ` +
+            `Uso más reciente (${latestUsage.usage_month}): ${latestUsage.users_count} usuarios, ` +
             `${latestUsage.incidents_count} incidencias, ${formatBytes(latestUsage.storage_bytes)}.`;
         detailEl.append(usageNote);
     }
@@ -1954,7 +1954,7 @@ function renderTenantDetail() {
     usersSummary.className = 'settings-actions-note';
     usersSummary.textContent = tenantUsers.length
         ? `${tenantUsers.length} usuario(s) cargados en este tenant.`
-        : 'Este tenant todavia no tiene usuarios web cargados.';
+        : 'Este tenant todavía no tiene usuarios web cargados.';
     usersSection.append(usersSummary);
 
     if (tenantUsers.length) {
@@ -1980,8 +1980,8 @@ function renderTenantDetail() {
                 meta.textContent = [
                     user.role || 'solo_lectura',
                     user.is_active ? 'activo' : 'inactivo',
-                    user.last_login_at ? `ultimo login ${formatDateTime(user.last_login_at)}` : 'sin login',
-                ].join(' Ã‚Â· ');
+                    user.last_login_at ? `último login ${formatDateTime(user.last_login_at)}` : 'sin login',
+                ].join(' · ');
                 copyWrap.append(title, meta);
 
                 const actions = document.createElement('div');
@@ -2036,7 +2036,7 @@ function renderTenantsSection() {
         setTenantSummaryValue('tenantsActive', '-');
         setTenantSummaryValue('tenantsSuspended', '-');
         setTenantSummaryValue('tenantsUsers', '-');
-        copyEl.textContent = 'Panel de administracion de tenants.';
+        copyEl.textContent = 'Panel de administración de tenants.';
         listEl.innerHTML = '<p class="settings-empty-state">No hay tenants para mostrar por ahora.</p>';
         createBtn.disabled = true;
         if (refreshBtn) refreshBtn.disabled = true;
@@ -2049,7 +2049,7 @@ function renderTenantsSection() {
         setTenantSummaryValue('tenantsActive', '-');
         setTenantSummaryValue('tenantsSuspended', '-');
         setTenantSummaryValue('tenantsUsers', '-');
-        copyEl.textContent = 'Esta secciÃ³n queda reservada para roles de plataforma.';
+        copyEl.textContent = 'Esta sección queda reservada para roles de plataforma.';
         listEl.innerHTML = '<p class="settings-empty-state">Solo plataforma puede administrar tenants.</p>';
         createBtn.disabled = true;
         renderTenantDetail();
@@ -2069,7 +2069,7 @@ function renderTenantsSection() {
     );
 
     if (!tenants.length) {
-        listEl.innerHTML = '<p class="settings-empty-state">TodavÃƒÂ­a no hay tenants cargados.</p>';
+        listEl.innerHTML = '<p class="settings-empty-state">Todavía no hay tenants cargados.</p>';
         renderTenantDetail();
         return;
     }
@@ -2096,7 +2096,7 @@ function renderTenantsSection() {
             Array.isArray(tenant.admin_usernames) && tenant.admin_usernames.length
                 ? tenant.admin_usernames.join(', ')
                 : 'Sin admins visibles',
-        ].join(' Ã‚Â· ');
+        ].join(' · ');
         titleWrap.append(title, subtitle);
 
         const chips = document.createElement('div');
@@ -2112,7 +2112,7 @@ function renderTenantsSection() {
         meta.className = 'asset-meta-grid';
         [
             ['Usuarios', tenant.metrics?.users_count ?? 0],
-            ['TÃƒÂ©cnicos', tenant.metrics?.technicians_count ?? 0],
+            ['Técnicos', tenant.metrics?.technicians_count ?? 0],
             ['Registros', tenant.metrics?.installations_count ?? 0],
             ['Incidencias activas', tenant.metrics?.active_incidents_count ?? 0],
         ].forEach(([label, value]) => {
@@ -2160,27 +2160,27 @@ function updateTechniciansPermissionCopy() {
     if (!copyEl || !createBtn) return;
 
     if (!hasActiveSession()) {
-        copyEl.textContent = 'Gestion del staff tecnico del tenant activo.';
+        copyEl.textContent = 'Gestión del staff técnico del tenant activo.';
         createBtn.disabled = true;
         if (refreshBtn) refreshBtn.disabled = true;
         return;
     }
 
     if (canCurrentUserManageTechnicians()) {
-        copyEl.textContent = 'Puedes crear, editar, activar o desactivar tÃ©cnicos. Las asignaciones quedan auditadas por tenant.';
+        copyEl.textContent = 'Puedes crear, editar, activar o desactivar técnicos. Las asignaciones quedan auditadas por tenant.';
         createBtn.disabled = false;
         if (refreshBtn) refreshBtn.disabled = false;
         return;
     }
 
     if (canCurrentUserManageTechnicianAssignments()) {
-        copyEl.textContent = 'Puedes consultar tÃ©cnicos y gestionar sus asignaciones operativas, pero no crear ni editar su ficha.';
+        copyEl.textContent = 'Puedes consultar técnicos y gestionar sus asignaciones operativas, pero no crear ni editar su ficha.';
         createBtn.disabled = true;
         if (refreshBtn) refreshBtn.disabled = false;
         return;
     }
 
-    copyEl.textContent = 'Tienes acceso de consulta sobre el staff tÃ©cnico del tenant.';
+    copyEl.textContent = 'Tienes acceso de consulta sobre el staff técnico del tenant.';
     createBtn.disabled = true;
     if (refreshBtn) refreshBtn.disabled = false;
 }
@@ -2205,7 +2205,7 @@ function renderTechniciansSection() {
         setTechnicianSummaryValue('settingsTechniciansActive', '-');
         setTechnicianSummaryValue('settingsTechniciansLinked', '-');
         setTechnicianSummaryValue('settingsTechniciansAssignments', '-');
-        listEl.innerHTML = '<p class="loading">No hay tecnicos para mostrar por ahora.</p>';
+        listEl.innerHTML = '<p class="loading">No hay técnicos para mostrar por ahora.</p>';
         return;
     }
 
@@ -2214,7 +2214,7 @@ function renderTechniciansSection() {
         setTechnicianSummaryValue('settingsTechniciansActive', '-');
         setTechnicianSummaryValue('settingsTechniciansLinked', '-');
         setTechnicianSummaryValue('settingsTechniciansAssignments', '-');
-        listEl.innerHTML = '<p class="settings-empty-state">Esta vista no esta disponible para tu rol actual.</p>';
+        listEl.innerHTML = '<p class="settings-empty-state">Esta vista no está disponible para tu rol actual.</p>';
         return;
     }
 
@@ -2229,7 +2229,7 @@ function renderTechniciansSection() {
     setTechnicianSummaryValue('settingsTechniciansAssignments', assignmentsCount);
 
     if (!technicians.length) {
-        listEl.innerHTML = '<p class="settings-empty-state">TodavÃ­a no hay tÃ©cnicos cargados para este tenant.</p>';
+        listEl.innerHTML = '<p class="settings-empty-state">Todavía no hay técnicos cargados para este tenant.</p>';
         return;
     }
 
@@ -2245,14 +2245,14 @@ function renderTechniciansSection() {
         const titleWrap = document.createElement('div');
         titleWrap.className = 'settings-technician-title';
         const title = document.createElement('h4');
-        title.textContent = technician.display_name || `TÃ©cnico #${technician.id}`;
+        title.textContent = technician.display_name || `Técnico #${technician.id}`;
         const subtitle = document.createElement('p');
         subtitle.className = 'settings-technician-subtitle';
         const subtitleParts = [
-            technician.employee_code ? `CÃ³digo ${technician.employee_code}` : 'Sin cÃ³digo interno',
+            technician.employee_code ? `Código ${technician.employee_code}` : 'Sin código interno',
             getTechnicianLinkedWebUserLabel(technician),
         ];
-        subtitle.textContent = subtitleParts.join(' Â· ');
+        subtitle.textContent = subtitleParts.join(' · ');
         titleWrap.append(title, subtitle);
 
         const chips = document.createElement('div');
@@ -2266,7 +2266,7 @@ function renderTechniciansSection() {
         if (technician.active_assignment_count > 0) {
             const assignmentChip = document.createElement('span');
             assignmentChip.className = 'settings-chip';
-            assignmentChip.textContent = `${technician.active_assignment_count} asignaciÃ³n${technician.active_assignment_count === 1 ? '' : 'es'}`;
+            assignmentChip.textContent = `${technician.active_assignment_count} asignación${technician.active_assignment_count === 1 ? '' : 'es'}`;
             chips.append(assignmentChip);
         }
 
@@ -2276,7 +2276,7 @@ function renderTechniciansSection() {
         meta.className = 'asset-meta-grid';
         const fields = [
             ['Email', technician.email || 'No informado'],
-            ['TelÃ©fono', technician.phone || 'No informado'],
+            ['Teléfono', technician.phone || 'No informado'],
             ['Notas', technician.notes || 'Sin notas operativas'],
         ];
         fields.forEach(([label, value]) => {
@@ -2342,13 +2342,13 @@ function renderTechniciansSection() {
                     });
                     showNotification(
                         technician.is_active
-                            ? `TÃ©cnico ${technician.display_name} desactivado.`
-                            : `TÃ©cnico ${technician.display_name} reactivado.`,
+                            ? `Técnico ${technician.display_name} desactivado.`
+                            : `Técnico ${technician.display_name} reactivado.`,
                         technician.is_active ? 'info' : 'success',
                     );
                     await loadTechniciansSection({ silent: true });
                 } catch (error) {
-                    showNotification(`No se pudo actualizar el tÃ©cnico: ${error?.message || error}`, 'error');
+                    showNotification(`No se pudo actualizar el técnico: ${error?.message || error}`, 'error');
                 }
             });
             actions.append(toggleBtn);
@@ -2371,7 +2371,7 @@ function renderTechniciansSection() {
                 if (!items.length) {
                     const empty = document.createElement('p');
                     empty.className = 'settings-empty-state';
-                    empty.textContent = 'Sin asignaciones activas para este tÃ©cnico.';
+                    empty.textContent = 'Sin asignaciones activas para este técnico.';
                     assignmentsWrap.append(empty);
                 } else {
                     const list = document.createElement('div');
@@ -2390,7 +2390,7 @@ function renderTechniciansSection() {
                         const assignmentMeta = document.createElement('p');
                         assignmentMeta.className = 'settings-assignment-meta';
                         const roleLabel = TECHNICIAN_ASSIGNMENT_ROLE_LABELS[assignment.assignment_role] || assignment.assignment_role;
-                        assignmentMeta.textContent = `${roleLabel} Â· asignado por ${assignment.assigned_by_username || 'sistema'}`;
+                        assignmentMeta.textContent = `${roleLabel} · asignado por ${assignment.assigned_by_username || 'sistema'}`;
                         textWrap.append(assignmentTitle, assignmentMeta);
                         top.append(textWrap);
 
@@ -2400,14 +2400,14 @@ function renderTechniciansSection() {
                             removeBtn.className = 'btn-secondary';
                             removeBtn.textContent = 'Quitar';
                             removeBtn.addEventListener('click', async () => {
-                                const confirmed = window.confirm(`Â¿Quitar la asignaciÃ³n ${entityLabel} ${assignment.entity_id}?`);
+                                const confirmed = window.confirm(`¿Quitar la asignación ${entityLabel} ${assignment.entity_id}?`);
                                 if (!confirmed) return;
                                 try {
                                     await api.deleteTechnicianAssignment(assignment.id);
-                                    showNotification('AsignaciÃ³n removida.', 'success');
+                                    showNotification('Asignación removida.', 'success');
                                     await loadTechnicianAssignments(technician.id, { force: true, silent: true });
                                 } catch (error) {
-                                    showNotification(`No se pudo quitar la asignaciÃ³n: ${error?.message || error}`, 'error');
+                                    showNotification(`No se pudo quitar la asignación: ${error?.message || error}`, 'error');
                                 }
                             });
                             top.append(removeBtn);
@@ -2507,7 +2507,7 @@ function getTechnicianLoadSummary() {
         .slice(0, 4)
         .map((item) => ({
             id: Number(item.id),
-            display_name: String(item.display_name || '').trim() || `TÃ©cnico #${item.id}`,
+            display_name: String(item.display_name || '').trim() || `Técnico #${item.id}`,
             employee_code: String(item.employee_code || '').trim(),
             active_assignment_count: Math.max(0, Number(item.active_assignment_count) || 0),
             linked_web_user: Number.isInteger(parseStrictInteger(item?.web_user_id)),
@@ -2545,8 +2545,8 @@ function getTechnicianLinkedWebUserLabel(technician) {
 
     const username = String(linkedUser.username || '').trim() || `Usuario #${webUserId}`;
     const role = String(linkedUser.role || '').trim();
-    const activeSuffix = linkedUser.is_active === false ? ' Â· inactivo' : '';
-    return role ? `${username} Â· ${role}${activeSuffix}` : `${username}${activeSuffix}`;
+    const activeSuffix = linkedUser.is_active === false ? ' · inactivo' : '';
+    return role ? `${username} · ${role}${activeSuffix}` : `${username}${activeSuffix}`;
 }
 
 function getSelectableWebUsersForTechnician(technician = null) {
@@ -2629,7 +2629,7 @@ async function loadTechniciansSection(options = {}) {
         renderTechniciansSection();
         dashboardOverview?.renderTechnicianLoadAttention?.();
         if (!silent) {
-            showNotification(`No se pudo cargar la gestiÃ³n de tÃ©cnicos: ${error?.message || error}`, 'error');
+            showNotification(`No se pudo cargar la gestión de técnicos: ${error?.message || error}`, 'error');
         }
         return [];
     }
@@ -2812,7 +2812,7 @@ function buildTechnicianModalFields(technician = null) {
     employeeCodeInput.id = 'actionTechnicianEmployeeCode';
     employeeCodeInput.value = String(technician?.employee_code || '');
     employeeCodeInput.placeholder = 'Ej: TEC-09';
-    grid.append(createModalInputGroup('CÃ³digo interno', employeeCodeInput, { htmlFor: employeeCodeInput.id }));
+    grid.append(createModalInputGroup('Código interno', employeeCodeInput, { htmlFor: employeeCodeInput.id }));
 
     const webUserSelect = document.createElement('select');
     webUserSelect.id = 'actionTechnicianWebUserId';
@@ -2824,9 +2824,9 @@ function buildTechnicianModalFields(technician = null) {
         const option = document.createElement('option');
         option.value = String(user.id);
         const role = String(user.role || '').trim();
-        const activeSuffix = user.is_active === false ? ' Â· inactivo' : '';
+        const activeSuffix = user.is_active === false ? ' · inactivo' : '';
         option.textContent = role
-            ? `${user.username} Â· ${role}${activeSuffix}`
+            ? `${user.username} · ${role}${activeSuffix}`
             : `${user.username}${activeSuffix}`;
         if (Number(user.id) === Number(technician?.web_user_id)) {
             option.selected = true;
@@ -2847,29 +2847,29 @@ function buildTechnicianModalFields(technician = null) {
     phoneInput.id = 'actionTechnicianPhone';
     phoneInput.value = String(technician?.phone || '');
     phoneInput.placeholder = '099 000 111';
-    grid.append(createModalInputGroup('TelÃ©fono', phoneInput, { htmlFor: phoneInput.id }));
+    grid.append(createModalInputGroup('Teléfono', phoneInput, { htmlFor: phoneInput.id }));
 
     const notesInput = document.createElement('textarea');
     notesInput.id = 'actionTechnicianNotes';
     notesInput.rows = 4;
     notesInput.value = String(technician?.notes || '');
-    notesInput.placeholder = 'Notas operativas o contexto del tÃ©cnico';
+    notesInput.placeholder = 'Notas operativas o contexto del técnico';
     fragment.append(grid, createModalInputGroup('Notas', notesInput, { htmlFor: notesInput.id }));
     return fragment;
 }
 
 function openTechnicianEditorModal(technician = null) {
     if (!canCurrentUserManageTechnicians()) {
-        showNotification('No tienes permisos para editar tÃ©cnicos.', 'error');
+        showNotification('No tienes permisos para editar técnicos.', 'error');
         return;
     }
 
     const openModal = () => openActionModal({
-        title: technician ? `Editar tÃ©cnico #${technician.id}` : 'Nuevo tÃ©cnico',
+        title: technician ? `Editar técnico #${technician.id}` : 'Nuevo técnico',
         subtitle: technician
-            ? 'Ajusta la ficha operativa del tÃ©cnico dentro del tenant actual.'
-            : 'Crea un tÃ©cnico reutilizable para asignaciones operativas.',
-        submitLabel: technician ? 'Guardar cambios' : 'Crear tÃ©cnico',
+            ? 'Ajusta la ficha operativa del técnico dentro del tenant actual.'
+            : 'Crea un técnico reutilizable para asignaciones operativas.',
+        submitLabel: technician ? 'Guardar cambios' : 'Crear técnico',
         focusId: 'actionTechnicianDisplayName',
         fields: buildTechnicianModalFields(technician),
         onSubmit: async () => {
@@ -2898,11 +2898,11 @@ function openTechnicianEditorModal(technician = null) {
             if (technician?.id) {
                 await api.updateTechnician(technician.id, payload);
                 closeActionModal(true);
-                showNotification(`TÃ©cnico ${displayName} actualizado.`, 'success');
+                showNotification(`Técnico ${displayName} actualizado.`, 'success');
             } else {
                 await api.createTechnician(payload);
                 closeActionModal(true);
-                showNotification(`TÃ©cnico ${displayName} creado.`, 'success');
+                showNotification(`Técnico ${displayName} creado.`, 'success');
             }
 
             await loadTechniciansSection({ silent: true, refreshAssignments: true });
@@ -2950,7 +2950,7 @@ function buildTechnicianAssignmentModalFields(technician) {
     [
         ['owner', 'Responsable'],
         ['assistant', 'Apoyo'],
-        ['reviewer', 'RevisiÃ³n'],
+        ['reviewer', 'Revisión'],
     ].forEach(([value, label]) => {
         const option = document.createElement('option');
         option.value = value;
@@ -2962,21 +2962,21 @@ function buildTechnicianAssignmentModalFields(technician) {
     const note = document.createElement('textarea');
     note.id = 'actionTechnicianAssignmentNote';
     note.rows = 3;
-    note.placeholder = `Contexto de asignaciÃ³n para ${technician?.display_name || 'el tÃ©cnico'} (opcional)`;
+    note.placeholder = `Contexto de asignación para ${technician?.display_name || 'el técnico'} (opcional)`;
     fragment.append(grid, createModalInputGroup('Metadata', note, { htmlFor: note.id }));
     return fragment;
 }
 
 function openTechnicianAssignmentModal(technician) {
     if (!canCurrentUserManageTechnicianAssignments()) {
-        showNotification('No tienes permisos para asignar tÃ©cnicos.', 'error');
+        showNotification('No tienes permisos para asignar técnicos.', 'error');
         return;
     }
 
     openActionModal({
-        title: `Asignar ${technician?.display_name || 'tÃ©cnico'}`,
-        subtitle: 'Vincula este tÃ©cnico a una entidad operativa del tenant.',
-        submitLabel: 'Guardar asignaciÃ³n',
+        title: `Asignar ${technician?.display_name || 'técnico'}`,
+        subtitle: 'Vincula este técnico a una entidad operativa del tenant.',
+        submitLabel: 'Guardar asignación',
         focusId: 'actionTechnicianAssignmentEntityId',
         fields: buildTechnicianAssignmentModalFields(technician),
         onSubmit: async () => {
@@ -3000,7 +3000,7 @@ function openTechnicianAssignmentModal(technician) {
             await api.createTechnicianAssignment(technician.id, payload);
             closeActionModal(true);
             expandedTechnicianAssignmentPanels.add(technician.id);
-            showNotification(`AsignaciÃ³n guardada para ${technician.display_name}.`, 'success');
+            showNotification(`Asignación guardada para ${technician.display_name}.`, 'success');
             await loadTechniciansSection({ silent: true, refreshAssignments: false });
             await loadTechnicianAssignments(technician.id, { force: true, silent: true });
         },
@@ -3014,24 +3014,24 @@ function buildEntityTechnicianAssignmentFields(entityConfig = {}) {
 
     const technicianSelect = document.createElement('select');
     technicianSelect.id = 'actionEntityAssignmentTechnicianId';
-    technicianSelect.appendChild(new Option('Selecciona un tÃ©cnico', ''));
+    technicianSelect.appendChild(new Option('Selecciona un técnico', ''));
     currentTechniciansData
         .filter((item) => item && item.is_active)
         .sort((left, right) => String(left.display_name || '').localeCompare(String(right.display_name || ''), 'es'))
         .forEach((technician) => {
             const label = technician.employee_code
-                ? `${technician.display_name} Â· ${technician.employee_code}`
+                ? `${technician.display_name} · ${technician.employee_code}`
                 : technician.display_name;
             technicianSelect.appendChild(new Option(label, String(technician.id)));
         });
-    grid.append(createModalInputGroup('TÃ©cnico', technicianSelect, { htmlFor: technicianSelect.id }));
+    grid.append(createModalInputGroup('Técnico', technicianSelect, { htmlFor: technicianSelect.id }));
 
     const assignmentRoleSelect = document.createElement('select');
     assignmentRoleSelect.id = 'actionEntityAssignmentRole';
     [
         ['owner', 'Responsable'],
         ['assistant', 'Apoyo'],
-        ['reviewer', 'RevisiÃ³n'],
+        ['reviewer', 'Revisión'],
     ].forEach(([value, label]) => {
         assignmentRoleSelect.appendChild(new Option(label, value, value === entityConfig.defaultRole, value === entityConfig.defaultRole));
     });
@@ -3040,14 +3040,14 @@ function buildEntityTechnicianAssignmentFields(entityConfig = {}) {
     const note = document.createElement('textarea');
     note.id = 'actionEntityAssignmentNote';
     note.rows = 3;
-    note.placeholder = `Contexto de asignaciÃ³n para ${entityConfig.entityLabel || 'esta entidad'} (opcional)`;
+    note.placeholder = `Contexto de asignación para ${entityConfig.entityLabel || 'esta entidad'} (opcional)`;
     fragment.append(grid, createModalInputGroup('Metadata', note, { htmlFor: note.id }));
     return fragment;
 }
 
 async function openEntityTechnicianAssignmentModal(entityConfig = {}) {
     if (!canCurrentUserManageTechnicianAssignments()) {
-        showNotification('No tienes permisos para asignar tÃ©cnicos.', 'error');
+        showNotification('No tienes permisos para asignar técnicos.', 'error');
         return;
     }
 
@@ -3060,14 +3060,14 @@ async function openEntityTechnicianAssignmentModal(entityConfig = {}) {
     }
 
     if (!currentTechniciansData.some((item) => item && item.is_active)) {
-        showNotification('Primero necesitas cargar al menos un tÃ©cnico activo en el tenant.', 'warning');
+        showNotification('Primero necesitas cargar al menos un técnico activo en el tenant.', 'warning');
         return;
     }
 
     openActionModal({
-        title: `Asignar tÃ©cnico a ${entityLabel}`,
-        subtitle: 'Esta asignaciÃ³n quedarÃ¡ disponible para operaciÃ³n, filtros y cola del tenant.',
-        submitLabel: 'Guardar asignaciÃ³n',
+        title: `Asignar técnico a ${entityLabel}`,
+        subtitle: 'Esta asignación quedará disponible para operación, filtros y cola del tenant.',
+        submitLabel: 'Guardar asignación',
         focusId: 'actionEntityAssignmentTechnicianId',
         fields: buildEntityTechnicianAssignmentFields({
             entityLabel,
@@ -3079,7 +3079,7 @@ async function openEntityTechnicianAssignmentModal(entityConfig = {}) {
             const note = String(document.getElementById('actionEntityAssignmentNote')?.value || '').trim();
 
             if (!Number.isInteger(technicianId) || technicianId <= 0) {
-                setActionModalError('Debes seleccionar un tÃ©cnico.');
+                setActionModalError('Debes seleccionar un técnico.');
                 return;
             }
 
@@ -3091,7 +3091,7 @@ async function openEntityTechnicianAssignmentModal(entityConfig = {}) {
                 Number(assignment?.technician_id) === technicianId &&
                 String(assignment?.assignment_role || '').trim().toLowerCase() === assignmentRole.toLowerCase());
             if (duplicateAssignment) {
-                setActionModalError('Ese tÃ©cnico ya tiene una asignaciÃ³n activa con ese rol en esta entidad.');
+                setActionModalError('Ese técnico ya tiene una asignación activa con ese rol en esta entidad.');
                 return;
             }
 
@@ -3104,7 +3104,7 @@ async function openEntityTechnicianAssignmentModal(entityConfig = {}) {
 
             closeActionModal(true);
             technicianAssignmentsByEntityKey.delete(buildTechnicianAssignmentEntityKey(entityType, entityId));
-            showNotification(`AsignaciÃ³n guardada para ${entityLabel}.`, 'success');
+            showNotification(`Asignación guardada para ${entityLabel}.`, 'success');
             await loadTechniciansSection({ silent: true, refreshAssignments: false });
             if (typeof entityConfig.onApplied === 'function') {
                 await entityConfig.onApplied();
@@ -3116,22 +3116,22 @@ async function openEntityTechnicianAssignmentModal(entityConfig = {}) {
 
 async function removeEntityTechnicianAssignment(assignment, entityConfig = {}) {
     if (!canCurrentUserManageTechnicianAssignments()) {
-        showNotification('No tienes permisos para desasignar tÃ©cnicos.', 'error');
+        showNotification('No tienes permisos para desasignar técnicos.', 'error');
         return;
     }
 
     const entityLabel = String(entityConfig.entityLabel || 'esta entidad').trim();
     const technicianName = String(
-        assignment?.technician_display_name || assignment?.display_name || assignment?.technician_name || 'el tÃ©cnico',
+        assignment?.technician_display_name || assignment?.display_name || assignment?.technician_name || 'el técnico',
     ).trim();
-    const confirmed = window.confirm(`Â¿Quitar a ${technicianName} de ${entityLabel}?`);
+    const confirmed = window.confirm(`¿Quitar a ${technicianName} de ${entityLabel}?`);
     if (!confirmed) return;
 
     await api.deleteTechnicianAssignment(assignment.id);
     technicianAssignmentsByEntityKey.delete(
         buildTechnicianAssignmentEntityKey(entityConfig.entityType, entityConfig.entityId),
     );
-    showNotification(`AsignaciÃ³n removida de ${entityLabel}.`, 'success');
+    showNotification(`Asignación removida de ${entityLabel}.`, 'success');
     await loadTechniciansSection({ silent: true, refreshAssignments: false });
     if (typeof entityConfig.onApplied === 'function') {
         await entityConfig.onApplied();
@@ -3143,8 +3143,8 @@ async function renderEntityTechnicianAssignmentsPanel(entityConfig = {}) {
     const entityType = String(entityConfig.entityType || '').trim().toLowerCase();
     const entityId = String(entityConfig.entityId || '').trim();
     const entityLabel = String(entityConfig.entityLabel || `${entityType} ${entityId}`).trim();
-    const title = String(entityConfig.title || 'TÃ©cnicos asignados').trim();
-    const emptyText = String(entityConfig.emptyText || 'Sin tÃ©cnicos asignados todavÃ­a.').trim();
+    const title = String(entityConfig.title || 'Técnicos asignados').trim();
+    const emptyText = String(entityConfig.emptyText || 'Sin técnicos asignados todavía.').trim();
     const compact = entityConfig.compact === true;
     const showEmptyMessage = entityConfig.showEmptyMessage !== false;
 
@@ -3161,7 +3161,7 @@ async function renderEntityTechnicianAssignmentsPanel(entityConfig = {}) {
         const assignBtn = document.createElement('button');
         assignBtn.type = 'button';
         assignBtn.className = 'btn-secondary';
-        assignBtn.textContent = 'Asignar tÃ©cnico';
+        assignBtn.textContent = 'Asignar técnico';
         assignBtn.addEventListener('click', () => {
             void openEntityTechnicianAssignmentModal({
                 entityType,
@@ -3202,15 +3202,15 @@ async function renderEntityTechnicianAssignmentsPanel(entityConfig = {}) {
         const copy = document.createElement('div');
         copy.className = 'entity-technician-copy';
         const primary = document.createElement('strong');
-        const technicianName = String(assignment?.technician_display_name || '').trim() || `TÃ©cnico #${assignment?.technician_id || '-'}`;
+        const technicianName = String(assignment?.technician_display_name || '').trim() || `Técnico #${assignment?.technician_id || '-'}`;
         primary.textContent = technicianName;
         const meta = document.createElement('small');
         const metaParts = [
             TECHNICIAN_ASSIGNMENT_ROLE_LABELS[String(assignment?.assignment_role || '').trim()] || assignment?.assignment_role || 'Responsable',
-            assignment?.technician_employee_code ? `CÃ³digo ${assignment.technician_employee_code}` : '',
+            assignment?.technician_employee_code ? `Código ${assignment.technician_employee_code}` : '',
             assignment?.assigned_by_username ? `por ${assignment.assigned_by_username}` : '',
         ].filter(Boolean);
-        meta.textContent = metaParts.join(' Â· ');
+        meta.textContent = metaParts.join(' · ');
         copy.append(primary, meta);
         item.appendChild(copy);
 
@@ -3291,12 +3291,12 @@ function createGpsCapturePanel({ panelId, statusId, summaryId, buttonId }) {
 
     const title = document.createElement('strong');
     title.className = 'gps-capture-panel-title';
-    title.textContent = 'Ubicacion puntual';
+    title.textContent = 'Ubicación puntual';
 
     const status = document.createElement('span');
     status.id = statusId;
     status.className = 'gps-capture-panel-status';
-    status.textContent = 'Capturando ubicacion puntual...';
+    status.textContent = 'Capturando ubicación puntual...';
 
     copyWrap.append(title, status);
 
@@ -3304,14 +3304,14 @@ function createGpsCapturePanel({ panelId, statusId, summaryId, buttonId }) {
     retryButton.type = 'button';
     retryButton.id = buttonId;
     retryButton.className = 'btn-secondary';
-    retryButton.textContent = 'Capturar ubicacion';
+    retryButton.textContent = 'Capturar ubicación';
 
     header.append(copyWrap, retryButton);
 
     const summary = document.createElement('p');
     summary.id = summaryId;
     summary.className = 'gps-capture-panel-summary';
-    summary.textContent = 'Intentamos obtener una ubicacion puntual para este formulario. No bloquea el guardado.';
+    summary.textContent = 'Intentamos obtener una ubicación puntual para este formulario. No bloquea el guardado.';
 
     wrapper.append(header, summary);
     return wrapper;
@@ -3341,7 +3341,7 @@ function buildManualRecordFields(defaultClient) {
     versionInput.id = 'actionRecordVersion';
     versionInput.value = 'N/A';
     versionInput.autocomplete = 'off';
-    grid.appendChild(createModalInputGroup('VersiÃ³n/Referencia (opcional)', versionInput, { htmlFor: 'actionRecordVersion' }));
+    grid.appendChild(createModalInputGroup('Versión/Referencia (opcional)', versionInput, { htmlFor: 'actionRecordVersion' }));
 
     const notesTextarea = document.createElement('textarea');
     notesTextarea.id = 'actionRecordNotes';
@@ -3373,7 +3373,7 @@ function buildAssetLinkFields({ defaultCode, defaultInstallationId, defaultNotes
         codeInput.value = defaultCode;
         codeInput.autocomplete = 'off';
         grid.appendChild(createModalInputGroup(
-            'CÃ³digo externo del equipo (QR/serie)',
+            'Código externo del equipo (QR/serie)',
             codeInput,
             { htmlFor: 'actionAssetCode' },
         ));
@@ -3398,7 +3398,7 @@ function buildAssetLinkFields({ defaultCode, defaultInstallationId, defaultNotes
     notesTextarea.id = 'actionAssetNotes';
     notesTextarea.rows = 3;
     notesTextarea.value = defaultNotes;
-    grid.appendChild(createModalInputGroup('Nota de asociacion (opcional)', notesTextarea, {
+    grid.appendChild(createModalInputGroup('Nota de asociación (opcional)', notesTextarea, {
         htmlFor: 'actionAssetNotes',
         className: 'full-width',
     }));
@@ -3414,7 +3414,7 @@ function buildAssetLookupFields() {
     input.autocomplete = 'off';
     input.placeholder = 'Ej: EQ-SL3-001';
     return createModalInputGroup(
-        'CÃ³digo externo del equipo',
+        'Código externo del equipo',
         input,
         { htmlFor: 'actionLookupAssetCode' },
     );
@@ -3427,7 +3427,7 @@ function createManualRecordFromWeb() {
     let gpsController = null;
     const modalOpened = openActionModal({
         title: 'Nuevo registro manual',
-        subtitle: 'Crea un registro sin depender de una instalaciÃ³n previa.',
+        subtitle: 'Crea un registro sin depender de una instalación previa.',
         submitLabel: 'Crear registro',
         focusId: 'actionRecordClient',
         fields: buildManualRecordFields(defaultClient),
@@ -3499,7 +3499,7 @@ function openAssetLinkModal(options = {}) {
     const needsExternalCode = !Number.isInteger(knownAssetId) || knownAssetId <= 0;
     const title = needsExternalCode ? 'Asociar equipo a registro' : `Vincular equipo #${knownAssetId}`;
     const subtitle = needsExternalCode
-        ? 'Ingresa el cÃ³digo del equipo y el registro destino.'
+        ? 'Ingresa el código del equipo y el registro destino.'
         : 'Asocia el equipo seleccionado a un registro destino.';
 
     openActionModal({
@@ -3529,7 +3529,7 @@ function openAssetLinkModal(options = {}) {
             if (!Number.isInteger(resolvedAssetId) || resolvedAssetId <= 0) {
                 const externalCode = String(document.getElementById('actionAssetCode')?.value || '').trim();
                 if (!externalCode) {
-                    setActionModalError('Debes ingresar un cÃ³digo de equipo vÃ¡lido.');
+                    setActionModalError('Debes ingresar un código de equipo válido.');
                     return;
                 }
                 const resolved = await api.resolveAsset({
@@ -3558,7 +3558,7 @@ function openAssetLinkModal(options = {}) {
 
             if (Number.isInteger(knownAssetId) && knownAssetId > 0) {
                 void loadAssetDetail(knownAssetId, { keepSelection: true }).catch(() => {
-                    showNotification('La asociacion se guardo, pero no pudimos refrescar el detalle del equipo.', 'warning');
+                    showNotification('La asociación se guardó, pero no pudimos refrescar el detalle del equipo.', 'warning');
                 });
                 return;
             }
@@ -3577,7 +3577,7 @@ async function openAssetLookupFromWeb() {
     if (!requireActiveSession()) return;
     openActionModal({
         title: 'Buscar equipo',
-        subtitle: 'Ingresa el cÃ³digo externo para abrir el detalle en modo lectura.',
+        subtitle: 'Ingresa el código externo para abrir el detalle en modo lectura.',
         submitLabel: 'Buscar',
         focusId: 'actionLookupAssetCode',
         fields: buildAssetLookupFields(),
@@ -3586,7 +3586,7 @@ async function openAssetLookupFromWeb() {
                 document.getElementById('actionLookupAssetCode')?.value || '',
             );
             if (!code) {
-                setActionModalError('Debes ingresar un cÃ³digo de equipo vÃ¡lido.');
+                setActionModalError('Debes ingresar un código de equipo válido.');
                 return;
             }
 
@@ -3596,7 +3596,7 @@ async function openAssetLookupFromWeb() {
             });
             const asset = Array.isArray(response?.items) ? response.items[0] : null;
             if (!asset) {
-                setActionModalError(`No existe equipo con cÃ³digo ${code}.`);
+                setActionModalError(`No existe equipo con código ${code}.`);
                 return;
             }
 
@@ -3972,7 +3972,7 @@ function readIncidentEstimatedDurationFromModal() {
         ) {
             return { seconds };
         }
-        return { error: 'Selecciona un tiempo estimado valido.' };
+        return { error: 'Selecciona un tiempo estimado válido.' };
     }
 
     const customSeconds = parseDurationHHMMToSeconds(customInput.value);
@@ -4149,7 +4149,7 @@ function exportToCSV(data, filename = 'registros.csv') {
         return;
     }
 
-    const headers = ['ID', 'Cliente', 'Marca', 'AtenciÃ³n', 'Tiempo', 'Notas', 'Fecha'];
+    const headers = ['ID', 'Cliente', 'Marca', 'Atención', 'Tiempo', 'Notas', 'Fecha'];
 
     const rows = data.map(inst => [
         inst.id,
@@ -4241,7 +4241,7 @@ async function exportToExcel(data, filename = 'registros.xls') {
         else if (filters.endDate) parts.push(`Periodo: hasta ${filters.endDate}`);
         if (filters.brand) parts.push(`Marca: ${filters.brand}`);
         if (filters.gps) parts.push(`GPS: ${filters.gps}`);
-        if (filters.search) parts.push(`Busqueda: ${filters.search}`);
+        if (filters.search) parts.push(`Búsqueda: ${filters.search}`);
         return parts.length ? parts.join(' | ') : 'Filtros: sin filtros activos';
     };
     const buildExportFilename = () => {
@@ -4295,10 +4295,10 @@ async function exportToExcel(data, filename = 'registros.xls') {
         'ID',
         'Cliente',
         'Marca',
-        'Version',
+        'Versión',
         'Equipo / OS',
-        'Tecnico / Usuario',
-        'Atencion',
+        'Técnico / Usuario',
+        'Atención',
         'Incidencias activas',
         'Incidencias resueltas',
         'Tiempo registro (s)',
@@ -4308,7 +4308,7 @@ async function exportToExcel(data, filename = 'registros.xls') {
         'Tiempo real incidencias (s)',
         'Tiempo real incidencias',
         'GPS estado',
-        'Precision GPS (m)',
+        'Precisión GPS (m)',
         'Coordenadas GPS',
         'Fuente GPS',
         'Notas',
@@ -4374,9 +4374,9 @@ async function exportToExcel(data, filename = 'registros.xls') {
         : null;
     const metricRows = [
         ['Total de registros', details.length],
-        ['Clientes unicos', new Set(details.map(item => item.clientName)).size],
+        ['Clientes únicos', new Set(details.map(item => item.clientName)).size],
         ['Marcas unicas', new Set(details.map(item => item.brand)).size],
-        ['Tecnicos / usuarios unicos', new Set(details.map(item => item.technician)).size],
+        ['Técnicos / usuarios únicos', new Set(details.map(item => item.technician)).size],
         ['Tiempo promedio de registro (s)', details.length ? Math.round(totalDurationSeconds / details.length) : 0],
         ['Tiempo promedio estimado de incidencias (s)', details.length ? Math.round(totalEstimatedSeconds / details.length) : 0],
         ['Tiempo promedio real de incidencias (s)', details.length ? Math.round(totalActualSeconds / details.length) : 0],
@@ -4385,17 +4385,17 @@ async function exportToExcel(data, filename = 'registros.xls') {
         ['GPS capturado', details.filter(item => item.gpsStatusRaw === 'captured').length],
         ['GPS pendiente', details.filter(item => item.gpsStatusRaw === 'pending').length],
         ['GPS con falla', details.filter(item => isGpsFailureStatus(item.gpsStatusRaw)).length],
-        ['Precision GPS promedio (capturado)', averageGpsAccuracy !== null ? `${averageGpsAccuracy} m` : 'N/A'],
+        ['Precisión GPS promedio (capturado)', averageGpsAccuracy !== null ? `${averageGpsAccuracy} m` : 'N/A'],
     ];
     const summaryRows = [
         ['Reporte de registros'],
         [`Generado el ${generatedAt.toLocaleString('es-ES')}`],
         [filterSummary],
         [],
-        ['Metrica', 'Valor'],
+        ['Métrica', 'Valor'],
         ...metricRows,
         [],
-        ['Atencion', 'Cantidad'],
+        ['Atención', 'Cantidad'],
         ...attentionDistribution,
         [],
         ['Estado GPS', 'Cantidad'],
@@ -4476,13 +4476,13 @@ async function exportToExcel(data, filename = 'registros.xls') {
         'Cliente',
         'Total',
         'Marcas',
-        'Tecnicos / Usuarios',
-        'Registros criticos',
+        'Técnicos / Usuarios',
+        'Registros críticos',
         'Incidencias activas',
         'GPS capturado',
         'Tiempo prom. registro (s)',
         'Tiempo prom. incidencias real (s)',
-        'Ultima fecha',
+        'Última fecha',
     ];
     const clientSummaries = Array.from(details.reduce((accumulator, item) => {
         const bucket = accumulator.get(item.clientName) || {
@@ -4550,7 +4550,7 @@ async function exportToExcel(data, filename = 'registros.xls') {
 
     const techniciansHeaderRowNumber = 5;
     const techniciansHeaders = [
-        'Tecnico / Usuario',
+        'Técnico / Usuario',
         'Total',
         'Clientes',
         'Marcas',
@@ -4558,7 +4558,7 @@ async function exportToExcel(data, filename = 'registros.xls') {
         'Incidencias activas',
         'Tiempo prom. registro (s)',
         'Tiempo prom. incidencias real (s)',
-        'Ultima fecha',
+        'Última fecha',
     ];
     const technicianSummaries = Array.from(details.reduce((accumulator, item) => {
         const key = item.technician || 'N/A';
@@ -4585,7 +4585,7 @@ async function exportToExcel(data, filename = 'registros.xls') {
         return accumulator;
     }, new Map()).values()).sort((a, b) => b.total - a.total || a.technician.localeCompare(b.technician));
     const techniciansRows = [
-        ['Resumen por tecnico'],
+        ['Resumen por técnico'],
         [`Generado el ${generatedAt.toLocaleString('es-ES')}`],
         [filterSummary],
         [],
@@ -4718,7 +4718,7 @@ async function exportToExcel(data, filename = 'registros.xls') {
     XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumen');
     XLSX.utils.book_append_sheet(workbook, detailSheet, 'Registros');
     XLSX.utils.book_append_sheet(workbook, clientsSheet, 'Por cliente');
-    XLSX.utils.book_append_sheet(workbook, techniciansSheet, 'Por tecnico');
+    XLSX.utils.book_append_sheet(workbook, techniciansSheet, 'Por técnico');
     XLSX.writeFile(workbook, normalizedFilename, {
         bookType: 'xlsx',
         compression: true,
@@ -4942,7 +4942,7 @@ function setupAdvancedFilters() {
         utilityActions.className = 'records-utility-actions';
 
         const utilitySummary = document.createElement('summary');
-        utilitySummary.textContent = 'Mas acciones';
+        utilitySummary.textContent = 'Más acciones';
 
         const utilityList = document.createElement('div');
         utilityList.className = 'records-utility-actions-list';
@@ -5038,7 +5038,7 @@ async function loadInstallations() {
         container.replaceChildren();
         renderContextualEmptyState(container, {
             title: 'No se pudieron cargar los registros',
-            description: 'Verifica tu conexiÃ³n y vuelve a intentar.',
+            description: 'Verifica tu conexión y vuelve a intentar.',
             actionLabel: 'Reintentar',
             onAction: () => loadInstallations(),
             tone: 'warning',
@@ -5189,7 +5189,7 @@ function renderInstallationsTable(installations) {
     const table = document.createElement('table');
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['ID', 'Cliente', 'Marca', 'AtenciÃ³n', 'Tiempo', 'Notas', 'Fecha', 'Acciones'].forEach(label => {
+    ['ID', 'Cliente', 'Marca', 'Atención', 'Tiempo', 'Notas', 'Fecha', 'Acciones'].forEach(label => {
         const th = document.createElement('th');
         th.textContent = label;
         headerRow.appendChild(th);
@@ -5231,7 +5231,7 @@ function renderInstallationsTable(installations) {
         brandCell.appendChild(buildInstallationTextStack(inst.driver_brand || 'N/A'));
 
         const attentionCell = document.createElement('td');
-        attentionCell.dataset.label = 'AtenciÃ³n';
+        attentionCell.dataset.label = 'Atención';
         attentionCell.className = 'installation-record-cell installation-record-attention';
         const attentionBadge = document.createElement('span');
         const attentionMeta = buildRecordAttentionBadge(inst);
@@ -5527,7 +5527,7 @@ function readAssetFormData() {
     const clientInput = document.getElementById('qrAssetClientInput');
     const notesInput = document.getElementById('qrAssetNotesInput');
     if (!codeInput || !brandInput || !modelInput || !serialInput || !clientInput || !notesInput) {
-        throw new Error('Formulario QR incompleto. Recarga la pagina.');
+        throw new Error('Formulario QR incompleto. Recarga la página.');
     }
 
     const brand = normalizeAssetFormText(brandInput.value, QR_MAX_BRAND_LENGTH);
@@ -5540,14 +5540,14 @@ function readAssetFormData() {
         throw new Error('Debes ingresar al menos marca o modelo.');
     }
     if (!serialNumber) {
-        throw new Error('El numero de serie es obligatorio para la etiqueta.');
+        throw new Error('El número de serie es obligatorio para la etiqueta.');
     }
 
     const explicitCode = normalizeAssetCodeForQr(codeInput.value);
     const fallbackCode = normalizeAssetCodeForQr(serialNumber);
     const externalCode = explicitCode || fallbackCode;
     if (!externalCode) {
-        throw new Error('No se pudo construir un codigo externo de equipo.');
+        throw new Error('No se pudo construir un código externo de equipo.');
     }
 
     return {
@@ -5571,12 +5571,12 @@ function getQrLabelPresetConfig() {
 
 function formatQrDetailsText(qrType, rawValue, assetData = null) {
     if (qrType === 'installation') {
-        return `Tipo: InstalaciÃ³n\nID: ${String(rawValue || '').trim()}`;
+        return `Tipo: Instalación\nID: ${String(rawValue || '').trim()}`;
     }
     const details = assetData || {};
     return [
         'Tipo: Equipo',
-        `CÃ³digo externo: ${details.external_code || '-'}`,
+        `Código externo: ${details.external_code || '-'}`,
         `Marca: ${details.brand || '-'}`,
         `Modelo: ${details.model || '-'}`,
         `Serie: ${details.serial_number || '-'}`,
@@ -5634,7 +5634,7 @@ function buildQrPayload(qrType, rawValue, assetData = null) {
     if (qrType === 'installation') {
         const installationId = Number.parseInt(String(rawValue || '').trim(), 10);
         if (!Number.isInteger(installationId) || installationId <= 0) {
-            throw new Error('El ID de instalacion debe ser un entero positivo.');
+        throw new Error('El ID de instalación debe ser un entero positivo.');
         }
         return `dm://installation/${encodeURIComponent(String(installationId))}`;
     }
@@ -5667,7 +5667,7 @@ function buildQrPayload(qrType, rawValue, assetData = null) {
 function buildQrImageUrl(payload) {
     const qrEngine = window.DMQR;
     if (!qrEngine || typeof qrEngine.createPngDataUrl !== 'function') {
-        throw new Error('Motor QR no disponible. Recarga la pagina.');
+        throw new Error('Motor QR no disponible. Recarga la página.');
     }
     return qrEngine.createPngDataUrl(payload, {
         sizePx: QR_PREVIEW_SIZE_PX,
@@ -5756,7 +5756,7 @@ function generateQrPreview(options = {}) {
 async function saveAssetFromQrModal(options = {}) {
     if (!requireActiveSession()) return;
     if (qrModalReadOnly && !qrModalEditUnlocked) {
-        setQrError('Modo solo lectura. Habilita ediciÃ³n y confirma tu contraseÃ±a para guardar cambios.');
+        setQrError('Modo solo lectura. Habilita edición y confirma tu contraseña para guardar cambios.');
         return;
     }
     const generateAfterSave = Boolean(options.generateAfterSave);
@@ -5945,7 +5945,7 @@ async function downloadQrImage() {
                 labelPreset
             );
         } catch (_error) {
-            // fallback: mantener download de QR simple si falla composiciÃ³n de etiqueta
+            // fallback: mantener download de QR simple si falla composición de etiqueta
         }
     }
 
@@ -6049,7 +6049,7 @@ function renderAuditLogs(logs) {
 
 function getCurrentShiftLabel(now = new Date()) {
     const hour = now.getHours();
-    if (hour >= 6 && hour < 12) return 'Turno maÃ±ana';
+    if (hour >= 6 && hour < 12) return 'Turno mañana';
     if (hour >= 12 && hour < 18) return 'Turno tarde';
     return 'Turno noche';
 }
@@ -6071,7 +6071,7 @@ function updatePageSubtitleForSection(section) {
     if (!subtitleEl) return;
     const normalizedSection = SECTION_SUBTITLES[section] ? section : 'dashboard';
     const subtitle = SECTION_SUBTITLES[normalizedSection];
-    subtitleEl.textContent = `${subtitle} Â· ${getCurrentShiftLabel()}`;
+    subtitleEl.textContent = `${subtitle} · ${getCurrentShiftLabel()}`;
 }
 
 function buildOpsPulseText(status, section) {
@@ -6082,9 +6082,9 @@ function buildOpsPulseText(status, section) {
 
     if (normalizedStatus === 'connected') return `${sectionLabel} en vivo`;
     if (normalizedStatus === 'reconnecting') return `Reconectando ${sectionLabel}`;
-    if (normalizedStatus === 'disconnected') return 'ConexiÃ³n interrumpida';
+    if (normalizedStatus === 'disconnected') return 'Conexión interrumpida';
     if (normalizedStatus === 'failed') return 'Sin enlace en tiempo real';
-    return 'SincronizaciÃ³n en pausa';
+    return 'Sincronización en pausa';
 }
 
 function syncHeaderDelight(section, explicitStatus = null) {
@@ -6155,7 +6155,7 @@ function resolveHeaderPrimaryActionConfig(section) {
         return { icon: 'refresh', label: 'Actualizar incidencias', action: 'refreshIncidents' };
     }
     if (normalizedSection === 'settings' && !canCurrentUserAccessAudit()) {
-        return { icon: 'logout', label: 'Cerrar sesiÃ³n', action: 'logout' };
+        return { icon: 'logout', label: 'Cerrar sesión', action: 'logout' };
     }
     return HEADER_PRIMARY_ACTIONS[normalizedSection] || HEADER_PRIMARY_ACTIONS.dashboard;
 }
@@ -6200,7 +6200,7 @@ function executeHeaderPrimaryAction(actionKey) {
             return;
         case 'refreshAudit':
             if (!canCurrentUserAccessAudit()) {
-                showNotification('No tienes permisos para acceder a AuditorÃ­a.', 'error');
+                showNotification('No tienes permisos para acceder a Auditoría.', 'error');
                 return;
             }
             navigateToSectionByKey('audit');
@@ -6212,7 +6212,7 @@ function executeHeaderPrimaryAction(actionKey) {
             return;
         case 'openAudit':
             if (!canCurrentUserAccessAudit()) {
-                showNotification('No tienes permisos para acceder a AuditorÃ­a.', 'error');
+                showNotification('No tienes permisos para acceder a Auditoría.', 'error');
                 return;
             }
             navigateToSectionByKey('audit');
@@ -6375,7 +6375,7 @@ function validateSectionBindings(section, options = {}) {
     if (options.notify === true && !NOTIFIED_SECTION_BINDING_ERRORS.has(sectionKey)) {
         const sectionLabel = SECTION_TITLES[sectionKey] || sectionKey;
         showNotification(
-            `Detectamos un desajuste visual en ${sectionLabel}. Recarga la pÃ¡gina si falta informaciÃ³n.`,
+            `Detectamos un desajuste visual en ${sectionLabel}. Recarga la página si falta información.`,
             'warning',
         );
         NOTIFIED_SECTION_BINDING_ERRORS.add(sectionKey);
@@ -6452,7 +6452,7 @@ document.getElementById('notifBtn')?.addEventListener('click', () => {
     const badge = document.getElementById('notifBadge');
     const badgeCount = Number.parseInt(String(badge?.textContent || '0'), 10) || 0;
     if (badgeCount > 0) {
-        showNotification(`Tienes ${badgeCount} alertas para revisar en "AtenciÃ³n ahora".`, 'warning');
+        showNotification(`Tienes ${badgeCount} alertas para revisar en "Atención ahora".`, 'warning');
     } else {
         showNotification('No hay alertas pendientes.', 'info');
     }
@@ -6477,11 +6477,11 @@ document.querySelectorAll('.nav-links a').forEach(link => {
             return;
         }
         if (section === 'assets' && !canCurrentUserViewAssetCatalog()) {
-            showNotification('El catalogo global de equipos no esta disponible para tu rol.', 'error');
+            showNotification('El catálogo global de equipos no está disponible para tu rol.', 'error');
             return;
         }
         if (section === 'audit' && !canCurrentUserAccessAudit()) {
-            showNotification('No tienes permisos para acceder a AuditorÃ­a.', 'error');
+            showNotification('No tienes permisos para acceder a Auditoría.', 'error');
             return;
         }
         closeHeaderOverflowMenu();
@@ -6497,7 +6497,7 @@ document.querySelectorAll('.nav-links a').forEach(link => {
 document.getElementById('settingsOpenAuditBtn')?.addEventListener('click', () => {
     if (!requireActiveSession()) return;
     if (!canCurrentUserAccessAudit()) {
-        showNotification('No tienes permisos para acceder a AuditorÃ­a.', 'error');
+        showNotification('No tienes permisos para acceder a Auditoría.', 'error');
         return;
     }
     navigateToSectionByKey('audit');
@@ -6506,7 +6506,7 @@ document.getElementById('settingsOpenAuditBtn')?.addEventListener('click', () =>
 document.getElementById('settingsRefreshTechniciansBtn')?.addEventListener('click', () => {
     if (!requireActiveSession()) return;
     if (!canCurrentUserViewTechnicianCatalog()) {
-        showNotification('No tienes permisos para ver el catalogo de tecnicos.', 'error');
+        showNotification('No tienes permisos para ver el catálogo de técnicos.', 'error');
         return;
     }
     void loadTechniciansSection({ silent: false, refreshAssignments: true });
@@ -6515,7 +6515,7 @@ document.getElementById('settingsRefreshTechniciansBtn')?.addEventListener('clic
 document.getElementById('settingsCreateTechnicianBtn')?.addEventListener('click', () => {
     if (!requireActiveSession()) return;
     if (!canCurrentUserManageTechnicians()) {
-        showNotification('Solo admin o plataforma puede crear tecnicos.', 'error');
+        showNotification('Solo admin o plataforma puede crear técnicos.', 'error');
         return;
     }
     openTechnicianEditorModal(null);
@@ -6650,7 +6650,7 @@ document.getElementById('qrEnableEditBtn')?.addEventListener('click', () => {
     if (isQrEditSessionActive() && qrModalEditUnlocked) {
         applyQrModalAccessState();
         setQrError('');
-        showNotification('La ediciÃ³n ya estÃ¡ habilitada temporalmente.', 'info');
+        showNotification('La edición ya está habilitada temporalmente.', 'info');
         return;
     }
     openQrPasswordModal();

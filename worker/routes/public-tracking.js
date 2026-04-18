@@ -103,6 +103,16 @@ export function createPublicTrackingRouteHandlers({
     }
   }
 
+  function resolvePublicTrackingThemeFromRequest(request) {
+    try {
+      const url = new URL(request.url);
+      const normalizedTheme = String(url.searchParams.get("theme") || "").trim().toLowerCase();
+      if (normalizedTheme === "dark") return "dark";
+      if (normalizedTheme === "light") return "light";
+    } catch {}
+    return "";
+  }
+
   async function handlePublicTrackingWebRoute(
     request,
     env,
@@ -250,9 +260,10 @@ export function createPublicTrackingRouteHandlers({
 
     if (routeParts.length === 2 && request.method === "GET") {
       await enforcePublicTrackingRateLimit(env, requestIp, "view");
+      const theme = resolvePublicTrackingThemeFromRequest(request);
       try {
         await resolvePublicTrackingRequest(env, token);
-        return new Response(renderPublicTrackingHtml({ token }), {
+        return new Response(renderPublicTrackingHtml({ token, theme }), {
           status: 200,
           headers: {
             ...publicTrackingHeaders(),
@@ -263,6 +274,7 @@ export function createPublicTrackingRouteHandlers({
         return new Response(
           renderPublicTrackingHtml({
             token,
+            theme,
             documentTitle: "Enlace no disponible",
             eyebrow: "Acceso de seguimiento",
             connectionLabel: "Sin enlace",

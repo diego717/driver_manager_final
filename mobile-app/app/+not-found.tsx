@@ -1,6 +1,7 @@
 import { Link, Stack } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 
+import { radii, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -40,7 +41,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: 20,
+    padding: spacing.s20,
   },
   title: {
     fontSize: 20,
@@ -48,21 +49,21 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   subtitle: {
-    marginTop: 8,
+    marginTop: spacing.s8,
     fontSize: 14,
     fontFamily: fontFamilies.regular,
     textAlign: "center",
   },
   link: {
-    marginTop: 18,
+    marginTop: spacing.s18,
   },
   linkText: {
     fontSize: 14,
     fontFamily: fontFamilies.semibold,
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s14,
+    paddingVertical: spacing.s10,
     overflow: "hidden",
   },
 });

@@ -2,8 +2,9 @@ import React, { type ReactNode, useEffect, useRef } from "react";
 import { Animated, Easing, StyleSheet, Text, View } from "react-native";
 
 import { useReducedMotion } from "@/src/hooks/useReducedMotion";
+import { radii, shadows, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, typeScale } from "@/src/theme/typography";
 
 type SectionCardProps = {
   title: string;
@@ -75,50 +76,46 @@ const styles = StyleSheet.create({
   card: {
     position: "relative",
     borderWidth: 1,
-    borderRadius: 20,
-    padding: 17,
-    gap: 12,
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
+    borderRadius: radii.r14,
+    padding: spacing.s16,
+    gap: spacing.s12,
+    ...shadows.cardMedium,
     overflow: "hidden",
   },
   accentRail: {
     position: "absolute",
     left: 0,
-    top: 16,
-    bottom: 16,
+    top: spacing.s16,
+    bottom: spacing.s16,
     width: 2,
-    opacity: 0.9,
+    opacity: 0.72,
   },
   frameLine: {
     position: "absolute",
-    left: 14,
-    right: 14,
-    top: 10,
+    left: spacing.s14,
+    right: spacing.s14,
+    top: spacing.s10,
     borderTopWidth: 1,
-    opacity: 0.26,
+    borderStyle: "dashed",
+    opacity: 0.4,
   },
   header: {
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 12,
+    gap: spacing.s12,
   },
   headerText: {
     flex: 1,
-    gap: 4,
+    gap: spacing.s4,
   },
   title: {
     fontFamily: fontFamilies.display,
-    fontSize: 19,
-    lineHeight: 22,
-    letterSpacing: -0.1,
+    ...typeScale.sectionDisplay,
     textTransform: "uppercase",
   },
   description: {
-    fontFamily: fontFamilies.medium,
+    fontFamily: fontFamilies.regular,
     fontSize: 13,
     lineHeight: 18,
   },

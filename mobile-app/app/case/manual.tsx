@@ -5,11 +5,11 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 
 import { extractApiError } from "@/src/api/client";
+import ConsoleButton from "@/src/components/ConsoleButton";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import InlineFeedback from "@/src/components/InlineFeedback";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -22,11 +22,12 @@ import { enqueueCreateIncident } from "@/src/services/sync/incident-outbox-servi
 import { runSyncAsync } from "@/src/services/sync/sync-runner";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { getStoredWebAccessUsername } from "@/src/storage/secure";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, typeScale } from "@/src/theme/typography";
 import { type IncidentSeverity } from "@/src/types/api";
 
-const MIN_TOUCH_TARGET_SIZE = 44;
+const MIN_TOUCH_TARGET_SIZE = sizing.touchTargetMin;
 
 const SEVERITY_OPTIONS: Array<{
   value: IncidentSeverity;
@@ -250,17 +251,11 @@ export default function ManualCaseScreen() {
           {SEVERITY_OPTIONS.map((item) => {
             const selected = severity === item.value;
             return (
-              <TouchableOpacity
+              <ConsoleButton
                 key={item.value}
-                style={[
-                  styles.severityOption,
-                  {
-                    backgroundColor: selected ? palette.primaryButtonBg : palette.severityBg,
-                    borderColor: selected ? palette.primaryButtonBg : palette.severityBorder,
-                  },
-                ]}
+                variant={selected ? "primary" : "subtle"}
+                style={styles.severityOption}
                 onPress={() => setSeverity(item.value)}
-                accessibilityRole="button"
                 accessibilityLabel={`Seleccionar severidad ${item.label}`}
                 accessibilityState={{ selected }}
               >
@@ -268,7 +263,7 @@ export default function ManualCaseScreen() {
                   style={[
                     styles.severityLabel,
                     {
-                      color: selected ? palette.primaryButtonText : palette.textPrimary,
+                      color: selected ? palette.primaryButtonText : palette.severityLabel,
                     },
                   ]}
                 >
@@ -278,13 +273,13 @@ export default function ManualCaseScreen() {
                   style={[
                     styles.severityHelper,
                     {
-                      color: selected ? palette.primaryButtonText : palette.textSecondary,
+                      color: selected ? palette.primaryButtonText : palette.severityCriteria,
                     },
                   ]}
                 >
                   {item.helper}
                 </Text>
-              </TouchableOpacity>
+              </ConsoleButton>
             );
           })}
         </View>
@@ -300,28 +295,18 @@ export default function ManualCaseScreen() {
             body="La app esta llevando el flujo al siguiente paso."
           />
         ) : null}
-        <TouchableOpacity
-          style={[
-            styles.primaryButton,
-            { backgroundColor: palette.primaryButtonBg },
-            submitting && styles.disabled,
-          ]}
+        <ConsoleButton
+          variant="primary"
+          style={[styles.primaryButton, submitting && styles.disabled]}
           onPress={() => {
             void onSubmit();
           }}
-          disabled={submitting}
-          accessibilityRole="button"
+          loading={submitting}
           accessibilityLabel={submitLabel}
           accessibilityState={{ disabled: submitting, busy: submitting }}
-        >
-          {submitting ? (
-            <ActivityIndicator color={palette.primaryButtonText} />
-          ) : (
-            <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
-              {submitLabel}
-            </Text>
-          )}
-        </TouchableOpacity>
+          label={submitLabel}
+          textStyle={styles.primaryButtonText}
+        />
       </SectionCard>
     </ScreenScaffold>
   );
@@ -330,13 +315,13 @@ export default function ManualCaseScreen() {
 const styles = StyleSheet.create({
   centerContainer: {
     flex: 1,
-    padding: 22,
+    padding: spacing.s22,
     alignItems: "center",
     justifyContent: "center",
   },
   container: {
-    padding: 22,
-    gap: 12,
+    padding: spacing.s22,
+    gap: spacing.s12,
   },
   authHintText: {
     fontSize: 14,
@@ -344,50 +329,54 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.regular,
   },
   label: {
-    fontSize: 13.5,
-    fontFamily: fontFamilies.semibold,
+    ...typeScale.buttonMono,
+    fontFamily: fontFamilies.mono,
+    textTransform: "uppercase",
   },
   input: {
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
+    borderRadius: radii.r12,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s11,
+    fontFamily: inputFontFamily,
+    ...typeScale.body,
   },
   multilineInput: {
     minHeight: 104,
     textAlignVertical: "top",
   },
   severityList: {
-    gap: 8,
+    gap: spacing.s8,
   },
   severityOption: {
-    borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    gap: 4,
+    gap: spacing.s4,
+    alignItems: "flex-start",
   },
   severityLabel: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 13.5,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   severityHelper: {
     fontFamily: fontFamilies.regular,
-    fontSize: 12.5,
-    lineHeight: 18,
+    ...typeScale.bodyCompact,
   },
   primaryButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 16,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 13,
-    paddingHorizontal: 14,
+    paddingVertical: spacing.s13,
+    paddingHorizontal: spacing.s14,
   },
   primaryButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 15,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   disabled: {
     opacity: 0.72,

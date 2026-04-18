@@ -6,6 +6,7 @@ import QuickActionCard from "@/src/components/QuickActionCard";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import SectionCard from "@/src/components/SectionCard";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -260,14 +261,14 @@ export default function QrHubScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 20,
-    gap: 12,
+    padding: spacing.s20,
+    gap: spacing.s12,
   },
   heroBadge: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s7,
   },
   heroBadgeText: {
     fontFamily: fontFamilies.bold,
@@ -276,13 +277,13 @@ const styles = StyleSheet.create({
   },
   modeRow: {
     flexDirection: "row",
-    gap: 10,
+    gap: spacing.s10,
   },
   modeButton: {
     flex: 1,
-    minHeight: 44,
+    minHeight: sizing.touchTargetMin,
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: radii.r14,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -298,8 +299,8 @@ const styles = StyleSheet.create({
   launchDeck: {
     borderWidth: 1,
     borderRadius: 24,
-    padding: 16,
-    gap: 12,
+    padding: spacing.s16,
+    gap: spacing.s12,
     shadowOpacity: 0.12,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 12 },
@@ -317,31 +318,31 @@ const styles = StyleSheet.create({
     lineHeight: 25,
   },
   primaryButton: {
-    minHeight: 44,
-    borderRadius: 14,
+    minHeight: sizing.touchTargetMin,
+    borderRadius: radii.r14,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
+    paddingVertical: spacing.s12,
   },
   launchPrimaryButton: {
     minHeight: 52,
-    borderRadius: 18,
+    borderRadius: radii.r18,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
+    paddingVertical: spacing.s12,
   },
   launchUtilityRow: {
     flexDirection: "row",
-    gap: 10,
+    gap: spacing.s10,
   },
   launchSecondaryButton: {
     flex: 1,
-    minHeight: 44,
-    borderRadius: 16,
+    minHeight: sizing.touchTargetMin,
+    borderRadius: radii.r16,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 10,
+    paddingHorizontal: spacing.s10,
   },
   launchSecondaryText: {
     fontFamily: fontFamilies.bold,
@@ -352,19 +353,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   flowSteps: {
-    gap: 10,
+    gap: spacing.s10,
   },
   flowStep: {
     flexDirection: "row",
-    gap: 12,
+    gap: spacing.s12,
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 12,
+    borderRadius: radii.r18,
+    padding: spacing.s12,
   },
   flowBadge: {
     width: 34,
     height: 34,
-    borderRadius: 999,
+    borderRadius: radii.full,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
@@ -375,7 +376,7 @@ const styles = StyleSheet.create({
   },
   flowText: {
     flex: 1,
-    gap: 2,
+    gap: spacing.s2,
   },
   flowTitle: {
     fontFamily: fontFamilies.bold,
@@ -389,6 +390,6 @@ const styles = StyleSheet.create({
   quickActionGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: spacing.s10,
   },
 });

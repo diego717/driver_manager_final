@@ -1,8 +1,9 @@
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 
+import { radii, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, typeScale } from "@/src/theme/typography";
 
 type RuntimeChipProps = {
   label: string;
@@ -22,22 +23,24 @@ export default function RuntimeChip({ label, value }: RuntimeChipProps) {
 const styles = StyleSheet.create({
   chip: {
     borderWidth: 1,
-    borderRadius: 16,
-    paddingHorizontal: 12,
+    borderRadius: radii.r12,
+    borderStyle: "dashed",
+    paddingHorizontal: spacing.s12,
     minHeight: 56,
-    paddingVertical: 8,
+    paddingVertical: spacing.s8,
     justifyContent: "center",
-    gap: 2,
+    gap: spacing.s2,
     minWidth: 112,
   },
   label: {
-    fontFamily: fontFamilies.regular,
-    fontSize: 11.5,
-    lineHeight: 14,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    letterSpacing: 0.75,
+    textTransform: "uppercase",
   },
   value: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 13,
-    lineHeight: 16,
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.bodyCompact,
+    fontSize: 14,
   },
 });

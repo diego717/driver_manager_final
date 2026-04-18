@@ -1,6 +1,7 @@
 import React, { type ReactNode } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -63,12 +64,12 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: "47%",
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 14,
-    gap: 10,
+    borderRadius: radii.r18,
+    padding: spacing.s14,
+    gap: spacing.s10,
   },
   header: {
-    gap: 8,
+    gap: spacing.s8,
   },
   iconWrap: {
     minHeight: 18,
@@ -84,8 +85,8 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   button: {
-    minHeight: 44,
-    borderRadius: 14,
+    minHeight: sizing.touchTargetMin,
+    borderRadius: radii.r14,
     alignItems: "center",
     justifyContent: "center",
     alignSelf: "flex-start",

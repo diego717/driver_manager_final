@@ -7,7 +7,6 @@ import {
   Switch,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 import Svg, { Path, Rect } from "react-native-svg";
@@ -17,6 +16,7 @@ import { extractApiError } from "@/src/api/client";
 import { getAssetIncidents, type AssetIncidentsResponse } from "@/src/api/assets";
 import { listInstallations } from "@/src/api/incidents";
 import { getCurrentLinkedTechnicianContext } from "@/src/api/technicians";
+import ConsoleButton from "@/src/components/ConsoleButton";
 import InlineFeedback from "@/src/components/InlineFeedback";
 import SignatureCanvas, {
   SIGNATURE_STROKE_WIDTH,
@@ -37,8 +37,9 @@ import { fitSignaturePathsToViewBox } from "@/src/features/conformity/signature-
 import { triggerSuccessHaptic, triggerWarningHaptic } from "@/src/services/haptics";
 import { captureCurrentGpsSnapshot } from "@/src/services/location";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, textInputAccentColor, typeScale } from "@/src/theme/typography";
 import {
   type GpsCapturePayload,
   type InstallationConformity,
@@ -51,7 +52,7 @@ import {
 } from "@/src/utils/gps";
 import { formatDateTime } from "@/src/utils/incidents";
 
-const MIN_TOUCH_TARGET_SIZE = 44;
+const MIN_TOUCH_TARGET_SIZE = sizing.touchTargetMin;
 const SIGNATURE_CANVAS_HEIGHT = 220;
 const SIGNATURE_PREVIEW_HEIGHT = 180;
 const SIGNATURE_EXPORT_DELAY_MS = 90;
@@ -517,26 +518,19 @@ export default function CaseConformityScreen() {
         title="GPS"
         description="El cierre intenta registrar tu ubicacion actual como respaldo operativo."
         aside={
-          <TouchableOpacity
-            style={[
-              styles.clearButton,
-              { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-              capturingGps && styles.disabled,
-            ]}
+          <ConsoleButton
+            variant="ghost"
+            size="sm"
+            style={[styles.clearButton, capturingGps && styles.disabled]}
             onPress={() => {
               void captureGps();
             }}
-            disabled={capturingGps}
-            accessibilityRole="button"
+            loading={capturingGps}
             accessibilityLabel="Recapturar ubicacion actual"
             accessibilityState={{ disabled: capturingGps, busy: capturingGps }}
-          >
-            {capturingGps ? (
-              <ActivityIndicator size="small" color={palette.refreshText} />
-            ) : (
-              <Text style={[styles.clearButtonText, { color: palette.refreshText }]}>Recapturar</Text>
-            )}
-          </TouchableOpacity>
+            label="Recapturar"
+            textStyle={styles.clearButtonText}
+          />
         }
       >
         <View
@@ -710,28 +704,24 @@ export default function CaseConformityScreen() {
         description="Abre una vista dedicada para firmar mas comodo. La pantalla de firma se presenta en horizontal y vuelve al flujo al guardar."
         aside={
           <View style={styles.signatureActions}>
-            <TouchableOpacity
-              style={[
-                styles.clearButton,
-                { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-              ]}
+            <ConsoleButton
+              variant="ghost"
+              size="sm"
+              style={styles.clearButton}
               onPress={clearSignature}
-              accessibilityRole="button"
               accessibilityLabel="Limpiar firma"
-            >
-              <Text style={[styles.clearButtonText, { color: palette.refreshText }]}>Limpiar</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.clearButton,
-                { backgroundColor: palette.primaryButtonBg, borderColor: palette.primaryButtonBg },
-              ]}
+              label="Limpiar"
+              textStyle={styles.clearButtonText}
+            />
+            <ConsoleButton
+              variant="primary"
+              size="sm"
+              style={styles.clearButton}
               onPress={openSignatureWorkspace}
-              accessibilityRole="button"
               accessibilityLabel="Abrir espacio de firma"
-            >
-              <Text style={[styles.clearButtonText, { color: palette.primaryButtonText }]}>Abrir firma</Text>
-            </TouchableOpacity>
+              label="Abrir firma"
+              textStyle={styles.clearButtonText}
+            />
           </View>
         }
       >
@@ -782,41 +772,26 @@ export default function CaseConformityScreen() {
       </View>
 
       <View style={styles.actionColumn}>
-        <TouchableOpacity
-          style={[
-            styles.primaryButton,
-            { backgroundColor: palette.primaryButtonBg },
-            submitting && styles.disabled,
-          ]}
+        <ConsoleButton
+          variant="primary"
+          style={[styles.primaryButton, submitting && styles.disabled]}
           onPress={() => {
             void onSubmit();
           }}
-          disabled={submitting}
-          accessibilityRole="button"
+          loading={submitting}
           accessibilityLabel="Generar conformidad"
           accessibilityState={{ disabled: submitting, busy: submitting }}
-        >
-          {submitting ? (
-            <ActivityIndicator color={palette.primaryButtonText} />
-          ) : (
-            <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
-              Generar PDF de conformidad
-            </Text>
-          )}
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.secondaryButton,
-            { backgroundColor: palette.secondaryButtonBg, borderColor: palette.inputBorder },
-          ]}
+          label="Generar PDF de conformidad"
+          textStyle={styles.primaryButtonText}
+        />
+        <ConsoleButton
+          variant="subtle"
+          style={styles.secondaryButton}
           onPress={() => router.back()}
-          accessibilityRole="button"
           accessibilityLabel="Volver al caso"
-        >
-          <Text style={[styles.secondaryButtonText, { color: palette.secondaryButtonText }]}>
-            Volver al caso
-          </Text>
-        </TouchableOpacity>
+          label="Volver al caso"
+          textStyle={styles.secondaryButtonText}
+        />
       </View>
     </ScreenScaffold>
   );
@@ -825,13 +800,13 @@ export default function CaseConformityScreen() {
 const styles = StyleSheet.create({
   centerContainer: {
     flex: 1,
-    padding: 22,
+    padding: spacing.s22,
     alignItems: "center",
     justifyContent: "center",
   },
   container: {
-    padding: 22,
-    gap: 12,
+    padding: spacing.s22,
+    gap: spacing.s12,
   },
   stateText: {
     fontSize: 14,
@@ -840,99 +815,91 @@ const styles = StyleSheet.create({
   },
   heroBadge: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s7,
   },
   heroBadgeText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 11.5,
-    letterSpacing: 0.3,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
   },
   heroSupport: {
-    fontSize: 13,
-    lineHeight: 18,
     fontFamily: fontFamilies.regular,
+    ...typeScale.bodyCompact,
   },
   loadingRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: spacing.s8,
     minHeight: 68,
   },
   contextGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: spacing.s10,
   },
   metricCard: {
     flexGrow: 1,
     minWidth: 140,
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 14,
-    gap: 4,
+    borderRadius: radii.r14,
+    padding: spacing.s14,
+    gap: spacing.s4,
   },
   metricLabel: {
-    fontSize: 11.5,
-    lineHeight: 15,
+    ...typeScale.buttonMonoTight,
     textTransform: "uppercase",
     letterSpacing: 0.6,
-    fontFamily: fontFamilies.semibold,
+    fontFamily: fontFamilies.mono,
   },
   metricValue: {
-    fontSize: 15,
-    lineHeight: 20,
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.body,
   },
   lastConformityCard: {
-    gap: 4,
+    gap: spacing.s4,
   },
   lastConformityTitle: {
-    fontSize: 16,
-    lineHeight: 21,
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.titleStrong,
   },
   lastConformityMeta: {
-    fontSize: 13,
-    lineHeight: 18,
     fontFamily: fontFamilies.regular,
+    ...typeScale.bodyCompact,
   },
   gpsCard: {
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 14,
-    gap: 6,
+    borderRadius: radii.r14,
+    padding: spacing.s14,
+    gap: spacing.s6,
   },
   gpsTitle: {
-    fontSize: 15,
-    lineHeight: 20,
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.body,
   },
   gpsBody: {
-    fontSize: 13,
-    lineHeight: 18,
     fontFamily: fontFamilies.regular,
+    ...typeScale.bodyCompact,
   },
   gpsFootnote: {
-    fontSize: 12.5,
-    lineHeight: 17,
     fontFamily: fontFamilies.medium,
+    ...typeScale.bodyCompact,
   },
   label: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: fontFamilies.semibold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   input: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
     borderWidth: 1,
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 14,
-    lineHeight: 19,
+    borderRadius: radii.r12,
+    paddingHorizontal: spacing.s14,
+    paddingVertical: spacing.s12,
     fontFamily: inputFontFamily,
+    ...typeScale.body,
   },
   multilineInput: {
     minHeight: 110,
@@ -940,26 +907,25 @@ const styles = StyleSheet.create({
   },
   clearButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 14,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s14,
     alignItems: "center",
     justifyContent: "center",
   },
   clearButtonText: {
-    fontSize: 12.5,
-    fontFamily: fontFamilies.semibold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   signatureActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: spacing.s8,
   },
   signatureCaption: {
-    marginTop: 10,
-    fontSize: 12.5,
-    lineHeight: 17,
+    marginTop: spacing.s10,
     fontFamily: fontFamilies.regular,
+    ...typeScale.bodyCompact,
   },
   hiddenSignatureExport: {
     position: "absolute",
@@ -967,55 +933,54 @@ const styles = StyleSheet.create({
     pointerEvents: "none",
   },
   actionColumn: {
-    gap: 10,
-    paddingBottom: 12,
+    gap: spacing.s10,
+    paddingBottom: spacing.s12,
   },
   switchRow: {
-    marginTop: 6,
+    marginTop: spacing.s6,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
+    gap: spacing.s12,
   },
   switchLabelWrap: {
     flex: 1,
-    gap: 3,
+    gap: spacing.s3,
   },
   switchTitle: {
-    fontSize: 13.5,
-    lineHeight: 18,
     fontFamily: fontFamilies.semibold,
+    ...typeScale.body,
   },
   switchDescription: {
-    fontSize: 12.5,
-    lineHeight: 17,
     fontFamily: fontFamilies.regular,
+    ...typeScale.bodyCompact,
   },
   primaryButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 18,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingVertical: spacing.s14,
+    paddingHorizontal: spacing.s16,
   },
   primaryButtonText: {
-    fontSize: 14,
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   secondaryButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderWidth: 1,
-    borderRadius: 18,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingVertical: spacing.s12,
+    paddingHorizontal: spacing.s16,
   },
   secondaryButtonText: {
-    fontSize: 14,
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   disabled: {
     opacity: 0.7,

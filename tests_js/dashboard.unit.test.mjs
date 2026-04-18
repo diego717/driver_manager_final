@@ -140,6 +140,75 @@ test("public tracking page polls automatically while visible and pauses when hid
   dom.window.close();
 });
 
+test("public tracking theme toggle updates theme and URL without full reload", async () => {
+  const dom = new JSDOM(
+    `<!doctype html>
+    <html data-theme="light">
+      <body data-tracking-token="token-publico">
+        <h1 id="publicTrackingTitle"></h1>
+        <div id="publicTrackingSummary" hidden>
+          <span id="publicTrackingStatusBadge"></span>
+          <span id="publicTrackingTransition"></span>
+          <p id="publicTrackingSummaryText"></p>
+        </div>
+        <p id="publicTrackingMessage"></p>
+        <div id="publicTrackingMeta"></div>
+        <section id="publicTrackingTimeline"></section>
+        <a id="publicTrackingThemeToggleBtn" href="/track/token-publico?theme=dark" data-target-theme="dark">Usar modo oscuro</a>
+        <button id="publicTrackingRefreshBtn" type="button">Actualizar</button>
+      </body>
+    </html>`,
+    {
+      url: "http://localhost:8787/track/token-publico?theme=light",
+      runScripts: "outside-only",
+    },
+  );
+  const { window } = dom;
+
+  window.fetch = async () => ({
+    ok: true,
+    async json() {
+      return {
+        success: true,
+        tracking: {
+          installation_id: 45,
+          public_reference: "Servicio QA",
+          public_status: "pendiente",
+          public_status_label: "Pendiente de atencion",
+          public_transition_label: "",
+          public_message: "Seguimiento disponible.",
+          last_updated_at: "2026-03-26T12:00:00.000Z",
+          milestones: [],
+        },
+      };
+    },
+  });
+  Object.defineProperty(window, "EventSource", {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+
+  const script = new vm.Script(readPublicTextAsset("public-tracking.js"), {
+    filename: "public/public-tracking.js",
+  });
+  script.runInContext(dom.getInternalVMContext());
+
+  window.dispatchEvent(new window.Event("DOMContentLoaded"));
+  await flushDashboardTasks();
+  await flushDashboardTasks();
+
+  const toggle = window.document.getElementById("publicTrackingThemeToggleBtn");
+  assert.ok(toggle instanceof window.HTMLAnchorElement);
+  toggle.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await flushDashboardTasks();
+
+  assert.equal(window.document.documentElement.dataset.theme, "dark");
+  assert.match(window.location.search, /theme=dark/);
+
+  dom.window.close();
+});
+
 test("dashboard html defers heavy chart and jsqr libraries until needed", () => {
   const html = readPublicTextAsset("dashboard.html");
   assert.equal(html.includes('/chart.umd.js'), false);
@@ -208,8 +277,8 @@ test("excel export builds a styled xlsx workbook with extra sheets and date-awar
     },
   ]);
 
-  assert.equal(appendedSheets.length, 3);
-  assert.deepEqual(appendedSheets.map((item) => item.name), ["Resumen", "Registros", "Por cliente"]);
+  assert.equal(appendedSheets.length, 4);
+  assert.deepEqual(appendedSheets.map((item) => item.name), ["Resumen", "Registros", "Por cliente", "Por técnico"]);
   assert.equal(writtenFiles.length, 1);
   assert.equal(writtenFiles[0].filename, "registros_2026-03-01_a_2026-03-27.xlsx");
   assert.equal(writtenFiles[0].options.bookType, "xlsx");
@@ -260,7 +329,7 @@ test("dashboard bootstrap shows login and masks protected panels without session
   const { document } = window;
 
   assert.ok(document.getElementById("loginModal").classList.contains("active"));
-  assert.match(document.getElementById("recentInstallations").textContent, /Inicia sesi/i);
+  assert.match(document.getElementById("recentInstallations").textContent, /Sin registros recientes por ahora/i);
 });
 
 test("dashboard login flow authenticates and renders user context from live public assets", async () => {
@@ -1370,7 +1439,7 @@ test("dashboard logout returns UI to protected-empty state and reopens login", a
   const logoutCallsAfter = router.calls.filter((call) => call.pathname === "/web/auth/logout").length;
   assert.equal(logoutCallsAfter, logoutCallsBefore + 1);
   assert.ok(document.getElementById("loginModal").classList.contains("active"));
-  assert.match(document.getElementById("recentInstallations").textContent, /Inicia sesi/i);
+  assert.match(document.getElementById("recentInstallations").textContent, /Sin registros recientes por ahora/i);
 });
 
 test("navigating to drivers loads data and updates the active section using served assets", async () => {
@@ -3352,7 +3421,7 @@ test("incidents view shows assigned technician and can filter cards by technicia
 
   const cards = Array.from(document.querySelectorAll("#incidentsList .incident-card"));
   assert.equal(cards.length, 2);
-  assert.match(cards[0].textContent || "", /Tecnico asignado:\s*Luis Rivera/i);
+  assert.match(cards[0].textContent || "", /Técnico asignado:\s*Luis Rivera/i);
 
   const filterSelect = document.getElementById("incidentsTechnicianFilter");
   assert.ok(filterSelect instanceof window.HTMLSelectElement);
@@ -3706,7 +3775,7 @@ test("conformity button stays disabled when there is no approved budget", async 
   const conformityButton = document.querySelector('[data-role="conformity-trigger"]');
   assert.ok(conformityButton instanceof window.HTMLButtonElement);
   assert.equal(conformityButton.disabled, true);
-  assert.match(conformityButton.title || "", /aprobar el ultimo presupuesto/i);
+  assert.match(conformityButton.title || "", /aprobar el último presupuesto/i);
 });
 
 test("conformity allows closing without approved budget when commercial coverage does not require it", async () => {
@@ -4303,7 +4372,7 @@ test("incident photo upload rejects batches over 20MB before sending requests", 
   await flushDashboardTasks();
 
   assert.deepEqual(uploadedFileNames, []);
-  assert.match(document.body.textContent, /supera el maximo de 20\.0MB por tanda/i);
+  assert.match(document.body.textContent, /supera el máximo de 20\.0MB por tanda/i);
 });
 
 test("incident map lets admin set operational target directly from the map", async () => {

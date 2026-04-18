@@ -13,6 +13,7 @@ import { extractApiError } from "@/src/api/client";
 import { loginWebSession } from "@/src/api/webAuth";
 import { refreshSharedWebSessionState } from "@/src/session/web-session-store";
 import { getStoredWebAccessUsername } from "@/src/storage/secure";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
 
@@ -34,8 +35,7 @@ export default function WebInlineLoginCard(props: WebInlineLoginCardProps) {
   const [feedback, setFeedback] = useState("");
   const [focusedField, setFocusedField] = useState<"username" | "password" | null>(null);
   const successFeedback = feedback.toLowerCase().includes("sesion iniciada");
-  const focusRingColor =
-    palette.accent === "#4fd2c2" ? "rgba(79, 210, 194, 0.22)" : "rgba(15, 139, 132, 0.18)";
+  const focusRingColor = palette.navActiveBg;
 
   useEffect(() => {
     let mounted = true;
@@ -281,30 +281,30 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     borderWidth: 1,
     borderRadius: 24,
-    paddingHorizontal: 18,
-    paddingVertical: 18,
-    gap: 12,
+    paddingHorizontal: spacing.s18,
+    paddingVertical: spacing.s18,
+    gap: spacing.s12,
   },
   cardCompact: {
     borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    gap: 10,
+    paddingHorizontal: spacing.s14,
+    paddingVertical: spacing.s14,
+    gap: spacing.s10,
   },
   header: {
     alignItems: "center",
-    gap: 4,
-    marginBottom: 2,
+    gap: spacing.s4,
+    marginBottom: spacing.s2,
   },
   headerCompact: {
-    gap: 3,
+    gap: spacing.s3,
     marginBottom: 0,
   },
   brandPill: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s6,
   },
   brand: {
     fontFamily: fontFamilies.bold,
@@ -337,7 +337,7 @@ const styles = StyleSheet.create({
     lineHeight: 16.5,
   },
   inputGroup: {
-    gap: 6,
+    gap: spacing.s6,
   },
   label: {
     fontSize: 12.5,
@@ -347,26 +347,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   input: {
-    minHeight: 46,
+    minHeight: sizing.touchTargetMin + spacing.s2,
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: radii.r12,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
     fontSize: 14,
     fontFamily: inputFontFamily,
   },
   inputCompact: {
-    minHeight: 44,
-    borderRadius: 11,
-    paddingHorizontal: 11,
-    paddingVertical: 9,
+    minHeight: sizing.touchTargetMin,
+    borderRadius: radii.r11,
+    paddingHorizontal: spacing.s11,
+    paddingVertical: spacing.s9,
     fontSize: 13.5,
   },
   feedbackBox: {
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: radii.r14,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
   },
   feedback: {
     fontSize: 12,
@@ -379,25 +379,25 @@ const styles = StyleSheet.create({
   },
   actionsRow: {
     flexDirection: "row",
-    gap: 10,
-    marginTop: 2,
+    gap: spacing.s10,
+    marginTop: spacing.s2,
   },
   actionsRowCompact: {
     flexDirection: "column",
-    gap: 8,
+    gap: spacing.s8,
   },
   primaryButton: {
     flex: 1,
-    borderRadius: 14,
-    minHeight: 48,
+    borderRadius: radii.r14,
+    minHeight: sizing.touchTargetMin + spacing.s4,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
+    paddingVertical: spacing.s12,
   },
   buttonCompact: {
-    minHeight: 44,
-    borderRadius: 12,
-    paddingVertical: 10,
+    minHeight: sizing.touchTargetMin,
+    borderRadius: radii.r12,
+    paddingVertical: spacing.s10,
   },
   primaryButtonText: {
     fontFamily: fontFamilies.bold,
@@ -408,12 +408,12 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     flex: 1,
-    borderRadius: 14,
+    borderRadius: radii.r14,
     borderWidth: 1,
-    minHeight: 48,
+    minHeight: sizing.touchTargetMin + spacing.s4,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
+    paddingVertical: spacing.s12,
   },
   secondaryButtonText: {
     fontFamily: fontFamilies.semibold,

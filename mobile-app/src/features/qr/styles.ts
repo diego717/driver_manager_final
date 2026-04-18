@@ -1,5 +1,6 @@
 import { StyleSheet } from "react-native";
 
+import { radii, spacing } from "@/src/theme/layout";
 import { fontFamilies } from "@/src/theme/typography";
 
 import { MIN_TOUCH_TARGET_SIZE } from "./shared";
@@ -7,7 +8,7 @@ import { MIN_TOUCH_TARGET_SIZE } from "./shared";
 export const styles = StyleSheet.create({
   centerContainer: {
     flex: 1,
-    padding: 20,
+    padding: spacing.s20,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -16,15 +17,15 @@ export const styles = StyleSheet.create({
     fontFamily: fontFamilies.regular,
   },
   contentContainer: {
-    padding: 20,
-    gap: 12,
+    padding: spacing.s20,
+    gap: spacing.s12,
     paddingBottom: 40,
   },
   heroBadge: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s7,
   },
   heroBadgeText: {
     fontFamily: fontFamilies.bold,
@@ -34,13 +35,13 @@ export const styles = StyleSheet.create({
   heroMetaRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
   },
   heroMetaChip: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s7,
   },
   heroMetaText: {
     fontFamily: fontFamilies.semibold,
@@ -48,16 +49,16 @@ export const styles = StyleSheet.create({
   },
   modeHint: {
     marginTop: -2,
-    marginBottom: 2,
+    marginBottom: spacing.s2,
     fontSize: 12,
     fontFamily: fontFamilies.regular,
   },
   formCard: {
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 8,
+    borderRadius: radii.r14,
+    paddingHorizontal: spacing.s14,
+    paddingVertical: spacing.s12,
+    gap: spacing.s8,
   },
   sectionTitle: {
     fontSize: 15,
@@ -65,16 +66,16 @@ export const styles = StyleSheet.create({
   },
   typeRow: {
     flexDirection: "row",
-    gap: 8,
+    gap: spacing.s8,
   },
   presetRow: {
     flexDirection: "row",
-    gap: 8,
+    gap: spacing.s8,
   },
   typeButton: {
     flex: 1,
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: radii.r10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
@@ -86,7 +87,7 @@ export const styles = StyleSheet.create({
   presetButton: {
     flex: 1,
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: radii.r10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
@@ -98,24 +99,24 @@ export const styles = StyleSheet.create({
   label: {
     fontSize: 13,
     fontFamily: fontFamilies.semibold,
-    marginTop: 6,
+    marginTop: spacing.s6,
   },
   input: {
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
   },
   notesInput: {
     minHeight: 84,
   },
   inlineButton: {
-    borderRadius: 10,
+    borderRadius: radii.r10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 10,
-    marginTop: 6,
+    paddingVertical: spacing.s10,
+    marginTop: spacing.s6,
   },
   inlineButtonText: {
     fontFamily: fontFamilies.semibold,
@@ -124,19 +125,19 @@ export const styles = StyleSheet.create({
   helperText: {
     fontSize: 12,
     fontFamily: fontFamilies.regular,
-    marginTop: 2,
+    marginTop: spacing.s2,
   },
   mainActionRow: {
     flexDirection: "row",
     alignItems: "stretch",
-    gap: 8,
+    gap: spacing.s8,
   },
   button: {
-    borderRadius: 10,
+    borderRadius: radii.r10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
+    paddingVertical: spacing.s12,
   },
   mainActionPrimary: {
     flex: 1,
@@ -144,14 +145,14 @@ export const styles = StyleSheet.create({
   mainActionSecondary: {
     minWidth: 112,
     borderWidth: 1,
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.s12,
   },
   secondaryButton: {
-    borderRadius: 10,
+    borderRadius: radii.r10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
+    paddingVertical: spacing.s12,
   },
   buttonText: {
     fontFamily: fontFamilies.bold,
@@ -163,7 +164,7 @@ export const styles = StyleSheet.create({
   },
   previewCard: {
     alignItems: "center",
-    gap: 8,
+    gap: spacing.s8,
   },
   payloadText: {
     fontSize: 12,

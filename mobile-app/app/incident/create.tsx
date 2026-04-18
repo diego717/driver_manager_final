@@ -6,7 +6,6 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 
@@ -17,6 +16,7 @@ import {
 import { extractApiError } from "@/src/api/client";
 import { listInstallations } from "@/src/api/incidents";
 import { getCurrentLinkedTechnicianContext } from "@/src/api/technicians";
+import ConsoleButton from "@/src/components/ConsoleButton";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -31,8 +31,9 @@ import { canReachConfiguredApi } from "@/src/services/network/api-connectivity";
 import { enqueueCreateIncident, registerIncidentExecutors } from "@/src/services/sync/incident-outbox-service";
 import { runSync } from "@/src/services/sync/sync-runner";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, textInputAccentColor, typeScale } from "@/src/theme/typography";
 import {
   type GpsCapturePayload,
   type IncidentSeverity,
@@ -52,7 +53,7 @@ async function isOnline(): Promise<boolean> {
   return canReachConfiguredApi();
 }
 
-const MIN_TOUCH_TARGET_SIZE = 44;
+const MIN_TOUCH_TARGET_SIZE = sizing.touchTargetMin;
 
 const SEVERITY_OPTIONS: Array<{
   value: IncidentSeverity;
@@ -415,16 +416,14 @@ export default function CreateIncidentScreen() {
             title="No hay caso seleccionado."
             body="La app necesita saber sobre que caso vas a trabajar antes de abrir la incidencia."
           />
-          <TouchableOpacity
-            style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
+          <ConsoleButton
+            variant="primary"
+            style={styles.primaryButton}
             onPress={() => router.replace("/case/context" as never)}
-            accessibilityRole="button"
             accessibilityLabel="Abrir el flujo para resolver el caso"
-          >
-            <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
-              Resolver caso
-            </Text>
-          </TouchableOpacity>
+            label="Resolver caso"
+            textStyle={styles.primaryButtonText}
+          />
         </SectionCard>
       </ScreenScaffold>
     );
@@ -504,25 +503,18 @@ export default function CreateIncidentScreen() {
             </Text>
             <View style={styles.contextActionRow}>
               {installationId ? (
-                <TouchableOpacity
-                  style={[
-                    styles.secondaryButton,
-                    { backgroundColor: palette.secondaryButtonBg, borderColor: palette.inputBorder },
-                  ]}
+                <ConsoleButton
+                  variant="subtle"
+                  style={styles.secondaryButton}
                   onPress={() => router.push(`/work?installationId=${installationId}` as never)}
-                  accessibilityRole="button"
                   accessibilityLabel={`Abrir el caso ${installationId}`}
-                >
-                  <Text style={[styles.secondaryButtonText, { color: palette.secondaryButtonText }]}>
-                    Abrir backlog
-                  </Text>
-                </TouchableOpacity>
+                  label="Abrir backlog"
+                  textStyle={styles.secondaryButtonText}
+                />
               ) : null}
-              <TouchableOpacity
-                style={[
-                  styles.ghostButton,
-                  { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-                ]}
+              <ConsoleButton
+                variant="ghost"
+                style={styles.ghostButton}
                 onPress={() =>
                   router.replace(
                     installationId
@@ -530,13 +522,10 @@ export default function CreateIncidentScreen() {
                       : "/case/manual" as never,
                   )
                 }
-                accessibilityRole="button"
                 accessibilityLabel={installationId ? "Cambiar el caso resuelto" : "Volver al caso manual"}
-              >
-                <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>
-                  {installationId ? "Cambiar contexto" : "Volver al caso manual"}
-                </Text>
-              </TouchableOpacity>
+                label={installationId ? "Cambiar contexto" : "Volver al caso manual"}
+                textStyle={styles.ghostButtonText}
+              />
             </View>
           </View>
         ) : (
@@ -551,26 +540,19 @@ export default function CreateIncidentScreen() {
         title="GPS"
         description="La incidencia intenta registrar tu ubicacion actual como respaldo operativo."
         aside={
-          <TouchableOpacity
-            style={[
-              styles.ghostButton,
-              { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-              capturingGps && styles.buttonDisabled,
-            ]}
+          <ConsoleButton
+            variant="ghost"
+            size="sm"
+            style={[styles.ghostButton, capturingGps && styles.buttonDisabled]}
             onPress={() => {
               void captureGps();
             }}
-            disabled={capturingGps}
-            accessibilityRole="button"
+            loading={capturingGps}
             accessibilityLabel="Recapturar ubicacion para la incidencia"
             accessibilityState={{ disabled: capturingGps, busy: capturingGps }}
-          >
-            {capturingGps ? (
-              <ActivityIndicator size="small" color={palette.refreshText} />
-            ) : (
-              <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>Recapturar</Text>
-            )}
-          </TouchableOpacity>
+            label="Recapturar"
+            textStyle={styles.ghostButtonText}
+          />
         }
       >
         <View
@@ -664,55 +646,40 @@ export default function CreateIncidentScreen() {
           {SEVERITY_OPTIONS.map((item) => {
             const selected = severity === item.value;
             return (
-              <TouchableOpacity
+              <ConsoleButton
                 key={item.value}
-                style={[
-                  styles.severityChip,
-                  {
-                    backgroundColor: selected ? palette.primaryButtonBg : palette.severityBg,
-                    borderColor: selected ? palette.primaryButtonBg : palette.severityBorder,
-                  },
-                ]}
+                variant={selected ? "primary" : "subtle"}
+                size="sm"
+                style={styles.severityChip}
                 onPress={() => setSeverity(item.value)}
-                accessibilityRole="button"
                 accessibilityLabel={`Seleccionar severidad ${item.label}`}
                 accessibilityState={{ selected }}
               >
                 <Text
                   style={[
                     styles.severityChipLabel,
-                    { color: selected ? palette.primaryButtonText : palette.textPrimary },
+                    { color: selected ? palette.primaryButtonText : palette.severityLabel },
                   ]}
                 >
                   {item.label}
                 </Text>
-              </TouchableOpacity>
+              </ConsoleButton>
             );
           })}
         </View>
 
-        <TouchableOpacity
-          style={[
-            styles.primaryButton,
-            { backgroundColor: palette.primaryButtonBg },
-            submitting && styles.buttonDisabled,
-          ]}
+        <ConsoleButton
+          variant="primary"
+          style={[styles.primaryButton, submitting && styles.buttonDisabled]}
           onPress={() => {
             void onSubmit();
           }}
-          disabled={submitting}
-          accessibilityRole="button"
+          loading={submitting}
           accessibilityLabel="Crear incidencia"
           accessibilityState={{ disabled: submitting, busy: submitting }}
-        >
-          {submitting ? (
-            <ActivityIndicator color={palette.primaryButtonText} />
-          ) : (
-            <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
-              Crear incidencia
-            </Text>
-          )}
-        </TouchableOpacity>
+          label="Crear incidencia"
+          textStyle={styles.primaryButtonText}
+        />
       </SectionCard>
 
       {lastCreatedIncidentId ? (
@@ -720,8 +687,9 @@ export default function CreateIncidentScreen() {
           title="Siguiente paso"
           description="La incidencia esta guardada. Avanza al backlog del caso o carga evidencia cuando tengas red."
         >
-          <TouchableOpacity
-            style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
+          <ConsoleButton
+            variant="primary"
+            style={styles.primaryButton}
             onPress={() =>
               router.push(
                 installationId
@@ -729,13 +697,10 @@ export default function CreateIncidentScreen() {
                   : "/(tabs)" as never,
               )
             }
-            accessibilityRole="button"
             accessibilityLabel={installationId ? "Ver backlog del caso" : "Volver al inicio"}
-          >
-            <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
-              {installationId ? "Ver backlog del caso" : "Volver al inicio"}
-            </Text>
-          </TouchableOpacity>
+            label={installationId ? "Ver backlog del caso" : "Volver al inicio"}
+            textStyle={styles.primaryButtonText}
+          />
         </SectionCard>
       ) : null}
     </ScreenScaffold>
@@ -745,13 +710,13 @@ export default function CreateIncidentScreen() {
 const styles = StyleSheet.create({
   centerContainer: {
     flex: 1,
-    padding: 22,
+    padding: spacing.s22,
     alignItems: "center",
     justifyContent: "center",
   },
   container: {
-    padding: 22,
-    gap: 12,
+    padding: spacing.s22,
+    gap: spacing.s12,
   },
   authHintText: {
     fontSize: 14,
@@ -761,74 +726,71 @@ const styles = StyleSheet.create({
   heroMetaRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
   },
   heroMetaChip: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s7,
   },
   heroMetaText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 12,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   caseSummaryCard: {
-    gap: 12,
+    gap: spacing.s12,
   },
   caseTitle: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 17,
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.titleStrong,
+    fontSize: 18,
     lineHeight: 22,
   },
   caseBody: {
     fontFamily: fontFamilies.regular,
-    fontSize: 13,
-    lineHeight: 19,
+    ...typeScale.body,
   },
   gpsCard: {
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 14,
-    gap: 6,
+    borderRadius: radii.r14,
+    padding: spacing.s14,
+    gap: spacing.s6,
   },
   gpsTitle: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 15,
-    lineHeight: 20,
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.body,
   },
   gpsBody: {
     fontFamily: fontFamilies.regular,
-    fontSize: 13,
-    lineHeight: 18,
+    ...typeScale.bodyCompact,
   },
   gpsFootnote: {
     fontFamily: fontFamilies.medium,
-    fontSize: 12.5,
-    lineHeight: 17,
+    ...typeScale.bodyCompact,
   },
   contextActionRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: spacing.s10,
   },
   reporterText: {
     fontFamily: fontFamilies.regular,
-    fontSize: 12.5,
-    lineHeight: 18,
+    ...typeScale.bodyCompact,
   },
   label: {
-    fontSize: 13.5,
-    fontFamily: fontFamilies.semibold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   input: {
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
+    borderRadius: radii.r12,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s11,
     fontFamily: inputFontFamily,
-    fontSize: 14,
-    lineHeight: 19,
+    ...typeScale.body,
   },
   noteInput: {
     minHeight: 120,
@@ -841,59 +803,60 @@ const styles = StyleSheet.create({
   severityWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
   },
   severityChip: {
     minWidth: 92,
-    borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
   },
   severityChipLabel: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 13.5,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   primaryButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 16,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 13,
-    paddingHorizontal: 14,
+    paddingVertical: spacing.s13,
+    paddingHorizontal: spacing.s14,
   },
   secondaryButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingVertical: spacing.s12,
+    paddingHorizontal: spacing.s14,
   },
   ghostButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingVertical: spacing.s12,
+    paddingHorizontal: spacing.s14,
   },
   primaryButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 14.5,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   secondaryButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 13.5,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   ghostButtonText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 13.5,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   buttonDisabled: {
     opacity: 0.72,

@@ -3,6 +3,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 import { useSyncState } from "@/src/hooks/useSyncState";
 import { runSync } from "@/src/services/sync/sync-runner";
+import { radii, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -68,7 +69,7 @@ export default function SyncStatusBanner() {
         titleColor: palette.errorText,
         bodyColor: palette.errorText,
         chipBg: palette.errorBorder,
-        chipText: "#ffffff",
+        chipText: palette.primaryButtonText,
       };
     }
     if (content.tone === "warning") {
@@ -78,7 +79,7 @@ export default function SyncStatusBanner() {
         titleColor: palette.warningText,
         bodyColor: palette.warningText,
         chipBg: palette.warningText,
-        chipText: "#ffffff",
+        chipText: palette.primaryButtonText,
       };
     }
     if (content.tone === "success") {
@@ -88,7 +89,7 @@ export default function SyncStatusBanner() {
         titleColor: palette.successText,
         bodyColor: palette.successText,
         chipBg: palette.successBorder,
-        chipText: "#ffffff",
+        chipText: palette.primaryButtonText,
       };
     }
     return {
@@ -97,7 +98,7 @@ export default function SyncStatusBanner() {
       titleColor: palette.infoText,
       bodyColor: palette.infoText,
       chipBg: palette.infoBorder,
-      chipText: "#ffffff",
+      chipText: palette.primaryButtonText,
     };
   }, [content, palette]);
 
@@ -154,16 +155,16 @@ export default function SyncStatusBanner() {
 const styles = StyleSheet.create({
   container: {
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    gap: 6,
+    borderRadius: radii.r14,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s11,
+    gap: spacing.s6,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
+    gap: spacing.s10,
   },
   title: {
     flex: 1,
@@ -181,10 +182,10 @@ const styles = StyleSheet.create({
   countChip: {
     minWidth: 24,
     height: 24,
-    borderRadius: 999,
+    borderRadius: radii.full,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 7,
+    paddingHorizontal: spacing.s7,
   },
   countChipText: {
     fontFamily: fontFamilies.mono,
@@ -194,10 +195,10 @@ const styles = StyleSheet.create({
   actionButton: {
     alignSelf: "flex-start",
     minHeight: 38,
-    borderRadius: 12,
+    borderRadius: radii.r12,
     justifyContent: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s9,
   },
   actionButtonText: {
     fontFamily: fontFamilies.semibold,

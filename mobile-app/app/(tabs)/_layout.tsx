@@ -11,9 +11,10 @@ import { canViewAssetCatalog } from "@/src/auth/roles";
 import AppHeaderTitle from "@/src/components/AppHeaderTitle";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { triggerSelectionHaptic } from "@/src/services/haptics";
+import { radii, shadows, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { useThemePreference } from "@/src/theme/theme-preference";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, typeScale } from "@/src/theme/typography";
 
 function TabBarIcon(props: {
   name: React.ComponentProps<typeof FontAwesome>["name"];
@@ -167,8 +168,9 @@ function AppTabBarButton(props: BottomTabBarButtonProps) {
         styles.tabButton,
         style,
         {
-          backgroundColor: selected ? palette.navActiveBg : "transparent",
+          backgroundColor: selected ? palette.heroBg : "transparent",
           borderColor: selected ? palette.heroBorder : "transparent",
+          borderStyle: selected ? "dashed" : "solid",
           opacity: pressed ? 0.9 : 1,
           transform: [{ scale: pressed ? 0.98 : 1 }],
         },
@@ -207,7 +209,7 @@ export default function TabLayout() {
   const { hasActiveSession } = useSharedWebSessionState();
   const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
   const tabBarBottomInset = Math.max(insets.bottom, Platform.OS === "android" ? 12 : 6);
-  const tabBarHeight = 60 + tabBarBottomInset + 10;
+  const tabBarHeight = sizing.tabBarBaseHeight + tabBarBottomInset;
   const shouldHideInventoryTab =
     hasActiveSession && webSessionRole !== null && !canViewAssetCatalog(webSessionRole);
 
@@ -245,37 +247,34 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: palette.tabBarSurface,
           borderColor: palette.heroBorder,
-          borderWidth: 1,
+          borderWidth: 1.2,
           borderTopWidth: 1.2,
           height: tabBarHeight,
-          paddingTop: 8,
-          paddingHorizontal: 8,
+          paddingTop: spacing.s8,
+          paddingHorizontal: spacing.s8,
           paddingBottom: tabBarBottomInset,
-          marginHorizontal: 10,
-          marginBottom: 6,
-          borderRadius: 18,
+          marginHorizontal: spacing.s4,
+          marginBottom: spacing.s2,
+          borderRadius: radii.r14,
           shadowColor: palette.shadowColor,
-          shadowOpacity: 0.24,
-          shadowOffset: { width: 0, height: -3 },
-          shadowRadius: 18,
-          elevation: 14,
+          ...shadows.tabBarRaised,
         },
         tabBarButton: (props) => <AppTabBarButton {...props} />,
         tabBarItemStyle: {
           marginHorizontal: 3,
           marginTop: 2,
-          minHeight: 44,
+          minHeight: sizing.touchTargetMin,
           paddingVertical: 2,
         },
         tabBarLabelStyle: {
           fontFamily: fontFamilies.mono,
-          fontSize: 11,
-          letterSpacing: 0.5,
+          ...typeScale.buttonMonoTight,
+          letterSpacing: 0.9,
           textTransform: "uppercase",
         },
         headerStyle: {
           backgroundColor: palette.headerSurface,
-          height: 76 + insets.top,
+          height: sizing.appHeaderBaseHeight + insets.top,
           borderBottomColor: palette.heroBorder,
           borderBottomWidth: 1,
         },
@@ -340,20 +339,20 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
-    width: 112,
-    gap: 8,
+    width: sizing.headerActionsWidth,
+    gap: spacing.s8,
   },
   headerButton: {
-    width: Platform.select({ ios: 44, default: 44 }),
-    height: Platform.select({ ios: 44, default: 44 }),
-    borderRadius: 12,
+    width: Platform.select({ ios: sizing.iconButton, default: sizing.iconButton }),
+    height: Platform.select({ ios: sizing.iconButton, default: sizing.iconButton }),
+    borderRadius: radii.r10,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
   tabButton: {
-    minHeight: 44,
-    borderRadius: 13,
+    minHeight: sizing.touchTargetMin,
+    borderRadius: radii.r10,
     borderWidth: 1,
     justifyContent: "center",
     overflow: "hidden",
@@ -368,6 +367,6 @@ const styles = StyleSheet.create({
     right: "20%",
     bottom: 2,
     height: 3,
-    borderRadius: 999,
+    borderRadius: radii.full,
   },
 });

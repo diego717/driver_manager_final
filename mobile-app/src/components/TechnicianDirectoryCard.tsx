@@ -23,6 +23,7 @@ import {
   listWebUsers,
   type WebManagedUser,
 } from "@/src/api/webAuth";
+import { radii, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 import { type TechnicianRecord } from "@/src/types/api";
@@ -444,19 +445,19 @@ export default function TechnicianDirectoryCard(props: {
 const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 10,
+    borderRadius: radii.r12,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s12,
+    gap: spacing.s10,
   },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 12,
+    gap: spacing.s12,
   },
   headerCopy: {
     flex: 1,
-    gap: 4,
+    gap: spacing.s4,
   },
   title: {
     fontSize: 14,
@@ -469,12 +470,12 @@ const styles = StyleSheet.create({
   actionsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
   },
   primaryButton: {
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    borderRadius: radii.r12,
+    paddingHorizontal: spacing.s14,
+    paddingVertical: spacing.s10,
     minWidth: 120,
     alignItems: "center",
     justifyContent: "center",
@@ -484,10 +485,10 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bold,
   },
   secondaryButton: {
-    borderRadius: 12,
+    borderRadius: radii.r12,
     borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingHorizontal: spacing.s14,
+    paddingVertical: spacing.s10,
     minWidth: 110,
     alignItems: "center",
     justifyContent: "center",
@@ -498,9 +499,9 @@ const styles = StyleSheet.create({
   },
   editorCard: {
     borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    gap: 10,
+    borderRadius: radii.r14,
+    padding: spacing.s12,
+    gap: spacing.s10,
   },
   editorTitle: {
     fontSize: 13,
@@ -508,9 +509,9 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: radii.r12,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
     fontSize: 14,
     fontFamily: fontFamilies.regular,
   },
@@ -522,11 +523,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
+    gap: spacing.s12,
   },
   inlineCopy: {
     flex: 1,
-    gap: 4,
+    gap: spacing.s4,
   },
   inlineTitle: {
     fontSize: 12.5,
@@ -541,10 +542,10 @@ const styles = StyleSheet.create({
   },
   userOption: {
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 8,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
+    marginBottom: spacing.s8,
   },
   userOptionText: {
     fontSize: 13,
@@ -552,14 +553,14 @@ const styles = StyleSheet.create({
   },
   technicianCard: {
     borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    gap: 8,
+    borderRadius: radii.r14,
+    padding: spacing.s12,
+    gap: spacing.s8,
   },
   technicianHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 10,
+    gap: spacing.s10,
   },
   technicianName: {
     fontSize: 14,

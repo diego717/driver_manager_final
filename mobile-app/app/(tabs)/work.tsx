@@ -35,6 +35,7 @@ import {
   getTechnicianAssignments,
   listAssignedIncidentsMap,
 } from "@/src/api/technicians";
+import ConsoleButton from "@/src/components/ConsoleButton";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import RuntimeChip from "@/src/components/RuntimeChip";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -50,8 +51,9 @@ import {
   triggerSuccessHaptic,
   triggerWarningHaptic,
 } from "@/src/services/haptics";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, typeScale } from "@/src/theme/typography";
 import {
   type Incident,
   type IncidentStatus,
@@ -72,7 +74,7 @@ import {
   summarizeIncidentBuckets,
 } from "@/src/utils/incidents";
 
-const MIN_TOUCH_TARGET_SIZE = 44;
+const MIN_TOUCH_TARGET_SIZE = sizing.touchTargetMin;
 
 type QueueIncident = Incident & {
   queue_source: "incident" | "installation" | "asset";
@@ -695,44 +697,30 @@ export default function WorkTabScreen() {
         </View>
 
         <View style={styles.priorityActionsRow}>
-          <TouchableOpacity
-            style={[
-              styles.priorityPrimaryAction,
-              { backgroundColor: palette.primaryButtonBg, borderColor: palette.primaryButtonBg },
-            ]}
+          <ConsoleButton
+            variant="primary"
+            style={styles.priorityPrimaryAction}
             onPress={primaryAction.onPress}
-            disabled={busy}
-          >
-            {busy ? (
-              <ActivityIndicator size="small" color={palette.primaryButtonText} />
-            ) : (
-              <Text style={[styles.priorityPrimaryText, { color: palette.primaryButtonText }]}>
-                {primaryAction.label}
-              </Text>
-            )}
-          </TouchableOpacity>
+            loading={busy}
+            label={primaryAction.label}
+            textStyle={styles.priorityPrimaryText}
+          />
           {secondaryStatusAction ? (
-            <TouchableOpacity
-              style={[
-                styles.prioritySecondaryAction,
-                { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-              ]}
+            <ConsoleButton
+              variant="ghost"
+              style={styles.prioritySecondaryAction}
               onPress={secondaryStatusAction.onPress}
               disabled={busy}
-            >
-              <Text style={[styles.prioritySecondaryText, { color: palette.refreshText }]}>
-                {secondaryStatusAction.label}
-              </Text>
-            </TouchableOpacity>
+              label={secondaryStatusAction.label}
+              textStyle={styles.prioritySecondaryText}
+            />
           ) : null}
         </View>
 
         <View style={styles.actionsRow}>
-          <TouchableOpacity
-            style={[
-              styles.detailButton,
-              { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-            ]}
+          <ConsoleButton
+            variant="ghost"
+            style={styles.detailButton}
             onPress={() =>
               {
                 void triggerSelectionHaptic();
@@ -741,32 +729,24 @@ export default function WorkTabScreen() {
                 );
               }
             }
-          >
-            <Text style={[styles.detailButtonText, { color: palette.refreshText }]}>
-              {options?.detailButtonLabel || "Abrir detalle"}
-            </Text>
-          </TouchableOpacity>
+            label={options?.detailButtonLabel || "Abrir detalle"}
+            textStyle={styles.detailButtonText}
+          />
           {options?.showInstallationTag ? (
-            <TouchableOpacity
-              style={[
-                styles.detailButton,
-                { backgroundColor: palette.secondaryButtonBg, borderColor: palette.inputBorder },
-              ]}
+            <ConsoleButton
+              variant="subtle"
+              style={styles.detailButton}
               onPress={() => {
                 void triggerSelectionHaptic();
                 void onSelectInstallation(incident.installation_id);
               }}
-            >
-              <Text style={[styles.detailButtonText, { color: palette.secondaryButtonText }]}>
-                Abrir caso
-              </Text>
-            </TouchableOpacity>
+              label="Abrir caso"
+              textStyle={styles.detailButtonText}
+            />
           ) : null}
-          <TouchableOpacity
-            style={[
-              styles.uploadButton,
-              { backgroundColor: palette.uploadButtonBg, borderColor: palette.uploadButtonBg },
-            ]}
+          <ConsoleButton
+            variant="primary"
+            style={styles.uploadButton}
             onPress={() =>
               {
                 void triggerSelectionHaptic();
@@ -775,11 +755,9 @@ export default function WorkTabScreen() {
                 );
               }
             }
-          >
-            <Text style={[styles.uploadButtonText, { color: palette.uploadButtonText }]}>
-              Subir evidencia
-            </Text>
-          </TouchableOpacity>
+            label="Subir evidencia"
+            textStyle={styles.uploadButtonText}
+          />
         </View>
       </View>
     );
@@ -1019,11 +997,10 @@ export default function WorkTabScreen() {
       ) : null}
 
       <View style={styles.topActionsRow}>
-        <TouchableOpacity
-          style={[
-            styles.topActionPrimary,
-            { backgroundColor: palette.primaryButtonBg, borderColor: palette.primaryButtonBg },
-          ]}
+        <ConsoleButton
+          variant="primary"
+          size="lg"
+          style={styles.topActionPrimary}
           onPress={() => {
             void triggerSelectionHaptic();
             router.push(`/case/context?installationId=${encodeURIComponent(installationId || "1")}` as never);
@@ -1035,13 +1012,11 @@ export default function WorkTabScreen() {
           <Text style={[styles.topActionText, { color: palette.primaryButtonText }]}>
             Resolver contexto
           </Text>
-        </TouchableOpacity>
+        </ConsoleButton>
         <View style={styles.utilityColumn}>
-          <TouchableOpacity
-            style={[
-              styles.topActionUtility,
-              { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-            ]}
+          <ConsoleButton
+            variant="ghost"
+            style={styles.topActionUtility}
             onPress={() => {
               void triggerSelectionHaptic();
               router.push("/qr?mode=scan");
@@ -1049,25 +1024,21 @@ export default function WorkTabScreen() {
           >
             <Text style={[styles.utilityLabel, { color: palette.textMuted }]}>Entrada</Text>
             <Text style={[styles.topActionText, { color: palette.refreshText }]}>Escanear QR</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.topActionUtility,
-              { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-            ]}
+          </ConsoleButton>
+          <ConsoleButton
+            variant="ghost"
+            style={styles.topActionUtility}
             onPress={() => {
               void triggerSelectionHaptic();
               void refreshCurrentInstallation();
             }}
-            disabled={loading}
+            loading={loading}
           >
             <Text style={[styles.utilityLabel, { color: palette.textMuted }]}>Estado</Text>
-            {loading ? (
-              <ActivityIndicator size="small" color={palette.refreshText} />
-            ) : (
+            {!loading ? (
               <Text style={[styles.topActionText, { color: palette.refreshText }]}>Actualizar caso</Text>
-            )}
-          </TouchableOpacity>
+            ) : null}
+          </ConsoleButton>
         </View>
       </View>
 
@@ -1137,11 +1108,9 @@ export default function WorkTabScreen() {
               />
             </View>
             <View style={styles.missionActionsRow}>
-              <TouchableOpacity
-                style={[
-                  styles.missionPrimaryAction,
-                  { backgroundColor: palette.primaryButtonBg, borderColor: palette.primaryButtonBg },
-                ]}
+              <ConsoleButton
+                variant="primary"
+                style={styles.missionPrimaryAction}
                 onPress={() => {
                   void triggerSelectionHaptic();
                   const status = normalizeIncidentStatus(missionIncident.incident_status);
@@ -1156,20 +1125,18 @@ export default function WorkTabScreen() {
                     status === "paused" ? "in_progress" : "in_progress",
                   );
                 }}
-              >
-                <Text style={[styles.missionPrimaryText, { color: palette.primaryButtonText }]}>
-                  {normalizeIncidentStatus(missionIncident.incident_status) === "in_progress"
+                label={
+                  normalizeIncidentStatus(missionIncident.incident_status) === "in_progress"
                     ? "Abrir seguimiento"
                     : normalizeIncidentStatus(missionIncident.incident_status) === "paused"
                       ? "Reanudar ahora"
-                      : "Empezar ahora"}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.missionSecondaryAction,
-                  { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-                ]}
+                      : "Empezar ahora"
+                }
+                textStyle={styles.missionPrimaryText}
+              />
+              <ConsoleButton
+                variant="ghost"
+                style={styles.missionSecondaryAction}
                 onPress={() =>
                   {
                     void triggerSelectionHaptic();
@@ -1178,11 +1145,9 @@ export default function WorkTabScreen() {
                     );
                   }
                 }
-              >
-                <Text style={[styles.missionSecondaryText, { color: palette.refreshText }]}>
-                  Ver detalle
-                </Text>
-              </TouchableOpacity>
+                label="Ver detalle"
+                textStyle={styles.missionSecondaryText}
+              />
             </View>
           </View>
         ) : (
@@ -1212,19 +1177,17 @@ export default function WorkTabScreen() {
             <Text style={[styles.focusBody, { color: palette.textSecondary }]}>
               Captura la firma del cliente y envia el PDF final por email desde este mismo flujo.
             </Text>
-            <TouchableOpacity
-              style={[styles.primaryAction, { backgroundColor: palette.primaryButtonBg }]}
+            <ConsoleButton
+              variant="primary"
+              style={styles.primaryAction}
               onPress={() => {
                 void triggerSelectionHaptic();
                 router.push(`/case/conformity?installationId=${currentInstallationRecord.id}` as never);
               }}
-              accessibilityRole="button"
               accessibilityLabel={`Abrir conformidad final del caso ${currentInstallationRecord.id}`}
-            >
-              <Text style={[styles.primaryActionText, { color: palette.primaryButtonText }]}>
-                Abrir conformidad final
-              </Text>
-            </TouchableOpacity>
+              label="Abrir conformidad final"
+              textStyle={styles.primaryActionText}
+            />
           </View>
         </SectionCard>
       ) : null}
@@ -1275,79 +1238,53 @@ export default function WorkTabScreen() {
               </Text>
             ) : null}
             <View style={styles.contextActionRow}>
-              <TouchableOpacity
-                style={[
-                  styles.primaryAction,
-                  { backgroundColor: palette.primaryButtonBg },
-                  trackingActionBusy && styles.buttonDisabled,
-                ]}
+              <ConsoleButton
+                variant="primary"
+                style={[styles.primaryAction, trackingActionBusy && styles.buttonDisabled]}
                 onPress={() => {
                   void handleCreateTrackingLink();
                 }}
-                disabled={trackingActionBusy}
-                accessibilityRole="button"
+                loading={trackingActionBusy}
                 accessibilityLabel={`Crear o regenerar enlace publico del caso ${currentInstallationRecord.id}`}
-              >
-                {trackingActionBusy ? (
-                  <ActivityIndicator color={palette.primaryButtonText} />
-                ) : (
-                  <Text style={[styles.primaryActionText, { color: palette.primaryButtonText }]}>
-                    {trackingLink?.active ? "Regenerar enlace" : "Crear enlace"}
-                  </Text>
-                )}
-              </TouchableOpacity>
+                label={trackingLink?.active ? "Regenerar enlace" : "Crear enlace"}
+                textStyle={styles.primaryActionText}
+              />
               {trackingLink?.active && activeTrackingUrl ? (
-                <TouchableOpacity
-                  style={[
-                    styles.secondaryButton,
-                    { backgroundColor: palette.secondaryButtonBg, borderColor: palette.inputBorder },
-                  ]}
+                <ConsoleButton
+                  variant="subtle"
+                  style={styles.secondaryButton}
                   onPress={() => {
                     void handleShareTrackingLink();
                   }}
-                  accessibilityRole="button"
                   accessibilityLabel={`Compartir enlace publico del caso ${currentInstallationRecord.id}`}
-                >
-                  <Text style={[styles.secondaryButtonText, { color: palette.secondaryButtonText }]}>
-                    Compartir
-                  </Text>
-                </TouchableOpacity>
+                  label="Compartir"
+                  textStyle={styles.secondaryButtonText}
+                />
               ) : null}
             </View>
             {trackingLink?.active && activeTrackingUrl ? (
               <View style={styles.contextActionRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.ghostButton,
-                    { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-                  ]}
+                <ConsoleButton
+                  variant="ghost"
+                  style={styles.ghostButton}
                   onPress={() => {
                     void handleOpenTrackingLink();
                   }}
-                  accessibilityRole="button"
                   accessibilityLabel={`Abrir tracking publico del caso ${currentInstallationRecord.id}`}
-                >
-                  <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>
-                    Abrir seguimiento
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.ghostButton,
-                    { backgroundColor: palette.warningBg, borderColor: palette.warningText },
-                    trackingActionBusy && styles.buttonDisabled,
-                  ]}
+                  label="Abrir seguimiento"
+                  textStyle={styles.ghostButtonText}
+                />
+                <ConsoleButton
+                  variant="warning"
+                  style={[styles.ghostButton, trackingActionBusy && styles.buttonDisabled]}
                   onPress={() => {
                     void handleRevokeTrackingLink();
                   }}
                   disabled={trackingActionBusy}
-                  accessibilityRole="button"
                   accessibilityLabel={`Revocar enlace publico del caso ${currentInstallationRecord.id}`}
-                >
-                  <Text style={[styles.ghostButtonText, { color: palette.warningText }]}>
-                    Revocar enlace
-                  </Text>
-                </TouchableOpacity>
+                  label="Revocar enlace"
+                  textStyle={styles.ghostButtonText}
+                />
               </View>
             ) : null}
           </View>
@@ -1383,15 +1320,15 @@ export default function WorkTabScreen() {
 const styles = StyleSheet.create({
   centerContainer: {
     flex: 1,
-    padding: 20,
+    padding: spacing.s20,
     alignItems: "center",
     justifyContent: "center",
   },
   container: {
-    padding: 20,
+    padding: spacing.s20,
   },
   screenEnterWrap: {
-    gap: 14,
+    gap: spacing.s14,
   },
   authHintText: {
     fontSize: 13,
@@ -1399,9 +1336,9 @@ const styles = StyleSheet.create({
   },
   heroBadge: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s7,
   },
   heroBadgeText: {
     fontFamily: fontFamilies.mono,
@@ -1412,120 +1349,113 @@ const styles = StyleSheet.create({
   heroMetaRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
   },
   heroMetaChip: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s7,
   },
   heroMetaText: {
     fontFamily: fontFamilies.mono,
-    fontSize: 11.5,
-    letterSpacing: 0.5,
+    ...typeScale.metaMono,
+    letterSpacing: 0.9,
     textTransform: "uppercase",
   },
   topActionsRow: {
     flexDirection: "row",
     alignItems: "stretch",
-    gap: 10,
+    gap: spacing.s10,
   },
   topActionPrimary: {
     flex: 1.35,
     minHeight: MIN_TOUCH_TARGET_SIZE * 2.05,
-    borderRadius: 16,
-    borderWidth: 1,
+    borderRadius: radii.r12,
     justifyContent: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    gap: spacing.s6,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s12,
   },
   topActionKicker: {
     fontFamily: fontFamilies.mono,
-    fontSize: 11,
+    ...typeScale.buttonMonoTight,
     textTransform: "uppercase",
     letterSpacing: 0.8,
   },
   utilityColumn: {
     flex: 1,
-    gap: 10,
+    gap: spacing.s10,
   },
   topActionUtility: {
     flex: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 12,
-    borderWidth: 1,
+    borderRadius: radii.r10,
     justifyContent: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
   },
   topActionText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 14,
-    letterSpacing: -0.1,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   focusCard: {
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 16,
-    gap: 12,
+    borderRadius: radii.r14,
+    padding: spacing.s16,
+    gap: spacing.s12,
   },
   focusTitle: {
     fontFamily: fontFamilies.bold,
-    fontSize: 19,
-    lineHeight: 24,
-    letterSpacing: -0.3,
+    ...typeScale.titleStrong,
+    letterSpacing: -0.2,
   },
   focusBody: {
     fontFamily: fontFamilies.regular,
-    fontSize: 13.5,
-    lineHeight: 19,
+    ...typeScale.body,
   },
   primaryAction: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 14,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 13,
+    paddingVertical: spacing.s13,
   },
   primaryActionText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 14.5,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   contextActionRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: spacing.s10,
   },
   secondaryButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingVertical: spacing.s12,
+    paddingHorizontal: spacing.s14,
   },
   secondaryButtonText: {
     fontFamily: fontFamilies.mono,
-    fontSize: 12,
-    letterSpacing: 0.4,
+    ...typeScale.buttonMono,
     textTransform: "uppercase",
   },
   ghostButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingVertical: spacing.s12,
+    paddingHorizontal: spacing.s14,
   },
   ghostButtonText: {
     fontFamily: fontFamilies.mono,
-    fontSize: 12,
-    letterSpacing: 0.4,
+    ...typeScale.buttonMono,
     textTransform: "uppercase",
   },
   buttonDisabled: {
@@ -1533,16 +1463,16 @@ const styles = StyleSheet.create({
   },
   utilityLabel: {
     fontFamily: fontFamilies.mono,
-    fontSize: 11,
-    marginBottom: 2,
-    letterSpacing: 0.5,
+    ...typeScale.buttonMonoTight,
+    marginBottom: spacing.s2,
+    letterSpacing: 0.8,
     textTransform: "uppercase",
   },
   missionBadge: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s6,
     minHeight: 30,
     alignSelf: "flex-start",
     justifyContent: "center",
@@ -1556,9 +1486,9 @@ const styles = StyleSheet.create({
   },
   missionPanel: {
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 16,
-    gap: 12,
+    borderRadius: radii.r14,
+    padding: spacing.s16,
+    gap: spacing.s12,
     shadowOpacity: 0.08,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 12 },
@@ -1568,64 +1498,63 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
+    gap: spacing.s12,
   },
   missionHeaderText: {
     flex: 1,
-    gap: 4,
+    gap: spacing.s4,
   },
   missionEyebrow: {
     fontFamily: fontFamilies.mono,
-    fontSize: 11,
+    ...typeScale.buttonMonoTight,
     textTransform: "uppercase",
     letterSpacing: 0.8,
   },
   missionTitle: {
     fontFamily: fontFamilies.bold,
-    fontSize: 17,
-    lineHeight: 23,
-    letterSpacing: -0.2,
+    ...typeScale.titleStrong,
+    fontSize: 18,
+    lineHeight: 22,
   },
   missionSupport: {
     fontFamily: fontFamilies.regular,
-    fontSize: 12.5,
-    lineHeight: 18,
+    ...typeScale.bodyCompact,
   },
   missionActionsRow: {
     flexDirection: "row",
-    gap: 10,
+    gap: spacing.s10,
   },
   missionPrimaryAction: {
     flex: 1.2,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 14,
-    borderWidth: 1,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.s12,
   },
   missionPrimaryText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 14,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   missionSecondaryAction: {
     flex: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 14,
-    borderWidth: 1,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.s12,
   },
   missionSecondaryText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 13,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   rowBetween: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
+    gap: spacing.s12,
   },
   label: {
     fontSize: 12,
@@ -1636,13 +1565,13 @@ const styles = StyleSheet.create({
   chipsWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
   },
   chip: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 11,
-    paddingVertical: 7,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s11,
+    paddingVertical: spacing.s7,
   },
   chipText: {
     fontSize: 11.5,
@@ -1652,10 +1581,10 @@ const styles = StyleSheet.create({
   },
   refreshButton: {
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: radii.r12,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s8,
     justifyContent: "center",
   },
   refreshButtonText: {
@@ -1666,34 +1595,34 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: radii.r12,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
   },
   runtimeGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
   },
   queueLoadingRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: spacing.s8,
     minHeight: 56,
   },
   todaySummaryGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: spacing.s10,
   },
   todaySummaryCard: {
     minWidth: 110,
     flexGrow: 1,
     borderWidth: 1,
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 4,
+    borderRadius: radii.r16,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s12,
+    gap: spacing.s4,
   },
   todaySummaryValue: {
     fontFamily: fontFamilies.bold,
@@ -1707,34 +1636,37 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   sectionTitle: {
-    fontSize: 16,
-    fontFamily: fontFamilies.bold,
-    marginTop: 2,
-    letterSpacing: -0.2,
+    fontFamily: fontFamilies.display,
+    ...typeScale.sectionDisplay,
+    fontSize: 24,
+    lineHeight: 24,
+    marginTop: spacing.s2,
+    letterSpacing: 0.7,
+    textTransform: "uppercase",
   },
   card: {
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 14,
-    gap: 10,
+    borderRadius: radii.r14,
+    padding: spacing.s14,
+    gap: spacing.s10,
   },
   cardHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 10,
+    gap: spacing.s10,
   },
   cardSignalRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
+    gap: spacing.s10,
   },
   priorityPill: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s6,
   },
   priorityPillText: {
     fontSize: 10.5,
@@ -1744,12 +1676,12 @@ const styles = StyleSheet.create({
   },
   cardHeaderText: {
     flex: 1,
-    gap: 4,
+    gap: spacing.s4,
   },
   badgesRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
     justifyContent: "flex-end",
   },
   metaText: {
@@ -1776,13 +1708,13 @@ const styles = StyleSheet.create({
   infoPillsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
   },
   infoPill: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s6,
   },
   infoPillText: {
     fontSize: 11,
@@ -1792,51 +1724,49 @@ const styles = StyleSheet.create({
   },
   priorityActionsRow: {
     flexDirection: "row",
-    gap: 8,
+    gap: spacing.s8,
   },
   priorityPrimaryAction: {
     flex: 1.3,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.s12,
   },
   priorityPrimaryText: {
-    fontSize: 13.5,
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   prioritySecondaryAction: {
     flex: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.s12,
   },
   prioritySecondaryText: {
-    fontSize: 12,
     fontFamily: fontFamilies.mono,
-    letterSpacing: 0.4,
+    ...typeScale.buttonMono,
     textTransform: "uppercase",
   },
   statusRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
   },
   statusButton: {
     flexBasis: "47%",
     flexGrow: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: radii.r12,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 8,
-    paddingVertical: 8,
+    paddingHorizontal: spacing.s8,
+    paddingVertical: spacing.s8,
   },
   statusButtonText: {
     fontSize: 12,
@@ -1847,36 +1777,32 @@ const styles = StyleSheet.create({
   actionsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
   },
   detailButton: {
     alignSelf: "flex-start",
-    borderRadius: 12,
-    borderWidth: 1,
+    borderRadius: radii.r10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
     justifyContent: "center",
   },
   detailButtonText: {
     fontFamily: fontFamilies.mono,
-    fontSize: 12,
-    letterSpacing: 0.4,
+    ...typeScale.buttonMono,
     textTransform: "uppercase",
   },
   uploadButton: {
     alignSelf: "flex-start",
-    borderRadius: 12,
-    borderWidth: 1,
+    borderRadius: radii.r10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
     justifyContent: "center",
   },
   uploadButtonText: {
     fontFamily: fontFamilies.mono,
-    fontSize: 12,
-    letterSpacing: 0.4,
+    ...typeScale.buttonMono,
     textTransform: "uppercase",
   },
   emptyText: {

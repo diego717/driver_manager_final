@@ -6,7 +6,6 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 
@@ -23,6 +22,7 @@ import {
 } from "@/src/api/incidents";
 import { readStoredWebSession } from "@/src/api/webAuth";
 import { canAssignTechnicians } from "@/src/auth/roles";
+import ConsoleButton from "@/src/components/ConsoleButton";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -34,12 +34,13 @@ import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { canReachConfiguredApi } from "@/src/services/network/api-connectivity";
 import { enqueueCreateCase } from "@/src/services/sync/case-outbox-service";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, textInputAccentColor, typeScale } from "@/src/theme/typography";
 import { type InstallationRecord } from "@/src/types/api";
 import { deriveRecordIncidentSummary } from "@/src/utils/incidents";
 
-const MIN_TOUCH_TARGET_SIZE = 44;
+const MIN_TOUCH_TARGET_SIZE = sizing.touchTargetMin;
 
 type FeedbackState = {
   tone: InlineFeedbackTone;
@@ -345,10 +346,10 @@ export default function CaseContextScreen() {
             description="El QR es la ruta base del trabajo en campo."
           >
             <View style={styles.entryStack}>
-              <TouchableOpacity
-                style={[styles.scanEntryButton, { backgroundColor: palette.primaryButtonBg }]}
+              <ConsoleButton
+                variant="primary"
+                style={styles.scanEntryButton}
                 onPress={() => router.push("/scan")}
-                accessibilityRole="button"
                 accessibilityLabel="Escanear equipo para iniciar trabajo"
               >
                 <Text style={[styles.entryTitle, { color: palette.primaryButtonText }]}>
@@ -357,15 +358,12 @@ export default function CaseContextScreen() {
                 <Text style={[styles.entryBody, { color: palette.primaryButtonText }]}>
                   Apunta, resuelve el contexto y sigue.
                 </Text>
-              </TouchableOpacity>
+              </ConsoleButton>
               <View style={styles.secondaryEntryRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.entryButton,
-                    { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-                  ]}
+                <ConsoleButton
+                  variant="ghost"
+                  style={styles.entryButton}
                   onPress={() => router.push("/case/manual" as never)}
-                  accessibilityRole="button"
                   accessibilityLabel="Abrir caso manual"
                 >
                   <Text style={[styles.entryTitle, { color: palette.refreshText }]}>
@@ -374,14 +372,11 @@ export default function CaseContextScreen() {
                   <Text style={[styles.entryBody, { color: palette.textSecondary }]}>
                     Fallback sin equipo.
                   </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.entryButton,
-                    { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-                  ]}
+                </ConsoleButton>
+                <ConsoleButton
+                  variant="ghost"
+                  style={styles.entryButton}
                   onPress={() => router.push("/explore?intent=resolve" as never)}
-                  accessibilityRole="button"
                   accessibilityLabel="Buscar equipo en inventario para iniciar trabajo"
                 >
                   <Text style={[styles.entryTitle, { color: palette.refreshText }]}>
@@ -390,7 +385,7 @@ export default function CaseContextScreen() {
                   <Text style={[styles.entryBody, { color: palette.textSecondary }]}>
                     Buscar antes de abrir.
                   </Text>
-                </TouchableOpacity>
+                </ConsoleButton>
               </View>
             </View>
           </SectionCard>
@@ -402,14 +397,13 @@ export default function CaseContextScreen() {
             >
               <View style={styles.caseList}>
                 {installations.slice(0, 2).map((item) => (
-                  <TouchableOpacity
+                  <ConsoleButton
                     key={item.id}
                     style={[
                       styles.caseRow,
                       { backgroundColor: palette.cardBg, borderColor: palette.cardBorder },
                     ]}
                     onPress={() => router.push(`/case/context?installationId=${item.id}` as never)}
-                    accessibilityRole="button"
                     accessibilityLabel={`Resolver contexto para el caso ${item.id}`}
                   >
                     <View style={styles.caseHeaderText}>
@@ -421,7 +415,7 @@ export default function CaseContextScreen() {
                       </Text>
                     </View>
                     <StatusChip kind="attention" value={item.attention_state} />
-                  </TouchableOpacity>
+                  </ConsoleButton>
                 ))}
               </View>
             </SectionCard>
@@ -478,74 +472,49 @@ export default function CaseContextScreen() {
               </Text>
 
               <View style={styles.actionColumn}>
-                <TouchableOpacity
-                  style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
+                <ConsoleButton
+                  variant="primary"
+                  style={styles.primaryButton}
                   onPress={() => openWorkCase(selectedCase.id)}
-                  accessibilityRole="button"
                   accessibilityLabel={`Continuar el caso ${selectedCase.id}`}
-                >
-                  <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
-                    Abrir backlog del caso
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.secondaryButton,
-                    { backgroundColor: palette.secondaryButtonBg, borderColor: palette.inputBorder },
-                  ]}
+                  label="Abrir backlog del caso"
+                  textStyle={styles.primaryButtonText}
+                />
+                <ConsoleButton
+                  variant="subtle"
+                  style={styles.secondaryButton}
                   onPress={() => router.push(buildIncidentRoute(selectedCase.id))}
-                  accessibilityRole="button"
                   accessibilityLabel={`Crear incidencia dentro del caso ${selectedCase.id}`}
-                >
-                  <Text style={[styles.secondaryButtonText, { color: palette.secondaryButtonText }]}>
-                    Nueva incidencia
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.secondaryButton,
-                    {
-                      backgroundColor: canSendConformity ? palette.secondaryButtonBg : palette.warningBg,
-                      borderColor: canSendConformity ? palette.inputBorder : palette.warningText,
-                    },
-                  ]}
+                  label="Nueva incidencia"
+                  textStyle={styles.secondaryButtonText}
+                />
+                <ConsoleButton
+                  variant={canSendConformity ? "subtle" : "warning"}
+                  style={styles.secondaryButton}
                   onPress={() =>
                     canSendConformity
                       ? router.push(buildConformityRoute(selectedCase.id))
                       : openWorkCase(selectedCase.id)
                   }
-                  accessibilityRole="button"
                   accessibilityLabel={
                     canSendConformity
                       ? `Generar conformidad para el caso ${selectedCase.id}`
                       : `Revisar incidencias antes de generar la conformidad para el caso ${selectedCase.id}`
                   }
-                >
-                  <Text
-                    style={[
-                      styles.secondaryButtonText,
-                      { color: canSendConformity ? palette.secondaryButtonText : palette.warningText },
-                    ]}
-                  >
-                    {canSendConformity
-                      ? "Enviar conformidad final"
-                      : "Revisar incidencias antes de cerrar"}
-                  </Text>
-                </TouchableOpacity>
+                  label={canSendConformity
+                    ? "Enviar conformidad final"
+                    : "Revisar incidencias antes de cerrar"}
+                  textStyle={styles.secondaryButtonText}
+                />
                 {assetDetail?.asset ? (
-                  <TouchableOpacity
-                    style={[
-                      styles.ghostButton,
-                      { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-                    ]}
+                  <ConsoleButton
+                    variant="ghost"
+                    style={styles.ghostButton}
                     onPress={openInventoryAsset}
-                    accessibilityRole="button"
                     accessibilityLabel="Abrir el inventario del equipo resuelto"
-                  >
-                    <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>
-                      Abrir inventario
-                    </Text>
-                  </TouchableOpacity>
+                    label="Abrir inventario"
+                    textStyle={styles.ghostButtonText}
+                  />
                 ) : null}
               </View>
             </View>
@@ -565,37 +534,26 @@ export default function CaseContextScreen() {
                 </Text>
               </View>
               <View style={styles.actionColumn}>
-                <TouchableOpacity
-                  style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
+                <ConsoleButton
+                  variant="primary"
+                  style={styles.primaryButton}
                   onPress={() => {
                     void startCaseFromAsset();
                   }}
-                  disabled={creatingCase}
-                  accessibilityRole="button"
+                  loading={creatingCase}
                   accessibilityLabel="Iniciar caso con este equipo"
                   accessibilityState={{ disabled: creatingCase, busy: creatingCase }}
-                >
-                  {creatingCase ? (
-                    <ActivityIndicator color={palette.primaryButtonText} />
-                  ) : (
-                    <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
-                      Iniciar caso con este equipo
-                    </Text>
-                  )}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.ghostButton,
-                    { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder },
-                  ]}
+                  label="Iniciar caso con este equipo"
+                  textStyle={styles.primaryButtonText}
+                />
+                <ConsoleButton
+                  variant="ghost"
+                  style={styles.ghostButton}
                   onPress={openInventoryAsset}
-                  accessibilityRole="button"
                   accessibilityLabel="Abrir inventario para revisar el equipo"
-                >
-                  <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>
-                    Revisar inventario
-                  </Text>
-                </TouchableOpacity>
+                  label="Revisar inventario"
+                  textStyle={styles.ghostButtonText}
+                />
               </View>
             </View>
           ) : (
@@ -652,13 +610,13 @@ export default function CaseContextScreen() {
 const styles = StyleSheet.create({
   centerContainer: {
     flex: 1,
-    padding: 22,
+    padding: spacing.s22,
     alignItems: "center",
     justifyContent: "center",
   },
   container: {
-    padding: 22,
-    gap: 12,
+    padding: spacing.s22,
+    gap: spacing.s12,
   },
   authHintText: {
     fontSize: 14,
@@ -667,102 +625,100 @@ const styles = StyleSheet.create({
   },
   heroBadge: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s7,
   },
   heroBadgeText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 11.5,
-    letterSpacing: 0.3,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
   },
   entryStack: {
-    gap: 10,
+    gap: spacing.s10,
   },
   scanEntryButton: {
-    borderWidth: 1,
-    borderRadius: 20,
-    padding: 18,
-    gap: 4,
+    borderRadius: radii.r14,
+    padding: spacing.s18,
+    gap: spacing.s4,
     minHeight: 88,
     justifyContent: "center",
   },
   secondaryEntryRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: spacing.s10,
   },
   entryButton: {
     flex: 1,
-    borderWidth: 1,
-    borderRadius: 18,
-    padding: 16,
-    gap: 4,
+    borderRadius: radii.r10,
+    padding: spacing.s16,
+    gap: spacing.s4,
     minHeight: MIN_TOUCH_TARGET_SIZE,
   },
   entryTitle: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 15,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   entryBody: {
     fontFamily: fontFamilies.regular,
-    fontSize: 13,
-    lineHeight: 18,
+    ...typeScale.bodyCompact,
   },
   caseList: {
-    gap: 10,
+    gap: spacing.s10,
   },
   caseRow: {
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 14,
+    borderRadius: radii.r12,
+    padding: spacing.s14,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
+    gap: spacing.s12,
   },
   caseHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 12,
+    gap: spacing.s12,
   },
   caseHeaderText: {
     flex: 1,
-    gap: 3,
+    gap: spacing.s3,
   },
   caseTitle: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 17,
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.titleStrong,
+    fontSize: 18,
     lineHeight: 22,
   },
   loadingBlock: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: spacing.s8,
     minHeight: 96,
   },
   loadingText: {
     fontFamily: fontFamilies.regular,
-    fontSize: 13,
+    ...typeScale.bodyCompact,
   },
   contextStack: {
-    gap: 12,
+    gap: spacing.s12,
   },
   contextCard: {
     borderWidth: 1,
-    borderRadius: 20,
-    padding: 16,
-    gap: 10,
+    borderRadius: radii.r14,
+    padding: spacing.s16,
+    gap: spacing.s10,
   },
   supportText: {
     fontFamily: fontFamilies.regular,
-    fontSize: 13,
-    lineHeight: 19,
+    ...typeScale.body,
   },
   supportMeta: {
-    fontFamily: fontFamilies.regular,
-    fontSize: 12.5,
-    lineHeight: 18,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   fieldLabel: {
     fontFamily: fontFamilies.semibold,
@@ -770,54 +726,54 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
+    borderRadius: radii.r12,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s11,
     fontFamily: inputFontFamily,
-    fontSize: 14,
-    lineHeight: 19,
+    ...typeScale.body,
     minHeight: MIN_TOUCH_TARGET_SIZE,
   },
   actionColumn: {
-    gap: 10,
+    gap: spacing.s10,
   },
   primaryButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 16,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 13,
-    paddingHorizontal: 14,
+    paddingVertical: spacing.s13,
+    paddingHorizontal: spacing.s14,
   },
   primaryButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 14,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   secondaryButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingVertical: spacing.s12,
+    paddingHorizontal: spacing.s14,
   },
   secondaryButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 14,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   ghostButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingVertical: spacing.s12,
+    paddingHorizontal: spacing.s14,
   },
   ghostButtonText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 13.5,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   buttonDisabled: {
     opacity: 0.72,

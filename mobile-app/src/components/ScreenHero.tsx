@@ -1,8 +1,9 @@
 import React, { type ReactNode } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
+import { radii, shadows, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, typeScale } from "@/src/theme/typography";
 
 type ScreenHeroProps = {
   eyebrow?: string;
@@ -66,45 +67,44 @@ const styles = StyleSheet.create({
   card: {
     position: "relative",
     borderWidth: 1,
-    borderRadius: 22,
-    paddingHorizontal: 18,
-    paddingVertical: 18,
-    gap: 10,
-    shadowOpacity: 0.08,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
+    borderRadius: radii.r16,
+    paddingHorizontal: spacing.s16,
+    paddingVertical: spacing.s16,
+    gap: spacing.s10,
+    ...shadows.cardMedium,
     overflow: "hidden",
   },
   chromeGlow: {
     position: "absolute",
-    width: 180,
-    height: 180,
-    borderRadius: 999,
-    right: -62,
-    top: -88,
-    opacity: 0.34,
+    width: 260,
+    height: 110,
+    borderRadius: radii.r20,
+    right: -94,
+    top: -38,
+    opacity: 0.22,
   },
   chromeLine: {
     position: "absolute",
-    left: 14,
-    right: 14,
-    top: 12,
+    left: spacing.s14,
+    right: spacing.s14,
+    top: spacing.s12,
     borderTopWidth: 1,
-    opacity: 0.34,
+    borderStyle: "dashed",
+    opacity: 0.52,
   },
   topRow: {
-    minHeight: 30,
+    minHeight: 24,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
+    gap: spacing.s10,
   },
   eyebrowWrap: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    borderRadius: radii.r10,
+    borderStyle: "dashed",
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s5,
   },
   eyebrow: {
     fontFamily: fontFamilies.mono,
@@ -115,19 +115,17 @@ const styles = StyleSheet.create({
   },
   title: {
     fontFamily: fontFamilies.display,
-    fontSize: 32,
-    lineHeight: 34,
-    letterSpacing: -0.5,
+    ...typeScale.heroDisplay,
     textTransform: "uppercase",
   },
   description: {
-    fontFamily: fontFamilies.medium,
+    fontFamily: fontFamilies.regular,
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 19,
     maxWidth: 520,
   },
   footer: {
-    marginTop: 2,
-    gap: 10,
+    marginTop: spacing.s2,
+    gap: spacing.s10,
   },
 });

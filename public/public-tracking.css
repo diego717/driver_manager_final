@@ -1,27 +1,131 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700;800&display=swap");
-
 :root {
     color-scheme: light;
-    --pt-bg: #eaf0f2;
-    --pt-surface: #f8fbfc;
-    --pt-panel: #ffffff;
-    --pt-border: #c8d4d9;
-    --pt-border-strong: #90a4ac;
-    --pt-text: #142129;
-    --pt-text-muted: #50626d;
-    --pt-accent: #0d766e;
-    --pt-accent-soft: rgba(13, 118, 110, 0.1);
-    --pt-warning: #8c5a12;
-    --pt-warning-soft: rgba(140, 90, 18, 0.12);
-    --pt-danger: #9a3530;
-    --pt-danger-soft: rgba(154, 53, 48, 0.12);
-    --pt-info: #275d86;
-    --pt-info-soft: rgba(39, 93, 134, 0.12);
-    --pt-shadow: 0 16px 28px rgba(15, 27, 34, 0.08);
-    --pt-grid-line: rgba(13, 118, 110, 0.08);
-    --pt-noise: rgba(255, 255, 255, 0.22);
-    --pt-band-primary: rgba(13, 118, 110, 0.14);
-    --pt-band-secondary: rgba(39, 93, 134, 0.1);
+    --font-display: "Bebas Neue", "IBM Plex Sans Condensed", "Source Sans 3", "Segoe UI", sans-serif;
+    --font-body: "Source Sans 3", "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", "IBM Plex Mono", "Cascadia Mono", "Consolas", monospace;
+    --pt-bg: oklch(0.94 0.06 90);
+    --pt-surface: oklch(0.97 0.02 88);
+    --pt-panel: oklch(0.95 0.03 95);
+    --pt-border: color-mix(in oklab, #ff7a18 44%, #0ea5e9 56%);
+    --pt-border-strong: color-mix(in oklab, var(--pt-border) 62%, var(--pt-accent) 38%);
+    --pt-text: oklch(0.22 0.03 250);
+    --pt-text-muted: oklch(0.42 0.03 252);
+    --pt-accent: oklch(0.74 0.18 140);
+    --pt-accent-soft: color-mix(in oklab, var(--pt-accent) 12%, transparent);
+    --pt-warning: oklch(0.72 0.18 44);
+    --pt-warning-soft: color-mix(in oklab, var(--pt-warning) 16%, transparent);
+    --pt-danger: oklch(0.62 0.2 27);
+    --pt-danger-soft: color-mix(in oklab, var(--pt-danger) 16%, transparent);
+    --pt-info: oklch(0.68 0.14 236);
+    --pt-info-soft: color-mix(in oklab, var(--pt-info) 16%, transparent);
+    --pt-shadow: 0 1px 2px rgba(10, 16, 24, 0.09), 0 10px 24px rgba(10, 16, 24, 0.08);
+    --pt-grid-line: color-mix(in oklab, var(--pt-info) 14%, transparent);
+    --pt-noise: rgba(255, 255, 255, 0.18);
+    --pt-band-primary: color-mix(in oklab, var(--pt-warning) 16%, transparent);
+    --pt-band-secondary: color-mix(in oklab, var(--pt-accent) 12%, transparent);
+    --pt-target: color-mix(in oklab, var(--pt-info) 20%, transparent);
+}
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --pt-bg: oklch(0.2 0.035 286);
+    --pt-surface: oklch(0.18 0.03 252);
+    --pt-panel: oklch(0.22 0.03 244);
+    --pt-border: color-mix(in oklab, #bef264 52%, #38bdf8 48%);
+    --pt-border-strong: color-mix(in oklab, var(--pt-border) 66%, var(--pt-accent) 34%);
+    --pt-text: oklch(0.95 0.015 220);
+    --pt-text-muted: oklch(0.78 0.02 220);
+    --pt-accent: oklch(0.81 0.17 146);
+    --pt-accent-soft: color-mix(in oklab, var(--pt-accent) 18%, transparent);
+    --pt-warning: oklch(0.8 0.16 58);
+    --pt-warning-soft: color-mix(in oklab, var(--pt-warning) 20%, transparent);
+    --pt-danger: oklch(0.78 0.16 30);
+    --pt-danger-soft: color-mix(in oklab, var(--pt-danger) 20%, transparent);
+    --pt-info: oklch(0.82 0.12 255);
+    --pt-info-soft: color-mix(in oklab, var(--pt-info) 20%, transparent);
+    --pt-shadow: 0 16px 30px rgba(0, 0, 0, 0.42);
+    --pt-grid-line: color-mix(in oklab, var(--pt-info) 22%, transparent);
+    --pt-noise: rgba(255, 255, 255, 0.07);
+    --pt-band-primary: color-mix(in oklab, var(--pt-warning) 20%, transparent);
+    --pt-band-secondary: color-mix(in oklab, var(--pt-accent) 18%, transparent);
+    --pt-target: color-mix(in oklab, var(--pt-info) 34%, transparent);
+}
+
+:root[data-theme="dark"] body::before {
+    opacity: 1;
+    filter: saturate(1.16) contrast(1.06);
+}
+
+:root[data-theme="dark"] body::after {
+    opacity: 0.44;
+    mix-blend-mode: screen;
+}
+
+:root[data-theme="dark"] .public-tracking-card {
+    background:
+        linear-gradient(145deg, color-mix(in oklab, var(--pt-warning) 18%, transparent) 0%, transparent 48%),
+        linear-gradient(180deg, color-mix(in oklab, var(--pt-panel) 94%, black 6%), color-mix(in oklab, var(--pt-surface) 94%, black 6%)),
+        var(--pt-surface);
+}
+
+:root[data-theme="dark"] .public-tracking-status-badge {
+    background: color-mix(in oklab, var(--pt-panel) 84%, black 16%);
+}
+
+:root[data-theme="dark"] .public-tracking-refresh:hover {
+    background: color-mix(in oklab, var(--pt-accent-soft) 68%, black 32%);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --pt-bg: oklch(0.2 0.035 286);
+        --pt-surface: oklch(0.18 0.03 252);
+        --pt-panel: oklch(0.22 0.03 244);
+        --pt-border: color-mix(in oklab, #bef264 52%, #38bdf8 48%);
+        --pt-border-strong: color-mix(in oklab, var(--pt-border) 66%, var(--pt-accent) 34%);
+        --pt-text: oklch(0.95 0.015 220);
+        --pt-text-muted: oklch(0.78 0.02 220);
+        --pt-accent: oklch(0.81 0.17 146);
+        --pt-accent-soft: color-mix(in oklab, var(--pt-accent) 18%, transparent);
+        --pt-warning: oklch(0.8 0.16 58);
+        --pt-warning-soft: color-mix(in oklab, var(--pt-warning) 20%, transparent);
+        --pt-danger: oklch(0.78 0.16 30);
+        --pt-danger-soft: color-mix(in oklab, var(--pt-danger) 20%, transparent);
+        --pt-info: oklch(0.82 0.12 255);
+        --pt-info-soft: color-mix(in oklab, var(--pt-info) 20%, transparent);
+        --pt-shadow: 0 16px 30px rgba(0, 0, 0, 0.42);
+        --pt-grid-line: color-mix(in oklab, var(--pt-info) 22%, transparent);
+        --pt-noise: rgba(255, 255, 255, 0.07);
+        --pt-band-primary: color-mix(in oklab, var(--pt-warning) 20%, transparent);
+        --pt-band-secondary: color-mix(in oklab, var(--pt-accent) 18%, transparent);
+        --pt-target: color-mix(in oklab, var(--pt-info) 34%, transparent);
+    }
+
+    :root:not([data-theme="light"]) body::before {
+        opacity: 1;
+        filter: saturate(1.16) contrast(1.06);
+    }
+
+    :root:not([data-theme="light"]) body::after {
+        opacity: 0.44;
+        mix-blend-mode: screen;
+    }
+
+    :root:not([data-theme="light"]) .public-tracking-card {
+        background:
+            linear-gradient(145deg, color-mix(in oklab, var(--pt-warning) 18%, transparent) 0%, transparent 48%),
+            linear-gradient(180deg, color-mix(in oklab, var(--pt-panel) 94%, black 6%), color-mix(in oklab, var(--pt-surface) 94%, black 6%)),
+            var(--pt-surface);
+    }
+
+    :root:not([data-theme="light"]) .public-tracking-status-badge {
+        background: color-mix(in oklab, var(--pt-panel) 84%, black 16%);
+    }
+
+    :root:not([data-theme="light"]) .public-tracking-refresh:hover {
+        background: color-mix(in oklab, var(--pt-accent-soft) 68%, black 32%);
+    }
 }
 
 * {
@@ -31,17 +135,15 @@
 body {
     margin: 0;
     min-height: 100vh;
-    font-family: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+    font-family: var(--font-body);
     color: var(--pt-text);
     background:
         linear-gradient(90deg, var(--pt-grid-line) 1px, transparent 1px),
         linear-gradient(0deg, var(--pt-grid-line) 1px, transparent 1px),
-        linear-gradient(120deg, transparent 0%, var(--pt-band-primary) 46%, transparent 72%),
-        linear-gradient(300deg, transparent 0%, var(--pt-band-secondary) 40%, transparent 66%),
-        linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0)),
-        radial-gradient(circle at 0% 0%, rgba(13, 118, 110, 0.08), transparent 28%),
-        var(--pt-bg);
-    background-size: 96px 96px, 96px 96px, auto, auto, auto, auto, auto;
+        radial-gradient(circle at 8% -10%, color-mix(in oklab, var(--pt-warning) 22%, transparent), transparent 34%),
+        radial-gradient(circle at 98% 2%, color-mix(in oklab, var(--pt-accent) 18%, transparent), transparent 34%),
+        linear-gradient(125deg, var(--pt-bg), var(--pt-surface) 42%, var(--pt-panel));
+    background-size: 120px 120px, 120px 120px, auto, auto, auto;
     position: relative;
 }
 
@@ -55,8 +157,10 @@ body::after {
 
 body::before {
     background:
-        linear-gradient(90deg, transparent 0%, rgba(13, 118, 110, 0.09) 49.5%, transparent 50.5%, transparent 100%);
-    opacity: 0.8;
+        linear-gradient(125deg, transparent 0%, var(--pt-band-primary) 46%, transparent 72%),
+        linear-gradient(305deg, transparent 0%, var(--pt-band-secondary) 42%, transparent 68%),
+        linear-gradient(90deg, transparent 0%, var(--pt-target) 49.5%, transparent 50.5%, transparent 100%);
+    opacity: 0.9;
 }
 
 body::after {
@@ -79,16 +183,16 @@ body::after {
     position: absolute;
     inset: 0;
     background:
-        radial-gradient(circle at 15% 18%, rgba(13, 118, 110, 0.12), transparent 26%),
-        radial-gradient(circle at 85% 82%, rgba(39, 93, 134, 0.1), transparent 24%);
+        radial-gradient(circle at 15% 18%, color-mix(in oklab, var(--pt-warning) 22%, transparent), transparent 26%),
+        radial-gradient(circle at 85% 82%, color-mix(in oklab, var(--pt-accent) 18%, transparent), transparent 24%);
     pointer-events: none;
 }
 
 .public-tracking-card {
     width: min(100%, 44rem);
     background:
-        linear-gradient(145deg, rgba(13, 118, 110, 0.07) 0%, transparent 48%),
-        linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.98)),
+        linear-gradient(145deg, color-mix(in oklab, var(--pt-warning) 16%, transparent) 0%, transparent 48%),
+        linear-gradient(180deg, color-mix(in oklab, white 86%, var(--pt-panel) 14%), color-mix(in oklab, white 94%, var(--pt-panel) 6%)),
         var(--pt-surface);
     border: 1px solid var(--pt-border-strong);
     border-radius: 16px;
@@ -112,8 +216,8 @@ body::after {
     position: absolute;
     inset: 0;
     background:
-        linear-gradient(90deg, transparent 0 78%, rgba(13, 118, 110, 0.08) 78% 78.6%, transparent 78.6%),
-        linear-gradient(180deg, transparent 0 20px, rgba(13, 118, 110, 0.05) 20px 21px, transparent 21px 100%);
+        linear-gradient(90deg, transparent 0 78%, color-mix(in oklab, var(--pt-accent) 16%, transparent) 78% 78.6%, transparent 78.6%),
+        linear-gradient(180deg, transparent 0 20px, color-mix(in oklab, var(--pt-info) 12%, transparent) 20px 21px, transparent 21px 100%);
     pointer-events: none;
     z-index: -1;
 }
@@ -142,12 +246,12 @@ body::after {
     height: 2.8rem;
     border-radius: 0.92rem;
     background:
-        linear-gradient(160deg, rgba(255, 255, 255, 0.26) 0%, transparent 34%),
-        linear-gradient(145deg, rgba(13, 118, 110, 0.18), color-mix(in oklab, var(--pt-surface) 87%, var(--pt-accent-soft) 13%));
+        linear-gradient(160deg, rgba(255, 255, 255, 0.28) 0%, transparent 34%),
+        linear-gradient(145deg, color-mix(in oklab, var(--pt-warning) 28%, transparent), color-mix(in oklab, var(--pt-surface) 87%, var(--pt-accent-soft) 13%));
     border: 1px solid color-mix(in oklab, var(--pt-border-strong) 58%, var(--pt-accent) 42%);
     box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, 0.34),
-        0 10px 22px rgba(13, 118, 110, 0.08);
+        0 10px 22px color-mix(in oklab, var(--pt-accent) 18%, transparent);
     clip-path: polygon(0 0, 78% 0, 100% 22%, 100% 100%, 22% 100%, 0 78%);
 }
 
@@ -165,7 +269,7 @@ body::after {
 .public-tracking-brand-mark::before {
     inset: 0.26rem;
     border-radius: 0.72rem;
-    border: 1px solid rgba(13, 118, 110, 0.18);
+    border: 1px solid color-mix(in oklab, var(--pt-accent) 22%, transparent);
     clip-path: polygon(0 0, 80% 0, 100% 20%, 100% 100%, 20% 100%, 0 80%);
 }
 
@@ -212,8 +316,8 @@ body::after {
     top: 0.68rem;
     background: color-mix(in oklab, var(--pt-accent) 82%, white 18%);
     box-shadow:
-        0 0 0 0.16rem rgba(13, 118, 110, 0.14),
-        0 0 14px rgba(13, 118, 110, 0.16);
+        0 0 0 0.16rem color-mix(in oklab, var(--pt-accent) 20%, transparent),
+        0 0 14px color-mix(in oklab, var(--pt-accent) 24%, transparent);
 }
 
 .public-tracking-brand-copy {
@@ -225,7 +329,7 @@ body::after {
 .public-tracking-brand-copy strong {
     display: block;
     color: var(--pt-accent);
-    font-family: "IBM Plex Sans Condensed", "Source Sans 3", sans-serif;
+    font-family: var(--font-display);
     font-size: 1.1rem;
     line-height: 0.92;
     letter-spacing: 0.12em;
@@ -235,7 +339,7 @@ body::after {
 .public-tracking-brand-copy span {
     display: block;
     color: var(--pt-text-muted);
-    font-family: "IBM Plex Mono", "Consolas", monospace;
+    font-family: var(--font-mono);
     font-size: 0.62rem;
     letter-spacing: 0.2em;
     text-transform: uppercase;
@@ -247,7 +351,14 @@ body::after {
     text-transform: uppercase;
     letter-spacing: 0.14em;
     color: var(--pt-text-muted);
-    font-family: "IBM Plex Mono", "Consolas", monospace;
+    font-family: var(--font-mono);
+}
+
+.public-tracking-head-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
 }
 
 .public-tracking-connection-badge {
@@ -304,9 +415,66 @@ body::after {
     background: var(--pt-danger);
 }
 
+.public-tracking-theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 2rem;
+    padding: 0.25rem 0.7rem;
+    border-radius: 999px;
+    border: 1px solid var(--pt-border);
+    background: color-mix(in oklab, var(--pt-panel) 88%, var(--pt-accent-soft) 12%);
+    color: var(--pt-text-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-decoration: none;
+    font-family: var(--font-mono);
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.public-tracking-theme-toggle::before {
+    content: "";
+    display: inline-block;
+    width: 0.78rem;
+    height: 0.78rem;
+    box-sizing: border-box;
+    flex: 0 0 0.78rem;
+}
+
+.public-tracking-theme-toggle[data-target-theme="dark"]::before {
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    box-shadow: inset -0.24rem -0.02rem 0 0 currentColor;
+    transform: rotate(-18deg);
+}
+
+.public-tracking-theme-toggle[data-target-theme="light"]::before {
+    border-radius: 999px;
+    background: currentColor;
+    box-shadow:
+        0 0 0 0.11rem color-mix(in oklab, currentColor 24%, transparent),
+        0 -0.48rem 0 -0.34rem currentColor,
+        0 0.48rem 0 -0.34rem currentColor,
+        0.48rem 0 0 -0.34rem currentColor,
+        -0.48rem 0 0 -0.34rem currentColor;
+}
+
+.public-tracking-theme-toggle:hover {
+    color: var(--pt-accent);
+    border-color: color-mix(in oklab, var(--pt-accent) 42%, var(--pt-border) 58%);
+    background: color-mix(in oklab, var(--pt-accent-soft) 74%, var(--pt-panel) 26%);
+}
+
+.public-tracking-theme-toggle:focus-visible {
+    outline: 2px solid var(--pt-accent);
+    outline-offset: 2px;
+}
+
 #publicTrackingTitle {
     margin: 0;
-    font-family: "IBM Plex Sans Condensed", "Source Sans 3", sans-serif;
+    font-family: var(--font-display);
     font-size: clamp(1.9rem, 4vw, 2.7rem);
     line-height: 0.96;
     letter-spacing: 0.03em;
@@ -359,7 +527,7 @@ body::after {
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(135deg, rgba(13, 118, 110, 0.08) 0%, transparent 52%);
+    background: linear-gradient(135deg, color-mix(in oklab, var(--pt-warning) 14%, transparent) 0%, transparent 52%);
     pointer-events: none;
 }
 
@@ -394,7 +562,7 @@ body::after {
     letter-spacing: 0.11em;
     color: var(--pt-text);
     text-transform: uppercase;
-    font-family: "IBM Plex Mono", "Consolas", monospace;
+    font-family: var(--font-mono);
 }
 
 .public-tracking-status-badge[data-tone="success"] {
@@ -425,7 +593,7 @@ body::after {
     letter-spacing: 0.11em;
     color: var(--pt-text-muted);
     text-transform: uppercase;
-    font-family: "IBM Plex Mono", "Consolas", monospace;
+    font-family: var(--font-mono);
 }
 
 .public-tracking-meta {
@@ -454,7 +622,7 @@ body::after {
     border-radius: 12px;
     border: 1px solid var(--pt-border);
     background:
-        linear-gradient(145deg, rgba(13, 118, 110, 0.05) 0%, transparent 44%),
+        linear-gradient(145deg, color-mix(in oklab, var(--pt-warning) 12%, transparent) 0%, transparent 44%),
         var(--pt-panel);
     padding: 0.86rem 0.95rem;
     display: grid;
@@ -483,7 +651,7 @@ body::after {
 .public-tracking-empty {
     color: var(--pt-text-muted);
     font-size: 0.8rem;
-    font-family: "IBM Plex Mono", "Consolas", monospace;
+    font-family: var(--font-mono);
 }
 
 .public-tracking-refresh {
@@ -491,7 +659,7 @@ body::after {
     border: 1px solid color-mix(in oklab, var(--pt-accent) 45%, var(--pt-border) 55%);
     border-radius: 12px;
     background:
-        linear-gradient(135deg, rgba(13, 118, 110, 0.12), rgba(13, 118, 110, 0.06)),
+        linear-gradient(135deg, color-mix(in oklab, var(--pt-warning) 22%, transparent), color-mix(in oklab, var(--pt-warning) 10%, transparent)),
         var(--pt-accent-soft);
     color: var(--pt-accent);
     font: inherit;
@@ -501,7 +669,7 @@ body::after {
     cursor: pointer;
     letter-spacing: 0.03em;
     text-transform: uppercase;
-    font-family: "IBM Plex Mono", "Consolas", monospace;
+    font-family: var(--font-mono);
 }
 
 .public-tracking-refresh:hover {
@@ -534,6 +702,10 @@ body::after {
     }
 
     .public-tracking-connection-badge {
+        align-self: flex-start;
+    }
+
+    .public-tracking-head-controls {
         align-self: flex-start;
     }
 }

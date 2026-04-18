@@ -1,6 +1,7 @@
 import React from "react";
 import { Image, StyleSheet, View } from "react-native";
 
+import { radii, sizing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { useThemePreference } from "@/src/theme/theme-preference";
 
@@ -34,15 +35,15 @@ export default function AppHeaderTitle(_: AppHeaderTitleProps) {
 
 const styles = StyleSheet.create({
   container: {
-    width: 132,
-    height: 42,
+    width: 136,
+    height: 40,
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: radii.r12,
     alignItems: "center",
     justifyContent: "center",
   },
   logo: {
-    width: 112,
-    height: 40,
+    width: sizing.headerActionsWidth - 2,
+    height: 32,
   },
 });

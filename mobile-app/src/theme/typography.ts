@@ -6,12 +6,58 @@ export const fontFamilies = {
   semibold: "IBMPlexSansCondensed_600SemiBold",
   bold: "IBMPlexSansCondensed_600SemiBold",
   mono: "IBMPlexMono_400Regular",
-  display: "IBMPlexSansCondensed_600SemiBold",
+  display: "BebasNeue_400Regular",
+} as const;
+
+export const typeScale = {
+  heroDisplay: {
+    fontSize: 46,
+    lineHeight: 42,
+    letterSpacing: 0.85,
+  },
+  sectionDisplay: {
+    fontSize: 28,
+    lineHeight: 27,
+    letterSpacing: 0.75,
+  },
+  actionDisplay: {
+    fontSize: 32,
+    lineHeight: 29,
+    letterSpacing: 0.75,
+  },
+  titleStrong: {
+    fontSize: 20,
+    lineHeight: 24,
+    letterSpacing: -0.1,
+  },
+  body: {
+    fontSize: 13.5,
+    lineHeight: 19,
+  },
+  bodyCompact: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  metaMono: {
+    fontSize: 11.5,
+    lineHeight: 18,
+    letterSpacing: 1,
+  },
+  buttonMono: {
+    fontSize: 12,
+    lineHeight: 15,
+    letterSpacing: 0.7,
+  },
+  buttonMonoTight: {
+    fontSize: 11,
+    lineHeight: 13,
+    letterSpacing: 0.8,
+  },
 } as const;
 
 export const inputFontFamily =
   Platform.OS === "android" ? "sans-serif" : fontFamilies.regular;
-export const textInputAccentColor = "#0ba6a6";
+export const textInputAccentColor = "#9af2bd";
 
 let defaultsApplied = false;
 

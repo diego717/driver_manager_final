@@ -23,7 +23,7 @@
     font-feature-settings: "liga";
     -webkit-font-smoothing: antialiased;
 }
-/* ===== DESIGN SYSTEM v1 â€” Stitch-aligned tokens ===== */
+/* ===== DESIGN SYSTEM v1 - Stitch-aligned tokens ===== */
 :root {
     --font-display: "Bebas Neue", "IBM Plex Sans Condensed", "Source Sans 3", "Segoe UI", sans-serif;
     --font-body: "Source Sans 3", "Segoe UI", sans-serif;
@@ -1812,7 +1812,7 @@ body[data-nav-transition="true"] .main-content::after {
 }
 
 .records-utility-actions[open] summary::after {
-    content: "âˆ’";
+    content: "-";
 }
 
 .records-utility-actions-list {
@@ -4955,7 +4955,7 @@ tr[data-asset-id]:focus-visible {
 }
 
 .asset-detail-more-actions[open] summary::after {
-    content: "âˆ’";
+    content: "-";
 }
 
 .asset-detail-more-actions-list {
@@ -7157,6 +7157,68 @@ tr[data-asset-id]:focus-visible {
         left: 0.45rem !important;
         right: 0.45rem;
         bottom: calc(5.4rem + env(safe-area-inset-bottom, 0px));
+    }
+}
+
+/* Mobile nav stabilization: keep tabs readable and avoid clipped labels on narrow phones */
+@media (max-width: 768px) {
+    .sidebar {
+        overflow: visible;
+    }
+
+    .nav-links {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 0.32rem;
+        overflow: visible;
+        padding: 0.08rem 0.08rem 0.2rem;
+        scroll-snap-type: none;
+    }
+
+    .nav-links .nav-group,
+    .nav-links .nav-group-list {
+        display: contents;
+    }
+
+    .nav-links li {
+        min-width: 0;
+        margin-bottom: 0;
+    }
+
+    .nav-links a,
+    .nav-mobile-more-btn {
+        min-width: 0;
+        min-height: 52px;
+        width: 100%;
+        padding: 0.4rem 0.2rem;
+        gap: 0.22rem;
+        font-size: clamp(0.6rem, 2.35vw, 0.68rem);
+        letter-spacing: 0.015em;
+        line-height: 1.12;
+        text-align: center;
+        text-transform: none;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        justify-content: center;
+    }
+
+    .nav-links a .material-symbols-outlined,
+    .nav-mobile-more-btn .material-symbols-outlined {
+        font-size: 1.08rem;
+    }
+
+    .nav-links a::after,
+    .nav-mobile-more-btn::after {
+        bottom: 3px;
+    }
+}
+
+@media (max-width: 360px) {
+    .nav-links a,
+    .nav-mobile-more-btn {
+        font-size: 0.56rem;
+        letter-spacing: 0;
     }
 }
 

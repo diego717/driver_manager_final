@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useReducedMotion } from "@/src/hooks/useReducedMotion";
+import { radii, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 
 type ScreenScaffoldProps = {
@@ -97,8 +98,10 @@ function AmbientBackdrop() {
   });
   const scanlineOpacity = sweep.interpolate({
     inputRange: [0, 0.12, 0.72, 1],
-    outputRange: [0.06, 0.22, 0.16, 0.06],
+    outputRange: [0.015, 0.07, 0.05, 0.015],
   });
+  const rowCount = Math.max(5, Math.floor(height / 140));
+  const columnCount = Math.max(3, Math.floor(width / 120));
 
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
@@ -151,6 +154,35 @@ function AmbientBackdrop() {
       <View style={[styles.frameBottom, { borderColor: palette.heroBorder }]} />
       <View style={[styles.notch, styles.notchLeft, { borderColor: palette.heroBorder }]} />
       <View style={[styles.notch, styles.notchRight, { borderColor: palette.heroBorder }]} />
+      <View style={styles.gridRows}>
+        {Array.from({ length: rowCount }).map((_, index) => (
+          <View
+            // Keep static, deterministic keys for ambient decoration layers.
+            key={`grid-row-${index}`}
+            style={[
+              styles.gridRow,
+              {
+                top: ((index + 1) * height) / (rowCount + 1),
+                borderColor: palette.border,
+              },
+            ]}
+          />
+        ))}
+      </View>
+      <View style={styles.gridColumns}>
+        {Array.from({ length: columnCount }).map((_, index) => (
+          <View
+            key={`grid-column-${index}`}
+            style={[
+              styles.gridColumn,
+              {
+                left: ((index + 1) * width) / (columnCount + 1),
+                borderColor: palette.border,
+              },
+            ]}
+          />
+        ))}
+      </View>
       <View style={[styles.gridVeil, { borderColor: palette.border }]} />
       <Animated.View
         style={[
@@ -180,8 +212,8 @@ export default function ScreenScaffold(props: ScreenScaffoldProps) {
   const baseContentStyle = [
     styles.contentBase,
     {
-      paddingTop: 18 + Math.max(insets.top, 0),
-      paddingBottom: 24 + Math.max(insets.bottom, 12),
+      paddingTop: spacing.s18 + Math.max(insets.top, 0),
+      paddingBottom: spacing.s24 + Math.max(insets.bottom, spacing.s12),
     },
   ];
 
@@ -224,8 +256,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentBase: {
-    paddingHorizontal: 20,
-    gap: 14,
+    paddingHorizontal: spacing.s20,
+    gap: spacing.s14,
   },
   centeredContent: {
     flexGrow: 1,
@@ -234,33 +266,34 @@ const styles = StyleSheet.create({
   },
   orb: {
     position: "absolute",
-    borderRadius: 999,
+    borderRadius: radii.full,
+    opacity: 0.1,
   },
   motionLayer: {
     ...StyleSheet.absoluteFillObject,
   },
   beam: {
     position: "absolute",
-    borderRadius: 999,
-    opacity: 0.52,
+    borderRadius: radii.full,
+    opacity: 0.14,
   },
   beamPrimary: {
-    width: 360,
-    height: 170,
-    top: -112,
-    right: -128,
+    width: 420,
+    height: 126,
+    top: -74,
+    right: -148,
   },
   beamSecondary: {
-    width: 310,
-    height: 132,
-    bottom: 84,
-    left: -158,
-    transform: [{ rotate: "18deg" }],
+    width: 360,
+    height: 104,
+    bottom: 106,
+    left: -178,
+    transform: [{ rotate: "10deg" }],
   },
   panelColumn: {
     position: "absolute",
-    borderRadius: 22,
-    opacity: 0.2,
+    borderRadius: radii.r22,
+    opacity: 0.08,
   },
   panelColumnPrimary: {
     right: -28,
@@ -297,25 +330,25 @@ const styles = StyleSheet.create({
     width: 192,
     height: 192,
     top: 248,
-    borderRadius: 999,
-    borderWidth: 1.5,
-    opacity: 0.26,
+    borderRadius: radii.full,
+    borderWidth: 1,
+    opacity: 0.12,
   },
   frameTop: {
     position: "absolute",
-    left: 12,
-    right: 12,
-    top: 10,
+    left: spacing.s12,
+    right: spacing.s12,
+    top: spacing.s10,
     borderTopWidth: 1,
-    opacity: 0.36,
+    opacity: 0.48,
   },
   frameBottom: {
     position: "absolute",
-    left: 14,
-    right: 14,
-    bottom: 14,
+    left: spacing.s14,
+    right: spacing.s14,
+    bottom: spacing.s14,
     borderTopWidth: 1,
-    opacity: 0.24,
+    opacity: 0.34,
   },
   notch: {
     position: "absolute",
@@ -323,28 +356,48 @@ const styles = StyleSheet.create({
     height: 10,
     borderTopWidth: 1,
     borderLeftWidth: 1,
-    opacity: 0.28,
+    opacity: 0.2,
   },
   notchLeft: {
-    left: 12,
-    top: 10,
+    left: spacing.s12,
+    top: spacing.s10,
   },
   notchRight: {
-    right: 12,
-    bottom: 14,
+    right: spacing.s12,
+    bottom: spacing.s14,
     transform: [{ rotate: "180deg" }],
   },
   gridVeil: {
     ...StyleSheet.absoluteFillObject,
-    borderTopWidth: 0.6,
-    borderBottomWidth: 0.6,
-    opacity: 0.11,
+    borderTopWidth: 0.9,
+    borderBottomWidth: 0.9,
+    opacity: 0.12,
+  },
+  gridRows: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  gridColumns: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  gridRow: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    borderTopWidth: 1,
+    opacity: 0.085,
+  },
+  gridColumn: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    borderLeftWidth: 1,
+    opacity: 0.06,
   },
   scanline: {
     position: "absolute",
-    left: 16,
-    right: 16,
-    height: 2,
-    borderRadius: 999,
+    left: spacing.s16,
+    right: spacing.s16,
+    height: 1.5,
+    borderRadius: radii.full,
   },
 });

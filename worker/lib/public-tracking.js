@@ -819,6 +819,7 @@ function escapeHtml(value) {
 
 export function renderPublicTrackingHtml({
   token,
+  theme = "",
   documentTitle = "Seguimiento del servicio",
   eyebrow = "Seguimiento del servicio",
   connectionLabel = "Actualizando",
@@ -837,6 +838,13 @@ export function renderPublicTrackingHtml({
   refreshHidden = false,
   includeClientScript = true,
 } = {}) {
+  const normalizedTheme = String(theme || "").trim().toLowerCase();
+  const htmlThemeAttr = normalizedTheme === "dark" || normalizedTheme === "light"
+    ? ` data-theme="${escapeHtml(normalizedTheme)}"`
+    : "";
+  const themeToggleTarget = normalizedTheme === "dark" ? "light" : "dark";
+  const themeToggleLabel = themeToggleTarget === "dark" ? "Usar modo oscuro" : "Usar modo claro";
+  const themeToggleHref = `/track/${encodeURIComponent(String(token || ""))}?theme=${encodeURIComponent(themeToggleTarget)}`;
   const escapedToken = escapeHtml(token);
   const connectionStateAttr = connectionState ? ` data-state="${escapeHtml(connectionState)}"` : "";
   const messageToneAttr = messageTone ? ` data-tone="${escapeHtml(messageTone)}"` : "";
@@ -854,7 +862,7 @@ export function renderPublicTrackingHtml({
     ? '  <script src="/public-tracking.js" defer></script>\n'
     : "";
   return `<!DOCTYPE html>
-<html lang="es">
+<html lang="es"${htmlThemeAttr}>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -862,7 +870,19 @@ export function renderPublicTrackingHtml({
   <title>${escapeHtml(documentTitle)}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link
+    rel="preload"
+    href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Source+Sans+3:wght@400;500;600;700;800&display=swap"
+    as="style"
+  >
+  <link
+    href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Source+Sans+3:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet"
+    media="all"
+  >
+  <noscript>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Source+Sans+3:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  </noscript>
   <link rel="stylesheet" href="/public-tracking.css">
 </head>
 <body data-tracking-token="${escapedToken}">
@@ -882,7 +902,16 @@ export function renderPublicTrackingHtml({
           </div>
         </div>
         <p class="public-tracking-eyebrow">${escapeHtml(eyebrow)}</p>
-        <span id="publicTrackingConnectionBadge" class="public-tracking-connection-badge" aria-live="polite"${connectionStateAttr}>${escapeHtml(connectionLabel)}</span>
+        <div class="public-tracking-head-controls">
+          <span id="publicTrackingConnectionBadge" class="public-tracking-connection-badge" aria-live="polite"${connectionStateAttr}>${escapeHtml(connectionLabel)}</span>
+          <a
+            id="publicTrackingThemeToggleBtn"
+            class="public-tracking-theme-toggle"
+            href="${escapeHtml(themeToggleHref)}"
+            data-target-theme="${escapeHtml(themeToggleTarget)}"
+            aria-label="${escapeHtml(themeToggleLabel)}"
+          >${escapeHtml(themeToggleLabel)}</a>
+        </div>
       </div>
       <h1 id="publicTrackingTitle">${escapeHtml(title)}</h1>
       <p class="public-tracking-intro">${escapeHtml(intro)}</p>
@@ -915,9 +944,10 @@ export function publicTrackingHeaders() {
       "frame-ancestors 'none'",
       "object-src 'none'",
       "img-src 'self' data:",
+      "font-src 'self' data: https://fonts.gstatic.com",
       "script-src 'self'",
-      "style-src 'self'",
-      "connect-src 'self'",
+      "style-src 'self' https://fonts.googleapis.com",
+      "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
       "form-action 'none'",
     ].join("; "),
   };

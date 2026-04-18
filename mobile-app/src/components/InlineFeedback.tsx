@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Animated, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 
+import { radii, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -105,21 +106,21 @@ export default function InlineFeedback({
 const styles = StyleSheet.create({
   wrapper: {
     borderWidth: 1,
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: radii.r16,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 10,
+    gap: spacing.s10,
   },
   iconWrap: {
     minWidth: 26,
     height: 26,
-    borderRadius: 999,
+    borderRadius: radii.full,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 6,
+    paddingHorizontal: spacing.s6,
     marginTop: 1,
     flexShrink: 0,
   },

@@ -6690,6 +6690,89 @@ test("public tracking link can be issued from web and consumed without DB reads"
   assert.equal(db.calls.length, dbCallsBeforePublicRead);
 });
 
+test("public tracking html accepts manual theme override via query string", async () => {
+  const db = createMockDB({
+    installations: [
+      {
+        id: 45,
+        timestamp: "2026-03-26T10:00:00.000Z",
+      },
+    ],
+    incidents: [
+      {
+        id: 91,
+        installation_id: 45,
+        incident_status: "open",
+        created_at: "2026-03-26T10:05:00.000Z",
+        status_updated_at: "2026-03-26T10:05:00.000Z",
+      },
+    ],
+  });
+  const publicTrackingKv = createMockKV();
+  const env = {
+    DB: db,
+    PUBLIC_TRACKING_KV: publicTrackingKv,
+    PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+    PUBLIC_TRACKING_BASE_URL: "https://estado.example.com",
+    WEB_LOGIN_PASSWORD: "web-pass",
+    WEB_SESSION_SECRET: "web-session-secret",
+  };
+
+  const bootstrapResponse = await workerFetch(
+    new Request("https://worker.example/web/auth/bootstrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bootstrap_password: "web-pass",
+        username: "admin_root",
+        password: "StrongPass#2026",
+      }),
+    }),
+    env,
+  );
+  assert.equal(bootstrapResponse.status, 201);
+
+  const createResponse = await workerFetch(
+    new Request("https://worker.example/web/installations/45/public-tracking-link", {
+      method: "POST",
+      headers: {
+        ...webSessionHeadersFromResponse(bootstrapResponse),
+      },
+    }),
+    env,
+  );
+  const createBody = await createResponse.json();
+  const shortCode = decodeURIComponent(new URL(createBody.link.tracking_url).pathname.split("/").pop() || "");
+
+  const publicViewEnv = {
+    PUBLIC_TRACKING_KV: publicTrackingKv,
+    PUBLIC_TRACKING_SECRET: "public-tracking-secret",
+    RATE_LIMIT_KV: createMockKV(),
+  };
+  const darkResponse = await workerFetch(
+    new Request(`https://worker.example/track/${encodeURIComponent(shortCode)}?theme=dark`, {
+      method: "GET",
+    }),
+    publicViewEnv,
+  );
+  const darkHtml = await darkResponse.text();
+  assert.equal(darkResponse.status, 200);
+  assert.match(darkHtml, /<html lang="es" data-theme="dark">/);
+  assert.match(darkHtml, /id="publicTrackingThemeToggleBtn"/);
+  assert.match(darkHtml, /\?theme=light/);
+
+  const lightResponse = await workerFetch(
+    new Request(`https://worker.example/track/${encodeURIComponent(shortCode)}?theme=light`, {
+      method: "GET",
+    }),
+    publicViewEnv,
+  );
+  const lightHtml = await lightResponse.text();
+  assert.equal(lightResponse.status, 200);
+  assert.match(lightHtml, /<html lang="es" data-theme="light">/);
+  assert.match(lightHtml, /\?theme=dark/);
+});
+
 test("public tracking link can be listed and revoked from web", async () => {
   const db = createMockDB({
     installations: [

@@ -8,7 +8,6 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 
@@ -21,6 +20,7 @@ import {
 } from "@/src/api/assets";
 import { extractAssetLabelFromImage, lookupCode } from "@/src/api/scan";
 import { extractApiError } from "@/src/api/client";
+import ConsoleButton from "@/src/components/ConsoleButton";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import { extractAssetLabelOnDevice } from "@/src/services/asset-label-ocr";
@@ -32,8 +32,9 @@ import {
   type PreviewValidationErrors,
 } from "@/src/utils/asset-label-preview";
 import { parseScannedPayload, type ParsedAssetLabelData } from "@/src/utils/scan";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, typeScale } from "@/src/theme/typography";
 
 const ENABLE_REMOTE_OCR_FALLBACK =
   String(process.env.EXPO_PUBLIC_ENABLE_REMOTE_OCR_FALLBACK || "").trim().toLowerCase() === "true";
@@ -548,21 +549,22 @@ export default function ScanScreen() {
         ) : (
           <View style={styles.noCameraContainer}>
             <Text style={[styles.noCameraText, { color: palette.textSecondary }]}>Camara no disponible o sin permisos.</Text>
-            <TouchableOpacity
-              style={[styles.secondaryButton, { backgroundColor: palette.secondaryBg }]}
+            <ConsoleButton
+              variant="subtle"
+              style={styles.secondaryButton}
               onPress={() => {
                 void requestPermission();
               }}
-            >
-              <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Solicitar permiso</Text>
-            </TouchableOpacity>
+              label="Solicitar permiso"
+              textStyle={styles.secondaryButtonText}
+            />
           </View>
         )}
 
         {resolving ? (
-          <View style={styles.overlay}>
-            <ActivityIndicator color="#fff" />
-            <Text style={styles.overlayText}>{resolvingLabel}</Text>
+          <View style={[styles.overlay, { backgroundColor: palette.overlayBg }]}>
+            <ActivityIndicator color={palette.primaryButtonText} />
+            <Text style={[styles.overlayText, { color: palette.primaryButtonText }]}>{resolvingLabel}</Text>
           </View>
         ) : null}
       </View>
@@ -618,27 +620,16 @@ export default function ScanScreen() {
                   Confianza OCR menor al umbral ({Math.round(OCR_LOW_CONFIDENCE_THRESHOLD * 100)}%).
                   Revisa Codigo y Serie antes de confirmar.
                 </Text>
-                <TouchableOpacity
-                  style={[
-                    styles.previewReviewButton,
-                    {
-                      backgroundColor: pendingLabelReviewConfirmed ? palette.successBg : palette.cardBg,
-                      borderColor: pendingLabelReviewConfirmed ? palette.successBorder : palette.inputBorder,
-                    },
-                  ]}
+                <ConsoleButton
+                  variant={pendingLabelReviewConfirmed ? "primary" : "ghost"}
+                  size="sm"
+                  style={styles.previewReviewButton}
                   onPress={onTogglePreviewManualReview}
-                >
-                  <Text
-                    style={[
-                      styles.previewReviewButtonText,
-                      { color: pendingLabelReviewConfirmed ? palette.successText : palette.textPrimary },
-                    ]}
-                  >
-                    {pendingLabelReviewConfirmed
-                      ? "Revision manual marcada"
-                      : "Marcar revision manual"}
-                  </Text>
-                </TouchableOpacity>
+                  label={pendingLabelReviewConfirmed
+                    ? "Revision manual marcada"
+                    : "Marcar revision manual"}
+                  textStyle={styles.previewReviewButtonText}
+                />
               </View>
             ) : null}
             <Text
@@ -818,26 +809,25 @@ export default function ScanScreen() {
               ]}
               multiline
             />
-            <TouchableOpacity
-              style={[styles.primaryButton, { backgroundColor: palette.buttonBg }]}
-              disabled={resolving || (pendingLabelRequiresReview && !pendingLabelReviewConfirmed && !hasCriticalManualEdit)}
+            <ConsoleButton
+              variant="secondary"
+              style={styles.primaryButton}
+              disabled={pendingLabelRequiresReview && !pendingLabelReviewConfirmed && !hasCriticalManualEdit}
+              loading={resolving}
               onPress={() => {
                 void onConfirmLabelPreview();
               }}
-            >
-              <Text style={[styles.primaryButtonText, { color: palette.buttonText }]}>
-                Confirmar y continuar
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.secondaryButton, { backgroundColor: palette.secondaryBg }]}
+              label="Confirmar y continuar"
+              textStyle={styles.primaryButtonText}
+            />
+            <ConsoleButton
+              variant="subtle"
+              style={styles.secondaryButton}
               disabled={resolving}
               onPress={onCancelLabelPreview}
-            >
-              <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>
-                Cancelar vista previa
-              </Text>
-            </TouchableOpacity>
+              label="Cancelar vista previa"
+              textStyle={styles.secondaryButtonText}
+            />
           </View>
         ) : null}
 
@@ -854,24 +844,24 @@ export default function ScanScreen() {
           autoCapitalize="none"
           autoCorrect={false}
         />
-        <TouchableOpacity
-          style={[styles.primaryButton, { backgroundColor: palette.buttonBg }]}
+        <ConsoleButton
+          variant="secondary"
+          style={styles.primaryButton}
           disabled={resolving}
           onPress={onManualSubmit}
-        >
-          <Text style={[styles.primaryButtonText, { color: palette.buttonText }]}>Continuar con codigo</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.secondaryButton, { backgroundColor: palette.secondaryBg }]}
+          label="Continuar con codigo"
+          textStyle={styles.primaryButtonText}
+        />
+        <ConsoleButton
+          variant="subtle"
+          style={styles.secondaryButton}
           disabled={resolving || Boolean(pendingLabelPreview)}
           onPress={() => {
             void onDetectLabelFromCamera();
           }}
-        >
-          <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>
-            Detectar etiqueta por foto
-          </Text>
-        </TouchableOpacity>
+          label="Detectar etiqueta por foto"
+          textStyle={styles.secondaryButtonText}
+        />
       </View>
     </ScreenScaffold>
   );
@@ -880,24 +870,25 @@ export default function ScanScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 16,
-    gap: 12,
+    padding: spacing.s16,
+    gap: spacing.s12,
   },
   heroBadge: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s7,
   },
   heroBadgeText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 11.5,
-    letterSpacing: 0.3,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
   },
   cameraFrame: {
     height: 300,
     borderWidth: 1,
-    borderRadius: 22,
+    borderRadius: radii.r22,
     overflow: "hidden",
     position: "relative",
   },
@@ -905,90 +896,95 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    gap: 12,
-    padding: 16,
+    gap: spacing.s12,
+    padding: spacing.s16,
   },
   noCameraText: {
     textAlign: "center",
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(2,6,23,0.65)",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
+    gap: spacing.s10,
   },
   overlayText: {
-    color: "#fff",
-    fontFamily: fontFamilies.semibold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   manualCard: {
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 14,
-    gap: 10,
+    borderRadius: radii.r14,
+    padding: spacing.s14,
+    gap: spacing.s10,
   },
   previewCard: {
     borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    gap: 8,
-    marginBottom: 8,
+    borderRadius: radii.r14,
+    padding: spacing.s12,
+    gap: spacing.s8,
+    marginBottom: spacing.s8,
   },
   previewTitle: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 16,
+    fontFamily: fontFamilies.display,
+    ...typeScale.sectionDisplay,
+    fontSize: 24,
+    lineHeight: 24,
+    letterSpacing: 0.7,
+    textTransform: "uppercase",
   },
   previewDescription: {
-    fontSize: 12.5,
-    lineHeight: 18,
-    marginBottom: 4,
+    ...typeScale.bodyCompact,
+    marginBottom: spacing.s4,
   },
   previewMetaRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 4,
+    marginBottom: spacing.s4,
   },
   previewConfidenceBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s5,
   },
   previewConfidenceText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 11.5,
-    letterSpacing: 0.2,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    textTransform: "uppercase",
   },
   previewReviewCard: {
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 10,
-    gap: 6,
-    marginBottom: 4,
+    borderRadius: radii.r12,
+    padding: spacing.s10,
+    gap: spacing.s6,
+    marginBottom: spacing.s4,
   },
   previewReviewTitle: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 12.5,
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   previewReviewBody: {
-    fontSize: 12,
-    lineHeight: 17,
+    ...typeScale.bodyCompact,
   },
   previewReviewButton: {
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s8,
     alignSelf: "flex-start",
+    minHeight: sizing.touchTargetMin,
   },
   previewReviewButtonText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 11.5,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   previewEditSummary: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 12,
-    marginBottom: 4,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    marginBottom: spacing.s4,
+    textTransform: "uppercase",
   },
   previewFieldHeader: {
     flexDirection: "row",
@@ -996,49 +992,62 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   previewFieldLabel: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 12,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   previewEditedBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 8,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s8,
     paddingVertical: 3,
   },
   previewEditedBadgeText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 10.5,
-    letterSpacing: 0.2,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    textTransform: "uppercase",
   },
   previewErrorText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 11.5,
-    marginTop: -4,
-    marginBottom: 2,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    marginTop: -spacing.s4,
+    marginBottom: spacing.s2,
+    textTransform: "uppercase",
   },
   label: {
-    fontFamily: fontFamilies.semibold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   input: {
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: radii.r14,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
+    minHeight: sizing.touchTargetMin,
+    fontFamily: inputFontFamily,
+    ...typeScale.bodyCompact,
   },
   primaryButton: {
-    borderRadius: 14,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
+    paddingVertical: spacing.s12,
+    minHeight: sizing.touchTargetMin,
   },
   primaryButtonText: {
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   secondaryButton: {
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s14,
+    paddingVertical: spacing.s10,
+    minHeight: sizing.touchTargetMin,
   },
   secondaryButtonText: {
-    fontFamily: fontFamilies.semibold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
 });

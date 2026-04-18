@@ -39,6 +39,7 @@ import { useNotificationsContext } from "@/src/notifications/notifications-conte
 import TechnicianDirectoryCard from "@/src/components/TechnicianDirectoryCard";
 import { clearSharedWebSessionState, refreshSharedWebSessionState, useSharedWebSessionState } from "@/src/session/web-session-store";
 import { useReducedMotion } from "@/src/hooks/useReducedMotion";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { useThemePreference } from "@/src/theme/theme-preference";
 import { fontFamilies } from "@/src/theme/typography";
@@ -569,7 +570,7 @@ export default function ApiSettingsScreen() {
           style={{
             opacity: contentOpacity,
             transform: [{ translateY: contentTranslateY }],
-            gap: 12,
+            gap: spacing.s12,
           }}
         >
         <ScreenHero
@@ -788,9 +789,11 @@ export default function ApiSettingsScreen() {
               disabled={saving || changingTheme || changingBiometric}
             >
               {saving ? (
-                <ActivityIndicator color="#ffffff" />
+                <ActivityIndicator color={palette.primaryButtonText} />
               ) : (
-                <Text style={styles.primaryButtonText}>Guardar URL</Text>
+                <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
+                  Guardar URL
+                </Text>
               )}
             </TouchableOpacity>
 
@@ -927,7 +930,7 @@ export default function ApiSettingsScreen() {
           </Text>
         </View>
 
-        <View style={{ height: keyboardHeight > 0 ? keyboardHeight + 24 : 24 }} />
+        <View style={{ height: keyboardHeight > 0 ? keyboardHeight + spacing.s24 : spacing.s24 }} />
         </Animated.View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -944,14 +947,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   container: {
-    padding: 20,
-    gap: 12,
+    padding: spacing.s20,
+    gap: spacing.s12,
   },
   heroBadge: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s7,
   },
   heroBadgeText: {
     fontFamily: fontFamilies.bold,
@@ -959,16 +962,15 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   sourceText: {
-    color: "#64748b",
     fontSize: 12,
     fontFamily: fontFamilies.regular,
   },
   summaryCard: {
     borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 4,
+    borderRadius: radii.r18,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
+    gap: spacing.s4,
   },
   summaryTitle: {
     fontSize: 14,
@@ -983,36 +985,31 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.regular,
   },
   hintText: {
-    color: "#64748b",
     fontSize: 12,
     fontFamily: fontFamilies.regular,
   },
   feedbackBox: {
-    marginTop: 6,
+    marginTop: spacing.s6,
     borderWidth: 1,
-    borderColor: "#bae6fd",
-    backgroundColor: "#f0f9ff",
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderRadius: radii.r8,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s8,
   },
   feedbackText: {
-    color: "#0c4a6e",
     fontSize: 12,
     fontFamily: fontFamilies.regular,
   },
   label: {
-    marginTop: 2,
+    marginTop: spacing.s2,
     fontSize: 13,
     fontFamily: fontFamilies.semibold,
-    color: "#1e293b",
   },
   sectionCard: {
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 8,
+    borderRadius: radii.r12,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s12,
+    gap: spacing.s8,
   },
   sectionCardTitle: {
     fontSize: 14,
@@ -1023,25 +1020,25 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.regular,
   },
   cardHeader: {
-    gap: 2,
-    marginBottom: 2,
+    gap: spacing.s2,
+    marginBottom: spacing.s2,
   },
   themePanel: {
     borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 12,
+    borderRadius: radii.r18,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s12,
+    gap: spacing.s12,
   },
   themeRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
+    gap: spacing.s12,
   },
   themeRowText: {
     flex: 1,
-    gap: 2,
+    gap: spacing.s2,
   },
   themeRowTitle: {
     fontFamily: fontFamilies.semibold,
@@ -1057,10 +1054,11 @@ const styles = StyleSheet.create({
   },
   detailsToggle: {
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: radii.r14,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 10,
+    paddingVertical: spacing.s10,
+    minHeight: sizing.touchTargetMin,
   },
   detailsToggleText: {
     fontFamily: fontFamilies.semibold,
@@ -1068,57 +1066,53 @@ const styles = StyleSheet.create({
   },
   detailsPanel: {
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 4,
+    borderRadius: radii.r14,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s8,
+    gap: spacing.s4,
   },
   input: {
     borderWidth: 1,
-    borderColor: "#cbd5e1",
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: "#ffffff",
+    borderRadius: radii.r14,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
+    minHeight: sizing.touchTargetMin,
   },
   buttonStack: {
-    gap: 10,
-    marginTop: 4,
+    gap: spacing.s10,
+    marginTop: spacing.s4,
   },
   primaryButton: {
-    borderRadius: 14,
+    borderRadius: radii.r14,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 14,
+    paddingVertical: spacing.s14,
+    minHeight: sizing.touchTargetMin,
   },
   primaryButtonText: {
-    color: "#ffffff",
     fontFamily: fontFamilies.bold,
     fontSize: 15,
   },
   secondaryButton: {
-    borderRadius: 14,
+    borderRadius: radii.r14,
     borderWidth: 1,
-    borderColor: "#cbd5e1",
-    backgroundColor: "#ffffff",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 14,
+    paddingVertical: spacing.s14,
+    minHeight: sizing.touchTargetMin,
   },
   secondaryButtonText: {
-    color: "#0f172a",
     fontFamily: fontFamilies.bold,
     fontSize: 15,
   },
   warningButton: {
-    borderRadius: 14,
-    backgroundColor: "#fee2e2",
+    borderRadius: radii.r14,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 14,
+    paddingVertical: spacing.s14,
+    minHeight: sizing.touchTargetMin,
   },
   warningButtonText: {
-    color: "#7f1d1d",
     fontFamily: fontFamilies.bold,
     fontSize: 14,
   },

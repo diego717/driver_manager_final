@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ActivityIndicator, Animated, Easing, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Animated, Easing, StyleSheet, Text, View } from "react-native";
 
 import { extractApiError } from "@/src/api/client";
 import { listInstallations } from "@/src/api/incidents";
 import { getDashboardStatistics } from "@/src/api/statistics";
 import { readStoredWebSession } from "@/src/api/webAuth";
 import { canManageTechnicians as canManageTechnicianDirectory } from "@/src/auth/roles";
+import ConsoleButton from "@/src/components/ConsoleButton";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -18,8 +19,9 @@ import SyncStatusBanner from "@/src/components/SyncStatusBanner";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { triggerSelectionHaptic } from "@/src/services/haptics";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, typeScale } from "@/src/theme/typography";
 import { type DashboardStatistics, type InstallationRecord } from "@/src/types/api";
 import { deriveRecordIncidentSummary } from "@/src/utils/incidents";
 
@@ -28,7 +30,7 @@ type FeedbackState = {
   message: string;
 } | null;
 
-const MIN_TOUCH_TARGET_SIZE = 44;
+const MIN_TOUCH_TARGET_SIZE = sizing.touchTargetMin;
 
 function normalizeRouteParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
@@ -270,62 +272,47 @@ export default function TodayScreen() {
         title="Entrada principal"
         description="Empieza por el QR cuando estas en campo."
       >
-        <TouchableOpacity
-          style={[
-            styles.scanButton,
-            {
-              backgroundColor: palette.primaryButtonBg,
-              borderColor: palette.heroBorder,
-            },
-          ]}
-            onPress={() => {
-              void triggerSelectionHaptic();
-              router.push("/scan" as never);
-            }}
-          accessibilityRole="button"
+        <ConsoleButton
+          variant="secondary"
+          size="lg"
+          style={styles.scanButton}
+          onPress={() => {
+            void triggerSelectionHaptic();
+            router.push("/scan" as never);
+          }}
           accessibilityLabel="Escanear equipo para iniciar trabajo"
         >
-          <Text style={[styles.scanButtonTitle, { color: palette.primaryButtonText }]}>
+          <Text style={[styles.scanButtonTitle, { color: palette.accent }]}>
             Escanear equipo
           </Text>
-          <Text style={[styles.scanButtonBody, { color: palette.primaryButtonText }]}>
+          <Text style={[styles.scanButtonBody, { color: palette.textSecondary }]}>
             Apunta, resuelve el contexto y sigue.
           </Text>
-        </TouchableOpacity>
+        </ConsoleButton>
 
         <View style={styles.utilityRow}>
-          <TouchableOpacity
-            style={[
-              styles.utilityButton,
-              { backgroundColor: palette.surface, borderColor: palette.inputBorder },
-            ]}
+          <ConsoleButton
+            variant="ghost"
+            style={styles.utilityButton}
             onPress={() => {
               void triggerSelectionHaptic();
               router.push("/case/manual" as never);
             }}
-            accessibilityRole="button"
             accessibilityLabel="Iniciar caso manual"
-          >
-            <Text style={[styles.utilityButtonText, { color: palette.refreshText }]}>
-              Caso manual
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.utilityButton,
-              { backgroundColor: palette.surface, borderColor: palette.inputBorder },
-            ]}
+            label="Caso manual"
+            textStyle={styles.utilityButtonText}
+          />
+          <ConsoleButton
+            variant="ghost"
+            style={styles.utilityButton}
             onPress={() => {
               void triggerSelectionHaptic();
               router.push("/explore" as never);
             }}
-            accessibilityRole="button"
             accessibilityLabel="Abrir inventario"
-          >
-            <Text style={[styles.utilityButtonText, { color: palette.refreshText }]}>
-              Inventario
-            </Text>
-          </TouchableOpacity>
+            label="Inventario"
+            textStyle={styles.utilityButtonText}
+          />
         </View>
       </SectionCard>
 
@@ -334,22 +321,17 @@ export default function TodayScreen() {
           title="Gestion de tecnicos"
           description="Acceso rapido al directorio operativo del tenant."
         >
-          <TouchableOpacity
-            style={[
-              styles.utilityButton,
-              { backgroundColor: palette.surface, borderColor: palette.inputBorder },
-            ]}
+          <ConsoleButton
+            variant="ghost"
+            style={styles.utilityButton}
             onPress={() => {
               void triggerSelectionHaptic();
               router.push("/technicians" as never);
             }}
-            accessibilityRole="button"
             accessibilityLabel="Abrir directorio de tecnicos"
-          >
-            <Text style={[styles.utilityButtonText, { color: palette.refreshText }]}>
-              Abrir tecnicos
-            </Text>
-          </TouchableOpacity>
+            label="Abrir tecnicos"
+            textStyle={styles.utilityButtonText}
+          />
         </SectionCard>
       ) : null}
 
@@ -357,28 +339,20 @@ export default function TodayScreen() {
         title="Caso foco"
         description="Si ya hay trabajo abierto, retomas desde aqui."
         aside={(
-          <TouchableOpacity
-            style={[
-              styles.refreshButton,
-              { backgroundColor: palette.surface, borderColor: palette.inputBorder },
-            ]}
+          <ConsoleButton
+            variant="ghost"
+            size="sm"
+            style={styles.refreshButton}
             onPress={() => {
               void triggerSelectionHaptic();
               void loadOverview({ forceRefresh: true });
             }}
-            disabled={loadingOverview}
-            accessibilityRole="button"
+            loading={loadingOverview}
             accessibilityLabel="Refrescar resumen operativo"
             accessibilityState={{ disabled: loadingOverview, busy: loadingOverview }}
-          >
-            {loadingOverview ? (
-              <ActivityIndicator size="small" color={palette.refreshText} />
-            ) : (
-              <Text style={[styles.refreshButtonText, { color: palette.refreshText }]}>
-                Refrescar
-              </Text>
-            )}
-          </TouchableOpacity>
+            label="Refrescar"
+            textStyle={styles.refreshButtonText}
+          />
         )}
       >
         {!focusRecord ? (
@@ -410,35 +384,28 @@ export default function TodayScreen() {
             </Text>
 
             <View style={styles.focusActions}>
-              <TouchableOpacity
-                style={[styles.primaryAction, { backgroundColor: palette.primaryButtonBg }]}
+              <ConsoleButton
+                variant="primary"
+                style={styles.primaryAction}
                 onPress={() => {
                   void triggerSelectionHaptic();
                   openCaseContext(focusRecord);
                 }}
-                accessibilityRole="button"
                 accessibilityLabel={`Abrir el caso ${focusRecord.id}`}
-              >
-                <Text style={[styles.primaryActionText, { color: palette.primaryButtonText }]}>
-                  Trabajar este caso
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.secondaryAction,
-                  { backgroundColor: palette.surface, borderColor: palette.inputBorder },
-                ]}
+                label="Trabajar este caso"
+                textStyle={styles.primaryActionText}
+              />
+              <ConsoleButton
+                variant="ghost"
+                style={styles.secondaryAction}
                 onPress={() => {
                   void triggerSelectionHaptic();
                   openBacklog(focusRecord);
                 }}
-                accessibilityRole="button"
                 accessibilityLabel={`Abrir backlog del caso ${focusRecord.id}`}
-              >
-                <Text style={[styles.secondaryActionText, { color: palette.refreshText }]}>
-                  Ver backlog
-                </Text>
-              </TouchableOpacity>
+                label="Ver backlog"
+                textStyle={styles.secondaryActionText}
+              />
             </View>
           </View>
         )}
@@ -451,13 +418,13 @@ export default function TodayScreen() {
 const styles = StyleSheet.create({
   centerContainer: {
     flex: 1,
-    padding: 22,
+    padding: spacing.s22,
     alignItems: "center",
     justifyContent: "center",
   },
   container: {
-    padding: 22,
-    gap: 14,
+    padding: spacing.s22,
+    gap: spacing.s14,
   },
   authHintText: {
     fontSize: 14,
@@ -466,120 +433,124 @@ const styles = StyleSheet.create({
   },
   heroMetaText: {
     fontFamily: fontFamilies.mono,
-    fontSize: 11.5,
-    lineHeight: 18,
-    letterSpacing: 0.6,
+    ...typeScale.metaMono,
+    letterSpacing: 1.1,
     textTransform: "uppercase",
   },
   scanButton: {
     minHeight: 88,
-    borderRadius: 18,
+    borderRadius: radii.r14,
     borderWidth: 1,
+    borderStyle: "dashed",
     alignItems: "flex-start",
     justifyContent: "center",
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-    gap: 4,
+    paddingHorizontal: spacing.s18,
+    paddingVertical: spacing.s16,
+    gap: spacing.s4,
   },
   scanButtonTitle: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 18,
-    lineHeight: 22,
-    letterSpacing: -0.2,
+    fontFamily: fontFamilies.display,
+    ...typeScale.actionDisplay,
+    textTransform: "uppercase",
   },
   scanButtonBody: {
-    fontFamily: fontFamilies.regular,
-    fontSize: 13,
-    lineHeight: 18,
+    fontFamily: fontFamilies.medium,
+    ...typeScale.bodyCompact,
   },
   refreshButton: {
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    borderRadius: radii.r10,
+    borderStyle: "dashed",
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s8,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     justifyContent: "center",
   },
   refreshButtonText: {
     fontFamily: fontFamilies.mono,
-    fontSize: 11.5,
-    letterSpacing: 0.5,
+    ...typeScale.buttonMono,
+    letterSpacing: 0.8,
     textTransform: "uppercase",
   },
   focusCard: {
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 16,
-    gap: 12,
+    borderRadius: radii.r14,
+    padding: spacing.s16,
+    gap: spacing.s12,
   },
   focusHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 12,
+    gap: spacing.s12,
   },
   focusTitleWrap: {
     flex: 1,
-    gap: 4,
+    gap: spacing.s4,
   },
   focusTitle: {
     fontFamily: fontFamilies.bold,
-    fontSize: 20,
-    lineHeight: 24,
-    letterSpacing: -0.3,
+    ...typeScale.titleStrong,
+    letterSpacing: -0.2,
   },
   focusBody: {
     fontFamily: fontFamilies.regular,
-    fontSize: 13.5,
-    lineHeight: 19,
+    ...typeScale.body,
   },
   focusMeta: {
     fontFamily: fontFamilies.mono,
-    fontSize: 11.5,
-    lineHeight: 18,
-    letterSpacing: 0.4,
+    ...typeScale.metaMono,
+    letterSpacing: 0.9,
+    textTransform: "uppercase",
   },
   focusActions: {
-    gap: 10,
+    gap: spacing.s10,
   },
   primaryAction: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 14,
+    borderRadius: radii.r10,
+    borderWidth: 1,
+    borderStyle: "dashed",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 13,
+    paddingVertical: spacing.s13,
   },
   primaryActionText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 14.5,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   secondaryAction: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
     borderWidth: 1,
-    borderRadius: 14,
+    borderStyle: "dashed",
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
+    paddingVertical: spacing.s12,
   },
   secondaryActionText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 13.5,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   utilityRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: spacing.s10,
   },
   utilityButton: {
     flex: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     borderWidth: 1,
-    borderRadius: 12,
+    borderStyle: "dashed",
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 10,
+    paddingVertical: spacing.s10,
   },
   utilityButtonText: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 13,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
 });

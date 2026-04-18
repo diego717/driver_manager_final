@@ -558,7 +558,7 @@
                 moreActions.className = 'asset-detail-more-actions';
 
                 const moreSummary = document.createElement('summary');
-                moreSummary.textContent = 'Mas acciones';
+                moreSummary.textContent = 'Más acciones';
 
                 const moreList = document.createElement('div');
                 moreList.className = 'asset-detail-more-actions-list';

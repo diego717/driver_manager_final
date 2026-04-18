@@ -7,7 +7,6 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
@@ -21,13 +20,15 @@ import {
   type DriverRecord,
 } from "@/src/api/drivers";
 import { extractApiError } from "@/src/api/client";
+import ConsoleButton from "@/src/components/ConsoleButton";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, typeScale } from "@/src/theme/typography";
 
 const DRIVER_LIST_LIMIT = 80;
 
@@ -309,61 +310,48 @@ export default function DriversScreen() {
           placeholderTextColor={palette.placeholder}
         />
 
-        <TouchableOpacity
-          style={[styles.secondaryButton, { backgroundColor: palette.surface, borderColor: palette.inputBorder }]}
+        <ConsoleButton
+          variant="ghost"
+          style={styles.secondaryButton}
           onPress={() => {
             void onPickFile();
           }}
-          accessibilityRole="button"
           accessibilityLabel="Seleccionar archivo de driver"
-          activeOpacity={0.88}
-        >
-          <Text style={[styles.secondaryButtonText, { color: palette.refreshText }]}>Seleccionar archivo</Text>
-        </TouchableOpacity>
+          label="Seleccionar archivo"
+          textStyle={styles.secondaryButtonText}
+        />
 
         <Text style={[styles.fileLabel, { color: palette.textMuted }]}>{selectedFileLabel}</Text>
 
-        <TouchableOpacity
-          style={[
-            styles.button,
-            { backgroundColor: palette.primaryButtonBg },
-            (uploading || !pickedFile) && styles.buttonDisabled,
-          ]}
+        <ConsoleButton
+          variant="primary"
+          style={[styles.button, (uploading || !pickedFile) && styles.buttonDisabled]}
           onPress={() => {
             void onUpload();
           }}
-          disabled={uploading || !pickedFile}
-          accessibilityRole="button"
+          loading={uploading}
+          disabled={!pickedFile}
           accessibilityLabel="Subir driver"
-          activeOpacity={0.86}
-        >
-          {uploading ? (
-            <ActivityIndicator color={palette.primaryButtonText} />
-          ) : (
-            <Text style={[styles.buttonText, { color: palette.primaryButtonText }]}>Subir driver</Text>
-          )}
-        </TouchableOpacity>
+          label="Subir driver"
+          textStyle={styles.buttonText}
+        />
       </View>
 
       <View style={[styles.card, { backgroundColor: palette.cardBg, borderColor: palette.cardBorder }]}>
         <View style={styles.listHeader}>
           <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Drivers disponibles</Text>
-          <TouchableOpacity
-            style={[styles.secondaryButtonCompact, { backgroundColor: palette.surface, borderColor: palette.inputBorder }]}
+          <ConsoleButton
+            variant="ghost"
+            size="sm"
+            style={styles.secondaryButtonCompact}
             onPress={() => {
               void loadDrivers();
             }}
-            disabled={loadingDrivers}
-            accessibilityRole="button"
+            loading={loadingDrivers}
             accessibilityLabel="Actualizar lista de drivers"
-            activeOpacity={0.88}
-          >
-            {loadingDrivers ? (
-              <ActivityIndicator size="small" color={palette.refreshText} />
-            ) : (
-              <Text style={[styles.secondaryButtonText, { color: palette.refreshText }]}>Actualizar</Text>
-            )}
-          </TouchableOpacity>
+            label="Actualizar"
+            textStyle={styles.secondaryButtonText}
+          />
         </View>
 
         {drivers.length === 0 ? (
@@ -382,17 +370,17 @@ export default function DriversScreen() {
             <Text style={[styles.hintText, { color: palette.textSecondary }]}>
               Sube el primer paquete para habilitar instalaciones por marca y version.
             </Text>
-            <TouchableOpacity
-              style={[styles.secondaryButtonCompact, { backgroundColor: palette.surface, borderColor: palette.inputBorder }]}
+            <ConsoleButton
+              variant="ghost"
+              size="sm"
+              style={styles.secondaryButtonCompact}
               onPress={() => {
                 void loadDrivers();
               }}
-              accessibilityRole="button"
               accessibilityLabel="Actualizar lista de drivers vacia"
-              activeOpacity={0.88}
-            >
-              <Text style={[styles.secondaryButtonText, { color: palette.refreshText }]}>Actualizar lista</Text>
-            </TouchableOpacity>
+              label="Actualizar lista"
+              textStyle={styles.secondaryButtonText}
+            />
           </View>
         ) : (
           <View style={styles.driverList}>
@@ -414,42 +402,31 @@ export default function DriversScreen() {
                 </View>
 
                 <View style={styles.driverActions}>
-                  <TouchableOpacity
-                    style={[
-                      styles.actionButton,
-                      { backgroundColor: palette.surface, borderColor: palette.inputBorder },
-                    ]}
+                  <ConsoleButton
+                    variant="ghost"
+                    size="sm"
+                    style={styles.actionButton}
                     onPress={() => {
                       void onDownload(driver);
                     }}
-                    disabled={downloadingKey === driver.key}
-                    accessibilityRole="button"
+                    loading={downloadingKey === driver.key}
                     accessibilityLabel={`Descargar driver ${driver.brand} ${driver.version}`}
-                    activeOpacity={0.86}
-                  >
-                    {downloadingKey === driver.key ? (
-                      <ActivityIndicator size="small" color={palette.refreshText} />
-                    ) : (
-                      <Text style={[styles.actionButtonText, { color: palette.refreshText }]}>Descargar</Text>
-                    )}
-                  </TouchableOpacity>
+                    label="Descargar"
+                    textStyle={styles.actionButtonText}
+                  />
 
-                  <TouchableOpacity
-                    style={[styles.actionButton, { backgroundColor: palette.errorBg }]}
+                  <ConsoleButton
+                    variant="warning"
+                    size="sm"
+                    style={styles.actionButton}
                     onPress={() => {
                       void onDelete(driver);
                     }}
-                    disabled={deletingKey === driver.key}
-                    accessibilityRole="button"
+                    loading={deletingKey === driver.key}
                     accessibilityLabel={`Eliminar driver ${driver.brand} ${driver.version}`}
-                    activeOpacity={0.86}
-                  >
-                    {deletingKey === driver.key ? (
-                      <ActivityIndicator size="small" color={palette.errorText} />
-                    ) : (
-                      <Text style={[styles.actionButtonText, { color: palette.errorText }]}>Eliminar</Text>
-                    )}
-                  </TouchableOpacity>
+                    label="Eliminar"
+                    textStyle={styles.actionButtonText}
+                  />
                 </View>
               </View>
             ))}
@@ -462,94 +439,99 @@ export default function DriversScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 22,
-    gap: 14,
+    padding: spacing.s22,
+    gap: spacing.s14,
   },
   centerContainer: {
     flex: 1,
-    padding: 20,
+    padding: spacing.s20,
     alignItems: "center",
     justifyContent: "center",
   },
   heroBadge: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s7,
   },
   heroBadgeText: {
     fontFamily: fontFamilies.mono,
-    fontSize: 11,
-    letterSpacing: 0.8,
+    ...typeScale.buttonMonoTight,
+    letterSpacing: 0.9,
     textTransform: "uppercase",
   },
   card: {
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 16,
-    gap: 10,
+    borderRadius: radii.r18,
+    padding: spacing.s16,
+    gap: spacing.s10,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontFamily: fontFamilies.bold,
-    letterSpacing: -0.2,
+    fontFamily: fontFamilies.display,
+    ...typeScale.sectionDisplay,
+    fontSize: 24,
+    lineHeight: 24,
+    letterSpacing: 0.7,
+    textTransform: "uppercase",
   },
   label: {
-    fontSize: 12,
     fontFamily: fontFamilies.mono,
-    marginTop: 2,
+    ...typeScale.buttonMono,
+    marginTop: spacing.s2,
     letterSpacing: 0.6,
     textTransform: "uppercase",
   },
   input: {
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    minHeight: 44,
+    borderRadius: radii.r12,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s11,
+    minHeight: sizing.touchTargetMin,
+    fontFamily: inputFontFamily,
+    ...typeScale.body,
   },
   fileLabel: {
-    fontSize: 12,
     fontFamily: fontFamilies.mono,
-    marginTop: 2,
+    ...typeScale.buttonMono,
+    marginTop: spacing.s2,
     letterSpacing: 0.3,
+    textTransform: "uppercase",
   },
   button: {
-    borderRadius: 12,
-    minHeight: 46,
+    borderRadius: radii.r10,
+    minHeight: sizing.touchTargetMin + spacing.s2,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 13,
-    marginTop: 6,
+    paddingVertical: spacing.s13,
+    marginTop: spacing.s6,
   },
   buttonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 16,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   secondaryButton: {
-    borderWidth: 1,
-    borderRadius: 12,
-    minHeight: 44,
+    borderRadius: radii.r10,
+    minHeight: sizing.touchTargetMin,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 10,
-    marginTop: 6,
+    paddingVertical: spacing.s10,
+    marginTop: spacing.s6,
   },
   secondaryButtonCompact: {
-    borderWidth: 1,
-    borderRadius: 12,
-    minHeight: 44,
-    paddingHorizontal: 12,
+    borderRadius: radii.r10,
+    minHeight: sizing.touchTargetMin,
+    paddingHorizontal: spacing.s12,
     alignItems: "center",
     justifyContent: "center",
   },
   secondaryButtonText: {
     fontFamily: fontFamilies.mono,
-    fontSize: 13.5,
-    letterSpacing: 0.4,
+    ...typeScale.buttonMono,
+    letterSpacing: 0.7,
     textTransform: "uppercase",
   },
   hintText: {
@@ -560,63 +542,61 @@ const styles = StyleSheet.create({
   emptyStateWrap: {
     borderWidth: 1,
     borderStyle: "solid",
-    borderRadius: 12,
-    padding: 12,
-    gap: 9,
+    borderRadius: radii.r12,
+    padding: spacing.s12,
+    gap: spacing.s9,
     alignItems: "flex-start",
   },
   emptyStateTitle: {
-    fontSize: 14,
-    fontFamily: fontFamilies.semibold,
+    fontFamily: fontFamilies.bold,
+    ...typeScale.body,
   },
   listHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 8,
+    gap: spacing.s8,
   },
   driverList: {
-    gap: 8,
+    gap: spacing.s8,
   },
   driverRow: {
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: radii.r12,
+    padding: spacing.s12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
+    gap: spacing.s12,
   },
   driverInfo: {
     flex: 1,
-    gap: 2,
+    gap: spacing.s2,
   },
   driverActions: {
-    gap: 8,
+    gap: spacing.s8,
   },
   driverTitle: {
-    fontSize: 14.5,
-    fontFamily: fontFamilies.bold,
-    letterSpacing: -0.1,
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.body,
   },
   driverMeta: {
-    fontSize: 12,
     fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   actionButton: {
-    borderRadius: 12,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    minHeight: 44,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
+    minHeight: sizing.touchTargetMin,
     minWidth: 82,
     alignItems: "center",
     justifyContent: "center",
   },
   actionButtonText: {
-    fontSize: 13,
     fontFamily: fontFamilies.mono,
-    letterSpacing: 0.4,
+    ...typeScale.buttonMono,
     textTransform: "uppercase",
   },
 });

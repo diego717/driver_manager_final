@@ -105,12 +105,13 @@ test("gps observability copy renders without mojibake", () => {
   const html = loadDashboardHtml();
   const dom = new JSDOM(html);
   const { document } = dom.window;
+  const gpsPanelText = document.querySelector(".gps-ops-panel")?.textContent || "";
 
   assert.match(document.getElementById("gpsOpsTitle")?.textContent || "", /Salud de captura y contexto GPS/);
-  assert.match(document.body.textContent || "", /auditoría operativa/);
-  assert.match(document.body.textContent || "", /Capturas útiles/);
-  assert.match(document.body.textContent || "", /Sin datos todavía/);
-  assert.doesNotMatch(document.body.textContent || "", /Ã|Â/);
+  assert.ok(gpsPanelText.includes("auditor\u00EDa operativa"));
+  assert.ok(gpsPanelText.includes("Capturas \u00FAtiles"));
+  assert.ok(gpsPanelText.includes("Sin datos todav\u00EDa"));
+  assert.doesNotMatch(gpsPanelText, /[\u00C3\u00C2]/);
 });
 
 test("login modal keeps keyboard focus trapped and closes on Escape", async () => {

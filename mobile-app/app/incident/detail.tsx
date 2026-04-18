@@ -18,6 +18,7 @@ import {
 } from "react-native";
 
 import { extractApiError } from "@/src/api/client";
+import ConsoleButton from "@/src/components/ConsoleButton";
 import {
   deleteIncident,
   getIncidentById,
@@ -39,8 +40,9 @@ import SectionCard from "@/src/components/SectionCard";
 import StatusChip from "@/src/components/StatusChip";
 import TechnicianAssignmentsPanel from "@/src/components/TechnicianAssignmentsPanel";
 import { useReducedMotion } from "@/src/hooks/useReducedMotion";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, textInputAccentColor, typeScale } from "@/src/theme/typography";
 import { type Incident, type TechnicianAssignment, type TechnicianRecord } from "@/src/types/api";
 import { buildIncidentNavigationTargets } from "@/src/utils/incident-dispatch";
 import {
@@ -53,7 +55,7 @@ import {
   resolveIncidentRealDurationSeconds,
 } from "@/src/utils/incidents";
 
-const MIN_TOUCH_TARGET_SIZE = 44;
+const MIN_TOUCH_TARGET_SIZE = sizing.touchTargetMin;
 
 function normalizeParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
@@ -517,30 +519,25 @@ export default function IncidentDetailScreen() {
       ) : null}
 
       <View style={styles.topRow}>
-        <TouchableOpacity
-          style={[
-            styles.refreshButton,
-            { backgroundColor: palette.buttonBg, borderColor: palette.buttonBorder },
-          ]}
+        <ConsoleButton
+          variant="secondary"
+          style={styles.refreshButton}
           onPress={loadIncident}
-          disabled={loading}
-          accessibilityRole="button"
+          loading={loading}
           accessibilityLabel="Refrescar datos de la incidencia"
           accessibilityState={{ disabled: loading, busy: loading }}
-        >
-          <Text style={[styles.refreshButtonText, { color: palette.buttonText }]}>
-            {loading ? "Cargando..." : "Refrescar"}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.backButton, { backgroundColor: palette.backBg }]}
+          label={loading ? "Cargando..." : "Refrescar"}
+          textStyle={styles.refreshButtonText}
+        />
+        <ConsoleButton
+          variant="ghost"
+          style={styles.backButton}
           onPress={() => router.back()}
-          accessibilityRole="button"
           accessibilityLabel="Volver a la pantalla anterior"
           accessibilityState={{ disabled: false }}
-        >
-          <Text style={[styles.backButtonText, { color: palette.textPrimary }]}>Volver</Text>
-        </TouchableOpacity>
+          label="Volver"
+          textStyle={styles.backButtonText}
+        />
       </View>
 
       {loading ? (
@@ -605,40 +602,18 @@ export default function IncidentDetailScreen() {
               {statusActions.map((action) => {
                 const selected = status === action.key;
                 return (
-                  <TouchableOpacity
+                  <ConsoleButton
                     key={action.key}
-                    style={[
-                      styles.statusButton,
-                      {
-                        backgroundColor:
-                          selected || action.primary
-                            ? palette.primaryButtonBg
-                            : palette.refreshBg,
-                        borderColor: action.primary
-                          ? palette.primaryButtonBg
-                          : palette.inputBorder,
-                      },
-                    ]}
+                    variant={selected || action.primary ? "primary" : "ghost"}
+                    size="sm"
+                    style={styles.statusButton}
                     onPress={() => {
                       void onChangeStatus(action.key);
                     }}
                     disabled={updatingStatus || (status === "resolved" && action.key === "resolved")}
-                    accessibilityRole="button"
-                  >
-                    <Text
-                      style={[
-                        styles.statusButtonText,
-                        {
-                          color:
-                            selected || action.primary
-                              ? palette.primaryButtonText
-                              : palette.refreshText,
-                        },
-                      ]}
-                    >
-                      {action.label}
-                    </Text>
-                  </TouchableOpacity>
+                    label={action.label}
+                    textStyle={styles.statusButtonText}
+                  />
                 );
               })}
             </View>
@@ -748,40 +723,26 @@ export default function IncidentDetailScreen() {
                 ) : null}
 
                 <View style={styles.navigationButtonsRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.statusButton,
-                      {
-                        backgroundColor: palette.primaryButtonBg,
-                        borderColor: palette.primaryButtonBg,
-                      },
-                    ]}
+                  <ConsoleButton
+                    variant="primary"
+                    size="sm"
+                    style={styles.statusButton}
                     onPress={() => {
                       void openExternalUrl(navigationTargets.google, "Google Maps");
                     }}
-                    accessibilityRole="button"
-                  >
-                    <Text style={[styles.statusButtonText, { color: palette.primaryButtonText }]}>
-                      Abrir en Google Maps
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.statusButton,
-                      {
-                        backgroundColor: palette.refreshBg,
-                        borderColor: palette.inputBorder,
-                      },
-                    ]}
+                    label="Abrir en Google Maps"
+                    textStyle={styles.statusButtonText}
+                  />
+                  <ConsoleButton
+                    variant="ghost"
+                    size="sm"
+                    style={styles.statusButton}
                     onPress={() => {
                       void openExternalUrl(navigationTargets.waze, "Waze");
                     }}
-                    accessibilityRole="button"
-                  >
-                    <Text style={[styles.statusButtonText, { color: palette.refreshText }]}>
-                      Abrir en Waze
-                    </Text>
-                  </TouchableOpacity>
+                    label="Abrir en Waze"
+                    textStyle={styles.statusButtonText}
+                  />
                 </View>
               </>
             )}
@@ -877,36 +838,26 @@ export default function IncidentDetailScreen() {
             )}
           </SectionCard>
 
-          <TouchableOpacity
-            style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
+          <ConsoleButton
+            variant="primary"
+            style={styles.primaryButton}
             onPress={onAddEvidence}
-            accessibilityRole="button"
             accessibilityLabel="Adjuntar evidencia fotografica"
             accessibilityState={{ disabled: false }}
-          >
-            <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
-              Adjuntar evidencia
-            </Text>
-          </TouchableOpacity>
+            label="Adjuntar evidencia"
+            textStyle={styles.primaryButtonText}
+          />
           {canDeleteIncident ? (
-            <TouchableOpacity
-              style={[
-                styles.secondaryDangerButton,
-                {
-                  backgroundColor: palette.errorBg,
-                  borderColor: palette.errorBorder,
-                },
-              ]}
+            <ConsoleButton
+              variant="warning"
+              style={styles.secondaryDangerButton}
               onPress={onDeleteIncident}
-              disabled={deletingIncident}
-              accessibilityRole="button"
+              loading={deletingIncident}
               accessibilityLabel="Eliminar incidencia"
               accessibilityState={{ disabled: deletingIncident, busy: deletingIncident }}
-            >
-              <Text style={[styles.secondaryDangerButtonText, { color: palette.errorText }]}>
-                {deletingIncident ? "Eliminando..." : "Eliminar incidencia"}
-              </Text>
-            </TouchableOpacity>
+              label={deletingIncident ? "Eliminando..." : "Eliminar incidencia"}
+              textStyle={styles.secondaryDangerButtonText}
+            />
           ) : null}
         </>
       ) : null}
@@ -916,35 +867,38 @@ export default function IncidentDetailScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 20,
-    gap: 10,
+    padding: spacing.s20,
+    gap: spacing.s10,
   },
   topRow: {
     flexDirection: "row",
-    gap: 10,
+    gap: spacing.s10,
   },
   refreshButton: {
     flex: 1,
-    borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: radii.r10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
+    paddingVertical: spacing.s12,
   },
   refreshButtonText: {
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   backButton: {
     flex: 1,
-    borderRadius: 14,
+    borderRadius: radii.r10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
+    paddingVertical: spacing.s12,
   },
   backButtonText: {
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   centerBox: {
     paddingVertical: 30,
@@ -953,96 +907,96 @@ const styles = StyleSheet.create({
   },
   feedbackBox: {
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderRadius: radii.r14,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s8,
   },
   feedbackText: {
-    fontSize: 12,
     fontFamily: fontFamilies.regular,
+    ...typeScale.bodyCompact,
   },
   cardText: {
-    fontSize: 13,
     fontFamily: fontFamilies.regular,
+    ...typeScale.bodyCompact,
   },
   dispatchPrimary: {
-    fontSize: 18,
-    lineHeight: 24,
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.titleStrong,
   },
   runtimeGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
   },
   navigationButtonsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
-    marginTop: 8,
+    gap: spacing.s8,
+    marginTop: spacing.s8,
   },
   statusButtonsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
-    marginTop: 6,
+    gap: spacing.s8,
+    marginTop: spacing.s6,
   },
   statusButton: {
     minWidth: "47%",
     flexGrow: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 14,
-    borderWidth: 1,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 8,
+    paddingHorizontal: spacing.s8,
   },
   statusButtonText: {
-    fontSize: 12,
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   resolutionInput: {
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: radii.r14,
     minHeight: MIN_TOUCH_TARGET_SIZE * 1.4,
-    marginTop: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontSize: 13,
+    marginTop: spacing.s6,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s8,
+    ...typeScale.bodyCompact,
     fontFamily: inputFontFamily,
     textAlignVertical: "top",
   },
   hintText: {
-    fontSize: 13,
     fontFamily: fontFamilies.regular,
+    ...typeScale.bodyCompact,
   },
   photoItem: {
     borderWidth: 1,
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 8,
-    marginRight: 12,
+    borderRadius: radii.r20,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s12,
+    gap: spacing.s8,
+    marginRight: spacing.s12,
   },
   photoHead: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
+    gap: spacing.s10,
   },
   photoIndexPill: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s5,
   },
   photoIndexText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 11,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    textTransform: "uppercase",
   },
   photoTitle: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 14,
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.body,
   },
   photoMeta: {
     fontSize: 12,
@@ -1055,62 +1009,65 @@ const styles = StyleSheet.create({
   photoPreview: {
     width: "100%",
     height: 220,
-    borderRadius: 16,
+    borderRadius: radii.r16,
   },
   photoFooter: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
+    gap: spacing.s10,
   },
   photoStats: {
-    gap: 2,
+    gap: spacing.s2,
   },
   openPreviewText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   photosList: {
-    paddingRight: 10,
+    paddingRight: spacing.s10,
   },
   photoCounterBadge: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s6,
   },
   photoCounterText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 11.5,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    textTransform: "uppercase",
   },
   photoRailHint: {
     fontFamily: fontFamilies.regular,
-    fontSize: 13,
-    lineHeight: 18,
+    ...typeScale.bodyCompact,
   },
   primaryButton: {
-    marginTop: 4,
-    borderRadius: 10,
+    marginTop: spacing.s4,
+    borderRadius: radii.r10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 14,
+    paddingVertical: spacing.s14,
   },
   primaryButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 15,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   secondaryDangerButton: {
-    marginTop: 4,
-    borderRadius: 10,
+    marginTop: spacing.s4,
+    borderRadius: radii.r10,
     borderWidth: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 14,
+    paddingVertical: spacing.s14,
   },
   secondaryDangerButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 15,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
 });

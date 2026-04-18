@@ -6,7 +6,6 @@ import {
   SafeAreaView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from "react-native";
 import {
@@ -20,8 +19,10 @@ import {
   type IncidentPhotoPreviewTarget,
   resolveIncidentPhotoPreviewTarget,
 } from "@/src/api/photos";
+import ConsoleButton from "@/src/components/ConsoleButton";
+import { radii, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, typeScale } from "@/src/theme/typography";
 
 function normalizeParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
@@ -185,26 +186,22 @@ export default function IncidentPhotoViewerScreen() {
         />
         <View style={[styles.container, { backgroundColor: palette.screenBg }]}>
           <View style={styles.topBar}>
-            <TouchableOpacity
-              style={[
-                styles.closeButton,
-                { backgroundColor: palette.buttonBg, borderColor: palette.buttonBorder },
-              ]}
+            <ConsoleButton
+              variant="secondary"
+              size="sm"
+              style={styles.topBarAction}
               onPress={() => router.back()}
-            >
-              <Text style={[styles.closeButtonText, { color: palette.textPrimary }]}>Cerrar</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.resetZoomButton,
-                { backgroundColor: palette.buttonBg, borderColor: palette.buttonBorder },
-              ]}
+              label="Cerrar"
+              textStyle={styles.topBarActionText}
+            />
+            <ConsoleButton
+              variant="subtle"
+              size="sm"
+              style={styles.topBarAction}
               onPress={resetZoom}
-            >
-              <Text style={[styles.closeButtonText, { color: palette.textPrimary }]}>
-                Restablecer zoom
-              </Text>
-            </TouchableOpacity>
+              label="Resetear zoom"
+              textStyle={styles.topBarActionText}
+            />
           </View>
 
           {photoIds.length > 1 ? (
@@ -217,23 +214,19 @@ export default function IncidentPhotoViewerScreen() {
                 },
               ]}
             >
-              <TouchableOpacity
-                style={[
-                  styles.navButton,
-                  {
-                    backgroundColor: canGoPrev ? palette.buttonBg : palette.subtleBg,
-                    borderColor: palette.buttonBorder,
-                    opacity: canGoPrev ? 1 : 0.55,
-                  },
-                ]}
+              <ConsoleButton
+                variant={canGoPrev ? "secondary" : "subtle"}
+                size="sm"
+                style={styles.navButton}
                 onPress={() => {
                   if (!canGoPrev) return;
                   setActiveIndex((current) => Math.max(0, current - 1));
                 }}
                 disabled={!canGoPrev}
-              >
-                <Text style={[styles.navButtonText, { color: palette.textPrimary }]}>Anterior</Text>
-              </TouchableOpacity>
+                accessibilityState={{ disabled: !canGoPrev }}
+                label="Anterior"
+                textStyle={styles.navButtonText}
+              />
               <View style={styles.navCenter}>
                 <Text style={[styles.counterText, { color: palette.textPrimary }]}>
                   {activeIndex + 1}/{photoIds.length}
@@ -242,30 +235,19 @@ export default function IncidentPhotoViewerScreen() {
                   Desliza mentalmente la incidencia sin salir del zoom.
                 </Text>
               </View>
-              <TouchableOpacity
-                style={[
-                  styles.navButton,
-                  {
-                    backgroundColor: canGoNext ? palette.primaryButtonBg : palette.subtleBg,
-                    borderColor: canGoNext ? palette.primaryButtonBg : palette.buttonBorder,
-                    opacity: canGoNext ? 1 : 0.55,
-                  },
-                ]}
+              <ConsoleButton
+                variant={canGoNext ? "primary" : "subtle"}
+                size="sm"
+                style={styles.navButton}
                 onPress={() => {
                   if (!canGoNext) return;
                   setActiveIndex((current) => Math.min(photoIds.length - 1, current + 1));
                 }}
                 disabled={!canGoNext}
-              >
-                <Text
-                  style={[
-                    styles.navButtonText,
-                    { color: canGoNext ? palette.primaryButtonText : palette.textPrimary },
-                  ]}
-                >
-                  Siguiente
-                </Text>
-              </TouchableOpacity>
+                accessibilityState={{ disabled: !canGoNext }}
+                label="Siguiente"
+                textStyle={styles.navButtonText}
+              />
             </View>
           ) : null}
 
@@ -301,27 +283,15 @@ export default function IncidentPhotoViewerScreen() {
               renderItem={({ item, index }) => {
                 const selected = index === activeIndex;
                 return (
-                  <TouchableOpacity
-                    style={[
-                      styles.thumbChip,
-                      {
-                        backgroundColor: selected ? palette.primaryButtonBg : palette.buttonBg,
-                        borderColor: selected ? palette.primaryButtonBg : palette.buttonBorder,
-                      },
-                    ]}
+                  <ConsoleButton
+                    variant={selected ? "primary" : "subtle"}
+                    size="sm"
+                    style={styles.thumbChip}
                     onPress={() => setActiveIndex(index)}
-                  >
-                    <Text
-                      style={[
-                        styles.thumbChipText,
-                        {
-                          color: selected ? palette.primaryButtonText : palette.textPrimary,
-                        },
-                      ]}
-                    >
-                      Foto {index + 1}
-                    </Text>
-                  </TouchableOpacity>
+                    accessibilityState={{ selected }}
+                    label={`Foto ${index + 1}`}
+                    textStyle={styles.thumbChipText}
+                  />
                 );
               }}
             />
@@ -341,66 +311,53 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    padding: 12,
+    padding: spacing.s12,
   },
   topBar: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
   },
-  closeButton: {
+  topBarAction: {
     alignSelf: "flex-start",
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginBottom: 6,
+    minWidth: 118,
   },
-  resetZoomButton: {
-    alignSelf: "flex-start",
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginBottom: 8,
-  },
-  closeButtonText: {
-    fontFamily: fontFamilies.bold,
+  topBarActionText: {
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   navRail: {
-    marginTop: 8,
+    marginTop: spacing.s8,
     borderWidth: 1,
-    borderRadius: 20,
-    padding: 10,
+    borderRadius: radii.r12,
+    padding: spacing.s10,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: spacing.s10,
   },
   navButton: {
-    minHeight: 44,
-    minWidth: 88,
-    borderRadius: 14,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 12,
+    minWidth: 104,
+    borderRadius: radii.r10,
   },
   navButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 13,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    textTransform: "uppercase",
   },
   navCenter: {
     flex: 1,
-    gap: 2,
+    gap: spacing.s2,
   },
   counterText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 15,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.metaMono,
     textAlign: "center",
+    textTransform: "uppercase",
   },
   counterHint: {
     fontFamily: fontFamilies.regular,
-    fontSize: 11.5,
+    ...typeScale.bodyCompact,
     textAlign: "center",
   },
   centered: {
@@ -413,34 +370,32 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
-    borderRadius: 8,
+    borderRadius: radii.r8,
   },
   image: {
     flex: 1,
     width: "100%",
   },
   zoomHint: {
-    marginTop: 8,
-    fontSize: 12,
+    marginTop: spacing.s8,
     fontFamily: fontFamilies.regular,
+    ...typeScale.bodyCompact,
     textAlign: "center",
   },
   thumbRail: {
-    paddingTop: 10,
-    paddingBottom: 2,
-    gap: 8,
+    paddingTop: spacing.s10,
+    paddingBottom: spacing.s2,
+    gap: spacing.s8,
   },
   thumbChip: {
-    minHeight: 38,
-    borderRadius: 999,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 14,
+    minHeight: 36,
+    borderRadius: radii.full,
+    minWidth: 98,
   },
   thumbChipText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    textTransform: "uppercase",
   },
   errorText: {},
 });

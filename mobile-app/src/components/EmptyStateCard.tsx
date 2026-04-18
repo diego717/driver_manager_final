@@ -1,6 +1,7 @@
 import React, { type ReactNode } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
+import { radii, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -45,17 +46,17 @@ export default function EmptyStateCard(props: EmptyStateCardProps) {
 const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    gap: 8,
+    borderRadius: radii.r18,
+    paddingHorizontal: spacing.s14,
+    paddingVertical: spacing.s14,
+    gap: spacing.s8,
   },
   badge: {
     alignSelf: "flex-start",
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s6,
   },
   badgeText: {
     fontFamily: fontFamilies.bold,
@@ -75,6 +76,6 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   actionWrap: {
-    marginTop: 2,
+    marginTop: spacing.s2,
   },
 });

@@ -14,11 +14,12 @@ import {
   listTechnicians,
 } from "@/src/api/technicians";
 import { extractApiError } from "@/src/api/client";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 import { type TechnicianAssignment, type TechnicianRecord } from "@/src/types/api";
 
-const MIN_TOUCH_TARGET_SIZE = 44;
+const MIN_TOUCH_TARGET_SIZE = sizing.touchTargetMin;
 const ROLE_OPTIONS = [
   { value: "owner", label: "Titular" },
   { value: "assistant", label: "Apoyo" },
@@ -351,28 +352,28 @@ export default function TechnicianAssignmentsPanel(props: {
 
 const styles = StyleSheet.create({
   container: {
-    gap: 10,
+    gap: spacing.s10,
   },
   loadingRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: spacing.s8,
     minHeight: 40,
   },
   list: {
-    gap: 8,
+    gap: spacing.s8,
   },
   assignmentCard: {
     borderWidth: 1,
-    borderRadius: 16,
-    padding: 12,
+    borderRadius: radii.r16,
+    padding: spacing.s12,
     flexDirection: "row",
-    gap: 10,
+    gap: spacing.s10,
     alignItems: "center",
   },
   assignmentCopy: {
     flex: 1,
-    gap: 3,
+    gap: spacing.s3,
   },
   assignmentName: {
     fontFamily: fontFamilies.bold,
@@ -396,26 +397,26 @@ const styles = StyleSheet.create({
   removeButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: radii.r14,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.s12,
   },
   removeButtonText: {
     fontFamily: fontFamilies.bold,
     fontSize: 12.5,
   },
   manageStack: {
-    gap: 10,
+    gap: spacing.s10,
   },
   manageButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: radii.r14,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
   },
   manageButtonText: {
     fontFamily: fontFamilies.mono,
@@ -425,9 +426,9 @@ const styles = StyleSheet.create({
   },
   editorCard: {
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 12,
-    gap: 10,
+    borderRadius: radii.r18,
+    padding: spacing.s12,
+    gap: spacing.s10,
   },
   groupLabel: {
     fontFamily: fontFamilies.semibold,
@@ -436,14 +437,14 @@ const styles = StyleSheet.create({
   optionWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
   },
   optionChip: {
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: radii.r14,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
     justifyContent: "center",
   },
   optionChipText: {
@@ -452,11 +453,11 @@ const styles = StyleSheet.create({
   },
   assignButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 16,
+    borderRadius: radii.r16,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: spacing.s14,
+    paddingVertical: spacing.s12,
   },
   assignButtonText: {
     fontFamily: fontFamilies.bold,

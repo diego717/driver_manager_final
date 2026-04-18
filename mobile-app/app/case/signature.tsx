@@ -3,19 +3,20 @@ import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import {
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
   useWindowDimensions,
 } from "react-native";
 
+import ConsoleButton from "@/src/components/ConsoleButton";
 import SignatureCanvas from "@/src/components/SignatureCanvas";
 import {
   getSignatureSession,
   updateSignatureSession,
 } from "@/src/features/conformity/signature-session";
 import { triggerSuccessHaptic } from "@/src/services/haptics";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, typeScale } from "@/src/theme/typography";
 
 function normalizeParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
@@ -71,48 +72,30 @@ export default function CaseSignatureScreen() {
           </View>
 
           <View style={styles.actionsRow}>
-            <TouchableOpacity
-              style={[
-                styles.actionButton,
-                styles.secondaryButton,
-                { backgroundColor: palette.secondaryButtonBg, borderColor: palette.border },
-              ]}
+            <ConsoleButton
+              variant="subtle"
+              style={[styles.actionButton, styles.secondaryButton]}
               onPress={() => setPaths([])}
-              accessibilityRole="button"
               accessibilityLabel="Limpiar firma"
-            >
-              <Text style={[styles.secondaryButtonText, { color: palette.secondaryButtonText }]}>
-                Limpiar
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.actionButton,
-                styles.secondaryButton,
-                { backgroundColor: palette.secondaryButtonBg, borderColor: palette.border },
-              ]}
+              label="Limpiar"
+              textStyle={styles.secondaryButtonText}
+            />
+            <ConsoleButton
+              variant="subtle"
+              style={[styles.actionButton, styles.secondaryButton]}
               onPress={handleCancel}
-              accessibilityRole="button"
               accessibilityLabel="Cancelar firma"
-            >
-              <Text style={[styles.secondaryButtonText, { color: palette.secondaryButtonText }]}>
-                Cancelar
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.actionButton,
-                styles.primaryButton,
-                { backgroundColor: palette.primaryButtonBg, borderColor: palette.primaryButtonBg },
-              ]}
+              label="Cancelar"
+              textStyle={styles.secondaryButtonText}
+            />
+            <ConsoleButton
+              variant="primary"
+              style={[styles.actionButton, styles.primaryButton]}
               onPress={handleSave}
-              accessibilityRole="button"
               accessibilityLabel="Guardar firma"
-            >
-              <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
-                Guardar firma
-              </Text>
-            </TouchableOpacity>
+              label="Guardar firma"
+              textStyle={styles.primaryButtonText}
+            />
           </View>
         </View>
 
@@ -145,54 +128,54 @@ export default function CaseSignatureScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    padding: 18,
+    padding: spacing.s18,
   },
   chrome: {
     flex: 1,
     borderWidth: 1,
-    borderRadius: 28,
-    padding: 18,
-    gap: 14,
+    borderRadius: radii.r16,
+    padding: spacing.s18,
+    gap: spacing.s14,
   },
   topRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 18,
+    gap: spacing.s18,
     alignItems: "flex-start",
   },
   titleWrap: {
     flex: 1,
-    gap: 4,
+    gap: spacing.s4,
   },
   eyebrow: {
-    fontSize: 11.5,
-    lineHeight: 15,
+    ...typeScale.buttonMonoTight,
     letterSpacing: 0.7,
     textTransform: "uppercase",
-    fontFamily: fontFamilies.semibold,
+    fontFamily: fontFamilies.mono,
   },
   title: {
+    fontFamily: fontFamilies.display,
+    ...typeScale.sectionDisplay,
     fontSize: 24,
-    lineHeight: 30,
-    fontFamily: fontFamilies.bold,
+    lineHeight: 24,
+    letterSpacing: 0.7,
+    textTransform: "uppercase",
   },
   subtitle: {
-    fontSize: 13.5,
-    lineHeight: 18,
+    ...typeScale.bodyCompact,
     fontFamily: fontFamilies.regular,
   },
   actionsRow: {
     flexDirection: "row",
-    gap: 10,
+    gap: spacing.s10,
     alignItems: "center",
     justifyContent: "flex-end",
     flexWrap: "wrap",
   },
   actionButton: {
-    minHeight: 46,
-    borderRadius: 16,
-    borderWidth: 1,
-    paddingHorizontal: 16,
+    minHeight: sizing.touchTargetMin + spacing.s2,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s16,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -203,17 +186,19 @@ const styles = StyleSheet.create({
     minWidth: 112,
   },
   primaryButtonText: {
-    fontSize: 14,
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   secondaryButtonText: {
-    fontSize: 13.5,
-    fontFamily: fontFamilies.semibold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   footerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 12,
+    gap: spacing.s12,
     alignItems: "center",
     flexWrap: "wrap",
   },

@@ -1,6 +1,7 @@
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 
+import { radii, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -60,24 +61,24 @@ export default function GuidedFlowRail({ steps }: GuidedFlowRailProps) {
 
 const styles = StyleSheet.create({
   rail: {
-    gap: 10,
+    gap: spacing.s10,
   },
   stepCard: {
     borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    gap: 8,
+    borderRadius: radii.r18,
+    paddingHorizontal: spacing.s14,
+    paddingVertical: spacing.s13,
+    gap: spacing.s8,
   },
   stepHeader: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: spacing.s10,
   },
   stepDot: {
     width: 28,
     height: 28,
-    borderRadius: 999,
+    borderRadius: radii.full,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",

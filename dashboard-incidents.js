@@ -380,7 +380,7 @@
             if (!normalized) return null;
             const parsed = Number(normalized.replace(',', '.'));
             if (!Number.isFinite(parsed)) {
-                throw new Error(`Campo "${fieldLabel}" invalido.`);
+                throw new Error(`Campo "${fieldLabel}" inválido.`);
             }
             return parsed;
         }
@@ -453,7 +453,7 @@
             dispatchHelp.className = 'gps-capture-panel-summary full-width';
             dispatchHelp.id = 'actionIncidentDispatchRequiredHelp';
             dispatchHelp.textContent = dispatchRequired
-                ? 'Carga direccion, referencia y coordenadas solo cuando realmente haga falta despacho en sitio.'
+                ? 'Carga dirección, referencia y coordenadas solo cuando realmente haga falta despacho en sitio.'
                 : 'La incidencia queda marcada sin visita en sitio requerida y se limpian los datos de destino operativo.';
             grid.appendChild(dispatchHelp);
 
@@ -524,18 +524,18 @@
             dispatchAddressInput.autocomplete = 'off';
             dispatchAddressInput.placeholder = 'Ej: Av. Italia 2456';
             dispatchAddressInput.value = String(incident?.dispatch_address || '').trim();
-            dispatchFields.appendChild(createInputGroup('Direccion', dispatchAddressInput, { htmlFor: dispatchAddressInput.id, className: 'full-width' }));
+            dispatchFields.appendChild(createInputGroup('Dirección', dispatchAddressInput, { htmlFor: dispatchAddressInput.id, className: 'full-width' }));
 
             const dispatchPlacesStatus = document.createElement('p');
             dispatchPlacesStatus.id = 'actionIncidentDispatchPlacesStatus';
             dispatchPlacesStatus.className = 'asset-muted full-width';
-            dispatchPlacesStatus.textContent = 'Puedes escribir manualmente o elegir una sugerencia de Google para completar direccion y coordenadas.';
+            dispatchPlacesStatus.textContent = 'Puedes escribir manualmente o elegir una sugerencia de Google para completar dirección y coordenadas.';
             dispatchFields.appendChild(dispatchPlacesStatus);
 
             const dispatchReferenceInput = document.createElement('textarea');
             dispatchReferenceInput.id = 'actionIncidentDispatchReference';
             dispatchReferenceInput.rows = 3;
-            dispatchReferenceInput.placeholder = 'Referencia de acceso o ubicacion interna';
+            dispatchReferenceInput.placeholder = 'Referencia de acceso o ubicación interna';
             dispatchReferenceInput.value = String(incident?.dispatch_reference || '').trim();
             dispatchFields.appendChild(createInputGroup('Referencia', dispatchReferenceInput, { htmlFor: dispatchReferenceInput.id, className: 'full-width' }));
 
@@ -553,7 +553,7 @@
             dispatchContactPhoneInput.autocomplete = 'tel';
             dispatchContactPhoneInput.placeholder = '+598...';
             dispatchContactPhoneInput.value = String(incident?.dispatch_contact_phone || '').trim();
-            dispatchFields.appendChild(createInputGroup('Telefono', dispatchContactPhoneInput, { htmlFor: dispatchContactPhoneInput.id }));
+            dispatchFields.appendChild(createInputGroup('Teléfono', dispatchContactPhoneInput, { htmlFor: dispatchContactPhoneInput.id }));
 
             const dispatchNotesInput = document.createElement('textarea');
             dispatchNotesInput.id = 'actionIncidentDispatchNotes';
@@ -570,7 +570,7 @@
                     field.disabled = !currentRequired;
                 });
                 dispatchHelp.textContent = currentRequired
-                    ? 'Carga direccion, referencia y coordenadas solo cuando realmente haga falta despacho en sitio.'
+                    ? 'Carga dirección, referencia y coordenadas solo cuando realmente haga falta despacho en sitio.'
                     : 'La incidencia queda marcada sin visita en sitio requerida y se limpian los datos de destino operativo.';
             };
             dispatchRequiredSelect.addEventListener('change', syncDispatchRequiredVisibility);
@@ -736,7 +736,7 @@
         function formatIncidentCoordinateLine(incident) {
             const coordinates = resolveIncidentOperationalCoordinates(incident);
             if (!coordinates) return 'Sin coordenadas disponibles.';
-            return `Lat ${coordinates.lat.toFixed(5)} Â· Lng ${coordinates.lng.toFixed(5)} Â· ${coordinates.source === 'target' ? 'Destino operativo' : 'GPS del reporte'}`;
+            return `Lat ${coordinates.lat.toFixed(5)} · Lng ${coordinates.lng.toFixed(5)} · ${coordinates.source === 'target' ? 'Destino operativo' : 'GPS del reporte'}`;
         }
 
         function buildIncidentMapsUrl(incident) {
@@ -874,8 +874,8 @@
 
             setIncidentDispatchPlacesStatus(
                 Number.isFinite(nextLat) && Number.isFinite(nextLng)
-                    ? 'Direccion validada con Google Maps. Coordenadas y nombre completados.'
-                    : 'Direccion sugerida aplicada. Puedes completar coordenadas manualmente si hace falta.',
+                    ? 'Dirección validada con Google Maps. Coordenadas y nombre completados.'
+                    : 'Dirección sugerida aplicada. Puedes completar coordenadas manualmente si hace falta.',
             );
         }
 
@@ -885,7 +885,7 @@
             if (addressInput.dataset.placesBound === '1') return;
 
             setIncidentDispatchPlacesStatus(
-                'Escribe una direccion o lugar y elige una sugerencia de Google. Si no aparece, puedes cargarlo manualmente.',
+                'Escribe una dirección o lugar y elige una sugerencia de Google. Si no aparece, puedes cargarlo manualmente.',
             );
 
             if (!hasIncidentGooglePlacesApi()) {
@@ -899,7 +899,7 @@
                     })
                     .catch(() => {
                         setIncidentDispatchPlacesStatus(
-                            'No pudimos cargar Google Places. Puedes seguir completando direccion y coordenadas manualmente.',
+                            'No pudimos cargar Google Places. Puedes seguir completando dirección y coordenadas manualmente.',
                         );
                     });
                 return;
@@ -915,7 +915,7 @@
                 const place = autocomplete.getPlace?.();
                 if (!place || typeof place !== 'object') {
                     setIncidentDispatchPlacesStatus(
-                        'No pudimos leer la sugerencia elegida. Puedes completar la direccion manualmente.',
+                        'No pudimos leer la sugerencia elegida. Puedes completar la dirección manualmente.',
                     );
                     return;
                 }
@@ -1005,11 +1005,11 @@
         function beginIncidentMapTargetSelection(incident) {
             const incidentId = options.parseStrictInteger(incident?.id);
             if (!Number.isInteger(incidentId) || incidentId <= 0) {
-                options.showNotification('Incidencia invalida para ajustar destino.', 'error');
+                options.showNotification('Incidencia inválida para ajustar destino.', 'error');
                 return;
             }
             if (!incidentMapState.mapLoaded) {
-                options.showNotification('El mapa aun no esta listo para fijar el destino.', 'warning');
+                options.showNotification('El mapa aún no está listo para fijar el destino.', 'warning');
                 return;
             }
             incidentMapState.selectedIncidentId = incidentId;
@@ -1379,7 +1379,7 @@
             metrics.className = 'incident-map-detail-metrics';
             [
                 ['Severidad', getIncidentMapSeverityLabel(selectedIncident?.severity)],
-                ['Tecnico', String(selectedIncident?.reporter_username || 'Sin dato').trim() || 'Sin dato'],
+                ['Técnico', String(selectedIncident?.reporter_username || 'Sin dato').trim() || 'Sin dato'],
                 ['Coordenada', operationalCoordinates?.source === 'target'
                     ? 'Destino operativo'
                     : Number.isFinite(Number(selectedIncident?.gps_accuracy_m))
@@ -1415,7 +1415,7 @@
                 ? 'Incidencia sin visita en sitio requerida.'
                 : hasTargetCoordinates
                 ? `Destino actual: ${String(selectedIncident?.dispatch_place_name || selectedIncident?.target_label || 'Punto operativo').trim()}`
-                : 'Aun no definiste un destino operativo manual para esta incidencia.';
+                : 'Aún no definiste un destino operativo manual para esta incidencia.';
             container.appendChild(dispatchSummary);
 
             if (selectionActive || savingSelection) {
@@ -1737,7 +1737,7 @@
             const snapshot = document.createElement('p');
             snapshot.id = PUBLIC_TRACKING_SNAPSHOT_ID;
             snapshot.className = 'gps-capture-panel-summary';
-            snapshot.textContent = 'Estado publico cacheado: s/d';
+            snapshot.textContent = 'Estado público cacheado: s/d';
 
             const actions = document.createElement('div');
             actions.className = 'action-form-actions-inline';
@@ -1760,18 +1760,18 @@
         async function openPublicTrackingModal(installationId) {
             if (!options.requireActiveSession()) return;
             if (!canCurrentUserManagePublicTracking()) {
-                options.showNotification('Solo admin o super_admin puede gestionar enlaces publicos.', 'error');
+                options.showNotification('Solo admin o super_admin puede gestionar enlaces públicos.', 'error');
                 return;
             }
             const targetInstallationId = options.parseStrictInteger(installationId);
             if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                options.showNotification('installation_id invalido para tracking publico.', 'error');
+                options.showNotification('installation_id inválido para tracking público.', 'error');
                 return;
             }
 
             let currentLink = null;
             const modalOpened = options.openActionModal({
-                title: `Seguimiento publico #${targetInstallationId}`,
+                title: `Seguimiento público #${targetInstallationId}`,
                 subtitle: 'Genera un Magic Link de solo lectura para compartir el estado actual del servicio.',
                 submitLabel: 'Crear enlace',
                 focusId: PUBLIC_TRACKING_URL_INPUT_ID,
@@ -1781,7 +1781,7 @@
                     currentLink = result?.link || null;
                     syncPublicTrackingModalUi();
                     options.showNotification(
-                        currentLink?.tracking_url ? 'Enlace publico listo para compartir.' : 'Enlace publico actualizado.',
+                        currentLink?.tracking_url ? 'Enlace público listo para compartir.' : 'Enlace público actualizado.',
                         'success',
                     );
                 },
@@ -1806,8 +1806,8 @@
                             ? `Link corto activo (${shortCode}).`
                             : `Link activo (${String(currentLink?.status || 'active')}).`
                         : currentLink?.status === 'expired'
-                            ? 'El ultimo enlace ya expiro.'
-                            : 'No hay un enlace publico activo.';
+                            ? 'El último enlace ya expiró.'
+                            : 'No hay un enlace público activo.';
                 }
                 if (urlInput instanceof HTMLInputElement) {
                     urlInput.value = hasActiveLink ? String(currentLink.tracking_url) : '';
@@ -1820,8 +1820,8 @@
                 if (snapshotEl instanceof HTMLElement) {
                     const snapshot = currentLink?.snapshot || {};
                     snapshotEl.textContent = snapshot?.public_status
-                        ? `Estado publico cacheado: ${snapshot.public_status} (${snapshot.public_message || 'sin mensaje'})`
-                        : 'Estado publico cacheado: s/d';
+                        ? `Estado público cacheado: ${snapshot.public_status} (${snapshot.public_message || 'sin mensaje'})`
+                        : 'Estado público cacheado: s/d';
                 }
                 if (copyBtn instanceof HTMLButtonElement) {
                     copyBtn.disabled = !hasActiveLink;
@@ -1854,7 +1854,7 @@
                     snapshot: currentLink?.snapshot || null,
                 };
                 syncPublicTrackingModalUi();
-                options.showNotification('Enlace publico revocado.', 'info');
+                options.showNotification('Enlace público revocado.', 'info');
             });
 
             try {
@@ -2029,7 +2029,7 @@
             const status = document.createElement('span');
             status.id = statusId;
             status.className = 'gps-capture-panel-status';
-            status.textContent = 'Capturando ubicacion puntual...';
+            status.textContent = 'Capturando ubicación puntual...';
 
             copyWrap.append(title, status);
 
@@ -2037,14 +2037,14 @@
             retryButton.type = 'button';
             retryButton.id = buttonId;
             retryButton.className = 'btn-secondary';
-            retryButton.textContent = 'Capturar ubicacion';
+            retryButton.textContent = 'Capturar ubicación';
 
             header.append(copyWrap, retryButton);
 
             const summary = document.createElement('p');
             summary.id = summaryId;
             summary.className = 'gps-capture-panel-summary';
-            summary.textContent = 'Intentamos obtener una ubicacion puntual para este formulario. No bloquea el guardado.';
+            summary.textContent = 'Intentamos obtener una ubicación puntual para este formulario. No bloquea el guardado.';
 
             wrapper.append(header, summary);
             return wrapper;
@@ -2163,9 +2163,9 @@
             if (count > 0) {
                 return {
                     tone: 'warning',
-                    eyebrow: 'En atencion',
-                    title: 'Caso en atencion operativa',
-                    description: 'Todavia hay incidencias activas. Resuelvelas antes de emitir la conformidad final.',
+                    eyebrow: 'En atención',
+                    title: 'Caso en atención operativa',
+                    description: 'Todavía hay incidencias activas. Resuélvelas antes de emitir la conformidad final.',
                 };
             }
             if (requiresApprovedBudget && !hasApprovedBudget) {
@@ -2173,7 +2173,7 @@
                     tone: 'warning',
                     eyebrow: 'Presupuesto pendiente',
                     title: 'Falta presupuesto aprobado',
-                    description: 'No quedan incidencias activas, pero debes aprobar el ultimo presupuesto antes de emitir la conformidad final.',
+                    description: 'No quedan incidencias activas, pero debes aprobar el último presupuesto antes de emitir la conformidad final.',
                 };
             }
             if (latestStatus === 'emailed') {
@@ -2181,23 +2181,23 @@
                     tone: 'resolved',
                     eyebrow: 'Conformidad enviada',
                     title: 'Cierre operativo completado',
-                    description: 'La ultima conformidad ya fue generada y enviada por email. Puedes descargar el PDF o reabrir trabajo si surge una novedad.',
+                    description: 'La última conformidad ya fue generada y enviada por email. Puedes descargar el PDF o reabrir trabajo si surge una novedad.',
                 };
             }
             if (latestStatus === 'email_failed') {
                 return {
                     tone: 'warning',
-                    eyebrow: 'Envio pendiente',
-                    title: 'La conformidad existe pero el email fallo',
-                    description: 'El PDF ya fue generado. Revisa la constancia anterior o vuelve a emitirla para intentar otro envio.',
+                    eyebrow: 'Envío pendiente',
+                    title: 'La conformidad existe pero el email falló',
+                    description: 'El PDF ya fue generado. Revisa la constancia anterior o vuelve a emitirla para intentar otro envío.',
                 };
             }
             if (latestStatus === 'generated') {
                 return {
                     tone: 'info',
                     eyebrow: 'Conformidad generada',
-                    title: 'El PDF ya esta disponible',
-                    description: 'La constancia ya fue generada, pero no se envio por email. Puedes revisarla o generar una nueva desde este registro.',
+                    title: 'El PDF ya está disponible',
+                    description: 'La constancia ya fue generada, pero no se envió por email. Puedes revisarla o generar una nueva desde este registro.',
                 };
             }
             return {
@@ -2205,7 +2205,7 @@
                 eyebrow: 'Listo para cierre',
                 title: 'Caso listo para conformidad',
                 description: requiresApprovedBudget
-                    ? 'No quedan incidencias activas. Genera la conformidad final y envia el PDF desde aqui.'
+                    ? 'No quedan incidencias activas. Genera la conformidad final y envía el PDF desde aquí.'
                     : 'No quedan incidencias activas. Este caso tiene cobertura comercial y puede cerrarse sin presupuesto.',
             };
         }
@@ -2262,7 +2262,7 @@
             if (count > 0) {
                 button.title = 'Debes resolver todas las incidencias activas antes de emitir la conformidad.';
             } else if (requiresApprovedBudget && !hasApprovedBudget) {
-                button.title = 'Debes aprobar el ultimo presupuesto para emitir la conformidad.';
+                button.title = 'Debes aprobar el último presupuesto para emitir la conformidad.';
             } else {
                 button.removeAttribute('title');
             }
@@ -2288,7 +2288,7 @@
                 button.textContent = label;
             }
             if (count === 0) {
-                button.title = 'El caso quedo listo para conformidad. Usa esto solo si necesitas reabrir trabajo con una incidencia nueva.';
+                button.title = 'El caso quedó listo para conformidad. Usa esto solo si necesitas reabrir trabajo con una incidencia nueva.';
             } else {
                 button.removeAttribute('title');
             }
@@ -2365,9 +2365,9 @@
             const summaryBody = document.createElement('p');
             summaryBody.textContent = activeIncidentCount === 0
                 ? requiresApprovedBudget
-                    ? 'No quedan incidencias activas. El caso esta listo para emitir la conformidad final y enviar el PDF por email.'
+                    ? 'No quedan incidencias activas. El caso está listo para emitir la conformidad final y enviar el PDF por email.'
                     : 'No quedan incidencias activas. Este caso tiene cobertura comercial y puede cerrarse sin presupuesto.'
-                : `Todavia hay ${activeIncidentCount} incidencia${activeIncidentCount === 1 ? '' : 's'} activa${activeIncidentCount === 1 ? '' : 's'}.`;
+                : `Todavía hay ${activeIncidentCount} incidencia${activeIncidentCount === 1 ? '' : 's'} activa${activeIncidentCount === 1 ? '' : 's'}.`;
             const summaryMeta = document.createElement('div');
             summaryMeta.className = 'conformity-modal-meta';
             summaryMeta.appendChild(
@@ -2379,7 +2379,7 @@
             if (latestConformity) {
                 summaryMeta.appendChild(
                     createConformityStatusChip(
-                        `Ultima: ${formatConformityStatusLabel(latestConformity.status)}`,
+                        `última: ${formatConformityStatusLabel(latestConformity.status)}`,
                         latestConformity.status === 'emailed' ? 'resolved' : latestConformity.status === 'email_failed' ? 'high' : 'info',
                     ),
                 );
@@ -2406,7 +2406,7 @@
                 const latestWrap = document.createElement('div');
                 latestWrap.className = 'conformity-modal-latest';
                 const latestTitle = document.createElement('strong');
-                latestTitle.textContent = 'Ultima conformidad registrada';
+                latestTitle.textContent = 'última conformidad registrada';
                 const latestBody = document.createElement('p');
                 latestBody.textContent = `${latestConformity.signed_by_name || 'Sin firmante'} · ${formatConformityGeneratedAt(latestConformity.generated_at)} · ${formatConformityStatusLabel(latestConformity.status)}`;
                 latestWrap.append(latestTitle, latestBody);
@@ -2416,7 +2416,7 @@
                     latestLink.target = '_blank';
                     latestLink.rel = 'noreferrer';
                     latestLink.className = 'conformity-modal-link';
-                    latestLink.textContent = 'Ver ultimo PDF';
+                    latestLink.textContent = 'Ver último PDF';
                     latestWrap.appendChild(latestLink);
                 }
                 grid.appendChild(latestWrap);
@@ -2455,7 +2455,7 @@
                 const coverageBody = document.createElement('p');
                 const modeLabel = formatCommercialClosureModeLabel(commercialClosureMode);
                 const note = String(commercialClosureNote || '').trim();
-                coverageBody.textContent = note ? `${modeLabel} Â· ${note}` : modeLabel;
+                coverageBody.textContent = note ? `${modeLabel} · ${note}` : modeLabel;
                 coverageWrap.append(coverageTitle, coverageBody);
                 grid.appendChild(coverageWrap);
             }
@@ -2495,7 +2495,7 @@
                 id: 'actionConformityTechnicianName',
                 includeCurrentUserOption: true,
             });
-            grid.appendChild(createInputGroup('Tecnico responsable', technicianSelect, {
+            grid.appendChild(createInputGroup('Técnico responsable', technicianSelect, {
                 htmlFor: technicianSelect.id,
             }));
 
@@ -2546,7 +2546,7 @@
             canvas.height = 220;
             const signatureHint = document.createElement('div');
             signatureHint.className = 'conformity-signature-hint';
-            signatureHint.textContent = 'Firma aqui con mouse, touch o lapiz.';
+            signatureHint.textContent = 'Firma aquí con mouse, touch o lápiz.';
             const signatureToolbar = document.createElement('div');
             signatureToolbar.className = 'conformity-signature-toolbar';
             const clearSignatureBtn = document.createElement('button');
@@ -2694,7 +2694,7 @@
             if (!options.requireActiveSession()) return;
             const targetInstallationId = options.parseStrictInteger(installationId);
             if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                options.showNotification('installation_id invalido para generar conformidad.', 'error');
+                options.showNotification('installation_id inválido para generar conformidad.', 'error');
                 return;
             }
 
@@ -2732,7 +2732,7 @@
             }
             if (!latestApprovedBudget) {
                 if (requiresApprovedBudget) {
-                    options.showNotification('Debes aprobar el ultimo presupuesto para emitir la conformidad.', 'warning');
+                    options.showNotification('Debes aprobar el último presupuesto para emitir la conformidad.', 'warning');
                     return;
                 }
             }
@@ -2758,7 +2758,7 @@
                 overrideInput.required = requiresOverride;
                 if (overrideHelp instanceof HTMLElement) {
                     if (requiresGpsOverride) {
-                        overrideHelp.textContent = `La captura GPS quedo en estado "${status}". Para cerrar la conformidad debes dejar motivo de override.`;
+                        overrideHelp.textContent = `La captura GPS quedó en estado "${status}". Para cerrar la conformidad debes dejar motivo de override.`;
                     } else {
                         overrideHelp.textContent = 'GPS listo para adjuntar en la conformidad.';
                     }
@@ -2767,7 +2767,7 @@
 
             const modalOpened = options.openActionModal({
                 title: `Conformidad del registro #${targetInstallationId}`,
-                subtitle: 'Captura la firma final y envia el PDF de conformidad al cliente.',
+                subtitle: 'Captura la firma final y envía el PDF de conformidad al cliente.',
                 submitLabel: 'Generar y enviar conformidad',
                 focusId: 'actionConformitySignedByName',
                 fields: buildInstallationConformityFields({
@@ -3030,8 +3030,8 @@
                 latestBudget?.estimated_days === null || latestBudget?.estimated_days === undefined
                     ? ''
                     : String(latestBudget.estimated_days);
-            estimatedDaysInput.placeholder = 'Dias estimados';
-            grid.appendChild(createInputGroup('Plazo (dias)', estimatedDaysInput, { htmlFor: estimatedDaysInput.id }));
+            estimatedDaysInput.placeholder = 'Días estimados';
+            grid.appendChild(createInputGroup('Plazo (días)', estimatedDaysInput, { htmlFor: estimatedDaysInput.id }));
 
             const validUntilInput = document.createElement('input');
             validUntilInput.type = 'date';
@@ -3096,14 +3096,14 @@
             channelSelect.appendChild(new Option('Email', 'email'));
             channelSelect.appendChild(new Option('WhatsApp', 'whatsapp'));
             channelSelect.appendChild(new Option('Firma', 'firma'));
-            channelSelect.appendChild(new Option('Telefono', 'telefono'));
+            channelSelect.appendChild(new Option('Teléfono', 'telefono'));
             channelSelect.appendChild(new Option('Otro', 'otro'));
             grid.appendChild(createInputGroup('Canal', channelSelect, { htmlFor: channelSelect.id }));
 
             const noteInput = document.createElement('textarea');
             noteInput.id = 'actionBudgetApprovalNote';
             noteInput.rows = 3;
-            noteInput.placeholder = 'Nota opcional de aprobacion';
+            noteInput.placeholder = 'Nota opcional de aprobación';
             grid.appendChild(createInputGroup('Nota', noteInput, {
                 htmlFor: noteInput.id,
                 className: 'full-width',
@@ -3117,7 +3117,7 @@
             if (!options.requireActiveSession()) return;
             const targetInstallationId = options.parseStrictInteger(installationId);
             if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                options.showNotification('installation_id invalido para crear presupuesto.', 'error');
+                options.showNotification('installation_id inválido para crear presupuesto.', 'error');
                 return;
             }
 
@@ -3134,7 +3134,7 @@
 
             options.openActionModal({
                 title: `Presupuesto del registro #${targetInstallationId}`,
-                subtitle: 'Genera un presupuesto separado y dejalo listo para aprobacion del cliente.',
+                subtitle: 'Genera un presupuesto separado y déjalo listo para aprobación del cliente.',
                 submitLabel: 'Generar presupuesto',
                 focusId: 'actionBudgetIncidenceSummary',
                 fields: buildInstallationBudgetFields({
@@ -3166,26 +3166,26 @@
                         return;
                     }
                     if (!Number.isInteger(laborAmountCents) || laborAmountCents < 0) {
-                        options.setActionModalError('Monto invalido en mano de obra.');
+                        options.setActionModalError('Monto inválido en mano de obra.');
                         return;
                     }
                     if (!Number.isInteger(partsAmountCents) || partsAmountCents < 0) {
-                        options.setActionModalError('Monto invalido en repuestos/insumos.');
+                        options.setActionModalError('Monto inválido en repuestos/insumos.');
                         return;
                     }
                     if (!Number.isInteger(taxAmountCents) || taxAmountCents < 0) {
-                        options.setActionModalError('Monto invalido en impuestos.');
+                        options.setActionModalError('Monto inválido en impuestos.');
                         return;
                     }
                     if (!/^[A-Z]{3}$/.test(currencyCode)) {
-                        options.setActionModalError('Moneda invalida. Usa codigo ISO de 3 letras (ej: UYU).');
+                        options.setActionModalError('Moneda inválida. Usa codigo ISO de 3 letras (ej: UYU).');
                         return;
                     }
                     let estimatedDays = null;
                     if (estimatedDaysRaw) {
                         estimatedDays = Number.parseInt(estimatedDaysRaw, 10);
                         if (!Number.isInteger(estimatedDays) || estimatedDays < 0) {
-                            options.setActionModalError('Plazo invalido. Usa un numero entero de dias.');
+                            options.setActionModalError('Plazo inválido. Usa un número entero de días.');
                             return;
                         }
                     }
@@ -3220,18 +3220,18 @@
             const targetInstallationId = options.parseStrictInteger(installationId);
             const targetBudgetId = options.parseStrictInteger(budget?.id);
             if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                options.showNotification('installation_id invalido para aprobar presupuesto.', 'error');
+                options.showNotification('installation_id inválido para aprobar presupuesto.', 'error');
                 return;
             }
             if (!Number.isInteger(targetBudgetId) || targetBudgetId <= 0) {
-                options.showNotification('budget_id invalido para aprobar presupuesto.', 'error');
+                options.showNotification('budget_id inválido para aprobar presupuesto.', 'error');
                 return;
             }
 
             options.openActionModal({
                 title: `Aprobar presupuesto #${targetBudgetId}`,
-                subtitle: 'Registra aprobacion del cliente para habilitar la conformidad final.',
-                submitLabel: 'Registrar aprobacion',
+                subtitle: 'Registra aprobación del cliente para habilitar la conformidad final.',
+                submitLabel: 'Registrar aprobación',
                 focusId: 'actionBudgetApprovedByName',
                 fields: buildInstallationBudgetApprovalFields({ budget }),
                 onSubmit: async () => {
@@ -3244,7 +3244,7 @@
                         return;
                     }
                     if (!approvedByChannel) {
-                        options.setActionModalError('Debes indicar un canal de aprobacion.');
+                        options.setActionModalError('Debes indicar un canal de aprobación.');
                         return;
                     }
 
@@ -3262,7 +3262,7 @@
                     options.showNotification(`Presupuesto ${budgetNumber} aprobado.`, 'success');
                     runIncidentRefreshInBackground(
                         { installationId: targetInstallationId },
-                        'La aprobacion se registro, pero no pudimos refrescar la vista.',
+                        'La aprobación se registró, pero no pudimos refrescar la vista.',
                     );
                 },
             });
@@ -3294,7 +3294,7 @@
                     : '';
                 summaryMeta.appendChild(
                     createConformityStatusChip(
-                        [setByText, setAtText].filter(Boolean).join(' ') || 'Configuracion registrada',
+                        [setByText, setAtText].filter(Boolean).join(' ') || 'Configuración registrada',
                         'neutral',
                     ),
                 );
@@ -3327,7 +3327,7 @@
             if (!options.requireActiveSession()) return;
             const targetInstallationId = options.parseStrictInteger(installationId);
             if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                options.showNotification('installation_id invalido para configurar cobertura.', 'error');
+                options.showNotification('installation_id inválido para configurar cobertura.', 'error');
                 return;
             }
 
@@ -3392,7 +3392,7 @@
             installationInput.value = defaultInstallationId;
             installationInput.autocomplete = 'off';
             installationInput.placeholder = isAssetContext
-                ? 'Opcional. Se usa vinculo activo o se crea contexto automatico'
+                ? 'Opcional. Se usa vínculo activo o se crea contexto automático'
                 : 'Ej: 245';
             grid.appendChild(createInputGroup(
                 isAssetContext ? 'ID de registro (opcional)' : 'ID de registro',
@@ -3413,7 +3413,7 @@
                 id: 'actionIncidentTechnicianName',
                 includeCurrentUserOption: true,
             });
-            grid.appendChild(createInputGroup('Tecnico responsable', technicianSelect, { htmlFor: technicianSelect.id }));
+            grid.appendChild(createInputGroup('Técnico responsable', technicianSelect, { htmlFor: technicianSelect.id }));
 
             const estimatedPresetSelect = document.createElement('select');
             estimatedPresetSelect.id = 'actionIncidentEstimatedPreset';
@@ -3469,7 +3469,7 @@
             applyCheckbox.id = 'actionIncidentApplyToRecord';
             applyCheckbox.checked = defaultApply;
             const applyCopy = document.createElement('span');
-            applyCopy.textContent = 'Aplicar nota y tiempo al registro de instalacion.';
+            applyCopy.textContent = 'Aplicar nota y tiempo al registro de instalación.';
             applyLabel.append(applyCheckbox, applyCopy);
             fragment.appendChild(applyLabel);
 
@@ -3512,7 +3512,7 @@
             const customChecklistTextarea = document.createElement('textarea');
             customChecklistTextarea.id = 'actionIncidentChecklistCustom';
             customChecklistTextarea.rows = 3;
-            customChecklistTextarea.placeholder = 'Ej: Foto del serial\nValidacion con supervisor';
+            customChecklistTextarea.placeholder = 'Ej: Foto del serial\nValidación con supervisor';
             customChecklistTextarea.value = customChecklistItems.join('\n');
             grid.appendChild(createInputGroup(
                 'Checklist adicional (una linea por item)',
@@ -3539,10 +3539,10 @@
             const resolutionNoteTextarea = document.createElement('textarea');
             resolutionNoteTextarea.id = 'actionIncidentResolutionNote';
             resolutionNoteTextarea.rows = 4;
-            resolutionNoteTextarea.placeholder = 'Resumen de la solucion aplicada';
+            resolutionNoteTextarea.placeholder = 'Resumen de la solución aplicada';
             resolutionNoteTextarea.value = defaultNote;
             return createInputGroup(
-                'Nota de resolucion (opcional)',
+                'Nota de resolución (opcional)',
                 resolutionNoteTextarea,
                 { htmlFor: 'actionIncidentResolutionNote' },
             );
@@ -3565,7 +3565,7 @@
 
                 const helpLine = document.createElement('small');
                 helpLine.className = 'asset-muted incident-meta-line';
-                helpLine.textContent = 'No se solicitaron direccion, referencia ni coordenadas operativas para esta incidencia.';
+                helpLine.textContent = 'No se solicitaron dirección, referencia ni coordenadas operativas para esta incidencia.';
                 summary.appendChild(helpLine);
 
                 const chips = document.createElement('div');
@@ -3601,7 +3601,7 @@
             } else {
                 const missingAddress = document.createElement('small');
                 missingAddress.className = 'asset-muted incident-meta-line';
-                missingAddress.textContent = 'Falta direccion legible para la visita';
+                missingAddress.textContent = 'Falta dirección legible para la visita';
                 summary.appendChild(missingAddress);
             }
 
@@ -3638,7 +3638,7 @@
                 chips.appendChild(createIncidentHighlightChip(`Origen: ${targetSource}`, 'info'));
             }
             if (!address || !reference) {
-                chips.appendChild(createIncidentHighlightChip('Informacion de visita incompleta', 'warning'));
+                chips.appendChild(createIncidentHighlightChip('Información de visita incompleta', 'warning'));
             }
             summary.appendChild(chips);
 
@@ -3660,7 +3660,7 @@
 
             const resolutionLabel = document.createElement('small');
             resolutionLabel.className = 'asset-muted';
-            resolutionLabel.textContent = 'Resolucion';
+            resolutionLabel.textContent = 'Resolución';
 
             const resolutionState = document.createElement('span');
             resolutionState.className = 'incident-resolution-state';
@@ -3674,7 +3674,7 @@
 
             const resolutionBody = document.createElement('p');
             resolutionBody.className = 'incident-resolution-text';
-            resolutionBody.textContent = resolutionNote || 'Incidencia marcada como resuelta sin nota de resolucion.';
+            resolutionBody.textContent = resolutionNote || 'Incidencia marcada como resuelta sin nota de resolución.';
 
             resolutionPanel.append(resolutionHeader, resolutionBody);
 
@@ -4252,7 +4252,7 @@
                 });
             });
 
-            select.replaceChildren(new Option('Todos los tecnicos', ''));
+            select.replaceChildren(new Option('Todos los técnicos', ''));
             Array.from(optionMap.values())
                 .sort((left, right) => left.localeCompare(right, 'es'))
                 .forEach((label) => {
@@ -4341,7 +4341,7 @@
             if (assignedTechnicianNames.length) {
                 const assignedLine = document.createElement('small');
                 assignedLine.className = 'incident-reporter-line incident-assigned-line';
-                assignedLine.textContent = 'Tecnico asignado: ';
+                assignedLine.textContent = 'Técnico asignado: ';
                 const assignedStrong = document.createElement('strong');
                 assignedStrong.textContent = assignedTechnicianNames.join(', ');
                 assignedLine.appendChild(assignedStrong);
@@ -4679,7 +4679,7 @@
                     budgetSummaryLink.target = '_blank';
                     budgetSummaryLink.rel = 'noreferrer';
                     budgetSummaryLink.className = 'conformity-modal-link';
-                    budgetSummaryLink.textContent = 'Descargar ultimo presupuesto';
+                    budgetSummaryLink.textContent = 'Descargar último presupuesto';
                     budgetSummary.appendChild(budgetSummaryLink);
                 }
                 closureBanner.appendChild(budgetSummary);
@@ -4719,7 +4719,7 @@
                 if (currentActiveIncidentCount === 0) {
                     options.openActionConfirmModal({
                         title: `Reabrir trabajo en registro #${installationId}`,
-                        subtitle: 'Este registro ya quedo listo para conformidad. Crear una nueva incidencia vuelve a abrir el trabajo operativo.',
+                        subtitle: 'Este registro ya quedó listo para conformidad. Crear una nueva incidencia vuelve a abrir el trabajo operativo.',
                         submitLabel: 'Abrir nueva incidencia',
                         acknowledgementText: 'Confirmo que necesito reabrir el trabajo con una nueva incidencia.',
                         missingConfirmationMessage: 'Debes confirmar la reapertura para continuar.',
@@ -4804,13 +4804,13 @@
                 );
                 if (currentActiveIncidentCount > 0) {
                     options.showNotification(
-                        `Quedan ${currentActiveIncidentCount} incidencia${currentActiveIncidentCount === 1 ? '' : 's'} activa${currentActiveIncidentCount === 1 ? '' : 's'}. Resuelvelas antes de emitir la conformidad.`,
+                        `Quedan ${currentActiveIncidentCount} incidencia${currentActiveIncidentCount === 1 ? '' : 's'} activa${currentActiveIncidentCount === 1 ? '' : 's'}. Resuélvelas antes de emitir la conformidad.`,
                         'warning',
                     );
                     return;
                 }
                 if (requiresApprovedBudget && !latestApprovedBudget) {
-                    options.showNotification('Debes aprobar el ultimo presupuesto para emitir la conformidad.', 'warning');
+                    options.showNotification('Debes aprobar el último presupuesto para emitir la conformidad.', 'warning');
                     return;
                 }
                 void openInstallationConformityModal(installationId, {
@@ -4852,11 +4852,11 @@
             technicianFilterWrap.hidden = true;
 
             const technicianFilterLabel = document.createElement('span');
-            technicianFilterLabel.textContent = 'Tecnico';
+            technicianFilterLabel.textContent = 'Técnico';
 
             const technicianFilterSelect = document.createElement('select');
             technicianFilterSelect.id = 'incidentsTechnicianFilter';
-            technicianFilterSelect.appendChild(new Option('Todos los tecnicos', ''));
+            technicianFilterSelect.appendChild(new Option('Todos los técnicos', ''));
             technicianFilterSelect.addEventListener('change', () => {
                 applyIncidentTechnicianFilter(container, technicianFilterSelect.value);
             });
@@ -4907,7 +4907,7 @@
                 const emptyStateHost = document.createElement('div');
                 options.renderContextualEmptyState(emptyStateHost, {
                     title: 'Sin incidencias para este registro',
-                    description: 'Si detectas un problema, crea la primera incidencia desde aqui. Si ya cerraste el caso, puedes emitir la conformidad desde el encabezado.',
+                    description: 'Si detectas un problema, crea la primera incidencia desde aquí. Si ya cerraste el caso, puedes emitir la conformidad desde el encabezado.',
                     actionLabel: 'Crear incidencia',
                     onAction: () => createIncidentBtn.click(),
                     tone: 'neutral',
@@ -5016,7 +5016,7 @@
             const modalOpened = options.openActionModal({
                 title: isAssetContext ? `Nueva incidencia para equipo #${numericAssetId}` : 'Nueva incidencia',
                 subtitle: isAssetContext
-                    ? 'Completa detalle y severidad. El registro se resolvera automaticamente si no lo indicas.'
+                    ? 'Completa detalle y severidad. El registro se resolverá automáticamente si no lo indicas.'
                     : 'Completa detalle, severidad y tiempo estimado.',
                 submitLabel: 'Crear incidencia',
                 focusId: 'actionIncidentNote',
@@ -5185,7 +5185,7 @@
             const targetId = options.parseStrictInteger(installationId);
             const numericAssetId = options.parseStrictInteger(config.assetId);
             if ((!Number.isInteger(targetId) || targetId <= 0) && (!Number.isInteger(numericAssetId) || numericAssetId <= 0)) {
-                options.showNotification('installation_id invalido para crear incidencia.', 'error');
+                options.showNotification('installation_id inválido para crear incidencia.', 'error');
                 return;
             }
 
@@ -5236,7 +5236,7 @@
         async function selectAndUploadIncidentPhoto(incidentId, installationId, config = {}) {
             const targetIncidentId = Number.parseInt(String(incidentId), 10);
             if (!Number.isInteger(targetIncidentId) || targetIncidentId <= 0) {
-                options.showNotification('incident_id invalido para subir foto.', 'error');
+                options.showNotification('incident_id inválido para subir foto.', 'error');
                 return;
             }
             const targetInstallationId = options.parseStrictInteger(installationId);
@@ -5268,7 +5268,7 @@
                 );
                 if (totalBatchBytes > INCIDENT_PHOTO_UPLOAD_MAX_BATCH_BYTES) {
                     options.showNotification(
-                        `La carga seleccionada pesa ${formatPhotoBytes(totalBatchBytes)} y supera el maximo de ${formatPhotoBytes(INCIDENT_PHOTO_UPLOAD_MAX_BATCH_BYTES)} por tanda.`,
+                        `La carga seleccionada pesa ${formatPhotoBytes(totalBatchBytes)} y supera el máximo de ${formatPhotoBytes(INCIDENT_PHOTO_UPLOAD_MAX_BATCH_BYTES)} por tanda.`,
                         'error',
                     );
                     return;
@@ -5291,7 +5291,7 @@
                         const uploadFile = optimized.file;
                         if (Math.max(0, Number(uploadFile?.size) || 0) > INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES) {
                             throw new Error(
-                                `La foto ${uploadFile?.name || 'seleccionada'} supera el maximo de ${formatPhotoBytes(INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES)} luego de optimizarla.`,
+                                `La foto ${uploadFile?.name || 'seleccionada'} supera el máximo de ${formatPhotoBytes(INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES)} luego de optimizarla.`,
                             );
                         }
                         await options.api.uploadIncidentPhoto(targetIncidentId, uploadFile);
@@ -5352,7 +5352,7 @@
             if (!options.requireActiveSession()) return;
             const incidentId = options.parseStrictInteger(incident?.id);
             if (!Number.isInteger(incidentId) || incidentId <= 0) {
-                options.showNotification('Incidencia invalida para actualizar evidencia.', 'error');
+                options.showNotification('Incidencia inválida para actualizar evidencia.', 'error');
                 return;
             }
             if (!canCurrentUserWriteOperationalData()) {
@@ -5408,7 +5408,7 @@
             if (!options.requireActiveSession()) return;
             const incidentId = options.parseStrictInteger(incident?.id);
             if (!Number.isInteger(incidentId) || incidentId <= 0) {
-                options.showNotification('Incidencia invalida para actualizar destino operativo.', 'error');
+                options.showNotification('Incidencia inválida para actualizar destino operativo.', 'error');
                 return;
             }
             if (!canCurrentUserWriteOperationalData()) {
@@ -5418,7 +5418,7 @@
 
             const modalOpened = options.openActionModal({
                 title: `Destino operativo #${incidentId}`,
-                subtitle: 'Define direccion, referencia y coordenadas operativas para el despacho.',
+                subtitle: 'Define dirección, referencia y coordenadas operativas para el despacho.',
                 submitLabel: 'Guardar destino',
                 modalWidth: 'wide',
                 focusId: 'actionIncidentDispatchRequired',
@@ -5457,7 +5457,7 @@
             if (!options.requireActiveSession()) return;
             const incidentId = Number.parseInt(String(incident?.id), 10);
             if (!Number.isInteger(incidentId) || incidentId <= 0) {
-                options.showNotification('Incidencia invalida para actualizar estado.', 'error');
+                options.showNotification('Incidencia inválida para actualizar estado.', 'error');
                 return;
             }
 
@@ -5483,7 +5483,7 @@
                     options.showNotification(`Incidencia #${incidentId} actualizada a "${options.incidentStatusLabel(normalizedStatus)}".`, 'success');
                     runIncidentRefreshInBackground(
                         config,
-                        'El estado se actualizo, pero no pudimos refrescar la vista.',
+                        'El estado se actualizó, pero no pudimos refrescar la vista.',
                     );
                     void options.loadDashboard();
                 } catch (error) {
@@ -5496,7 +5496,7 @@
                 const defaultNote = String(incident?.resolution_note || '').trim();
                 options.openActionModal({
                     title: `Resolver incidencia #${incidentId}`,
-                    subtitle: 'Agrega una nota de resolucion opcional antes de cerrar la incidencia.',
+                    subtitle: 'Agrega una nota de resolución opcional antes de cerrar la incidencia.',
                     submitLabel: 'Resolver incidencia',
                     focusId: 'actionIncidentResolutionNote',
                     fields: buildIncidentResolutionFields(defaultNote),
@@ -5513,7 +5513,7 @@
                 const targetStatusLabel = options.incidentStatusLabel(normalizedStatus);
                 options.openActionConfirmModal({
                     title: `Reabrir incidencia #${incidentId}`,
-                    subtitle: `La incidencia volvera al flujo activo y pasara a "${targetStatusLabel}".`,
+                    subtitle: `La incidencia volverá al flujo activo y pasará a "${targetStatusLabel}".`,
                     submitLabel: `Cambiar a ${targetStatusLabel}`,
                     acknowledgementText: `Confirmo que quiero reabrir esta incidencia y moverla a "${targetStatusLabel}".`,
                     missingConfirmationMessage: 'Debes confirmar la reapertura para continuar.',
@@ -5535,10 +5535,10 @@
 
             options.openActionConfirmModal({
                 title: `Eliminar incidencia #${incidentId}`,
-                subtitle: 'Esta accion marcara la incidencia como eliminada y dejara rastro en el registro de auditoria.',
+                subtitle: 'Esta acción marcará la incidencia como eliminada y dejará rastro en el registro de auditoría.',
                 submitLabel: 'Eliminar incidencia',
                 acknowledgementText: 'Confirmo que deseo eliminar esta incidencia de los listados activos.',
-                missingConfirmationMessage: 'Debes confirmar la eliminacion para continuar.',
+                missingConfirmationMessage: 'Debes confirmar la eliminación para continuar.',
                 onSubmit: async () => {
                     options.closeActionModal(true);
                     try {
@@ -5563,7 +5563,7 @@
             if (!options.requireActiveSession()) return;
             const numericAssetId = Number.parseInt(String(assetId), 10);
             if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
-                options.showNotification('asset_id invalido.', 'error');
+                options.showNotification('asset_id inválido.', 'error');
                 return;
             }
 

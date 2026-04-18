@@ -6,6 +6,7 @@ import {
   View,
 } from "react-native";
 
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
 import { fontFamilies } from "@/src/theme/typography";
 
@@ -82,9 +83,11 @@ export default function BiometricLockScreen({
             ]}
           >
             {busy ? (
-              <ActivityIndicator color="#ffffff" size="small" />
+              <ActivityIndicator color={palette.primaryButtonText} size="small" />
             ) : (
-              <Text style={styles.statusIconText}>{hasError ? "!" : "OK"}</Text>
+              <Text style={[styles.statusIconText, { color: palette.primaryButtonText }]}>
+                {hasError ? "!" : "OK"}
+              </Text>
             )}
           </View>
           <View style={styles.statusCopy}>
@@ -153,23 +156,23 @@ const styles = StyleSheet.create({
     zIndex: 50,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 24,
+    paddingHorizontal: spacing.s24,
   },
   card: {
     width: "100%",
     maxWidth: 420,
     borderRadius: 24,
     borderWidth: 1,
-    paddingHorizontal: 18,
-    paddingVertical: 20,
-    gap: 14,
+    paddingHorizontal: spacing.s18,
+    paddingVertical: spacing.s20,
+    gap: spacing.s14,
   },
   badge: {
     alignSelf: "flex-start",
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s6,
   },
   badgeText: {
     fontSize: 11.5,
@@ -188,30 +191,29 @@ const styles = StyleSheet.create({
   },
   statusCard: {
     borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    borderRadius: radii.r18,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s12,
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: spacing.s12,
   },
   statusIcon: {
     width: 36,
     height: 36,
-    borderRadius: 999,
+    borderRadius: radii.full,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
   statusIconText: {
-    color: "#ffffff",
     fontFamily: fontFamilies.bold,
     fontSize: 11.5,
     lineHeight: 13,
   },
   statusCopy: {
     flex: 1,
-    gap: 2,
+    gap: spacing.s2,
   },
   statusTitle: {
     fontSize: 13.5,
@@ -224,21 +226,23 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   primaryButton: {
-    borderRadius: 14,
+    borderRadius: radii.r14,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 13,
+    minHeight: sizing.touchTargetMin,
+    paddingVertical: spacing.s13,
   },
   primaryButtonText: {
     fontFamily: fontFamilies.bold,
     fontSize: 15,
   },
   secondaryButton: {
-    borderRadius: 14,
+    borderRadius: radii.r14,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 13,
+    minHeight: sizing.touchTargetMin,
+    paddingVertical: spacing.s13,
   },
   secondaryButtonText: {
     fontFamily: fontFamilies.bold,

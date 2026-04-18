@@ -6,6 +6,69 @@
     let activeLoadRequestId = 0;
     let eventSource = null;
     let eventSourceEnabled = false;
+    let hasInitialized = false;
+
+    function resolveEffectiveTheme() {
+        const explicitTheme = String(documentRef.documentElement?.dataset?.theme || '').trim().toLowerCase();
+        if (explicitTheme === 'dark' || explicitTheme === 'light') {
+            return explicitTheme;
+        }
+        if (typeof globalScope.matchMedia === 'function') {
+            try {
+                return globalScope.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            } catch {
+                return 'light';
+            }
+        }
+        return 'light';
+    }
+
+    function buildThemeTogglePath(targetTheme) {
+        try {
+            const url = new URL(globalScope.location.href);
+            url.searchParams.set('theme', targetTheme);
+            return `${url.pathname}${url.search}${url.hash}`;
+        } catch {
+            return `?theme=${encodeURIComponent(targetTheme)}`;
+        }
+    }
+
+    function updateThemeToggleControl(currentTheme) {
+        const toggleEl = documentRef.getElementById('publicTrackingThemeToggleBtn');
+        if (!toggleEl || String(toggleEl.tagName || '').toLowerCase() !== 'a') return;
+        const targetTheme = String(currentTheme || '').toLowerCase() === 'dark' ? 'light' : 'dark';
+        const nextLabel = targetTheme === 'dark' ? 'Usar modo oscuro' : 'Usar modo claro';
+        toggleEl.dataset.targetTheme = targetTheme;
+        toggleEl.textContent = nextLabel;
+        toggleEl.setAttribute('aria-label', nextLabel);
+        toggleEl.setAttribute('href', buildThemeTogglePath(targetTheme));
+    }
+
+    function applyTheme(nextTheme, options = {}) {
+        const { syncUrl = true } = options;
+        const normalizedTheme = String(nextTheme || '').trim().toLowerCase();
+        if (normalizedTheme !== 'dark' && normalizedTheme !== 'light') return;
+        if (documentRef.documentElement) {
+            documentRef.documentElement.setAttribute('data-theme', normalizedTheme);
+        }
+        if (syncUrl && globalScope.history && typeof globalScope.history.replaceState === 'function') {
+            const targetPath = buildThemeTogglePath(normalizedTheme);
+            globalScope.history.replaceState(null, '', targetPath);
+        }
+        updateThemeToggleControl(normalizedTheme);
+    }
+
+    function bindThemeToggleControl() {
+        const toggleEl = documentRef.getElementById('publicTrackingThemeToggleBtn');
+        if (!toggleEl || String(toggleEl.tagName || '').toLowerCase() !== 'a') return;
+        updateThemeToggleControl(resolveEffectiveTheme());
+        toggleEl.addEventListener('click', (event) => {
+            const targetTheme = String(toggleEl.dataset.targetTheme || '').trim().toLowerCase();
+            if (targetTheme !== 'dark' && targetTheme !== 'light') return;
+            event.preventDefault();
+            applyTheme(targetTheme, { syncUrl: true });
+        });
+    }
 
     function setConnectionState(state) {
         const badgeEl = documentRef.getElementById('publicTrackingConnectionBadge');
@@ -333,7 +396,10 @@
     }
 
     globalScope.addEventListener('DOMContentLoaded', () => {
+        if (hasInitialized) return;
+        hasInitialized = true;
         ensureBrandLockup();
+        bindThemeToggleControl();
         documentRef.getElementById('publicTrackingRefreshBtn')?.addEventListener('click', () => {
             void loadTrackingState();
         });

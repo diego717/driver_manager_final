@@ -14,11 +14,11 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 
 import { extractApiError } from "@/src/api/client";
+import ConsoleButton from "@/src/components/ConsoleButton";
 import { updateIncidentEvidence } from "@/src/api/incidents";
 import { uploadIncidentPhoto } from "@/src/api/photos";
 import ScreenHero from "@/src/components/ScreenHero";
@@ -27,8 +27,9 @@ import { canReachConfiguredApi } from "@/src/services/network/api-connectivity";
 import { enqueueUpdateIncidentEvidence } from "@/src/services/sync/incident-evidence-outbox-service";
 import { enqueueUploadIncidentPhoto } from "@/src/services/sync/photo-outbox-service";
 import { runSync } from "@/src/services/sync/sync-runner";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, textInputAccentColor, typeScale } from "@/src/theme/typography";
 
 type SelectedImage = {
   uri: string;
@@ -56,7 +57,7 @@ const TARGET_UPLOAD_PHOTO_BYTES = Math.round(2.5 * 1024 * 1024);
 const MIN_UPLOAD_PHOTO_BYTES = 1024;
 const MAX_IMAGE_DIMENSION = 1600;
 const COMPRESS_QUALITIES = [0.82, 0.72, 0.62, 0.52, 0.42];
-const MIN_TOUCH_TARGET_SIZE = 44;
+const MIN_TOUCH_TARGET_SIZE = sizing.touchTargetMin;
 
 const STEP_TITLES = ["Checklist", "Nota", "Fotos", "Confirmacion"] as const;
 const WIZARD_STEP_ANIMATION_MS = 260;
@@ -826,13 +827,11 @@ export default function UploadIncidentPhotoScreen() {
           {CHECKLIST_ITEMS.map((item) => {
             const selected = Boolean(selectedChecklist[item]);
             return (
-              <TouchableOpacity
+              <ConsoleButton
                 key={item}
-                style={[
-                  styles.checkItem,
-                  { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
-                  selected && { backgroundColor: palette.selectedBg, borderColor: palette.selectedBg },
-                ]}
+                variant={selected ? "primary" : "subtle"}
+                size="sm"
+                style={styles.checkItem}
                 onPress={() => toggleChecklist(item)}
               >
                 <Text
@@ -843,7 +842,7 @@ export default function UploadIncidentPhotoScreen() {
                 >
                   {selected ? "[x]" : "[ ]"} {item}
                 </Text>
-              </TouchableOpacity>
+              </ConsoleButton>
             );
           })}
         </View>
@@ -879,30 +878,24 @@ export default function UploadIncidentPhotoScreen() {
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Fotos y captura</Text>
           <View style={styles.row}>
-            <TouchableOpacity
-              style={[
-                styles.secondaryButton,
-                { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
-              ]}
+            <ConsoleButton
+              variant="subtle"
+              style={styles.secondaryButton}
               onPress={pickFromGallery}
               disabled={saving || processingImage}
-              accessibilityRole="button"
               accessibilityLabel="Seleccionar foto desde la galeria"
-            >
-              <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Galeria</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.secondaryButton,
-                { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder },
-              ]}
+              label="Galeria"
+              textStyle={styles.secondaryButtonText}
+            />
+            <ConsoleButton
+              variant="subtle"
+              style={styles.secondaryButton}
               onPress={takePhoto}
               disabled={saving || processingImage}
-              accessibilityRole="button"
               accessibilityLabel="Tomar foto con la camara"
-            >
-              <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Camara</Text>
-            </TouchableOpacity>
+              label="Camara"
+              textStyle={styles.secondaryButtonText}
+            />
           </View>
 
           {processingImage ? (
@@ -921,18 +914,20 @@ export default function UploadIncidentPhotoScreen() {
               <Text style={[styles.metaText, { color: palette.label }]}>Tamano: {formatBytes(selectedImage.sizeBytes)}</Text>
               <Text style={[styles.metaText, { color: palette.label }]}>Estado: Sin confirmar</Text>
               <View style={styles.row}>
-                <TouchableOpacity
-                  style={[styles.secondaryButton, { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder }]}
+                <ConsoleButton
+                  variant="subtle"
+                  style={styles.secondaryButton}
                   onPress={onRemoveSelectedPhoto}
-                >
-                  <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Quitar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
+                  label="Quitar"
+                  textStyle={styles.secondaryButtonText}
+                />
+                <ConsoleButton
+                  variant="primary"
+                  style={styles.primaryButton}
                   onPress={onConfirmSelectedPhoto}
-                >
-                  <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>Confirmar</Text>
-                </TouchableOpacity>
+                  label="Confirmar"
+                  textStyle={styles.primaryButtonText}
+                />
               </View>
             </View>
           ) : null}
@@ -948,9 +943,14 @@ export default function UploadIncidentPhotoScreen() {
                     {formatBytes(item.sizeBytes)} | Captured: {formatDateTime(item.deviceCapturedAt)}
                   </Text>
                 </View>
-                <TouchableOpacity onPress={() => onRemoveConfirmedPhoto(index)}>
-                  <Text style={[styles.removeText, { color: palette.errorText }]}>Quitar</Text>
-                </TouchableOpacity>
+                <ConsoleButton
+                  variant="warning"
+                  size="sm"
+                  style={styles.removeButton}
+                  onPress={() => onRemoveConfirmedPhoto(index)}
+                  label="Quitar"
+                  textStyle={[styles.removeText, { color: palette.errorText }]}
+                />
               </View>
             ))
           )}
@@ -965,23 +965,16 @@ export default function UploadIncidentPhotoScreen() {
           <Text style={[styles.metaText, { color: palette.textSecondary }]}>Evidencias confirmadas: {confirmedEvidence.length}</Text>
           <Text style={[styles.hintText, { color: palette.hint }]}>Cada evidencia se sube y queda registrada por incidencia.</Text>
 
-          <TouchableOpacity
-            style={[
-              styles.primaryButton,
-              { backgroundColor: palette.primaryButtonBg },
-              saving && styles.primaryButtonDisabled,
-            ]}
+          <ConsoleButton
+            variant="primary"
+            style={[styles.primaryButton, saving && styles.primaryButtonDisabled]}
             onPress={onSaveAllEvidence}
-            disabled={saving || processingImage}
-            accessibilityRole="button"
+            loading={saving}
+            disabled={processingImage}
             accessibilityLabel="Confirmar y guardar evidencia"
-          >
-            {saving ? (
-              <ActivityIndicator color={palette.primaryButtonText} />
-            ) : (
-              <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>Confirmar y guardar</Text>
-            )}
-          </TouchableOpacity>
+            label="Confirmar y guardar"
+            textStyle={styles.primaryButtonText}
+          />
         </View>
       ) : null}
       </Animated.View>
@@ -1004,24 +997,22 @@ export default function UploadIncidentPhotoScreen() {
       ) : null}
 
       <View style={styles.row}>
-        <TouchableOpacity
-          style={[styles.secondaryButton, { backgroundColor: palette.secondaryBg, borderColor: palette.inputBorder }]}
+        <ConsoleButton
+          variant="subtle"
+          style={styles.secondaryButton}
           onPress={onBackStep}
           disabled={step === 0 || saving}
-        >
-          <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Anterior</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.primaryButton,
-            { backgroundColor: palette.primaryButtonBg },
-            (step === 3 || saving) && styles.primaryButtonDisabled,
-          ]}
+          label="Anterior"
+          textStyle={styles.secondaryButtonText}
+        />
+        <ConsoleButton
+          variant="primary"
+          style={[styles.primaryButton, (step === 3 || saving) && styles.primaryButtonDisabled]}
           onPress={onNextStep}
           disabled={step === 3 || saving}
-        >
-          <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>Siguiente</Text>
-        </TouchableOpacity>
+          label="Siguiente"
+          textStyle={styles.primaryButtonText}
+        />
       </View>
     </ScreenScaffold>
   );
@@ -1029,64 +1020,70 @@ export default function UploadIncidentPhotoScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 20,
-    gap: 12,
+    padding: spacing.s20,
+    gap: spacing.s12,
   },
   heroBadge: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s7,
   },
   heroBadgeText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 11.5,
-    letterSpacing: 0.3,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
   },
   subtitle: {
-    fontSize: 13,
     fontFamily: fontFamilies.regular,
+    ...typeScale.bodyCompact,
   },
   progressWrap: {
-    gap: 6,
+    gap: spacing.s6,
   },
   progressTrack: {
     height: 8,
-    borderRadius: 999,
+    borderRadius: radii.full,
     borderWidth: 1,
     overflow: "hidden",
   },
   progressFill: {
     height: "100%",
-    borderRadius: 999,
+    borderRadius: radii.full,
   },
   progressLabel: {
     alignSelf: "flex-end",
-    fontSize: 12,
-    fontFamily: fontFamilies.medium,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   stepPanel: {
-    gap: 12,
+    gap: spacing.s12,
   },
   section: {
-    gap: 8,
+    gap: spacing.s8,
   },
   sectionTitle: {
-    fontSize: 20,
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.display,
+    ...typeScale.sectionDisplay,
+    fontSize: 24,
+    lineHeight: 24,
+    letterSpacing: 0.7,
+    textTransform: "uppercase",
   },
   label: {
-    fontSize: 13,
-    fontFamily: fontFamilies.semibold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   input: {
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: radii.r12,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
     fontFamily: inputFontFamily,
-    fontSize: 14,
-    lineHeight: 19,
+    ...typeScale.body,
   },
   noteInput: {
     minHeight: 110,
@@ -1094,105 +1091,113 @@ const styles = StyleSheet.create({
   },
   row: {
     flexDirection: "row",
-    gap: 10,
+    gap: spacing.s10,
   },
   checkItem: {
-    borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
+    alignItems: "flex-start",
   },
   checkItemText: {
-    fontSize: 14,
-    fontFamily: fontFamilies.semibold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   processingRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: spacing.s8,
   },
   secondaryButton: {
     flex: 1,
-    borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: radii.r10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
+    paddingVertical: spacing.s12,
   },
   secondaryButtonText: {
-    fontFamily: fontFamilies.bold,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   primaryButton: {
     flex: 1,
-    borderRadius: 14,
+    borderRadius: radii.r10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 14,
+    paddingVertical: spacing.s14,
   },
   primaryButtonDisabled: {
     opacity: 0.7,
   },
   primaryButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 15,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   previewCard: {
     borderWidth: 1,
-    borderRadius: 16,
-    padding: 10,
-    gap: 8,
+    borderRadius: radii.r16,
+    padding: spacing.s10,
+    gap: spacing.s8,
   },
   previewImage: {
     width: "100%",
     height: 220,
-    borderRadius: 8,
+    borderRadius: radii.r8,
   },
   hintText: {
-    fontSize: 13,
     fontFamily: fontFamilies.regular,
+    ...typeScale.bodyCompact,
   },
   metaText: {
-    fontSize: 12,
     fontFamily: fontFamilies.regular,
+    ...typeScale.bodyCompact,
   },
   photoRow: {
     borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderRadius: radii.r8,
+    paddingHorizontal: spacing.s10,
+    paddingVertical: spacing.s8,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
+    gap: spacing.s10,
   },
   photoRowTextWrap: {
     flex: 1,
-    gap: 2,
+    gap: spacing.s2,
   },
   removeText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
+  },
+  removeButton: {
+    minWidth: 88,
+    borderRadius: radii.r10,
   },
   summaryCard: {
     borderWidth: 1,
-    borderRadius: 10,
-    padding: 12,
+    borderRadius: radii.r10,
+    padding: spacing.s12,
   },
   feedbackBox: {
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 2,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
+    gap: spacing.s2,
   },
   feedbackTitle: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 13,
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.bodyCompact,
   },
   feedbackMessage: {
-    fontSize: 13,
     fontFamily: fontFamilies.regular,
+    ...typeScale.bodyCompact,
   },
 });

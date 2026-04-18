@@ -10,6 +10,7 @@ import {
 import Svg, { Path, Rect } from "react-native-svg";
 
 import { fitSignaturePathsToViewBox } from "@/src/features/conformity/signature-paths";
+import { radii, spacing } from "@/src/theme/layout";
 import { fontFamilies } from "@/src/theme/typography";
 
 const DEFAULT_CANVAS_WIDTH = 320;
@@ -149,7 +150,7 @@ const styles = StyleSheet.create({
   shell: {
     position: "relative",
     borderWidth: 1,
-    borderRadius: 20,
+    borderRadius: radii.r20,
     overflow: "hidden",
   },
   hintWrap: {
@@ -157,7 +158,7 @@ const styles = StyleSheet.create({
     inset: 0,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 24,
+    paddingHorizontal: spacing.s24,
   },
   hint: {
     fontSize: 13,

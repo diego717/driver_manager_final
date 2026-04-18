@@ -2,8 +2,9 @@ import React, { useEffect, useRef } from "react";
 import { Animated, Easing, StyleSheet, Text } from "react-native";
 
 import { useReducedMotion } from "@/src/hooks/useReducedMotion";
+import { radii, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, typeScale } from "@/src/theme/typography";
 import {
   getIncidentStatusLabel,
   getRecordAttentionStateLabel,
@@ -89,18 +90,19 @@ export default function StatusChip({ value, kind = "incident" }: StatusChipProps
 const styles = StyleSheet.create({
   chip: {
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    minHeight: 32,
-    paddingVertical: 6,
+    borderRadius: radii.r11,
+    borderStyle: "dashed",
+    paddingHorizontal: spacing.s10,
+    minHeight: 30,
+    paddingVertical: spacing.s5,
     alignItems: "center",
     justifyContent: "center",
     alignSelf: "flex-start",
   },
   label: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 11.5,
-    lineHeight: 14,
-    letterSpacing: 0.2,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    letterSpacing: 0.7,
+    textTransform: "uppercase",
   },
 });

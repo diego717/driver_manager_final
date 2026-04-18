@@ -13,7 +13,7 @@ import {
 import QRCode from "react-native-qrcode-svg";
 import Svg, { Image as SvgImage, Rect, Text as SvgText } from "react-native-svg";
 
-import type { AppPalette } from "@/src/theme/palette";
+import { getAppPalette, type AppPalette } from "@/src/theme/palette";
 
 import { styles } from "./styles";
 import type { QrLabelPreset, QrLabelPresetConfig, QrLabelRenderState } from "./shared";
@@ -71,6 +71,8 @@ type LabelRendererProps = {
   exportPresetConfig: QrLabelPresetConfig;
   setQrLabelSvgRef: (instance: unknown) => void;
 };
+
+const qrLabelPalette = getAppPalette("light");
 
 function ChipButton(props: {
   selected: boolean;
@@ -423,7 +425,7 @@ export function QrLabelRenderer(props: LabelRendererProps) {
           y={0}
           width={exportPresetConfig.width}
           height={exportPresetConfig.height}
-          fill="#ffffff"
+          fill={qrLabelPalette.primaryButtonText}
         />
         <SvgImage
           x={exportPresetConfig.padding}
@@ -438,7 +440,7 @@ export function QrLabelRenderer(props: LabelRendererProps) {
           y={Math.max(exportPresetConfig.titleY, (exportPresetConfig.height - 230) / 2)}
           fontSize={exportPresetConfig.titleSize}
           fontWeight="700"
-          fill="#0f172a"
+          fill={qrLabelPalette.textPrimary}
         >
           SiteOps
         </SvgText>
@@ -452,7 +454,7 @@ export function QrLabelRenderer(props: LabelRendererProps) {
             }
             fontSize={exportPresetConfig.lineSize}
             fontWeight="500"
-            fill="#1f2937"
+            fill={qrLabelPalette.textSecondary}
           >
             {line}
           </SvgText>
@@ -463,7 +465,7 @@ export function QrLabelRenderer(props: LabelRendererProps) {
           width={Math.max(0, exportPresetConfig.width - 4)}
           height={Math.max(0, exportPresetConfig.height - 4)}
           fill="none"
-          stroke="#222222"
+          stroke={qrLabelPalette.textPrimary}
           strokeWidth={2}
         />
       </Svg>

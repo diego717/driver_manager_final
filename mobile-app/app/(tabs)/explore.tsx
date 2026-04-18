@@ -7,6 +7,7 @@ import { getAssetIncidents, linkAssetToInstallation, listAssets, type AssetRecor
 import { extractApiError } from "@/src/api/client";
 import { readStoredWebSession } from "@/src/api/webAuth";
 import { canAssignTechnicians, canViewAssetCatalog } from "@/src/auth/roles";
+import ConsoleButton from "@/src/components/ConsoleButton";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
@@ -15,10 +16,11 @@ import TechnicianAssignmentsPanel from "@/src/components/TechnicianAssignmentsPa
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { triggerSelectionHaptic } from "@/src/services/haptics";
+import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies } from "@/src/theme/typography";
+import { fontFamilies, typeScale } from "@/src/theme/typography";
 
-const MIN_TOUCH_TARGET_SIZE = 44;
+const MIN_TOUCH_TARGET_SIZE = sizing.touchTargetMin;
 const ASSET_LIST_LIMIT = 80;
 
 function normalizeString(value: string | null | undefined): string {
@@ -257,51 +259,52 @@ export default function ExploreTabScreen() {
           placeholder="Buscar equipo o cliente"
           placeholderTextColor={palette.placeholder}
         />
-        <TouchableOpacity
-          style={[styles.smallButton, { backgroundColor: palette.primaryButtonBg }]}
+        <ConsoleButton
+          variant="primary"
+          size="sm"
+          style={styles.smallButton}
           onPress={() => {
             void triggerSelectionHaptic();
             void loadAssets();
           }}
-          disabled={loadingAssets}
-          accessibilityRole="button"
-        >
-          <Text style={[styles.smallButtonText, { color: palette.primaryButtonText }]}>Buscar</Text>
-        </TouchableOpacity>
+          loading={loadingAssets}
+          label="Buscar"
+          textStyle={styles.smallButtonText}
+        />
       </View>
 
       <View style={styles.topActionsRow}>
-        <TouchableOpacity
-          style={[styles.ghostButton, { backgroundColor: palette.surface, borderColor: palette.inputBorder }]}
+        <ConsoleButton
+          variant="ghost"
+          style={styles.ghostButton}
           onPress={() => {
             void triggerSelectionHaptic();
             void loadAssets();
           }}
-          accessibilityRole="button"
-        >
-          <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>Actualizar lista</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.ghostButton, { backgroundColor: palette.surface, borderColor: palette.inputBorder }]}
+          label="Actualizar lista"
+          textStyle={styles.ghostButtonText}
+        />
+        <ConsoleButton
+          variant="ghost"
+          style={styles.ghostButton}
           onPress={() => {
             void triggerSelectionHaptic();
             router.push("/qr?mode=scan");
           }}
-          accessibilityRole="button"
-        >
-          <Text style={[styles.ghostButtonText, { color: palette.refreshText }]}>Escanear</Text>
-        </TouchableOpacity>
+          label="Escanear"
+          textStyle={styles.ghostButtonText}
+        />
         {resolveIntent ? (
-          <TouchableOpacity
-            style={[styles.ghostButton, { backgroundColor: palette.secondaryButtonBg }]}
+          <ConsoleButton
+            variant="subtle"
+            style={styles.ghostButton}
             onPress={() => {
               void triggerSelectionHaptic();
               router.push("/case/manual" as never);
             }}
-            accessibilityRole="button"
-          >
-            <Text style={[styles.ghostButtonText, { color: palette.secondaryButtonText }]}>Caso manual</Text>
-          </TouchableOpacity>
+            label="Caso manual"
+            textStyle={styles.ghostButtonText}
+          />
         ) : null}
       </View>
 
@@ -329,11 +332,10 @@ export default function ExploreTabScreen() {
                     {(asset.brand || "-") + " / " + (asset.model || "-")} - {asset.client_name || "Sin cliente"}
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.inlineAction,
-                    { backgroundColor: selected ? palette.chipSelectedBg : palette.secondaryButtonBg, borderColor: palette.inputBorder },
-                  ]}
+                <ConsoleButton
+                  variant={selected ? "primary" : "subtle"}
+                  size="sm"
+                  style={styles.inlineAction}
                   onPress={() => {
                     void triggerSelectionHaptic();
                     if (selected) {
@@ -342,12 +344,9 @@ export default function ExploreTabScreen() {
                     }
                     setSelectedAssetId(asset.id);
                   }}
-                  accessibilityRole="button"
-                >
-                  <Text style={[styles.inlineActionText, { color: selected ? palette.chipSelectedText : palette.secondaryButtonText }]}>
-                    {selected ? (resolveIntent ? "Abrir en casos" : "Incidencia") : "Ver"}
-                  </Text>
-                </TouchableOpacity>
+                  label={selected ? (resolveIntent ? "Abrir en casos" : "Incidencia") : "Ver"}
+                  textStyle={styles.inlineActionText}
+                />
               </View>
             );
           })}
@@ -383,29 +382,27 @@ export default function ExploreTabScreen() {
           ) : null}
 
           <View style={styles.detailActions}>
-            <TouchableOpacity
-              style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
+            <ConsoleButton
+              variant="primary"
+              style={styles.primaryButton}
               onPress={() => {
                 void triggerSelectionHaptic();
                 openPrimaryAction(selectedAsset);
               }}
-              accessibilityRole="button"
-            >
-              <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>
-                {resolveIntent ? "Abrir en casos" : "Crear incidencia"}
-              </Text>
-            </TouchableOpacity>
+              label={resolveIntent ? "Abrir en casos" : "Crear incidencia"}
+              textStyle={styles.primaryButtonText}
+            />
             {!resolveIntent ? (
-              <TouchableOpacity
-                style={[styles.secondaryButton, { backgroundColor: palette.refreshBg, borderColor: palette.inputBorder }]}
+              <ConsoleButton
+                variant="ghost"
+                style={styles.secondaryButton}
                 onPress={() => {
                   void triggerSelectionHaptic();
                   setShowLinkForm((current) => !current);
                 }}
-                accessibilityRole="button"
-              >
-                <Text style={[styles.secondaryButtonText, { color: palette.refreshText }]}>Vincular a caso</Text>
-              </TouchableOpacity>
+                label="Vincular a caso"
+                textStyle={styles.secondaryButtonText}
+              />
             ) : null}
           </View>
 
@@ -422,21 +419,17 @@ export default function ExploreTabScreen() {
                 placeholder="Installation ID"
                 placeholderTextColor={palette.placeholder}
               />
-              <TouchableOpacity
-                style={[styles.primaryButton, { backgroundColor: palette.primaryButtonBg }]}
+              <ConsoleButton
+                variant="primary"
+                style={styles.primaryButton}
                 onPress={() => {
                   void triggerSelectionHaptic();
                   void onLinkAsset();
                 }}
-                disabled={linking}
-                accessibilityRole="button"
-              >
-                {linking ? (
-                  <ActivityIndicator color={palette.primaryButtonText} />
-                ) : (
-                  <Text style={[styles.primaryButtonText, { color: palette.primaryButtonText }]}>Vincular ahora</Text>
-                )}
-              </TouchableOpacity>
+                loading={linking}
+                label="Vincular ahora"
+                textStyle={styles.primaryButtonText}
+              />
             </View>
           ) : null}
         </View>
@@ -468,19 +461,19 @@ export default function ExploreTabScreen() {
 const styles = StyleSheet.create({
   centerContainer: {
     flex: 1,
-    padding: 20,
+    padding: spacing.s20,
     alignItems: "center",
     justifyContent: "center",
   },
   container: {
-    padding: 20,
+    padding: spacing.s20,
   },
   screenEnterWrap: {
-    gap: 12,
+    gap: spacing.s12,
   },
   searchRow: {
     flexDirection: "row",
-    gap: 8,
+    gap: spacing.s8,
     alignItems: "center",
   },
   searchInput: {
@@ -488,143 +481,138 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: radii.r12,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s10,
     minHeight: MIN_TOUCH_TARGET_SIZE,
   },
   smallButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
     minWidth: 84,
-    borderRadius: 12,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.s12,
   },
   smallButtonText: {
     fontFamily: fontFamilies.mono,
-    fontSize: 12,
-    letterSpacing: 0.4,
+    ...typeScale.buttonMono,
     textTransform: "uppercase",
   },
   topActionsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: spacing.s8,
   },
   ghostButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 12,
-    borderWidth: 1,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingHorizontal: spacing.s12,
+    paddingVertical: spacing.s9,
   },
   ghostButtonText: {
     fontFamily: fontFamilies.mono,
-    fontSize: 12,
-    letterSpacing: 0.4,
+    ...typeScale.buttonMono,
     textTransform: "uppercase",
   },
   assetList: {
-    gap: 8,
+    gap: spacing.s8,
   },
   assetRow: {
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: radii.r12,
+    padding: spacing.s12,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: spacing.s10,
   },
   assetInfo: {
     flex: 1,
-    gap: 2,
+    gap: spacing.s2,
   },
   assetCode: {
     fontFamily: fontFamilies.bold,
-    fontSize: 13.5,
+    ...typeScale.body,
     letterSpacing: -0.1,
   },
   assetMeta: {
     fontFamily: fontFamilies.mono,
-    fontSize: 12,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   inlineAction: {
-    borderWidth: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 12,
-    paddingHorizontal: 12,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s12,
     alignItems: "center",
     justifyContent: "center",
   },
   inlineActionText: {
     fontFamily: fontFamilies.mono,
-    fontSize: 12,
-    letterSpacing: 0.4,
+    ...typeScale.buttonMono,
     textTransform: "uppercase",
   },
   loadingRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: spacing.s8,
   },
   loadingText: {
     fontFamily: fontFamilies.mono,
-    fontSize: 12,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   detailCard: {
     borderWidth: 1,
-    borderRadius: 16,
-    padding: 14,
-    gap: 8,
+    borderRadius: radii.r16,
+    padding: spacing.s14,
+    gap: spacing.s8,
   },
   detailTitle: {
     fontFamily: fontFamilies.bold,
-    fontSize: 18,
+    ...typeScale.titleStrong,
     letterSpacing: -0.2,
   },
   detailLine: {
     fontFamily: fontFamilies.regular,
-    fontSize: 13,
-    lineHeight: 18,
+    ...typeScale.bodyCompact,
   },
   detailActions: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
-    marginTop: 2,
+    gap: spacing.s8,
+    marginTop: spacing.s2,
   },
   primaryButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: 14,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: spacing.s14,
+    paddingVertical: spacing.s12,
   },
   primaryButtonText: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 14,
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
   },
   secondaryButton: {
     minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: radii.r10,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: spacing.s14,
+    paddingVertical: spacing.s12,
   },
   secondaryButtonText: {
     fontFamily: fontFamilies.mono,
-    fontSize: 12,
-    letterSpacing: 0.4,
+    ...typeScale.buttonMono,
     textTransform: "uppercase",
   },
   linkForm: {
-    gap: 8,
-    marginTop: 4,
+    gap: spacing.s8,
+    marginTop: spacing.s4,
   },
 });
