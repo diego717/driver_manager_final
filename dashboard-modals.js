@@ -175,9 +175,23 @@
             subtitleEl.textContent = subtitle;
             subtitleEl.classList.toggle('is-hidden', subtitle.length === 0);
 
+            const previousClass = String(modalContent.dataset.contextClass || '').trim();
+            if (previousClass) {
+                modalContent.classList.remove(previousClass);
+            }
+            modalContent.dataset.contextClass = '';
             modalContent.classList.remove('action-modal-wide');
             if (config.modalWidth === 'wide') {
                 modalContent.classList.add('action-modal-wide');
+            }
+            const modalClassName = String(config.modalClassName || '').trim();
+            if (modalClassName) {
+                modalContent.classList.add(modalClassName);
+                modalContent.dataset.contextClass = modalClassName;
+            }
+            const onboardBlock = modal.querySelector('.flow-panel-onboard');
+            if (onboardBlock instanceof HTMLElement) {
+                onboardBlock.classList.toggle('is-hidden', config.hideOnboard === true);
             }
 
             fieldsEl.replaceChildren(...normalizeActionModalFields(config.fields));

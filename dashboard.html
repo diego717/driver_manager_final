@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#0f756d">
+    <meta name="theme-color" content="#d97706">
     <meta name="description" content="Dashboard de gestión de registros de drivers">
     <title>SiteOps Dashboard</title>
     <link rel="stylesheet" href="/dashboard.css">
@@ -644,83 +644,115 @@
             </div>
             <div id="visualLabSection" class="section visual-lab-section">
                 <section id="visualLabHero" class="visual-lab-hero" aria-labelledby="visualLabTitle">
-                    <p class="visual-lab-eyebrow">Specimen mode // alt direction</p>
-                    <h3 id="visualLabTitle"><span>Neon</span> Control Deck</h3>
-                    <p class="visual-lab-lead">Esta versión rompe la línea actual: mezcla display typography, paleta enérgica y composición asimétrica para explorar un look mucho más expresivo.</p>
+                    <p class="visual-lab-eyebrow">Visual Lab // direccion operativa</p>
+                    <h3 id="visualLabTitle"><span>Amber</span> Ops Console</h3>
+                    <p class="visual-lab-lead">Prototipo de control de turno con lectura de campo: mono dominante, acento ambar y estados semanticos visibles sin depender de etiquetas.</p>
                     <div class="visual-lab-marquee" aria-hidden="true">
-                        <span>visual lab // wild variant // editorial rhythm // signal-rich motion // color-first interface // visual lab // wild variant //</span>
+                        <span>mono dominant interface // amber operational accent // semantic left border // field-ready readability // mono dominant interface //</span>
+                    </div>
+                </section>
+                <section class="visual-lab-ops-board" aria-labelledby="visualLabOpsBoardTitle">
+                    <header class="visual-lab-ops-topbar">
+                        <div>
+                            <p class="visual-lab-ops-kicker">Centro del turno</p>
+                            <h4 id="visualLabOpsBoardTitle">Centro del turno en vivo</h4>
+                        </div>
+                        <div class="visual-lab-ops-actions" aria-label="Acciones de demo">
+                            <span class="visual-lab-ops-chip">prioridad sla</span>
+                            <span class="visual-lab-ops-chip visual-lab-ops-chip-live">turno noche</span>
+                            <div class="visual-lab-theme-switch" role="group" aria-label="Seleccion de tema">
+                                <button
+                                    id="visualLabThemeLightBtn"
+                                    class="visual-lab-theme-btn"
+                                    type="button"
+                                    data-theme-value="light"
+                                    aria-pressed="false"
+                                >
+                                    claro
+                                </button>
+                                <button
+                                    id="visualLabThemeDarkBtn"
+                                    class="visual-lab-theme-btn"
+                                    type="button"
+                                    data-theme-value="dark"
+                                    aria-pressed="false"
+                                >
+                                    oscuro
+                                </button>
+                            </div>
+                            <span class="visual-lab-ops-pill">nuevo registro</span>
+                        </div>
+                    </header>
+
+                    <div class="visual-lab-ops-shell">
+                        <aside class="visual-lab-ops-nav" aria-label="Navegacion simulada">
+                            <p class="visual-lab-ops-nav-label">operacion</p>
+                            <ul>
+                                <li class="is-active">hoy</li>
+                                <li>mis casos</li>
+                                <li>incidencias</li>
+                                <li>mapa</li>
+                                <li>registros</li>
+                            </ul>
+                            <p class="visual-lab-ops-nav-label">activos</p>
+                            <ul>
+                                <li>equipos</li>
+                                <li>drivers</li>
+                            </ul>
+                        </aside>
+
+                        <div class="visual-lab-ops-main">
+                            <div class="visual-lab-ops-kpi-grid">
+                                <article class="kpi-primary critical">
+                                    <p class="kpi-title">incidencias criticas activas</p>
+                                    <p class="kpi-value">0</p>
+                                    <p class="kpi-sub">sin cambios en el turno</p>
+                                </article>
+                                <div class="kpi-secondary-stack">
+                                    <article class="kpi-secondary active">
+                                        <p class="kpi-title">incidencias en curso</p>
+                                        <p class="kpi-value">0</p>
+                                        <p class="kpi-sub">normal</p>
+                                    </article>
+                                    <article class="kpi-secondary warning">
+                                        <p class="kpi-title">incidencias fuera de sla</p>
+                                        <p class="kpi-value">0</p>
+                                        <p class="kpi-sub">ok (+30 min)</p>
+                                    </article>
+                                </div>
+                            </div>
+
+                            <article class="visual-lab-ops-module info">
+                                <header class="visual-lab-ops-module-head">
+                                    <div>
+                                        <p class="kpi-title">observabilidad gps</p>
+                                        <h5>salud de captura y contexto gps</h5>
+                                    </div>
+                                    <p class="visual-lab-ops-module-note">lectura consolidada desde registros, incidencias y auditoria operativa.</p>
+                                </header>
+                                <div class="visual-lab-ops-mini-grid">
+                                    <article class="kpi-secondary active">
+                                        <p class="kpi-title">capturas utiles</p>
+                                        <p class="kpi-value">8</p>
+                                        <p class="kpi-sub">8/8 capturas validas</p>
+                                    </article>
+                                    <article class="kpi-secondary info">
+                                        <p class="kpi-title">fallas gps</p>
+                                        <p class="kpi-value">0</p>
+                                        <p class="kpi-sub">sin incidencias de captura</p>
+                                    </article>
+                                    <article class="kpi-secondary warning">
+                                        <p class="kpi-title">overrides gps</p>
+                                        <p class="kpi-value">0</p>
+                                        <p class="kpi-sub">excepciones por falta de captura</p>
+                                    </article>
+                                </div>
+                            </article>
+                        </div>
                     </div>
                 </section>
 
-                <div id="visualLabMotion" class="visual-lab-compare" role="list" aria-label="Comparador de variantes visuales">
-                    <article id="visualLabFlow" class="visual-lab-skin visual-lab-skin-neon" role="listitem">
-                        <p class="visual-lab-skin-kicker">Variant A</p>
-                        <h4><span class="material-symbols-outlined">flare</span> Neon Editorial</h4>
-                        <p>Ritmo alto, tipografía display y color enérgico para una presencia visual protagonista.</p>
-                        <div class="visual-lab-skin-swatches" aria-hidden="true">
-                            <span class="visual-lab-chip chip-sun">Solar</span>
-                            <span class="visual-lab-chip chip-lime">Lime</span>
-                            <span class="visual-lab-chip chip-cyan">Cyan</span>
-                            <span class="visual-lab-chip chip-ink">Ink</span>
-                        </div>
-                        <ul class="visual-lab-skin-points">
-                            <li>Display headline dominante</li>
-                            <li>Layout orgánico en capas</li>
-                            <li>Micro motion expresivo</li>
-                        </ul>
-                        <div class="visual-lab-meter" aria-hidden="true">
-                            <span></span>
-                            <span></span>
-                            <span></span>
-                        </div>
-                    </article>
-
-                    <article id="visualLabTheme" class="visual-lab-skin visual-lab-skin-brutalist" role="listitem">
-                        <p class="visual-lab-skin-kicker">Variant B</p>
-                        <h4><span class="material-symbols-outlined">memory</span> Brutalist Tech</h4>
-                        <p>Paneles densos, grilla marcada y contraste duro para una lectura más de consola operativa.</p>
-                        <div class="visual-lab-skin-swatches" aria-hidden="true">
-                            <span class="visual-lab-chip chip-steel">Steel</span>
-                            <span class="visual-lab-chip chip-laser">Laser</span>
-                            <span class="visual-lab-chip chip-slate">Slate</span>
-                            <span class="visual-lab-chip chip-black">Graphite</span>
-                        </div>
-                        <ul class="visual-lab-skin-points">
-                            <li>Tipografía condensada técnica</li>
-                            <li>Superficies con retícula</li>
-                            <li>Feedback visual sobrio</li>
-                        </ul>
-                        <div class="visual-lab-meter" aria-hidden="true">
-                            <span></span>
-                            <span></span>
-                            <span></span>
-                        </div>
-                    </article>
-
-                    <article id="visualLabFuture" class="visual-lab-skin visual-lab-skin-future" role="listitem">
-                        <p class="visual-lab-skin-kicker">Variant C</p>
-                        <h4><span class="material-symbols-outlined">rocket_launch</span> Quantum Flux</h4>
-                        <p>Apuesta futurista: tipografía techno, tonos eléctricos y capas holográficas para una presencia más radical.</p>
-                        <div class="visual-lab-skin-swatches" aria-hidden="true">
-                            <span class="visual-lab-chip chip-ultraviolet">Ultraviolet</span>
-                            <span class="visual-lab-chip chip-hypercyan">Hypercyan</span>
-                            <span class="visual-lab-chip chip-plasma">Plasma</span>
-                            <span class="visual-lab-chip chip-void">Void</span>
-                        </div>
-                        <ul class="visual-lab-skin-points">
-                            <li>Titulares geométrico-futuristas</li>
-                            <li>Contraste frío con glow controlado</li>
-                            <li>Paneles con atmósfera holográfica</li>
-                        </ul>
-                        <div class="visual-lab-meter" aria-hidden="true">
-                            <span></span>
-                            <span></span>
-                            <span></span>
-                        </div>
-                    </article>
-                </div>
-
-                <p class="visual-lab-compare-note">Comparacion de 3 variantes: valida cual se acerca mas al tono que queres llevar a mobile.</p>
+                <p class="visual-lab-compare-note">Panel guia: mono dominante + acento ambar + borde semantico izquierdo en KPI.</p>
             </div>
 
             <div id="tenantsSection" class="section">

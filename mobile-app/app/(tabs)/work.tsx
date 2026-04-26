@@ -35,9 +35,10 @@ import {
   getTechnicianAssignments,
   listAssignedIncidentsMap,
 } from "@/src/api/technicians";
+import { readStoredWebSession } from "@/src/api/webAuth";
+import { canManagePublicTracking } from "@/src/auth/roles";
 import ConsoleButton from "@/src/components/ConsoleButton";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
-import RuntimeChip from "@/src/components/RuntimeChip";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import SectionCard from "@/src/components/SectionCard";
@@ -133,8 +134,10 @@ export default function WorkTabScreen() {
   const [usingOfflineIncidentSnapshot, setUsingOfflineIncidentSnapshot] = useState(false);
   const [usingOfflineQueueSnapshot, setUsingOfflineQueueSnapshot] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
   const screenEnterAnim = useRef(new Animated.Value(0)).current;
   const { checkingSession, hasActiveSession } = useSharedWebSessionState();
+  const canManageTrackingLinks = canManagePublicTracking(webSessionRole);
 
   const loadIncidents = useCallback(
     async (targetInstallationId: number) => {
@@ -287,6 +290,10 @@ export default function WorkTabScreen() {
   const loadTrackingLink = useCallback(
     async (targetInstallationId: number, options?: { silent?: boolean }) => {
       if (!hasActiveSession) return;
+      if (!canManageTrackingLinks) {
+        setTrackingLink(null);
+        return;
+      }
       if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) return;
 
       try {
@@ -302,7 +309,7 @@ export default function WorkTabScreen() {
         setLoadingTrackingLink(false);
       }
     },
-    [hasActiveSession],
+    [canManageTrackingLinks, hasActiveSession],
   );
 
   const refreshCurrentInstallation = useCallback(async () => {
@@ -377,8 +384,12 @@ export default function WorkTabScreen() {
       setLinkedTechnician(null);
       setTechnicianAssignments([]);
       setQueueIncidents([]);
+      setWebSessionRole(null);
       return;
     }
+    void readStoredWebSession()
+      .then((session) => setWebSessionRole(session.role))
+      .catch(() => setWebSessionRole(null));
     void Promise.all([
       loadInstallations(),
       loadTechnicianQueue(),
@@ -395,6 +406,9 @@ export default function WorkTabScreen() {
     useCallback(() => {
       if (!hasActiveSession) return;
       const parsedInstallationId = Number.parseInt(installationId, 10);
+      void readStoredWebSession()
+        .then((session) => setWebSessionRole(session.role))
+        .catch(() => setWebSessionRole(null));
       void loadTechnicianQueue();
       if (Number.isInteger(parsedInstallationId) && parsedInstallationId > 0) {
         void Promise.all([
@@ -404,6 +418,17 @@ export default function WorkTabScreen() {
       }
     }, [hasActiveSession, installationId, loadIncidents, loadTechnicianQueue, loadTrackingLink]),
   );
+
+  useEffect(() => {
+    if (!hasActiveSession) return;
+    if (!canManageTrackingLinks) {
+      setTrackingLink(null);
+      return;
+    }
+    const parsedInstallationId = Number.parseInt(installationId, 10);
+    if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) return;
+    void loadTrackingLink(parsedInstallationId, { silent: true });
+  }, [canManageTrackingLinks, hasActiveSession, installationId, loadTrackingLink]);
 
   useFocusEffect(
     useCallback(() => {
@@ -474,9 +499,46 @@ export default function WorkTabScreen() {
   const activeTrackingUrl = trackingLink?.active === true
     ? String(trackingLink?.tracking_url || "").trim()
     : "";
+  const missionStatus = missionIncident
+    ? normalizeIncidentStatus(missionIncident.incident_status)
+    : "open";
+  const missionRuntime = missionIncident
+    ? resolveIncidentRealDurationSeconds(missionIncident, nowMs)
+    : 0;
+  const missionEstimated = missionIncident
+    ? resolveIncidentEstimatedDurationSeconds(missionIncident)
+    : 0;
+  const missionResolvedByMetric = missionIncident
+    ? [
+        String(missionIncident.resolved_by || missionIncident.status_updated_by || "").trim(),
+        missionIncident.resolved_at ? formatDateTime(missionIncident.resolved_at) : "",
+      ].filter(Boolean).join(" - ") || "--"
+    : "--";
+  const missionPrimaryLabel =
+    missionStatus === "in_progress"
+      ? "Abrir seguimiento"
+      : missionStatus === "paused"
+        ? "Reanudar ahora"
+        : "Empezar ahora";
+  const missionSecondaryStatusAction =
+    missionStatus === "in_progress"
+      ? {
+          label: "Pausar",
+          target: "paused" as IncidentStatus,
+        }
+      : missionStatus === "paused"
+        ? {
+            label: "Resolver",
+            target: "resolved" as IncidentStatus,
+          }
+        : null;
 
   const handleCreateTrackingLink = useCallback(async () => {
     void triggerSelectionHaptic();
+    if (!canManageTrackingLinks) {
+      Alert.alert("Tracking publico", "No tienes permisos para gestionar enlaces publicos.");
+      return;
+    }
     const parsedInstallationId = Number.parseInt(installationId, 10);
     if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) return;
     try {
@@ -491,10 +553,14 @@ export default function WorkTabScreen() {
     } finally {
       setTrackingActionBusy(false);
     }
-  }, [installationId]);
+  }, [canManageTrackingLinks, installationId]);
 
   const handleRevokeTrackingLink = useCallback(async () => {
     void triggerSelectionHaptic();
+    if (!canManageTrackingLinks) {
+      Alert.alert("Tracking publico", "No tienes permisos para gestionar enlaces publicos.");
+      return;
+    }
     const parsedInstallationId = Number.parseInt(installationId, 10);
     if (!Number.isInteger(parsedInstallationId) || parsedInstallationId <= 0) return;
     try {
@@ -514,7 +580,7 @@ export default function WorkTabScreen() {
     } finally {
       setTrackingActionBusy(false);
     }
-  }, [installationId]);
+  }, [canManageTrackingLinks, installationId]);
 
   const handleOpenTrackingLink = useCallback(async () => {
     void triggerSelectionHaptic();
@@ -616,6 +682,11 @@ export default function WorkTabScreen() {
               },
             }
           : null;
+    const resolvedByMetric = [
+      String(incident.resolved_by || incident.status_updated_by || "").trim(),
+      incident.resolved_at ? formatDateTime(incident.resolved_at) : "",
+    ].filter(Boolean).join(" - ") || "--";
+    const followupLabel = options?.showQueueMeta ? "Destino" : (options?.detailButtonLabel || "Abrir detalle");
 
     return (
       <View
@@ -625,139 +696,164 @@ export default function WorkTabScreen() {
           { backgroundColor: palette.cardBg, borderColor: palette.cardBorder },
         ]}
       >
-        <View style={styles.cardSignalRow}>
-          <View
-            style={[
-              styles.priorityPill,
-              {
-                backgroundColor: priorityTone.backgroundColor,
-                borderColor: priorityTone.borderColor,
-              },
-            ]}
-          >
-            <Text style={[styles.priorityPillText, { color: priorityTone.textColor }]}>
-              {priorityText}
+        <View style={[styles.cardSection, { borderBottomColor: palette.border }]}>
+          <View style={styles.cardSignalRow}>
+            <View
+              style={[
+                styles.priorityPill,
+                {
+                  backgroundColor: priorityTone.backgroundColor,
+                  borderColor: priorityTone.borderColor,
+                },
+              ]}
+            >
+              <Text style={[styles.priorityPillText, { color: priorityTone.textColor }]}>
+                {priorityText}
+              </Text>
+            </View>
+            <Text style={[styles.metaText, { color: palette.textMuted }]}>
+              {ageLabel}  -  {formatDateTime(incident.created_at)}
             </Text>
           </View>
-          <Text style={[styles.metaText, { color: palette.textMuted }]}>
-            {ageLabel}  -  {formatDateTime(incident.created_at)}
-          </Text>
-        </View>
 
-        <View style={styles.cardHeader}>
-          <View style={styles.cardHeaderText}>
-            <Text style={[styles.noteText, { color: palette.textPrimary }]}>
-              {incident.note || "Sin detalle operativo."}
-            </Text>
-            <Text style={[styles.cardSummaryText, { color: palette.textSecondary }]}>
-              #{incident.id}  -  {getSeverityLabel(incident.severity)}  -  {incident.photos?.length ?? 0} fotos
-            </Text>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardHeaderText}>
+              <Text style={[styles.noteText, { color: palette.textPrimary }]}>
+                {incident.note || "Sin detalle operativo."}
+              </Text>
+              <Text style={[styles.cardSummaryText, { color: palette.textSecondary }]}>
+                #{incident.id}  -  {getSeverityLabel(incident.severity)}  -  {incident.photos?.length ?? 0} fotos
+              </Text>
+            </View>
+            <View style={styles.badgesRow}>
+              <StatusChip value={status} />
+              <StatusChip
+                kind="attention"
+                value={incident.severity === "critical" ? "critical" : "open"}
+              />
+            </View>
           </View>
-          <View style={styles.badgesRow}>
-            <StatusChip value={status} />
-            <StatusChip
-              kind="attention"
-              value={incident.severity === "critical" ? "critical" : "open"}
-            />
-          </View>
-        </View>
 
-        <View style={styles.infoPillsRow}>
-          <View style={[styles.infoPill, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
-            <Text style={[styles.infoPillText, { color: palette.textSecondary }]}>
-              Usuario {incident.reporter_username || "-"}
-            </Text>
+          <View style={styles.infoPillsRow}>
+            <View style={[styles.infoPill, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+              <Text style={[styles.infoPillText, { color: palette.textSecondary }]}>
+                Usuario {incident.reporter_username || "-"}
+              </Text>
+            </View>
+            <View style={[styles.infoPill, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+              <Text style={[styles.infoPillText, { color: palette.textSecondary }]}>
+                {options?.showInstallationTag ? `Caso #${incident.installation_id}` : ageLabel}
+              </Text>
+            </View>
           </View>
-          <View style={[styles.infoPill, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
-            <Text style={[styles.infoPillText, { color: palette.textSecondary }]}>
-              {options?.showInstallationTag ? `Caso #${incident.installation_id}` : ageLabel}
+          {options?.showQueueMeta && queueIncident.queue_source_label ? (
+            <Text style={[styles.supportingText, { color: palette.textMuted }]}>
+              Cola: {queueIncident.queue_source_label}
             </Text>
-          </View>
-        </View>
-        {options?.showQueueMeta && queueIncident.queue_source_label ? (
-          <Text style={[styles.supportingText, { color: palette.textMuted }]}>
-            Cola: {queueIncident.queue_source_label}
-          </Text>
-        ) : null}
-        {incident.evidence_note?.trim() ? (
-          <Text style={[styles.supportingText, { color: palette.textSecondary }]}>
-            Nota operativa: {incident.evidence_note}
-          </Text>
-        ) : null}
-        {incident.checklist_items?.length ? (
-          <Text style={[styles.supportingText, { color: palette.textSecondary }]}>
-            Checklist: {incident.checklist_items.slice(0, 3).join("  -  ")}
-          </Text>
-        ) : null}
-
-        <View style={styles.runtimeGrid}>
-          <RuntimeChip label="Estado" value={getIncidentStatusLabel(status)} />
-          <RuntimeChip label="Estimado" value={formatDuration(estimated)} />
-          <RuntimeChip label="Real" value={formatDuration(runtime)} />
-        </View>
-
-        <View style={styles.priorityActionsRow}>
-          <ConsoleButton
-            variant="primary"
-            style={styles.priorityPrimaryAction}
-            onPress={primaryAction.onPress}
-            loading={busy}
-            label={primaryAction.label}
-            textStyle={styles.priorityPrimaryText}
-          />
-          {secondaryStatusAction ? (
-            <ConsoleButton
-              variant="ghost"
-              style={styles.prioritySecondaryAction}
-              onPress={secondaryStatusAction.onPress}
-              disabled={busy}
-              label={secondaryStatusAction.label}
-              textStyle={styles.prioritySecondaryText}
-            />
+          ) : null}
+          {incident.evidence_note?.trim() ? (
+            <Text style={[styles.supportingText, { color: palette.textSecondary }]}>
+              Nota operativa: {incident.evidence_note}
+            </Text>
+          ) : null}
+          {incident.checklist_items?.length ? (
+            <Text style={[styles.supportingText, { color: palette.textSecondary }]}>
+              Checklist: {incident.checklist_items.slice(0, 3).join("  -  ")}
+            </Text>
           ) : null}
         </View>
 
-        <View style={styles.actionsRow}>
-          <ConsoleButton
-            variant="ghost"
-            style={styles.detailButton}
-            onPress={() =>
-              {
-                void triggerSelectionHaptic();
-                router.push(
-                  `/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
-                );
-              }
-            }
-            label={options?.detailButtonLabel || "Abrir detalle"}
-            textStyle={styles.detailButtonText}
-          />
-          {options?.showInstallationTag ? (
-            <ConsoleButton
-              variant="subtle"
-              style={styles.detailButton}
-              onPress={() => {
-                void triggerSelectionHaptic();
-                void onSelectInstallation(incident.installation_id);
-              }}
-              label="Abrir caso"
-              textStyle={styles.detailButtonText}
-            />
-          ) : null}
-          <ConsoleButton
-            variant="primary"
-            style={styles.uploadButton}
-            onPress={() =>
-              {
-                void triggerSelectionHaptic();
-                router.push(
-                  `/incident/upload?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
-                );
-              }
-            }
-            label="Subir evidencia"
-            textStyle={styles.uploadButtonText}
-          />
+        <View style={[styles.cardSection, { borderBottomColor: palette.border }]}>
+          <View style={styles.metricsRow}>
+            <View style={[styles.metricCard, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+              <Text style={[styles.metricLabel, { color: palette.textSecondary }]}>Estimado</Text>
+              <Text style={[styles.metricValue, { color: palette.textPrimary }]}>
+                {estimated > 0 ? formatDuration(estimated) : "--"}
+              </Text>
+            </View>
+            <View style={[styles.metricCard, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+              <Text style={[styles.metricLabel, { color: palette.textSecondary }]}>Real</Text>
+              <Text style={[styles.metricValue, { color: palette.textPrimary }]}>
+                {formatDuration(runtime)}
+              </Text>
+            </View>
+            <View style={[styles.metricCard, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+              <Text style={[styles.metricLabel, { color: palette.textSecondary }]}>Resuelta por</Text>
+              <Text style={[styles.metricValue, { color: palette.textPrimary }]} numberOfLines={2}>
+                {resolvedByMetric}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.cardSectionLast}>
+          <View style={styles.cardActionHierarchyRow}>
+            <View style={[styles.cardActionGroupPrimary, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+              <Text style={[styles.actionGroupLabel, { color: palette.textPrimary }]}>Estado</Text>
+              <ConsoleButton
+                variant="primary"
+                style={styles.statusPrimaryButton}
+                onPress={primaryAction.onPress}
+                loading={busy}
+                label={primaryAction.label}
+                textStyle={styles.priorityPrimaryText}
+              />
+              {secondaryStatusAction ? (
+                <ConsoleButton
+                  variant="secondary"
+                  style={styles.statusSecondaryButton}
+                  onPress={secondaryStatusAction.onPress}
+                  disabled={busy}
+                  label={secondaryStatusAction.label}
+                  textStyle={styles.prioritySecondaryText}
+                />
+              ) : null}
+            </View>
+
+            <View style={[styles.cardActionGroupSecondary, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+              <Text style={[styles.actionGroupLabel, { color: palette.textPrimary }]}>Secundarias</Text>
+              <ConsoleButton
+                variant="subtle"
+                style={styles.utilityActionButton}
+                onPress={() =>
+                  {
+                    void triggerSelectionHaptic();
+                    router.push(
+                      `/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
+                    );
+                  }
+                }
+                label={followupLabel}
+                textStyle={styles.detailButtonText}
+              />
+              <ConsoleButton
+                variant="subtle"
+                style={styles.utilityActionButton}
+                onPress={() =>
+                  {
+                    void triggerSelectionHaptic();
+                    router.push(
+                      `/incident/upload?incidentId=${incident.id}&installationId=${incident.installation_id}` as never,
+                    );
+                  }
+                }
+                label="Evidencia"
+                textStyle={styles.uploadButtonText}
+              />
+              {options?.showInstallationTag ? (
+                <ConsoleButton
+                  variant="ghost"
+                  style={styles.utilityActionButton}
+                  onPress={() => {
+                    void triggerSelectionHaptic();
+                    void onSelectInstallation(incident.installation_id);
+                  }}
+                  label="Caso"
+                  textStyle={styles.detailButtonText}
+                />
+              ) : null}
+            </View>
+          </View>
         </View>
       </View>
     );
@@ -1078,76 +1174,121 @@ export default function WorkTabScreen() {
               },
             ]}
           >
-            <View style={styles.missionHeader}>
-              <View style={styles.missionHeaderText}>
-                <Text style={[styles.missionEyebrow, { color: palette.heroEyebrowText }]}>
-                  Caso #{missionIncident.installation_id}
-                </Text>
-                <Text style={[styles.missionTitle, { color: palette.textPrimary }]}>
-                  {missionIncident.note || "Incidencia sin detalle operativo."}
-                </Text>
+            <View style={[styles.cardSection, { borderBottomColor: palette.border }]}>
+              <View style={styles.missionHeader}>
+                <View style={styles.missionHeaderText}>
+                  <Text style={[styles.missionEyebrow, { color: palette.heroEyebrowText }]}>
+                    Caso #{missionIncident.installation_id}
+                  </Text>
+                  <Text style={[styles.missionTitle, { color: palette.textPrimary }]}>
+                    {missionIncident.note || "Incidencia sin detalle operativo."}
+                  </Text>
+                </View>
+                <StatusChip value={missionIncident.incident_status} />
               </View>
-              <StatusChip value={missionIncident.incident_status} />
+              <Text style={[styles.missionSupport, { color: palette.textSecondary }]}>
+                #{missionIncident.id} - {getSeverityLabel(missionIncident.severity)} - fotos{" "}
+                {missionIncident.photos?.length ?? 0} - {missionIncident.reporter_username || "-"}
+              </Text>
             </View>
-            <Text style={[styles.missionSupport, { color: palette.textSecondary }]}>
-              #{missionIncident.id} - {getSeverityLabel(missionIncident.severity)} - fotos{" "}
-              {missionIncident.photos?.length ?? 0} - {missionIncident.reporter_username || "-"}
-            </Text>
-            <View style={styles.runtimeGrid}>
-              <RuntimeChip
-                label="Real"
-                value={formatDuration(resolveIncidentRealDurationSeconds(missionIncident, nowMs))}
-              />
-              <RuntimeChip
-                label="Estimado"
-                value={formatDuration(resolveIncidentEstimatedDurationSeconds(missionIncident))}
-              />
-              <RuntimeChip
-                label="Estado"
-                value={getIncidentStatusLabel(normalizeIncidentStatus(missionIncident.incident_status))}
-              />
+
+            <View style={[styles.cardSection, { borderBottomColor: palette.border }]}>
+              <View style={styles.metricsRow}>
+                <View style={[styles.metricCard, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+                  <Text style={[styles.metricLabel, { color: palette.textSecondary }]}>Estimado</Text>
+                  <Text style={[styles.metricValue, { color: palette.textPrimary }]}>
+                    {missionEstimated > 0 ? formatDuration(missionEstimated) : "--"}
+                  </Text>
+                </View>
+                <View style={[styles.metricCard, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+                  <Text style={[styles.metricLabel, { color: palette.textSecondary }]}>Real</Text>
+                  <Text style={[styles.metricValue, { color: palette.textPrimary }]}>
+                    {formatDuration(missionRuntime)}
+                  </Text>
+                </View>
+                <View style={[styles.metricCard, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+                  <Text style={[styles.metricLabel, { color: palette.textSecondary }]}>Resuelta por</Text>
+                  <Text style={[styles.metricValue, { color: palette.textPrimary }]} numberOfLines={2}>
+                    {missionResolvedByMetric}
+                  </Text>
+                </View>
+              </View>
             </View>
-            <View style={styles.missionActionsRow}>
-              <ConsoleButton
-                variant="primary"
-                style={styles.missionPrimaryAction}
-                onPress={() => {
-                  void triggerSelectionHaptic();
-                  const status = normalizeIncidentStatus(missionIncident.incident_status);
-                  if (status === "in_progress") {
-                    router.push(
-                      `/incident/detail?incidentId=${missionIncident.id}&installationId=${missionIncident.installation_id}` as never,
-                    );
-                    return;
-                  }
-                  void onChangeStatus(
-                    missionIncident,
-                    status === "paused" ? "in_progress" : "in_progress",
-                  );
-                }}
-                label={
-                  normalizeIncidentStatus(missionIncident.incident_status) === "in_progress"
-                    ? "Abrir seguimiento"
-                    : normalizeIncidentStatus(missionIncident.incident_status) === "paused"
-                      ? "Reanudar ahora"
-                      : "Empezar ahora"
-                }
-                textStyle={styles.missionPrimaryText}
-              />
-              <ConsoleButton
-                variant="ghost"
-                style={styles.missionSecondaryAction}
-                onPress={() =>
-                  {
-                    void triggerSelectionHaptic();
-                    router.push(
-                      `/incident/detail?incidentId=${missionIncident.id}&installationId=${missionIncident.installation_id}` as never,
-                    );
-                  }
-                }
-                label="Ver detalle"
-                textStyle={styles.missionSecondaryText}
-              />
+
+            <View style={styles.cardSectionLast}>
+              <View style={styles.cardActionHierarchyRow}>
+                <View style={[styles.cardActionGroupPrimary, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+                  <Text style={[styles.actionGroupLabel, { color: palette.textPrimary }]}>Estado</Text>
+                  <ConsoleButton
+                    variant="primary"
+                    style={styles.statusPrimaryButton}
+                    onPress={() => {
+                      void triggerSelectionHaptic();
+                      if (missionStatus === "in_progress") {
+                        router.push(
+                          `/incident/detail?incidentId=${missionIncident.id}&installationId=${missionIncident.installation_id}` as never,
+                        );
+                        return;
+                      }
+                      void onChangeStatus(missionIncident, "in_progress");
+                    }}
+                    label={missionPrimaryLabel}
+                    textStyle={styles.missionPrimaryText}
+                  />
+                  {missionSecondaryStatusAction ? (
+                    <ConsoleButton
+                      variant="secondary"
+                      style={styles.statusSecondaryButton}
+                      onPress={() => {
+                        void triggerSelectionHaptic();
+                        void onChangeStatus(missionIncident, missionSecondaryStatusAction.target);
+                      }}
+                      label={missionSecondaryStatusAction.label}
+                      textStyle={styles.missionSecondaryText}
+                    />
+                  ) : null}
+                </View>
+
+                <View style={[styles.cardActionGroupSecondary, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+                  <Text style={[styles.actionGroupLabel, { color: palette.textPrimary }]}>Secundarias</Text>
+                  <ConsoleButton
+                    variant="subtle"
+                    style={styles.utilityActionButton}
+                    onPress={() => {
+                      void triggerSelectionHaptic();
+                      router.push(
+                        `/incident/detail?incidentId=${missionIncident.id}&installationId=${missionIncident.installation_id}` as never,
+                      );
+                    }}
+                    label="Destino"
+                    textStyle={styles.detailButtonText}
+                  />
+                  <ConsoleButton
+                    variant="subtle"
+                    style={styles.utilityActionButton}
+                    onPress={() => {
+                      void triggerSelectionHaptic();
+                      router.push(
+                        `/incident/upload?incidentId=${missionIncident.id}&installationId=${missionIncident.installation_id}` as never,
+                      );
+                    }}
+                    label="Evidencia"
+                    textStyle={styles.uploadButtonText}
+                  />
+                  <ConsoleButton
+                    variant="ghost"
+                    style={styles.utilityActionButton}
+                    onPress={() => {
+                      void triggerSelectionHaptic();
+                      router.push(
+                        `/incident/upload?incidentId=${missionIncident.id}&installationId=${missionIncident.installation_id}` as never,
+                      );
+                    }}
+                    label="Subir fotos"
+                    textStyle={styles.uploadButtonText}
+                  />
+                </View>
+              </View>
             </View>
           </View>
         ) : (
@@ -1225,7 +1366,9 @@ export default function WorkTabScreen() {
             <Text style={[styles.focusBody, { color: palette.textSecondary }]}>
               {trackingLink?.active
                 ? trackingLink.snapshot?.summary_text || "El cliente puede seguir el estado actual del caso con este enlace."
-                : "Solo admin o platform_owner puede generar el Magic Link publico desde mobile."}
+                : canManageTrackingLinks
+                  ? "Puedes generar un Magic Link de solo lectura para seguimiento externo."
+                  : "No tienes permisos para generar o revocar enlaces publicos desde esta cuenta."}
             </Text>
             {trackingLink?.active && activeTrackingUrl ? (
               <Text style={[styles.supportingText, { color: palette.textMuted }]}>
@@ -1237,32 +1380,34 @@ export default function WorkTabScreen() {
                 Expira: {formatDateTime(trackingLink.expires_at)}
               </Text>
             ) : null}
-            <View style={styles.contextActionRow}>
-              <ConsoleButton
-                variant="primary"
-                style={[styles.primaryAction, trackingActionBusy && styles.buttonDisabled]}
-                onPress={() => {
-                  void handleCreateTrackingLink();
-                }}
-                loading={trackingActionBusy}
-                accessibilityLabel={`Crear o regenerar enlace publico del caso ${currentInstallationRecord.id}`}
-                label={trackingLink?.active ? "Regenerar enlace" : "Crear enlace"}
-                textStyle={styles.primaryActionText}
-              />
-              {trackingLink?.active && activeTrackingUrl ? (
+            {canManageTrackingLinks ? (
+              <View style={styles.contextActionRow}>
                 <ConsoleButton
-                  variant="subtle"
-                  style={styles.secondaryButton}
+                  variant="primary"
+                  style={[styles.primaryAction, trackingActionBusy && styles.buttonDisabled]}
                   onPress={() => {
-                    void handleShareTrackingLink();
+                    void handleCreateTrackingLink();
                   }}
-                  accessibilityLabel={`Compartir enlace publico del caso ${currentInstallationRecord.id}`}
-                  label="Compartir"
-                  textStyle={styles.secondaryButtonText}
+                  loading={trackingActionBusy}
+                  accessibilityLabel={`Crear o regenerar enlace publico del caso ${currentInstallationRecord.id}`}
+                  label={trackingLink?.active ? "Regenerar enlace" : "Crear enlace"}
+                  textStyle={styles.primaryActionText}
                 />
-              ) : null}
-            </View>
-            {trackingLink?.active && activeTrackingUrl ? (
+                {trackingLink?.active && activeTrackingUrl ? (
+                  <ConsoleButton
+                    variant="subtle"
+                    style={styles.secondaryButton}
+                    onPress={() => {
+                      void handleShareTrackingLink();
+                    }}
+                    accessibilityLabel={`Compartir enlace publico del caso ${currentInstallationRecord.id}`}
+                    label="Compartir"
+                    textStyle={styles.secondaryButtonText}
+                  />
+                ) : null}
+              </View>
+            ) : null}
+            {canManageTrackingLinks && trackingLink?.active && activeTrackingUrl ? (
               <View style={styles.contextActionRow}>
                 <ConsoleButton
                   variant="ghost"
@@ -1520,30 +1665,10 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.regular,
     ...typeScale.bodyCompact,
   },
-  missionActionsRow: {
-    flexDirection: "row",
-    gap: spacing.s10,
-  },
-  missionPrimaryAction: {
-    flex: 1.2,
-    minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: radii.r10,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.s12,
-  },
   missionPrimaryText: {
     fontFamily: fontFamilies.mono,
     ...typeScale.buttonMono,
     textTransform: "uppercase",
-  },
-  missionSecondaryAction: {
-    flex: 1,
-    minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: radii.r10,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.s12,
   },
   missionSecondaryText: {
     fontFamily: fontFamilies.mono,
@@ -1599,11 +1724,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.s12,
     paddingVertical: spacing.s10,
   },
-  runtimeGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.s8,
-  },
   queueLoadingRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1649,6 +1769,14 @@ const styles = StyleSheet.create({
     borderRadius: radii.r14,
     padding: spacing.s14,
     gap: spacing.s10,
+  },
+  cardSection: {
+    borderBottomWidth: 1,
+    paddingBottom: spacing.s10,
+    gap: spacing.s8,
+  },
+  cardSectionLast: {
+    gap: spacing.s8,
   },
   cardHeader: {
     flexDirection: "row",
@@ -1721,6 +1849,78 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.mono,
     letterSpacing: 0.4,
     textTransform: "uppercase",
+  },
+  metricsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.s8,
+  },
+  metricCard: {
+    minWidth: "30%",
+    flexGrow: 1,
+    flexShrink: 1,
+    borderWidth: 1,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s8,
+    paddingVertical: spacing.s8,
+    gap: spacing.s2,
+  },
+  metricLabel: {
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    textTransform: "uppercase",
+  },
+  metricValue: {
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.body,
+  },
+  cardActionHierarchyRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.s8,
+  },
+  cardActionGroupPrimary: {
+    flex: 1.2,
+    minWidth: 200,
+    borderWidth: 1,
+    borderRadius: radii.r12,
+    padding: spacing.s8,
+    gap: spacing.s6,
+  },
+  cardActionGroupSecondary: {
+    flex: 1,
+    minWidth: 170,
+    borderWidth: 1,
+    borderRadius: radii.r12,
+    padding: spacing.s8,
+    gap: spacing.s6,
+  },
+  actionGroupLabel: {
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  statusPrimaryButton: {
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    borderRadius: radii.r10,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.s12,
+  },
+  statusSecondaryButton: {
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    borderRadius: radii.r10,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.s12,
+  },
+  utilityActionButton: {
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    borderRadius: radii.r10,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.s12,
   },
   priorityActionsRow: {
     flexDirection: "row",

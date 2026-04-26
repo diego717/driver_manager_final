@@ -13,6 +13,14 @@
             unavailable: 'Ubicacion no disponible',
             unsupported: 'Geolocalizacion no soportada',
         });
+        const COMPACT_STATUS_LABELS = Object.freeze({
+            pending: 'capturando',
+            captured: 'capturada',
+            denied: 'sin permiso',
+            timeout: 'sin senal',
+            unavailable: 'no disponible',
+            unsupported: 'no soportado',
+        });
         const STATUS_SUMMARIES = Object.freeze({
             pending: 'Intentamos obtener una ubicacion puntual para este formulario. No bloquea el guardado.',
             denied: 'El formulario se puede guardar igual. Quedara registrado que el permiso fue denegado.',
@@ -101,6 +109,15 @@
             return `+- ${Math.round(Math.max(0, numericValue))} m`;
         }
 
+        function formatCompactAccuracy(value) {
+            const numericValue = Number(value);
+            if (!Number.isFinite(numericValue)) return '-';
+            const meters = Math.round(Math.max(0, numericValue));
+            if (meters >= 10000) return '>10km';
+            if (meters >= 1000) return `${(meters / 1000).toFixed(1)}km`;
+            return `±${meters}m`;
+        }
+
         function formatCapturedAt(value) {
             const parsed = value ? new Date(value) : null;
             if (!parsed || Number.isNaN(parsed.getTime())) return 'Sin hora';
@@ -119,11 +136,21 @@
             return STATUS_SUMMARIES[snapshot?.status] || STATUS_SUMMARIES.pending;
         }
 
+        function describeCompactSnapshot(snapshot) {
+            if (snapshot?.status === 'captured') {
+                return formatCompactAccuracy(snapshot?.accuracy_m);
+            }
+            return '-';
+        }
+
         function createController(config = {}) {
             const panelElement = config.panelElement || null;
             const statusElement = config.statusElement || null;
             const summaryElement = config.summaryElement || null;
             const captureButton = config.captureButton || null;
+            const mode = String(config.mode || '').trim();
+            const compactInlineMode = mode === 'compact-inline'
+                || (panelElement instanceof HTMLElement && panelElement.dataset.gpsMode === 'compact');
             const onSnapshotChange = typeof config.onSnapshotChange === 'function'
                 ? config.onSnapshotChange
                 : null;
@@ -136,14 +163,28 @@
                     panelElement.dataset.gpsState = status;
                 }
                 if (statusElement instanceof HTMLElement) {
-                    statusElement.textContent = STATUS_LABELS[status] || STATUS_LABELS.pending;
+                    statusElement.textContent = compactInlineMode
+                        ? (COMPACT_STATUS_LABELS[status] || COMPACT_STATUS_LABELS.pending)
+                        : (STATUS_LABELS[status] || STATUS_LABELS.pending);
                 }
                 if (summaryElement instanceof HTMLElement) {
-                    summaryElement.textContent = describeSnapshot(currentSnapshot);
+                    summaryElement.textContent = compactInlineMode
+                        ? describeCompactSnapshot(currentSnapshot)
+                        : describeSnapshot(currentSnapshot);
                 }
                 if (captureButton instanceof HTMLButtonElement) {
+                    const allowRetryStates = status === 'denied'
+                        || status === 'timeout'
+                        || status === 'unavailable'
+                        || status === 'unsupported';
+                    const shouldShowButton = compactInlineMode
+                        ? (inflightCapture !== null || allowRetryStates)
+                        : true;
+                    captureButton.hidden = !shouldShowButton;
                     captureButton.disabled = inflightCapture !== null;
-                    captureButton.textContent = inflightCapture ? 'Capturando...' : 'Capturar ubicacion';
+                    captureButton.textContent = inflightCapture
+                        ? 'Capturando...'
+                        : (compactInlineMode ? 'Reintentar' : 'Capturar ubicacion');
                 }
                 if (onSnapshotChange) {
                     onSnapshotChange(cloneSnapshot(currentSnapshot), {

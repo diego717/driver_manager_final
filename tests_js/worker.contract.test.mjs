@@ -1044,6 +1044,59 @@ function createMockDB({
 
           if (
             normalized.startsWith(
+              "SELECT id, installation_id, asset_id, reporter_username, note, time_adjustment_seconds, estimated_duration_seconds, severity, source, created_at, incident_status, status_updated_at, status_updated_by, resolved_at, resolved_by, resolution_note, checklist_json, evidence_note, work_started_at, work_ended_at, actual_duration_seconds, gps_lat, gps_lng, gps_accuracy_m, gps_captured_at, gps_capture_source, gps_capture_status, gps_capture_note, target_lat, target_lng, target_label, target_source, target_updated_at, target_updated_by, dispatch_required, dispatch_place_name, dispatch_address, dispatch_reference, dispatch_contact_name, dispatch_contact_phone, dispatch_notes, deleted_at, deleted_by, deletion_reason FROM incidents",
+            )
+          ) {
+            const installationId = Number(call.bound?.[0]);
+            const tenantId = String(call.bound?.[1] ?? "default");
+            const technicianScoped = normalized.includes("ta.technician_id = ?");
+            const technicianId = technicianScoped ? Number(call.bound?.[2]) : null;
+            let rows = state.incidents.filter(
+              (item) =>
+                Number(item.installation_id) === installationId &&
+                String(item.tenant_id ?? "default") === tenantId,
+            );
+            if (normalized.includes("deleted_at IS NULL")) {
+              rows = rows.filter((item) => !item.deleted_at);
+            }
+            if (Number.isInteger(technicianId) && technicianId > 0) {
+              const activeAssignments = (state.technicianAssignments || []).filter(
+                (assignment) =>
+                  Number(assignment.technician_id) === technicianId &&
+                  String(assignment.tenant_id ?? "default") === tenantId &&
+                  !assignment.unassigned_at,
+              );
+              rows = rows.filter((item) =>
+                activeAssignments.some((assignment) => {
+                  const entityType = String(assignment.entity_type ?? "").toLowerCase();
+                  const entityId = String(assignment.entity_id ?? "");
+                  if (entityType === "incident") {
+                    return entityId === String(item.id);
+                  }
+                  if (entityType === "installation") {
+                    return entityId === String(item.installation_id);
+                  }
+                  if (entityType === "asset") {
+                    return (
+                      item.asset_id !== null &&
+                      item.asset_id !== undefined &&
+                      entityId === String(item.asset_id)
+                    );
+                  }
+                  return false;
+                }),
+              );
+            }
+            rows.sort((left, right) => {
+              const byCreatedAt = String(right.created_at ?? "").localeCompare(String(left.created_at ?? ""));
+              if (byCreatedAt !== 0) return byCreatedAt;
+              return Number(right.id) - Number(left.id);
+            });
+            return { results: rows };
+          }
+
+          if (
+            normalized.startsWith(
               "SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at FROM incident_photos p INNER JOIN incidents i ON i.id = p.incident_id WHERE i.installation_id = ?",
             )
           ) {

@@ -2,7 +2,7 @@ export function createPublicTrackingRouteHandlers({
   HttpError,
   jsonResponse,
   textResponse,
-  requireAdminRole,
+  requirePublicTrackingManagerRole,
   parsePositiveInt,
   getClientIpForRateLimit,
   issuePublicTrackingLink,
@@ -131,7 +131,7 @@ export function createPublicTrackingRouteHandlers({
       return null;
     }
 
-    requireAdminRole(webSession?.role);
+    requirePublicTrackingManagerRole(webSession?.role);
     const installationId = parsePositiveInt(routeParts[1], "installation_id");
     const tenantId = webSession?.tenant_id;
     const requestIp = getClientIpForRateLimit(request);

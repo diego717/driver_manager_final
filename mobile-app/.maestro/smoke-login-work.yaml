@@ -1,23 +1,62 @@
 appId: com.diego717.drivermanager
-name: Smoke - Login and assigned work
+name: Smoke - Login and redesigned tabs
 env:
   E2E_TECHNICIAN_USERNAME: e2e-tech
   E2E_TECHNICIAN_PASSWORD: E2ETech#2026
 ---
 - launchApp:
     clearState: true
-- assertVisible: "Acceso seguro"
-- tapOn: "Usuario web para iniciar sesion"
-- inputText: ${E2E_TECHNICIAN_USERNAME}
-- tapOn: "Contrasena web para iniciar sesion"
-- inputText: ${E2E_TECHNICIAN_PASSWORD}
-- tapOn: "Iniciar sesion"
+- runFlow:
+    when:
+      visible: "http://10.0.2.2:8081"
+    commands:
+      - tapOn: "http://10.0.2.2:8081"
+- runFlow:
+    when:
+      visible: "Connect"
+    commands:
+      - tapOn: "Connect"
+- runFlow:
+    when:
+      visible: "Continue"
+    commands:
+      - tapOn: "Continue"
+- runFlow:
+    when:
+      visible: "Go home"
+    commands:
+      - tapOn: "Go home"
+- runFlow:
+    when:
+      visible: "http://10.0.2.2:8081"
+    commands:
+      - tapOn: "http://10.0.2.2:8081"
+- runFlow:
+    when:
+      visible: "Usuario web para iniciar sesion"
+    commands:
+      - tapOn: "Usuario web para iniciar sesion"
+      - inputText: ${E2E_TECHNICIAN_USERNAME}
+      - tapOn: "Contrasena web para iniciar sesion"
+      - inputText: ${E2E_TECHNICIAN_PASSWORD}
+      - tapOn: "Iniciar sesion"
 - extendedWaitUntil:
-    visible: "Centro del turno"
-    timeout: 30000
-- tapOn: "Casos"
+    visible: "Operacion en campo"
+    timeout: 180000
+- assertVisible: "Mi cola"
+- assertVisible: "Escanear"
+- assertVisible: "Nueva"
+- assertVisible: "Incidencias asignadas"
+- tapOn: "Escanear"
 - extendedWaitUntil:
-    visible: "Trabajo asignado"
+    visible: "Escanear QR o codigo"
     timeout: 30000
-- assertVisible: "Tecnico activo"
-- assertVisible: "Tecnico E2E Campo"
+- tapOn: "Nueva"
+- extendedWaitUntil:
+    visible: "Abrir trabajo"
+    timeout: 30000
+- assertVisible: "Crear incidencia rapida"
+- tapOn: "Mi cola"
+- extendedWaitUntil:
+    visible: "Operacion en campo"
+    timeout: 30000

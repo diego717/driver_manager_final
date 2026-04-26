@@ -57,7 +57,7 @@ export const typeScale = {
 
 export const inputFontFamily =
   Platform.OS === "android" ? "sans-serif" : fontFamilies.regular;
-export const textInputAccentColor = "#9af2bd";
+export const textInputAccentColor = "#dd9730";
 
 let defaultsApplied = false;
 

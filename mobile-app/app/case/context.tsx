@@ -1,13 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import {
-  ActivityIndicator,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
 import {
   getAssetIncidents,
@@ -18,10 +12,9 @@ import {
 import { extractApiError } from "@/src/api/client";
 import {
   createInstallationRecord,
+  listIncidentsByInstallation,
   listInstallations,
 } from "@/src/api/incidents";
-import { readStoredWebSession } from "@/src/api/webAuth";
-import { canAssignTechnicians } from "@/src/auth/roles";
 import ConsoleButton from "@/src/components/ConsoleButton";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
 import InlineFeedback, { type InlineFeedbackTone } from "@/src/components/InlineFeedback";
@@ -29,18 +22,15 @@ import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import SectionCard from "@/src/components/SectionCard";
 import StatusChip from "@/src/components/StatusChip";
-import TechnicianAssignmentsPanel from "@/src/components/TechnicianAssignmentsPanel";
 import WebInlineLoginCard from "@/src/components/WebInlineLoginCard";
 import { canReachConfiguredApi } from "@/src/services/network/api-connectivity";
 import { enqueueCreateCase } from "@/src/services/sync/case-outbox-service";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
-import { radii, sizing, spacing } from "@/src/theme/layout";
+import { radii, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies, inputFontFamily, textInputAccentColor, typeScale } from "@/src/theme/typography";
-import { type InstallationRecord } from "@/src/types/api";
-import { deriveRecordIncidentSummary } from "@/src/utils/incidents";
-
-const MIN_TOUCH_TARGET_SIZE = sizing.touchTargetMin;
+import { fontFamilies, typeScale } from "@/src/theme/typography";
+import { type Incident, type InstallationRecord } from "@/src/types/api";
+import { deriveRecordIncidentSummary, normalizeIncidentStatus } from "@/src/utils/incidents";
 
 type FeedbackState = {
   tone: InlineFeedbackTone;
@@ -58,6 +48,22 @@ function parsePositiveInt(value: string | string[] | undefined): number | null {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function getIncidentSortWeight(incident: Pick<Incident, "incident_status" | "severity" | "created_at">): number {
+  const status = normalizeIncidentStatus(incident.incident_status);
+  const statusWeight =
+    status === "in_progress" ? 0 : status === "paused" ? 1 : status === "open" ? 2 : 3;
+  const severityWeight =
+    incident.severity === "critical" ? 0 : incident.severity === "high" ? 1 : incident.severity === "medium" ? 2 : 3;
+  const createdWeight = new Date(incident.created_at || 0).getTime();
+  return statusWeight * 1_000_000_000 + severityWeight * 1_000_000 + createdWeight;
+}
+
+function pickLatestActiveIncident(incidents: Incident[]): Incident | null {
+  const active = incidents.filter((item) => normalizeIncidentStatus(item.incident_status) !== "resolved");
+  if (!active.length) return null;
+  return [...active].sort((left, right) => getIncidentSortWeight(left) - getIncidentSortWeight(right))[0] || null;
+}
+
 export default function CaseContextScreen() {
   const router = useRouter();
   const palette = useAppPalette();
@@ -67,14 +73,14 @@ export default function CaseContextScreen() {
     assetRecordId?: string | string[];
   }>();
   const { checkingSession, hasActiveSession } = useSharedWebSessionState();
+
   const [installations, setInstallations] = useState<InstallationRecord[]>([]);
   const [assetDetail, setAssetDetail] = useState<AssetIncidentsResponse | null>(null);
-  const [resolvedAssetId, setResolvedAssetId] = useState<number | null>(
-    parsePositiveInt(queryParams.assetRecordId),
-  );
+  const [resolvedAssetId, setResolvedAssetId] = useState<number | null>(parsePositiveInt(queryParams.assetRecordId));
+  const [caseIncidents, setCaseIncidents] = useState<Incident[]>([]);
   const [loadingContext, setLoadingContext] = useState(false);
+  const [loadingIncidents, setLoadingIncidents] = useState(false);
   const [creatingCase, setCreatingCase] = useState(false);
-  const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<FeedbackState>(null);
   const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -86,16 +92,13 @@ export default function CaseContextScreen() {
     () => normalizeRouteParam(queryParams.assetExternalCode).trim(),
     [queryParams.assetExternalCode],
   );
-  const hasPrefilledContext = Boolean(
-    routeInstallationId || routeAssetExternalCode || resolvedAssetId,
-  );
+
+  const hasPrefilledContext = Boolean(routeInstallationId || routeAssetExternalCode || resolvedAssetId);
 
   const resolvedCaseId = useMemo(() => {
     if (routeInstallationId) return routeInstallationId;
     const linkedInstallationId = Number(assetDetail?.active_link?.installation_id);
-    return Number.isInteger(linkedInstallationId) && linkedInstallationId > 0
-      ? linkedInstallationId
-      : null;
+    return Number.isInteger(linkedInstallationId) && linkedInstallationId > 0 ? linkedInstallationId : null;
   }, [assetDetail?.active_link?.installation_id, routeInstallationId]);
 
   const selectedCase = useMemo(() => {
@@ -103,18 +106,25 @@ export default function CaseContextScreen() {
     return (
       installations.find((item) => item.id === resolvedCaseId) || {
         id: resolvedCaseId,
-        client_name: "Caso cargado por contexto",
+        client_name: assetDetail?.asset?.client_name || "Caso resuelto por contexto",
       }
     );
-  }, [installations, resolvedCaseId]);
+  }, [assetDetail?.asset?.client_name, installations, resolvedCaseId]);
+
   const selectedSummary = useMemo(
     () => deriveRecordIncidentSummary(selectedCase),
     [selectedCase],
   );
-  const canSendConformity = Boolean(selectedCase) && selectedSummary.active === 0;
-  const canManageTechnicianAssignments = canAssignTechnicians(webSessionRole);
 
-  const clearFeedbackSoon = useCallback(() => {
+  const latestActiveIncident = useMemo(
+    () => pickLatestActiveIncident(caseIncidents),
+    [caseIncidents],
+  );
+
+  const canSendConformity = Boolean(selectedCase) && selectedSummary.active === 0;
+
+  const notify = useCallback((tone: InlineFeedbackTone, message: string) => {
+    setFeedbackMessage({ tone, message });
     if (feedbackTimeoutRef.current) {
       clearTimeout(feedbackTimeoutRef.current);
     }
@@ -124,37 +134,18 @@ export default function CaseContextScreen() {
     }, 5000);
   }, []);
 
-  const notify = useCallback(
-    (tone: InlineFeedbackTone, message: string) => {
-      setFeedbackMessage({ tone, message });
-      clearFeedbackSoon();
-    },
-    [clearFeedbackSoon],
-  );
-
-  const buildIncidentRoute = useCallback(
-    (installationId: number) => {
-      const params = new URLSearchParams({ installationId: String(installationId) });
-      const assetCode = routeAssetExternalCode || assetDetail?.asset?.external_code || "";
-      const assetId = resolvedAssetId || Number(assetDetail?.asset?.id) || null;
-      if (assetCode.trim()) params.set("assetExternalCode", assetCode.trim());
-      if (assetId && assetId > 0) params.set("assetRecordId", String(assetId));
-      return `/incident/create?${params.toString()}` as never;
-    },
-    [assetDetail?.asset?.external_code, assetDetail?.asset?.id, resolvedAssetId, routeAssetExternalCode],
-  );
-
-  const buildConformityRoute = useCallback(
-    (installationId: number) => {
-      const params = new URLSearchParams({ installationId: String(installationId) });
-      const assetId = resolvedAssetId || Number(assetDetail?.asset?.id) || null;
-      if (assetId && assetId > 0) {
-        params.set("assetRecordId", String(assetId));
-      }
-      return `/case/conformity?${params.toString()}` as never;
-    },
-    [assetDetail?.asset?.id, resolvedAssetId],
-  );
+  const loadCaseIncidents = useCallback(async (installationId: number) => {
+    if (!hasActiveSession) return;
+    try {
+      setLoadingIncidents(true);
+      const response = await listIncidentsByInstallation(installationId);
+      setCaseIncidents(response.incidents || []);
+    } catch (error) {
+      notify("warning", `No se pudieron cargar incidencias del caso: ${extractApiError(error)}`);
+    } finally {
+      setLoadingIncidents(false);
+    }
+  }, [hasActiveSession, notify]);
 
   const loadContext = useCallback(async () => {
     if (!hasActiveSession || !hasPrefilledContext) return;
@@ -186,22 +177,12 @@ export default function CaseContextScreen() {
     } finally {
       setLoadingContext(false);
     }
-  }, [
-    hasActiveSession,
-    hasPrefilledContext,
-    notify,
-    resolvedAssetId,
-    routeInstallationId,
-    routeAssetExternalCode,
-  ]);
+  }, [hasActiveSession, hasPrefilledContext, notify, resolvedAssetId, routeAssetExternalCode]);
 
   useFocusEffect(
     useCallback(() => {
       if (!hasActiveSession || !hasPrefilledContext) return;
       void loadContext();
-      void readStoredWebSession()
-        .then((session) => setWebSessionRole(session.role))
-        .catch(() => setWebSessionRole(null));
     }, [hasActiveSession, hasPrefilledContext, loadContext]),
   );
 
@@ -213,6 +194,14 @@ export default function CaseContextScreen() {
   }, [hasActiveSession, hasPrefilledContext]);
 
   useEffect(() => {
+    if (!resolvedCaseId || !hasActiveSession) {
+      setCaseIncidents([]);
+      return;
+    }
+    void loadCaseIncidents(resolvedCaseId);
+  }, [hasActiveSession, loadCaseIncidents, resolvedCaseId]);
+
+  useEffect(() => {
     return () => {
       if (feedbackTimeoutRef.current) {
         clearTimeout(feedbackTimeoutRef.current);
@@ -220,18 +209,13 @@ export default function CaseContextScreen() {
     };
   }, []);
 
-  const openWorkCase = useCallback(
-    (installationId: number) => {
-      router.push(`/work?installationId=${installationId}` as never);
-    },
-    [router],
-  );
+  const openIncidentQuick = useCallback((installationId: number) => {
+    router.push(`/incident/quick?installationId=${installationId}` as never);
+  }, [router]);
 
-  const openInventoryAsset = useCallback(() => {
-    const assetId = resolvedAssetId || Number(assetDetail?.asset?.id) || null;
-    const query = assetId ? `?assetId=${assetId}` : "";
-    router.push(`/explore${query}` as never);
-  }, [assetDetail?.asset?.id, resolvedAssetId, router]);
+  const openIncidentDetail = useCallback((incident: Incident) => {
+    router.push(`/incident/detail?incidentId=${incident.id}&installationId=${incident.installation_id}` as never);
+  }, [router]);
 
   const startCaseFromAsset = useCallback(async () => {
     if (!assetDetail?.asset?.id) {
@@ -246,7 +230,7 @@ export default function CaseContextScreen() {
       if (!online) {
         await enqueueCreateCase({
           clientName: assetDetail.asset.client_name?.trim() || "Sin cliente",
-          notes: `Caso iniciado desde equipo ${assetDetail.asset.external_code}${assetDetail.asset.notes ? `\n${assetDetail.asset.notes}` : ""}`,
+          notes: `Caso iniciado desde equipo ${assetDetail.asset.external_code}`,
           status: "manual",
           driverBrand: assetDetail.asset.brand?.trim() || "Equipo registrado",
           driverVersion: assetDetail.asset.model?.trim() || "Sin modelo",
@@ -261,7 +245,7 @@ export default function CaseContextScreen() {
 
       const created = await createInstallationRecord({
         client_name: assetDetail.asset.client_name?.trim() || "Sin cliente",
-        notes: `Caso iniciado desde equipo ${assetDetail.asset.external_code}${assetDetail.asset.notes ? `\n${assetDetail.asset.notes}` : ""}`,
+        notes: `Caso iniciado desde equipo ${assetDetail.asset.external_code}`,
         status: "manual",
         driver_brand: assetDetail.asset.brand?.trim() || "Equipo registrado",
         driver_version: assetDetail.asset.model?.trim() || "Sin modelo",
@@ -276,21 +260,19 @@ export default function CaseContextScreen() {
         `Vinculado al iniciar caso desde mobile (${assetDetail.asset.external_code})`,
       );
 
-      router.replace(buildIncidentRoute(created.record.id));
+      router.replace(`/incident/quick?installationId=${created.record.id}` as never);
     } catch (error) {
       notify("error", `No se pudo iniciar el caso: ${extractApiError(error)}`);
     } finally {
       setCreatingCase(false);
     }
-  }, [assetDetail, buildIncidentRoute, notify, router]);
+  }, [assetDetail, notify, router]);
 
   if (checkingSession) {
     return (
       <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
         <ActivityIndicator size="large" color={palette.loadingSpinner} />
-        <Text style={[styles.authHintText, { color: palette.textSecondary }]}>
-          Preparando contexto...
-        </Text>
+        <Text style={[styles.authHintText, { color: palette.textSecondary }]}>Preparando contexto...</Text>
       </ScreenScaffold>
     );
   }
@@ -299,7 +281,7 @@ export default function CaseContextScreen() {
     return (
       <ScreenScaffold scroll={false} centered contentContainerStyle={styles.centerContainer}>
         <WebInlineLoginCard
-          hint="Inicia sesion web para abrir casos, resolver equipos y cargar incidencias."
+          hint="Inicia sesion web para abrir casos y cargar incidencias."
           onLoginSuccess={async () => {
             await loadContext();
           }}
@@ -312,296 +294,152 @@ export default function CaseContextScreen() {
   return (
     <ScreenScaffold contentContainerStyle={styles.container}>
       <ScreenHero
-        eyebrow="Resolver contexto"
-        title="Iniciar trabajo"
-        description="Escanea primero. Si no aplica, usa inventario o caso manual."
-        aside={
-          hasPrefilledContext ? (
-            <View
-              style={[
-                styles.heroBadge,
-                { backgroundColor: palette.heroEyebrowBg, borderColor: palette.heroBorder },
-              ]}
-            >
-              <Text style={[styles.heroBadgeText, { color: palette.heroEyebrowText }]}>
-                {assetDetail?.asset?.external_code
-                  ? assetDetail.asset.external_code
-                  : resolvedCaseId
-                    ? `caso #${resolvedCaseId}`
-                    : "contexto"}
-              </Text>
-            </View>
-          ) : undefined
-        }
+        eyebrow="Contexto"
+        title="Entrada inmediata"
+        description="Cliente, incidencia activa y accion principal en una sola pantalla."
       />
 
-      {feedbackMessage ? (
-        <InlineFeedback message={feedbackMessage.message} tone={feedbackMessage.tone} />
-      ) : null}
+      {feedbackMessage ? <InlineFeedback message={feedbackMessage.message} tone={feedbackMessage.tone} /> : null}
 
       {!hasPrefilledContext ? (
-        <>
-          <SectionCard
-            title="Entrada principal"
-            description="El QR es la ruta base del trabajo en campo."
-          >
-            <View style={styles.entryStack}>
-              <ConsoleButton
-                variant="primary"
-                style={styles.scanEntryButton}
-                onPress={() => router.push("/scan")}
-                accessibilityLabel="Escanear equipo para iniciar trabajo"
-              >
-                <Text style={[styles.entryTitle, { color: palette.primaryButtonText }]}>
-                  Escanear equipo
-                </Text>
-                <Text style={[styles.entryBody, { color: palette.primaryButtonText }]}>
-                  Apunta, resuelve el contexto y sigue.
-                </Text>
-              </ConsoleButton>
-              <View style={styles.secondaryEntryRow}>
-                <ConsoleButton
-                  variant="ghost"
-                  style={styles.entryButton}
-                  onPress={() => router.push("/case/manual" as never)}
-                  accessibilityLabel="Abrir caso manual"
-                >
-                  <Text style={[styles.entryTitle, { color: palette.refreshText }]}>
-                    Caso manual
-                  </Text>
-                  <Text style={[styles.entryBody, { color: palette.textSecondary }]}>
-                    Fallback sin equipo.
-                  </Text>
-                </ConsoleButton>
-                <ConsoleButton
-                  variant="ghost"
-                  style={styles.entryButton}
-                  onPress={() => router.push("/explore?intent=resolve" as never)}
-                  accessibilityLabel="Buscar equipo en inventario para iniciar trabajo"
-                >
-                  <Text style={[styles.entryTitle, { color: palette.refreshText }]}>
-                    Inventario
-                  </Text>
-                  <Text style={[styles.entryBody, { color: palette.textSecondary }]}>
-                    Buscar antes de abrir.
-                  </Text>
-                </ConsoleButton>
-              </View>
-            </View>
-          </SectionCard>
-
-          {installations.length ? (
-            <SectionCard
-              title="Retomar"
-              description="Casos recientes para no empezar de cero."
+        <SectionCard title="Como iniciar" description="Escanea primero o abre caso manual.">
+          <View style={styles.entryStack}>
+            <ConsoleButton
+              variant="primary"
+              style={styles.scanEntryButton}
+              onPress={() => router.push("/scan")}
             >
-              <View style={styles.caseList}>
-                {installations.slice(0, 2).map((item) => (
-                  <ConsoleButton
-                    key={item.id}
-                    style={[
-                      styles.caseRow,
-                      { backgroundColor: palette.cardBg, borderColor: palette.cardBorder },
-                    ]}
-                    onPress={() => router.push(`/case/context?installationId=${item.id}` as never)}
-                    accessibilityLabel={`Resolver contexto para el caso ${item.id}`}
-                  >
-                    <View style={styles.caseHeaderText}>
-                      <Text style={[styles.caseTitle, { color: palette.textPrimary }]}>
-                        Caso #{item.id}
-                      </Text>
-                      <Text style={[styles.supportText, { color: palette.textSecondary }]}>
-                        {item.client_name || "Sin cliente"}
-                      </Text>
-                    </View>
-                    <StatusChip kind="attention" value={item.attention_state} />
-                  </ConsoleButton>
-                ))}
-              </View>
-            </SectionCard>
-          ) : null}
-        </>
+              <Text style={[styles.entryTitle, { color: palette.primaryButtonText }]}>Escanear equipo</Text>
+              <Text style={[styles.entryBody, { color: palette.primaryButtonText }]}>Ruta principal para campo</Text>
+            </ConsoleButton>
+            <View style={styles.secondaryEntryRow}>
+              <ConsoleButton
+                variant="ghost"
+                style={styles.entryButton}
+                onPress={() => router.push("/case/manual" as never)}
+                label="Caso manual"
+                textStyle={styles.entryButtonText}
+              />
+              <ConsoleButton
+                variant="ghost"
+                style={styles.entryButton}
+                onPress={() => router.push("/incident/quick" as never)}
+                label="Incidencia rapida"
+                textStyle={styles.entryButtonText}
+              />
+            </View>
+          </View>
+        </SectionCard>
       ) : (
-        <>
-          <SectionCard
-            title="Caso listo"
-            description="Desde aqui sigues sin volver a decidir contexto."
-          >
+        <SectionCard title="Contexto resuelto" description="Listo para actuar en menos de 30 segundos.">
           {loadingContext ? (
             <View style={styles.loadingBlock}>
               <ActivityIndicator size="small" color={palette.loadingSpinner} />
-              <Text style={[styles.loadingText, { color: palette.textSecondary }]}>
-                Resolviendo caso y equipo...
-              </Text>
+              <Text style={[styles.loadingText, { color: palette.textSecondary }]}>Resolviendo cliente y equipo...</Text>
             </View>
           ) : selectedCase ? (
             <View style={styles.contextStack}>
-              <View
-                style={[
-                  styles.contextCard,
-                  { backgroundColor: palette.heroBg, borderColor: palette.heroBorder },
-                ]}
-              >
+              <View style={[styles.contextCard, { backgroundColor: palette.heroBg, borderColor: palette.heroBorder }]}> 
                 <View style={styles.caseHeader}>
                   <View style={styles.caseHeaderText}>
-                    <Text style={[styles.caseTitle, { color: palette.textPrimary }]}>
-                      #{selectedCase.id} {selectedCase.client_name ? `- ${selectedCase.client_name}` : ""}
+                    <Text style={[styles.caseTitle, { color: palette.textPrimary }]}>Caso #{selectedCase.id}</Text>
+                    <Text style={[styles.supportText, { color: palette.textSecondary }]}> 
+                      {selectedCase.client_name || assetDetail?.asset?.client_name || "Sin cliente"}
                     </Text>
                   </View>
                   <StatusChip kind="attention" value={selectedCase.attention_state} />
                 </View>
-                <Text style={[styles.supportText, { color: palette.textSecondary }]}>
-                  {assetDetail?.asset?.external_code
-                    ? `Equipo ${assetDetail.asset.external_code} vinculado a este caso.`
-                    : "Caso manual o seleccionado sin equipo confirmado."}
-                </Text>
-                <Text style={[styles.supportMeta, { color: palette.textMuted }]}>
-                  {selectedSummary.active} activas · {selectedSummary.inProgress} en curso · {selectedSummary.paused} pausadas
+                <Text style={[styles.supportMeta, { color: palette.textMuted }]}> 
+                  {selectedSummary.active} activas - {selectedSummary.inProgress} en curso - {selectedSummary.paused} pausadas
                 </Text>
               </View>
 
-              <Text
-                style={[
-                  styles.supportText,
-                  { color: canSendConformity ? palette.successText : palette.warningText },
-                ]}
-              >
-                {canSendConformity
-                  ? "Caso listo para cerrar y enviar la conformidad."
-                  : "Primero resuelve las incidencias activas y luego emite la conformidad."}
-              </Text>
+              {loadingIncidents ? (
+                <Text style={[styles.supportText, { color: palette.textSecondary }]}>Cargando incidencia activa...</Text>
+              ) : latestActiveIncident ? (
+                <View style={[styles.contextCard, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}> 
+                  <View style={styles.caseHeader}>
+                    <View style={styles.caseHeaderText}>
+                      <Text style={[styles.caseTitle, { color: palette.textPrimary }]}>Incidencia activa #{latestActiveIncident.id}</Text>
+                      <Text style={[styles.supportText, { color: palette.textSecondary }]} numberOfLines={2}> 
+                        {latestActiveIncident.note || "Sin nota"}
+                      </Text>
+                    </View>
+                    <StatusChip value={latestActiveIncident.incident_status} />
+                  </View>
+                </View>
+              ) : (
+                <View style={[styles.contextCard, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}> 
+                  <Text style={[styles.supportText, { color: palette.textSecondary }]}>No hay incidencias activas en este caso.</Text>
+                </View>
+              )}
 
               <View style={styles.actionColumn}>
-                <ConsoleButton
-                  variant="primary"
-                  style={styles.primaryButton}
-                  onPress={() => openWorkCase(selectedCase.id)}
-                  accessibilityLabel={`Continuar el caso ${selectedCase.id}`}
-                  label="Abrir backlog del caso"
-                  textStyle={styles.primaryButtonText}
-                />
+                {latestActiveIncident ? (
+                  <ConsoleButton
+                    variant="primary"
+                    style={styles.primaryButton}
+                    onPress={() => openIncidentDetail(latestActiveIncident)}
+                    label={`Continuar incidencia #${latestActiveIncident.id}`}
+                    textStyle={styles.primaryButtonText}
+                  />
+                ) : (
+                  <ConsoleButton
+                    variant="primary"
+                    style={styles.primaryButton}
+                    onPress={() => openIncidentQuick(selectedCase.id)}
+                    label="Crear incidencia"
+                    textStyle={styles.primaryButtonText}
+                  />
+                )}
+
                 <ConsoleButton
                   variant="subtle"
                   style={styles.secondaryButton}
-                  onPress={() => router.push(buildIncidentRoute(selectedCase.id))}
-                  accessibilityLabel={`Crear incidencia dentro del caso ${selectedCase.id}`}
-                  label="Nueva incidencia"
+                  onPress={() => openIncidentQuick(selectedCase.id)}
+                  label="Nueva incidencia rapida"
                   textStyle={styles.secondaryButtonText}
                 />
+
                 <ConsoleButton
-                  variant={canSendConformity ? "subtle" : "warning"}
+                  variant={canSendConformity ? "secondary" : "warning"}
                   style={styles.secondaryButton}
                   onPress={() =>
                     canSendConformity
-                      ? router.push(buildConformityRoute(selectedCase.id))
-                      : openWorkCase(selectedCase.id)
+                      ? router.push(`/case/conformity?installationId=${selectedCase.id}` as never)
+                      : openIncidentQuick(selectedCase.id)
                   }
-                  accessibilityLabel={
-                    canSendConformity
-                      ? `Generar conformidad para el caso ${selectedCase.id}`
-                      : `Revisar incidencias antes de generar la conformidad para el caso ${selectedCase.id}`
-                  }
-                  label={canSendConformity
-                    ? "Enviar conformidad final"
-                    : "Revisar incidencias antes de cerrar"}
+                  label={canSendConformity ? "Enviar conformidad final" : "Resolver activas antes de cerrar"}
                   textStyle={styles.secondaryButtonText}
                 />
-                {assetDetail?.asset ? (
-                  <ConsoleButton
-                    variant="ghost"
-                    style={styles.ghostButton}
-                    onPress={openInventoryAsset}
-                    accessibilityLabel="Abrir el inventario del equipo resuelto"
-                    label="Abrir inventario"
-                    textStyle={styles.ghostButtonText}
-                  />
-                ) : null}
               </View>
             </View>
           ) : assetDetail?.asset ? (
             <View style={styles.contextStack}>
-              <View
-                style={[
-                  styles.contextCard,
-                  { backgroundColor: palette.heroBg, borderColor: palette.heroBorder },
-                ]}
-              >
-                <Text style={[styles.caseTitle, { color: palette.textPrimary }]}>
-                  {assetDetail.asset.external_code}
-                </Text>
-                <Text style={[styles.supportText, { color: palette.textSecondary }]}>
-                  Este equipo no tiene un caso abierto. Puedes iniciarlo ahora y entrar directo a la nueva incidencia.
+              <View style={[styles.contextCard, { backgroundColor: palette.heroBg, borderColor: palette.heroBorder }]}> 
+                <Text style={[styles.caseTitle, { color: palette.textPrimary }]}>{assetDetail.asset.external_code}</Text>
+                <Text style={[styles.supportText, { color: palette.textSecondary }]}> 
+                  Equipo detectado sin caso abierto. Inicia uno y continua al formulario rapido.
                 </Text>
               </View>
-              <View style={styles.actionColumn}>
-                <ConsoleButton
-                  variant="primary"
-                  style={styles.primaryButton}
-                  onPress={() => {
-                    void startCaseFromAsset();
-                  }}
-                  loading={creatingCase}
-                  accessibilityLabel="Iniciar caso con este equipo"
-                  accessibilityState={{ disabled: creatingCase, busy: creatingCase }}
-                  label="Iniciar caso con este equipo"
-                  textStyle={styles.primaryButtonText}
-                />
-                <ConsoleButton
-                  variant="ghost"
-                  style={styles.ghostButton}
-                  onPress={openInventoryAsset}
-                  accessibilityLabel="Abrir inventario para revisar el equipo"
-                  label="Revisar inventario"
-                  textStyle={styles.ghostButtonText}
-                />
-              </View>
+              <ConsoleButton
+                variant="primary"
+                style={styles.primaryButton}
+                onPress={() => {
+                  void startCaseFromAsset();
+                }}
+                loading={creatingCase}
+                label="Iniciar caso con este equipo"
+                textStyle={styles.primaryButtonText}
+              />
             </View>
           ) : (
             <EmptyStateCard
-              title="No se pudo resolver el contexto."
-              body="Vuelve a escanear, abre inventario o inicia un caso manual para continuar."
+              title="No se pudo resolver el contexto"
+              body="Vuelve a escanear o inicia un caso manual para continuar."
             />
           )}
-          </SectionCard>
-
-          {selectedCase ? (
-            <SectionCard
-              title="Tecnicos del caso"
-              description={
-                canManageTechnicianAssignments
-                  ? "Administra responsables del caso directamente desde mobile."
-                  : "Responsables asignados a este caso."
-              }
-            >
-              <TechnicianAssignmentsPanel
-                entityType="installation"
-                entityId={selectedCase.id}
-                entityLabel={`Caso #${selectedCase.id}`}
-                canManage={canManageTechnicianAssignments}
-                emptyText="Sin tecnicos asignados a este caso."
-              />
-            </SectionCard>
-          ) : null}
-
-          {assetDetail?.asset?.id ? (
-            <SectionCard
-              title="Tecnicos del equipo"
-              description={
-                canManageTechnicianAssignments
-                  ? "Administra responsables del equipo vinculado."
-                  : "Responsables asignados a este equipo."
-              }
-            >
-              <TechnicianAssignmentsPanel
-                entityType="asset"
-                entityId={assetDetail.asset.id}
-                entityLabel={assetDetail.asset.external_code || `Activo #${assetDetail.asset.id}`}
-                canManage={canManageTechnicianAssignments}
-                emptyText="Sin tecnicos asignados a este equipo."
-              />
-            </SectionCard>
-          ) : null}
-        </>
+        </SectionCard>
       )}
     </ScreenScaffold>
   );
@@ -615,25 +453,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   container: {
-    padding: spacing.s22,
+    padding: spacing.s20,
     gap: spacing.s12,
   },
   authHintText: {
     fontSize: 14,
     lineHeight: 20,
     fontFamily: fontFamilies.regular,
-  },
-  heroBadge: {
-    borderWidth: 1,
-    borderRadius: radii.full,
-    paddingHorizontal: spacing.s12,
-    paddingVertical: spacing.s7,
-  },
-  heroBadgeText: {
-    fontFamily: fontFamilies.mono,
-    ...typeScale.buttonMonoTight,
-    letterSpacing: 0.8,
-    textTransform: "uppercase",
   },
   entryStack: {
     gap: spacing.s10,
@@ -642,8 +468,9 @@ const styles = StyleSheet.create({
     borderRadius: radii.r14,
     padding: spacing.s18,
     gap: spacing.s4,
-    minHeight: 88,
+    minHeight: 92,
     justifyContent: "center",
+    alignItems: "flex-start",
   },
   secondaryEntryRow: {
     flexDirection: "row",
@@ -653,44 +480,25 @@ const styles = StyleSheet.create({
   entryButton: {
     flex: 1,
     borderRadius: radii.r10,
-    padding: spacing.s16,
-    gap: spacing.s4,
-    minHeight: MIN_TOUCH_TARGET_SIZE,
+    minHeight: 64,
+    justifyContent: "center",
   },
-  entryTitle: {
+  entryButtonText: {
     fontFamily: fontFamilies.mono,
     ...typeScale.buttonMono,
+    textTransform: "uppercase",
+  },
+  entryTitle: {
+    fontFamily: fontFamilies.display,
+    ...typeScale.actionDisplay,
+    fontSize: 30,
+    lineHeight: 28,
+    letterSpacing: 0.75,
     textTransform: "uppercase",
   },
   entryBody: {
     fontFamily: fontFamilies.regular,
     ...typeScale.bodyCompact,
-  },
-  caseList: {
-    gap: spacing.s10,
-  },
-  caseRow: {
-    borderRadius: radii.r12,
-    padding: spacing.s14,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.s12,
-  },
-  caseHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: spacing.s12,
-  },
-  caseHeaderText: {
-    flex: 1,
-    gap: spacing.s3,
-  },
-  caseTitle: {
-    fontFamily: fontFamilies.semibold,
-    ...typeScale.titleStrong,
-    fontSize: 18,
-    lineHeight: 22,
   },
   loadingBlock: {
     flexDirection: "row",
@@ -708,8 +516,23 @@ const styles = StyleSheet.create({
   contextCard: {
     borderWidth: 1,
     borderRadius: radii.r14,
-    padding: spacing.s16,
-    gap: spacing.s10,
+    padding: spacing.s14,
+    gap: spacing.s8,
+  },
+  caseHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: spacing.s12,
+  },
+  caseHeaderText: {
+    flex: 1,
+    gap: spacing.s3,
+  },
+  caseTitle: {
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.titleStrong,
+    fontSize: 18,
+    lineHeight: 22,
   },
   supportText: {
     fontFamily: fontFamilies.regular,
@@ -720,29 +543,13 @@ const styles = StyleSheet.create({
     ...typeScale.buttonMono,
     textTransform: "uppercase",
   },
-  fieldLabel: {
-    fontFamily: fontFamilies.semibold,
-    fontSize: 13.5,
-  },
-  input: {
-    borderWidth: 1,
-    borderRadius: radii.r12,
-    paddingHorizontal: spacing.s12,
-    paddingVertical: spacing.s11,
-    fontFamily: inputFontFamily,
-    ...typeScale.body,
-    minHeight: MIN_TOUCH_TARGET_SIZE,
-  },
   actionColumn: {
     gap: spacing.s10,
   },
   primaryButton: {
-    minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: radii.r10,
-    alignItems: "center",
+    minHeight: 64,
+    borderRadius: radii.r12,
     justifyContent: "center",
-    paddingVertical: spacing.s13,
-    paddingHorizontal: spacing.s14,
   },
   primaryButtonText: {
     fontFamily: fontFamilies.mono,
@@ -750,32 +557,13 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   secondaryButton: {
-    minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: radii.r10,
-    alignItems: "center",
+    minHeight: 64,
+    borderRadius: radii.r12,
     justifyContent: "center",
-    paddingVertical: spacing.s12,
-    paddingHorizontal: spacing.s14,
   },
   secondaryButtonText: {
     fontFamily: fontFamilies.mono,
     ...typeScale.buttonMono,
     textTransform: "uppercase",
-  },
-  ghostButton: {
-    minHeight: MIN_TOUCH_TARGET_SIZE,
-    borderRadius: radii.r10,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: spacing.s12,
-    paddingHorizontal: spacing.s14,
-  },
-  ghostButtonText: {
-    fontFamily: fontFamilies.mono,
-    ...typeScale.buttonMono,
-    textTransform: "uppercase",
-  },
-  buttonDisabled: {
-    opacity: 0.72,
   },
 });

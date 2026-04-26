@@ -32,6 +32,83 @@
             return 'N/A';
         }
 
+        function normalizeDriverBrandKey(value) {
+            return String(value || '').trim().toLowerCase() || '__sin_marca__';
+        }
+
+        function parseDriverTimestamp(driver) {
+            const candidates = [
+                driver?.uploaded_at,
+                driver?.uploaded,
+                driver?.last_modified,
+                driver?.created_at,
+            ];
+            for (const candidate of candidates) {
+                const parsed = Date.parse(String(candidate || ''));
+                if (Number.isFinite(parsed)) {
+                    return parsed;
+                }
+            }
+            return Number.NaN;
+        }
+
+        function compareDriverRecency(left, right) {
+            const leftTs = parseDriverTimestamp(left);
+            const rightTs = parseDriverTimestamp(right);
+            if (Number.isFinite(leftTs) && Number.isFinite(rightTs) && leftTs !== rightTs) {
+                return leftTs - rightTs;
+            }
+            if (Number.isFinite(leftTs) && !Number.isFinite(rightTs)) {
+                return 1;
+            }
+            if (!Number.isFinite(leftTs) && Number.isFinite(rightTs)) {
+                return -1;
+            }
+
+            const leftVersion = String(left?.version || '');
+            const rightVersion = String(right?.version || '');
+            const versionCompare = leftVersion.localeCompare(rightVersion, 'es', {
+                numeric: true,
+                sensitivity: 'base',
+            });
+            if (versionCompare !== 0) {
+                return versionCompare;
+            }
+
+            return String(left?.filename || '').localeCompare(String(right?.filename || ''), 'es', {
+                sensitivity: 'base',
+            });
+        }
+
+        function buildDriverIdentity(driver) {
+            const explicitKey = String(driver?.key || '').trim();
+            if (explicitKey) return `key:${explicitKey}`;
+            return [
+                normalizeDriverBrandKey(driver?.brand),
+                String(driver?.version || '').trim().toLowerCase(),
+                String(driver?.filename || '').trim().toLowerCase(),
+                String(driver?.uploaded || driver?.last_modified || '').trim().toLowerCase(),
+            ].join('|');
+        }
+
+        function resolveLatestDriverIdentitySet(drivers) {
+            const latestByBrand = new Map();
+            for (const driver of drivers || []) {
+                if (!driver) continue;
+                const brandKey = normalizeDriverBrandKey(driver.brand);
+                const current = latestByBrand.get(brandKey);
+                if (!current || compareDriverRecency(driver, current) > 0) {
+                    latestByBrand.set(brandKey, driver);
+                }
+            }
+
+            const identities = new Set();
+            latestByBrand.forEach((driver) => {
+                identities.add(buildDriverIdentity(driver));
+            });
+            return identities;
+        }
+
         function updateDriverSelectedFileLabel() {
             const label = document.getElementById('driversSelectedFileLabel');
             if (!label) return;
@@ -105,14 +182,28 @@
             thead.appendChild(headerRow);
 
             const tbody = document.createElement('tbody');
+            const latestDriverIdentities = resolveLatestDriverIdentitySet(drivers);
             for (const driver of drivers) {
                 const row = document.createElement('tr');
+                const driverIdentity = buildDriverIdentity(driver);
+                const isLatestByBrand = latestDriverIdentities.has(driverIdentity);
 
                 const brandCell = document.createElement('td');
                 brandCell.textContent = driver.brand || '-';
 
                 const versionCell = document.createElement('td');
-                versionCell.textContent = driver.version || '-';
+                const versionWrap = document.createElement('div');
+                versionWrap.className = 'driver-version-cell';
+                const versionText = document.createElement('span');
+                versionText.textContent = driver.version || '-';
+                versionWrap.appendChild(versionText);
+                if (isLatestByBrand) {
+                    const latestBadge = document.createElement('span');
+                    latestBadge.className = 'badge success driver-latest-version-badge';
+                    latestBadge.textContent = 'Ultimo';
+                    versionWrap.appendChild(latestBadge);
+                }
+                versionCell.appendChild(versionWrap);
 
                 const fileCell = document.createElement('td');
                 fileCell.textContent = driver.filename || '-';
@@ -128,7 +219,7 @@
                 const actionsCell = document.createElement('td');
                 const downloadBtn = document.createElement('button');
                 downloadBtn.type = 'button';
-                downloadBtn.className = 'btn-secondary table-action-btn';
+                downloadBtn.className = 'btn-secondary table-action-btn table-action-btn-download';
                 downloadBtn.textContent = 'Descargar';
                 downloadBtn.addEventListener('click', (event) => {
                     event.preventDefault();
@@ -140,7 +231,7 @@
 
                 const deleteBtn = document.createElement('button');
                 deleteBtn.type = 'button';
-                deleteBtn.className = 'btn-secondary table-action-btn';
+                deleteBtn.className = 'btn-secondary table-action-btn btn-danger-subtle table-action-btn-danger';
                 deleteBtn.textContent = 'Eliminar';
                 deleteBtn.classList.add('spaced-action-btn');
                 deleteBtn.addEventListener('click', async (event) => {

@@ -1,54 +1,54 @@
 :root {
     color-scheme: light;
-    --font-display: "Bebas Neue", "IBM Plex Sans Condensed", "Source Sans 3", "Segoe UI", sans-serif;
-    --font-body: "Source Sans 3", "Segoe UI", sans-serif;
+    --font-display: "JetBrains Mono", "IBM Plex Mono", "Cascadia Mono", "Consolas", monospace;
+    --font-body: "JetBrains Mono", "IBM Plex Mono", "Cascadia Mono", "Consolas", monospace;
     --font-mono: "JetBrains Mono", "IBM Plex Mono", "Cascadia Mono", "Consolas", monospace;
     --pt-bg: oklch(0.94 0.06 90);
     --pt-surface: oklch(0.97 0.02 88);
     --pt-panel: oklch(0.95 0.03 95);
-    --pt-border: color-mix(in oklab, #ff7a18 44%, #0ea5e9 56%);
-    --pt-border-strong: color-mix(in oklab, var(--pt-border) 62%, var(--pt-accent) 38%);
-    --pt-text: oklch(0.22 0.03 250);
-    --pt-text-muted: oklch(0.42 0.03 252);
-    --pt-accent: oklch(0.74 0.18 140);
+    --pt-border: color-mix(in oklab, #f59e0b 56%, #d97706 44%);
+    --pt-border-strong: color-mix(in oklab, var(--pt-border) 68%, var(--pt-accent) 32%);
+    --pt-text: oklch(0.22 0.02 72);
+    --pt-text-muted: oklch(0.42 0.02 78);
+    --pt-accent: oklch(0.73 0.14 72);
     --pt-accent-soft: color-mix(in oklab, var(--pt-accent) 12%, transparent);
-    --pt-warning: oklch(0.72 0.18 44);
+    --pt-warning: oklch(0.7 0.15 66);
     --pt-warning-soft: color-mix(in oklab, var(--pt-warning) 16%, transparent);
     --pt-danger: oklch(0.62 0.2 27);
     --pt-danger-soft: color-mix(in oklab, var(--pt-danger) 16%, transparent);
-    --pt-info: oklch(0.68 0.14 236);
+    --pt-info: oklch(0.62 0.08 248);
     --pt-info-soft: color-mix(in oklab, var(--pt-info) 16%, transparent);
     --pt-shadow: 0 1px 2px rgba(10, 16, 24, 0.09), 0 10px 24px rgba(10, 16, 24, 0.08);
-    --pt-grid-line: color-mix(in oklab, var(--pt-info) 14%, transparent);
+    --pt-grid-line: color-mix(in oklab, var(--pt-accent) 14%, transparent);
     --pt-noise: rgba(255, 255, 255, 0.18);
     --pt-band-primary: color-mix(in oklab, var(--pt-warning) 16%, transparent);
     --pt-band-secondary: color-mix(in oklab, var(--pt-accent) 12%, transparent);
-    --pt-target: color-mix(in oklab, var(--pt-info) 20%, transparent);
+    --pt-target: color-mix(in oklab, var(--pt-warning) 20%, transparent);
 }
 
 :root[data-theme="dark"] {
     color-scheme: dark;
-    --pt-bg: oklch(0.2 0.035 286);
-    --pt-surface: oklch(0.18 0.03 252);
-    --pt-panel: oklch(0.22 0.03 244);
-    --pt-border: color-mix(in oklab, #bef264 52%, #38bdf8 48%);
-    --pt-border-strong: color-mix(in oklab, var(--pt-border) 66%, var(--pt-accent) 34%);
-    --pt-text: oklch(0.95 0.015 220);
-    --pt-text-muted: oklch(0.78 0.02 220);
-    --pt-accent: oklch(0.81 0.17 146);
-    --pt-accent-soft: color-mix(in oklab, var(--pt-accent) 18%, transparent);
-    --pt-warning: oklch(0.8 0.16 58);
-    --pt-warning-soft: color-mix(in oklab, var(--pt-warning) 20%, transparent);
-    --pt-danger: oklch(0.78 0.16 30);
-    --pt-danger-soft: color-mix(in oklab, var(--pt-danger) 20%, transparent);
-    --pt-info: oklch(0.82 0.12 255);
-    --pt-info-soft: color-mix(in oklab, var(--pt-info) 20%, transparent);
+    --pt-bg: oklch(0.14 0.018 76);
+    --pt-surface: oklch(0.17 0.018 74);
+    --pt-panel: oklch(0.22 0.02 76);
+    --pt-border: color-mix(in oklab, #f59e0b 64%, #b45309 36%);
+    --pt-border-strong: color-mix(in oklab, var(--pt-border) 70%, var(--pt-accent) 30%);
+    --pt-text: oklch(0.94 0.02 84);
+    --pt-text-muted: oklch(0.84 0.02 84);
+    --pt-accent: oklch(0.85 0.16 72);
+    --pt-accent-soft: color-mix(in oklab, var(--pt-accent) 24%, transparent);
+    --pt-warning: oklch(0.88 0.19 62);
+    --pt-warning-soft: color-mix(in oklab, var(--pt-warning) 28%, transparent);
+    --pt-danger: oklch(0.83 0.24 30);
+    --pt-danger-soft: color-mix(in oklab, var(--pt-danger) 28%, transparent);
+    --pt-info: oklch(0.82 0.12 250);
+    --pt-info-soft: color-mix(in oklab, var(--pt-info) 26%, transparent);
     --pt-shadow: 0 16px 30px rgba(0, 0, 0, 0.42);
-    --pt-grid-line: color-mix(in oklab, var(--pt-info) 22%, transparent);
+    --pt-grid-line: color-mix(in oklab, var(--pt-accent) 24%, transparent);
     --pt-noise: rgba(255, 255, 255, 0.07);
-    --pt-band-primary: color-mix(in oklab, var(--pt-warning) 20%, transparent);
-    --pt-band-secondary: color-mix(in oklab, var(--pt-accent) 18%, transparent);
-    --pt-target: color-mix(in oklab, var(--pt-info) 34%, transparent);
+    --pt-band-primary: color-mix(in oklab, var(--pt-warning) 26%, transparent);
+    --pt-band-secondary: color-mix(in oklab, var(--pt-accent) 22%, transparent);
+    --pt-target: color-mix(in oklab, var(--pt-warning) 38%, transparent);
 }
 
 :root[data-theme="dark"] body::before {
@@ -79,27 +79,27 @@
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
         color-scheme: dark;
-        --pt-bg: oklch(0.2 0.035 286);
-        --pt-surface: oklch(0.18 0.03 252);
-        --pt-panel: oklch(0.22 0.03 244);
-        --pt-border: color-mix(in oklab, #bef264 52%, #38bdf8 48%);
-        --pt-border-strong: color-mix(in oklab, var(--pt-border) 66%, var(--pt-accent) 34%);
-        --pt-text: oklch(0.95 0.015 220);
-        --pt-text-muted: oklch(0.78 0.02 220);
-        --pt-accent: oklch(0.81 0.17 146);
-        --pt-accent-soft: color-mix(in oklab, var(--pt-accent) 18%, transparent);
-        --pt-warning: oklch(0.8 0.16 58);
-        --pt-warning-soft: color-mix(in oklab, var(--pt-warning) 20%, transparent);
-        --pt-danger: oklch(0.78 0.16 30);
-        --pt-danger-soft: color-mix(in oklab, var(--pt-danger) 20%, transparent);
-        --pt-info: oklch(0.82 0.12 255);
-        --pt-info-soft: color-mix(in oklab, var(--pt-info) 20%, transparent);
+        --pt-bg: oklch(0.14 0.018 76);
+        --pt-surface: oklch(0.17 0.018 74);
+        --pt-panel: oklch(0.22 0.02 76);
+        --pt-border: color-mix(in oklab, #f59e0b 64%, #b45309 36%);
+        --pt-border-strong: color-mix(in oklab, var(--pt-border) 70%, var(--pt-accent) 30%);
+        --pt-text: oklch(0.94 0.02 84);
+        --pt-text-muted: oklch(0.84 0.02 84);
+        --pt-accent: oklch(0.85 0.16 72);
+        --pt-accent-soft: color-mix(in oklab, var(--pt-accent) 24%, transparent);
+        --pt-warning: oklch(0.88 0.19 62);
+        --pt-warning-soft: color-mix(in oklab, var(--pt-warning) 28%, transparent);
+        --pt-danger: oklch(0.83 0.24 30);
+        --pt-danger-soft: color-mix(in oklab, var(--pt-danger) 28%, transparent);
+        --pt-info: oklch(0.82 0.12 250);
+        --pt-info-soft: color-mix(in oklab, var(--pt-info) 26%, transparent);
         --pt-shadow: 0 16px 30px rgba(0, 0, 0, 0.42);
-        --pt-grid-line: color-mix(in oklab, var(--pt-info) 22%, transparent);
+        --pt-grid-line: color-mix(in oklab, var(--pt-accent) 24%, transparent);
         --pt-noise: rgba(255, 255, 255, 0.07);
-        --pt-band-primary: color-mix(in oklab, var(--pt-warning) 20%, transparent);
-        --pt-band-secondary: color-mix(in oklab, var(--pt-accent) 18%, transparent);
-        --pt-target: color-mix(in oklab, var(--pt-info) 34%, transparent);
+        --pt-band-primary: color-mix(in oklab, var(--pt-warning) 26%, transparent);
+        --pt-band-secondary: color-mix(in oklab, var(--pt-accent) 22%, transparent);
+        --pt-target: color-mix(in oklab, var(--pt-warning) 38%, transparent);
     }
 
     :root:not([data-theme="light"]) body::before {
@@ -208,7 +208,7 @@ body::after {
     position: absolute;
     inset: 0 auto 0 0;
     width: 5px;
-    background: linear-gradient(180deg, var(--pt-accent), color-mix(in oklab, var(--pt-info) 45%, var(--pt-accent) 55%));
+    background: linear-gradient(180deg, var(--pt-accent), color-mix(in oklab, var(--pt-warning) 45%, var(--pt-accent) 55%));
 }
 
 .public-tracking-card::after {
@@ -217,19 +217,19 @@ body::after {
     inset: 0;
     background:
         linear-gradient(90deg, transparent 0 78%, color-mix(in oklab, var(--pt-accent) 16%, transparent) 78% 78.6%, transparent 78.6%),
-        linear-gradient(180deg, transparent 0 20px, color-mix(in oklab, var(--pt-info) 12%, transparent) 20px 21px, transparent 21px 100%);
+        linear-gradient(180deg, transparent 0 20px, color-mix(in oklab, var(--pt-warning) 12%, transparent) 20px 21px, transparent 21px 100%);
     pointer-events: none;
     z-index: -1;
 }
 
 .public-tracking-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: start;
+    column-gap: 0.75rem;
+    row-gap: 0.5rem;
     margin-bottom: 0.35rem;
     position: relative;
-    flex-wrap: wrap;
 }
 
 .public-tracking-brand {
@@ -352,13 +352,17 @@ body::after {
     letter-spacing: 0.14em;
     color: var(--pt-text-muted);
     font-family: var(--font-mono);
+    justify-self: end;
+    align-self: center;
+    white-space: nowrap;
 }
 
 .public-tracking-head-controls {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    justify-self: end;
 }
 
 .public-tracking-connection-badge {
@@ -373,6 +377,9 @@ body::after {
     font-size: 0.76rem;
     font-weight: 700;
     color: var(--pt-text-muted);
+    justify-content: center;
+    min-width: 5.9rem;
+    white-space: nowrap;
 }
 
 .public-tracking-connection-badge::before {
@@ -385,8 +392,8 @@ body::after {
 
 .public-tracking-connection-badge[data-state="live"] {
     color: var(--pt-accent);
-    border-color: color-mix(in oklab, var(--pt-accent) 45%, var(--pt-border) 55%);
-    background: var(--pt-accent-soft);
+    border-color: color-mix(in oklab, var(--pt-accent) 58%, var(--pt-border) 42%);
+    background: color-mix(in oklab, var(--pt-accent-soft) 82%, var(--pt-panel) 18%);
 }
 
 .public-tracking-connection-badge[data-state="live"]::before {
@@ -396,8 +403,8 @@ body::after {
 .public-tracking-connection-badge[data-state="polling"],
 .public-tracking-connection-badge[data-state="loading"] {
     color: var(--pt-warning);
-    border-color: color-mix(in oklab, var(--pt-warning) 38%, var(--pt-border) 62%);
-    background: var(--pt-warning-soft);
+    border-color: color-mix(in oklab, var(--pt-warning) 54%, var(--pt-border) 46%);
+    background: color-mix(in oklab, var(--pt-warning-soft) 82%, var(--pt-panel) 18%);
 }
 
 .public-tracking-connection-badge[data-state="polling"]::before,
@@ -407,8 +414,8 @@ body::after {
 
 .public-tracking-connection-badge[data-state="offline"] {
     color: var(--pt-danger);
-    border-color: color-mix(in oklab, var(--pt-danger) 38%, var(--pt-border) 62%);
-    background: var(--pt-danger-soft);
+    border-color: color-mix(in oklab, var(--pt-danger) 56%, var(--pt-border) 44%);
+    background: color-mix(in oklab, var(--pt-danger-soft) 82%, var(--pt-panel) 18%);
 }
 
 .public-tracking-connection-badge[data-state="offline"]::before {
@@ -432,6 +439,9 @@ body::after {
     text-decoration: none;
     font-family: var(--font-mono);
     transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+    justify-content: center;
+    min-width: 11rem;
+    white-space: nowrap;
 }
 
 .public-tracking-theme-toggle::before {
@@ -567,18 +577,42 @@ body::after {
 
 .public-tracking-status-badge[data-tone="success"] {
     color: var(--pt-accent);
+    border-color: color-mix(in oklab, var(--pt-accent) 54%, var(--pt-border) 46%);
+    background: color-mix(in oklab, var(--pt-accent-soft) 72%, white 28%);
 }
 
 .public-tracking-status-badge[data-tone="warning"] {
     color: var(--pt-warning);
+    border-color: color-mix(in oklab, var(--pt-warning) 56%, var(--pt-border) 44%);
+    background: color-mix(in oklab, var(--pt-warning-soft) 70%, white 30%);
 }
 
 .public-tracking-status-badge[data-tone="error"] {
     color: var(--pt-danger);
+    border-color: color-mix(in oklab, var(--pt-danger) 58%, var(--pt-border) 42%);
+    background: color-mix(in oklab, var(--pt-danger-soft) 70%, white 30%);
 }
 
 .public-tracking-status-badge[data-tone="reopened"] {
     color: var(--pt-info);
+    border-color: color-mix(in oklab, var(--pt-info) 54%, var(--pt-border) 46%);
+    background: color-mix(in oklab, var(--pt-info-soft) 72%, white 28%);
+}
+
+:root[data-theme="dark"] .public-tracking-status-badge[data-tone="success"] {
+    background: color-mix(in oklab, var(--pt-accent-soft) 90%, var(--pt-panel) 10%);
+}
+
+:root[data-theme="dark"] .public-tracking-status-badge[data-tone="warning"] {
+    background: color-mix(in oklab, var(--pt-warning-soft) 90%, var(--pt-panel) 10%);
+}
+
+:root[data-theme="dark"] .public-tracking-status-badge[data-tone="error"] {
+    background: color-mix(in oklab, var(--pt-danger-soft) 92%, var(--pt-panel) 8%);
+}
+
+:root[data-theme="dark"] .public-tracking-status-badge[data-tone="reopened"] {
+    background: color-mix(in oklab, var(--pt-info-soft) 90%, var(--pt-panel) 10%);
 }
 
 .public-tracking-summary-text {
@@ -634,17 +668,26 @@ body::after {
 
 .public-tracking-timeline-item[data-type="case_reopened"] {
     border-left-color: var(--pt-info);
-    background: var(--pt-info-soft);
+    border-color: color-mix(in oklab, var(--pt-info) 46%, var(--pt-border) 54%);
+    background: linear-gradient(145deg, color-mix(in oklab, var(--pt-info) 16%, transparent) 0%, transparent 42%), var(--pt-info-soft);
 }
 
 .public-tracking-timeline-item[data-type="incident_resolved"],
 .public-tracking-timeline-item[data-type="conformity_generated"] {
     border-left-color: var(--pt-accent);
+    border-color: color-mix(in oklab, var(--pt-accent) 44%, var(--pt-border) 56%);
+    background:
+        linear-gradient(145deg, color-mix(in oklab, var(--pt-accent) 14%, transparent) 0%, transparent 44%),
+        color-mix(in oklab, var(--pt-panel) 82%, var(--pt-accent-soft) 18%);
 }
 
 .public-tracking-timeline-item[data-type="case_delayed_again"],
 .public-tracking-timeline-item[data-type="incident_status_updated"] {
     border-left-color: var(--pt-warning);
+    border-color: color-mix(in oklab, var(--pt-warning) 48%, var(--pt-border) 52%);
+    background:
+        linear-gradient(145deg, color-mix(in oklab, var(--pt-warning) 16%, transparent) 0%, transparent 42%),
+        color-mix(in oklab, var(--pt-panel) 78%, var(--pt-warning-soft) 22%);
 }
 
 .public-tracking-timeline-time,
@@ -697,15 +740,27 @@ body::after {
     }
 
     .public-tracking-head {
-        align-items: flex-start;
-        flex-direction: column;
+        grid-template-columns: 1fr;
+        row-gap: 0.55rem;
+    }
+
+    .public-tracking-eyebrow {
+        justify-self: start;
+        align-self: start;
     }
 
     .public-tracking-connection-badge {
         align-self: flex-start;
+        min-width: 0;
     }
 
     .public-tracking-head-controls {
         align-self: flex-start;
+        justify-self: start;
+        flex-wrap: wrap;
+    }
+
+    .public-tracking-theme-toggle {
+        min-width: 0;
     }
 }

@@ -4384,7 +4384,7 @@ test("incident map lets admin set operational target directly from the map", asy
     note: "Visita de coordinacion",
     severity: "high",
     incident_status: "open",
-    created_at: "2026-03-20T12:20:00.000Z",
+    created_at: new Date(Date.now() - (2 * 24 * 60 * 60 * 1000)).toISOString(),
     reporter_username: "ops-admin",
     gps_lat: -34.9011,
     gps_lng: -56.1645,
@@ -4539,7 +4539,7 @@ test("incident map lets admin set operational target directly from the map", asy
   await flushDashboardTasks();
 
   const adjustButton = Array.from(document.querySelectorAll("#incidentMapDetail button")).find((button) =>
-    /Elegir destino/i.test(button.textContent || ""),
+    /(Elegir|Mover) destino/i.test(button.textContent || ""),
   );
   assert.ok(adjustButton);
 

@@ -3209,7 +3209,7 @@ test("installation incidents handler returns runtime timing fields on GET", asyn
 
   const db = {
     prepare(sql) {
-      if (sql.includes("FROM incidents") && sql.includes("WHERE installation_id = ?")) {
+      if (sql.includes("FROM incidents") && sql.includes("installation_id = ?")) {
         return {
           bind(...args) {
             assert.deepEqual(args, [45, "tenant-q"]);
@@ -3312,7 +3312,7 @@ test("installation incidents handler reindexes orphaned R2 photos when D1 metada
 
   const db = {
     prepare(sql) {
-      if (sql.includes("FROM incidents") && sql.includes("WHERE installation_id = ?")) {
+      if (sql.includes("FROM incidents") && sql.includes("installation_id = ?")) {
         return {
           bind(...args) {
             assert.deepEqual(args, [34, "tenant-q"]);

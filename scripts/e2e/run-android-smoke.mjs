@@ -52,7 +52,7 @@ function spawnLogged(command, args, options = {}) {
       ...process.env,
       ...(options.env || {}),
     },
-    shell: false,
+    shell: options.shell ?? isWindows(),
     stdio: options.stdio || "pipe",
   });
 

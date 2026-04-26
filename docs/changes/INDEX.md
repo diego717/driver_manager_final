@@ -10,6 +10,8 @@ Indice resumido de cambios relevantes del proyecto.
 
 ## Entradas
 
+- `2026-04-20` - Mejoras operativas en UI de Equipos/Drivers/Tenants + mapa de incidencias: indicador de incidencias activas en fila, distincion visual Descargar vs Eliminar, badge `Ultimo` por marca, roles por color, proteccion de borrado para `platform_owner`, jerarquia del panel lateral, lista de recientes con severidad/estado y CTA primario `Abrir caso`. Ver `docs/changes/2026-04-20-ops-ui-equipment-drivers-tenants-safety.md`.
+- `2026-04-20` - Hardening RBAC de tecnico en incidencias, alineacion de tracking publico y pasada visual de dashboard/tracking (layout, tema y mobile viewport), incluyendo cierre de permiso en `POST /web/assets/resolve`. Ver `docs/changes/2026-04-20-rbac-technician-incidents-and-tracking-hardening.md`.
 - `2026-04-12` - Presupuestos por instalacion con PDF/email, aprobacion versionada, bloqueo de conformidad y excepciones comerciales por garantia/abono/cortesia. Ver `docs/changes/2026-04-12-installation-budgets-and-conformity-gating.md`.
 - `2026-04-10` - Fase completa de polish motion/claridad en mobile y web: transicion operativa entre secciones, haptics consistentes en tabs/pantallas clave y copy de CTA mas accionable. Ver `docs/changes/2026-04-10-mobile-web-motion-phase-complete.md`.
 - `2026-04-09` - Polish de experiencia mobile/web con animacion de secciones, navegacion mobile mas expresiva y feedback haptico en tabs/CTA de la app. Ver `docs/changes/2026-04-09-mobile-web-motion-and-navigation-polish.md`.

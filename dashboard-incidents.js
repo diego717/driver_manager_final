@@ -21,6 +21,7 @@
         const CONFORMITY_GPS_OVERRIDE_INPUT_ID = 'actionConformityGpsOverrideNote';
         const CONFORMITY_GPS_OVERRIDE_HELP_ID = 'actionConformityGpsOverrideHelp';
         const PUBLIC_TRACKING_URL_INPUT_ID = 'actionPublicTrackingUrl';
+        const PUBLIC_TRACKING_URL_LINK_ID = 'actionPublicTrackingLink';
         const PUBLIC_TRACKING_STATUS_ID = 'actionPublicTrackingStatus';
         const PUBLIC_TRACKING_EXPIRES_ID = 'actionPublicTrackingExpires';
         const PUBLIC_TRACKING_SNAPSHOT_ID = 'actionPublicTrackingSnapshot';
@@ -44,6 +45,7 @@
             days: INCIDENT_MAP_DEFAULT_DAYS,
             status: '',
             severity: '',
+            sourceIncidents: [],
             incidents: [],
             linkedTechnician: null,
             scope: 'tenant',
@@ -345,11 +347,8 @@
             return result;
         }
 
-        function hasIncidentDispatchTargetData(incident) {
+        function hasIncidentDispatchTargetContent(incident) {
             if (!incident || typeof incident !== 'object') return false;
-            if (incident.dispatch_required === false) {
-                return true;
-            }
             const textFields = [
                 incident.dispatch_place_name,
                 incident.dispatch_address,
@@ -373,6 +372,14 @@
                 Number.isFinite(Number(targetLat)) &&
                 Number.isFinite(Number(targetLng))
             );
+        }
+
+        function hasIncidentDispatchTargetData(incident) {
+            if (!incident || typeof incident !== 'object') return false;
+            if (incident.dispatch_required === false) {
+                return true;
+            }
+            return hasIncidentDispatchTargetContent(incident);
         }
 
         function parseDispatchCoordinate(value, fieldLabel) {
@@ -437,29 +444,76 @@
             };
         }
 
-        function buildIncidentDispatchTargetFields(incident = {}) {
+        function buildIncidentDispatchTargetFields(incident = {}, config = {}) {
             const fragment = document.createDocumentFragment();
             const grid = document.createElement('div');
-            grid.className = 'action-modal-grid';
-            const dispatchRequired = incident?.dispatch_required !== false;
+            grid.className = 'action-modal-grid incident-dispatch-grid';
+            const hasExistingData = hasIncidentDispatchTargetContent(incident);
+            const collapsible = config?.collapsible === true;
+            const hideDispatchRequiredField = config?.hideDispatchRequiredField === true;
+            const initialDispatchRequired = typeof config?.defaultDispatchRequired === 'boolean'
+                ? config.defaultDispatchRequired
+                : incident?.dispatch_required !== false;
+            const startCollapsed = collapsible
+                && config?.collapsedByDefault === true
+                && !hasExistingData
+                && incident?.dispatch_required !== false;
+            const dispatchRequired = startCollapsed
+                ? false
+                : (hasExistingData ? true : initialDispatchRequired);
 
             const dispatchRequiredSelect = document.createElement('select');
             dispatchRequiredSelect.id = 'actionIncidentDispatchRequired';
             dispatchRequiredSelect.appendChild(new Option('Si', '1', dispatchRequired, dispatchRequired));
             dispatchRequiredSelect.appendChild(new Option('No', '0', !dispatchRequired, !dispatchRequired));
-            grid.appendChild(createInputGroup('Requiere datos de visita', dispatchRequiredSelect, { htmlFor: dispatchRequiredSelect.id }));
+            const dispatchRequiredGroup = createInputGroup(
+                'Requiere datos de visita',
+                dispatchRequiredSelect,
+                { htmlFor: dispatchRequiredSelect.id },
+            );
+            if (hideDispatchRequiredField) {
+                dispatchRequiredGroup.classList.add('is-hidden');
+                dispatchRequiredGroup.setAttribute('aria-hidden', 'true');
+            }
+            grid.appendChild(dispatchRequiredGroup);
+
+            const dispatchTouchedInput = document.createElement('input');
+            dispatchTouchedInput.type = 'hidden';
+            dispatchTouchedInput.id = 'actionIncidentDispatchTouched';
+            dispatchTouchedInput.value = '0';
+            grid.appendChild(dispatchTouchedInput);
+
+            const dispatchSummaryRow = document.createElement('div');
+            dispatchSummaryRow.className = 'incident-dispatch-summary-row full-width';
+            dispatchSummaryRow.hidden = !collapsible;
+            const dispatchSummaryCopy = document.createElement('div');
+            dispatchSummaryCopy.className = 'incident-dispatch-summary-copy';
+            const dispatchSummaryTitle = document.createElement('strong');
+            dispatchSummaryTitle.className = 'incident-dispatch-summary-title';
+            dispatchSummaryTitle.textContent = 'Destino operativo';
+            const dispatchSummaryState = document.createElement('span');
+            dispatchSummaryState.className = 'incident-dispatch-summary-state';
+            dispatchSummaryState.id = 'actionIncidentDispatchSummaryState';
+            dispatchSummaryCopy.append(dispatchSummaryTitle, dispatchSummaryState);
+            const dispatchToggleButton = document.createElement('button');
+            dispatchToggleButton.type = 'button';
+            dispatchToggleButton.id = 'actionIncidentDispatchToggle';
+            dispatchToggleButton.className = 'incident-dispatch-toggle';
+            dispatchToggleButton.setAttribute('aria-controls', 'actionIncidentDispatchFields');
+            dispatchSummaryRow.append(dispatchSummaryCopy, dispatchToggleButton);
+            grid.appendChild(dispatchSummaryRow);
 
             const dispatchHelp = document.createElement('p');
-            dispatchHelp.className = 'gps-capture-panel-summary full-width';
+            dispatchHelp.className = 'gps-capture-panel-summary incident-dispatch-help full-width';
             dispatchHelp.id = 'actionIncidentDispatchRequiredHelp';
             dispatchHelp.textContent = dispatchRequired
-                ? 'Carga dirección, referencia y coordenadas solo cuando realmente haga falta despacho en sitio.'
+                ? 'Completa destino solo si se requiere visita en sitio.'
                 : 'La incidencia queda marcada sin visita en sitio requerida y se limpian los datos de destino operativo.';
             grid.appendChild(dispatchHelp);
 
             const dispatchFields = document.createElement('div');
             dispatchFields.id = 'actionIncidentDispatchFields';
-            dispatchFields.className = 'action-modal-grid full-width';
+            dispatchFields.className = 'action-modal-grid full-width incident-dispatch-fields';
 
             const sourceSelect = document.createElement('select');
             sourceSelect.id = 'actionIncidentTargetSource';
@@ -529,7 +583,7 @@
             const dispatchPlacesStatus = document.createElement('p');
             dispatchPlacesStatus.id = 'actionIncidentDispatchPlacesStatus';
             dispatchPlacesStatus.className = 'asset-muted full-width';
-            dispatchPlacesStatus.textContent = 'Puedes escribir manualmente o elegir una sugerencia de Google para completar dirección y coordenadas.';
+            dispatchPlacesStatus.textContent = 'Escribe una dirección o usa una sugerencia para completar coordenadas.';
             dispatchFields.appendChild(dispatchPlacesStatus);
 
             const dispatchReferenceInput = document.createElement('textarea');
@@ -563,17 +617,51 @@
             dispatchFields.appendChild(createInputGroup('Notas para la visita', dispatchNotesInput, { htmlFor: dispatchNotesInput.id, className: 'full-width' }));
 
             grid.appendChild(dispatchFields);
+            const markDispatchTouched = () => {
+                dispatchTouchedInput.value = '1';
+            };
             const syncDispatchRequiredVisibility = () => {
                 const currentRequired = dispatchRequiredSelect.value !== '0';
-                dispatchFields.hidden = !currentRequired;
+                if (collapsible) {
+                    dispatchFields.hidden = false;
+                    dispatchFields.classList.toggle('is-collapsed', !currentRequired);
+                    dispatchFields.setAttribute('aria-hidden', currentRequired ? 'false' : 'true');
+                } else {
+                    dispatchFields.hidden = !currentRequired;
+                    dispatchFields.classList.remove('is-collapsed');
+                    dispatchFields.setAttribute('aria-hidden', currentRequired ? 'false' : 'true');
+                }
                 Array.from(dispatchFields.querySelectorAll('input, textarea, select')).forEach((field) => {
                     field.disabled = !currentRequired;
                 });
                 dispatchHelp.textContent = currentRequired
-                    ? 'Carga dirección, referencia y coordenadas solo cuando realmente haga falta despacho en sitio.'
+                    ? 'Completa destino solo si se requiere visita en sitio.'
                     : 'La incidencia queda marcada sin visita en sitio requerida y se limpian los datos de destino operativo.';
+                if (collapsible) {
+                    dispatchHelp.hidden = !currentRequired;
+                    dispatchSummaryState.textContent = currentRequired
+                        ? (hasExistingData ? 'con datos' : 'completando')
+                        : 'sin datos';
+                    dispatchToggleButton.textContent = currentRequired ? 'Ocultar' : '+ Agregar destino';
+                    dispatchToggleButton.setAttribute('aria-expanded', currentRequired ? 'true' : 'false');
+                }
             };
-            dispatchRequiredSelect.addEventListener('change', syncDispatchRequiredVisibility);
+            dispatchRequiredSelect.addEventListener('change', () => {
+                markDispatchTouched();
+                syncDispatchRequiredVisibility();
+            });
+            if (collapsible) {
+                dispatchToggleButton.addEventListener('click', () => {
+                    const nextRequired = dispatchRequiredSelect.value === '0';
+                    dispatchRequiredSelect.value = nextRequired ? '1' : '0';
+                    dispatchRequiredSelect.dispatchEvent(new Event('change'));
+                    if (nextRequired) {
+                        requestAnimationFrame(() => {
+                            document.getElementById('actionIncidentDispatchAddress')?.focus();
+                        });
+                    }
+                });
+            }
             syncDispatchRequiredVisibility();
 
             fragment.appendChild(grid);
@@ -604,6 +692,54 @@
             chip.classList.remove('is-pulsing');
             void chip.offsetWidth;
             chip.classList.add('is-pulsing');
+        }
+
+        function createIncidentMetricItem(label, value, config = {}) {
+            const metric = document.createElement('div');
+            metric.className = 'incident-metric';
+            if (config.metricKey) {
+                metric.dataset.metric = String(config.metricKey);
+            }
+            if (config.tone) {
+                metric.dataset.tone = String(config.tone);
+            }
+
+            const metricLabel = document.createElement('small');
+            metricLabel.className = 'incident-metric-label';
+            metricLabel.textContent = label;
+
+            const metricValue = document.createElement('strong');
+            metricValue.className = 'incident-metric-value';
+            metricValue.textContent = value;
+            if (config.metricKey) {
+                metricValue.dataset.metric = String(config.metricKey);
+            }
+
+            metric.append(metricLabel, metricValue);
+
+            if (config.meta) {
+                const meta = document.createElement('small');
+                meta.className = 'incident-metric-meta';
+                meta.textContent = String(config.meta);
+                metric.appendChild(meta);
+            }
+
+            return metric;
+        }
+
+        function formatIncidentResolvedByMetricValue(incident) {
+            const resolvedBy = String(incident?.resolved_by || incident?.status_updated_by || '').trim();
+            const resolvedAtText = String(incident?.resolved_at || '').trim();
+            if (!resolvedBy && !resolvedAtText) return '--';
+            const resolvedAtLabel = resolvedAtText
+                ? new Date(resolvedAtText).toLocaleString('es-ES', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                })
+                : '';
+            return [resolvedBy || 'Sin usuario', resolvedAtLabel].filter(Boolean).join(' · ');
         }
 
         function normalizeIncidentContextText(value) {
@@ -661,51 +797,77 @@
 
         function appendIncidentHighlights(parent, incident, config = {}) {
             const highlights = document.createElement('div');
-            highlights.className = 'incident-highlights';
+            highlights.className = 'incident-highlights incident-highlights-quadrants';
 
             const installationId = options.parseStrictInteger(config.installationId ?? incident?.installation_id);
             const assetId = options.parseStrictInteger(config.assetId ?? incident?.asset_id);
             const statusValue = options.normalizeIncidentStatus(incident?.incident_status);
             const estimatedDurationSeconds = options.resolveIncidentEstimatedDurationSeconds(incident);
             const realDurationSeconds = options.resolveIncidentRealDurationSeconds(incident);
+            const runtimeStatusMeta = statusValue === 'in_progress'
+                ? 'En curso'
+                : statusValue === 'paused'
+                    ? 'En pausa'
+                    : '';
 
-            highlights.appendChild(
-                createIncidentHighlightChip(
-                    `Tiempo estimado: ${options.formatDuration(estimatedDurationSeconds)}`,
-                    estimatedDurationSeconds > 0 ? 'accent' : 'neutral',
-                ),
+            const estimatedMetric = createIncidentMetricItem(
+                'Estimado',
+                estimatedDurationSeconds > 0 ? options.formatDuration(estimatedDurationSeconds) : '--',
+                {
+                    metricKey: 'estimated',
+                    tone: estimatedDurationSeconds > 0 ? 'accent' : 'neutral',
+                },
             );
+            highlights.appendChild(estimatedMetric);
 
-            if (Number.isInteger(realDurationSeconds) && realDurationSeconds >= 0) {
-                const runtimeChip = createIncidentHighlightChip(
-                    `Tiempo real: ${options.formatDuration(realDurationSeconds)}${statusValue === 'in_progress'
-                        ? ' (en curso)'
-                        : statusValue === 'paused'
-                            ? ' (en pausa)'
-                            : ''
-                    }`,
-                    statusValue === 'resolved' ? 'resolved' : statusValue,
-                );
-                runtimeChip.dataset.chip = 'runtime';
-                if (statusValue === 'in_progress') {
-                    const runtimeStartMs = options.resolveIncidentRuntimeStartMs(incident);
-                    if (Number.isFinite(runtimeStartMs) && runtimeStartMs > 0) {
-                        runtimeChip.dataset.runtimeLive = '1';
-                        runtimeChip.dataset.runtimeStartMs = String(runtimeStartMs);
-                        runtimeChip.dataset.runtimeBaseSeconds = String(
-                            Math.max(0, Number(incident?.actual_duration_seconds || 0) || 0),
-                        );
-                        options.ensureIncidentRuntimeTicker();
-                    }
+            const runtimeMetric = createIncidentMetricItem(
+                'Real',
+                Number.isInteger(realDurationSeconds) && realDurationSeconds >= 0
+                    ? options.formatDuration(realDurationSeconds)
+                    : '--',
+                {
+                    metricKey: 'runtime',
+                    tone: statusValue === 'resolved' ? 'resolved' : statusValue,
+                    meta: runtimeStatusMeta,
+                },
+            );
+            const runtimeMetricValue = runtimeMetric.querySelector('.incident-metric-value[data-metric="runtime"]');
+            if (
+                runtimeMetricValue instanceof HTMLElement
+                && Number.isInteger(realDurationSeconds)
+                && realDurationSeconds >= 0
+                && statusValue === 'in_progress'
+            ) {
+                const runtimeStartMs = options.resolveIncidentRuntimeStartMs(incident);
+                if (Number.isFinite(runtimeStartMs) && runtimeStartMs > 0) {
+                    runtimeMetricValue.dataset.runtimeLive = '1';
+                    runtimeMetricValue.dataset.runtimeStartMs = String(runtimeStartMs);
+                    runtimeMetricValue.dataset.runtimeBaseSeconds = String(
+                        Math.max(0, Number(incident?.actual_duration_seconds || 0) || 0),
+                    );
+                    options.ensureIncidentRuntimeTicker();
                 }
-                highlights.appendChild(runtimeChip);
             }
+            highlights.appendChild(runtimeMetric);
+
+            const resolvedMetric = createIncidentMetricItem(
+                'Resuelta por',
+                formatIncidentResolvedByMetricValue(incident),
+                {
+                    metricKey: 'resolved-by',
+                    tone: statusValue === 'resolved' ? 'resolved' : 'neutral',
+                },
+            );
+            highlights.appendChild(resolvedMetric);
 
             if (
                 (!Number.isInteger(installationId) || installationId <= 0)
                 && (!Number.isInteger(assetId) || assetId <= 0)
             ) {
-                highlights.appendChild(createIncidentHighlightChip('Contexto automatico', 'info'));
+                const contextHint = document.createElement('small');
+                contextHint.className = 'incident-metrics-note asset-muted';
+                contextHint.textContent = 'Contexto automatico';
+                highlights.appendChild(contextHint);
             }
 
             parent.appendChild(highlights);
@@ -978,15 +1140,18 @@
         function upsertIncidentInMapState(incident) {
             const incidentId = options.parseStrictInteger(incident?.id);
             if (!Number.isInteger(incidentId) || incidentId <= 0) return;
-            const existingIndex = incidentMapState.incidents.findIndex((entry) => (
-                options.parseStrictInteger(entry?.id) === incidentId
-            ));
-            if (existingIndex >= 0) {
-                incidentMapState.incidents[existingIndex] = {
-                    ...incidentMapState.incidents[existingIndex],
-                    ...incident,
-                };
-            }
+            [incidentMapState.sourceIncidents, incidentMapState.incidents].forEach((list) => {
+                if (!Array.isArray(list)) return;
+                const existingIndex = list.findIndex((entry) => (
+                    options.parseStrictInteger(entry?.id) === incidentId
+                ));
+                if (existingIndex >= 0) {
+                    list[existingIndex] = {
+                        ...list[existingIndex],
+                        ...incident,
+                    };
+                }
+            });
         }
 
         function cancelIncidentMapTargetSelection({ silent = false } = {}) {
@@ -1097,12 +1262,12 @@
             const severity = getIncidentMapSeverityTone(incident?.severity);
             const status = getIncidentMapStatusTone(incident?.incident_status);
             const fillColor = severity === 'critical'
-                ? '#ff6b5c'
+                ? '#ef4444'
                 : severity === 'high'
-                    ? '#ef7f1a'
+                    ? '#f97316'
                     : severity === 'medium'
-                        ? '#0f756d'
-                        : '#3fa57c';
+                        ? '#f59e0b'
+                        : '#eab308';
             const fillOpacity = status === 'resolved'
                 ? 0.68
                 : status === 'paused'
@@ -1212,6 +1377,54 @@
             return options.formatDateTime?.(isoValue) || String(isoValue || '').trim() || 'Sin fecha';
         }
 
+        function updateIncidentMapFilterFeedback(sourceIncidents) {
+            const safeSource = Array.isArray(sourceIncidents) ? sourceIncidents : [];
+            const statusCounts = {
+                '': safeSource.length,
+                open: 0,
+                in_progress: 0,
+                paused: 0,
+                resolved: 0,
+            };
+            const severityCounts = {
+                '': safeSource.length,
+                critical: 0,
+                high: 0,
+                medium: 0,
+                low: 0,
+            };
+
+            safeSource.forEach((incident) => {
+                const statusTone = getIncidentMapStatusTone(incident?.incident_status);
+                if (Object.prototype.hasOwnProperty.call(statusCounts, statusTone)) {
+                    statusCounts[statusTone] += 1;
+                }
+
+                const severityTone = getIncidentMapSeverityTone(incident?.severity);
+                if (Object.prototype.hasOwnProperty.call(severityCounts, severityTone)) {
+                    severityCounts[severityTone] += 1;
+                }
+            });
+
+            [
+                ['incidentMapStatusFilter', statusCounts, incidentMapState.status],
+                ['incidentMapSeverityFilter', severityCounts, incidentMapState.severity],
+            ].forEach(([selectId, counts, selectedValue]) => {
+                const select = document.getElementById(selectId);
+                if (!(select instanceof window.HTMLSelectElement)) return;
+                Array.from(select.options || []).forEach((option) => {
+                    const optionValue = String(option.value || '').trim().toLowerCase();
+                    const baseLabel = String(option.dataset.baseLabel || option.textContent || '')
+                        .replace(/\s+\(\d+\)\s*$/, '')
+                        .trim();
+                    option.dataset.baseLabel = baseLabel;
+                    const count = Number.isInteger(counts[optionValue]) ? counts[optionValue] : 0;
+                    option.textContent = `${baseLabel} (${count})`;
+                });
+                select.classList.toggle('is-filtered', Boolean(String(selectedValue || '').trim()));
+            });
+        }
+
         function syncIncidentMapRangeButtons() {
             document.querySelectorAll('.incident-map-range-btn').forEach((button) => {
                 button.classList.toggle(
@@ -1283,13 +1496,25 @@
             summary.replaceChildren();
 
             [
-                `${total} punto${total === 1 ? '' : 's'} visibles`,
-                `${critical} crítica${critical === 1 ? '' : 's'}`,
-                `${active} activa${active === 1 ? '' : 's'}`,
-                `${uniqueClients} cliente${uniqueClients === 1 ? '' : 's'}`,
-            ].forEach((label) => {
+                {
+                    label: `${total} punto${total === 1 ? '' : 's'} visibles`,
+                    tone: 'neutral',
+                },
+                {
+                    label: `${critical} critica${critical === 1 ? '' : 's'}`,
+                    tone: critical > 0 ? 'critical' : 'neutral',
+                },
+                {
+                    label: `${active} activa${active === 1 ? '' : 's'}`,
+                    tone: active > 0 ? 'active' : 'neutral',
+                },
+                {
+                    label: `${uniqueClients} cliente${uniqueClients === 1 ? '' : 's'}`,
+                    tone: 'muted',
+                },
+            ].forEach(({ label, tone }) => {
                 const chip = document.createElement('span');
-                chip.className = 'incident-map-summary-chip';
+                chip.className = `incident-map-summary-chip incident-map-summary-chip-${tone}`;
                 chip.textContent = label;
                 summary.appendChild(chip);
             });
@@ -1307,12 +1532,45 @@
                     button.classList.add('is-active');
                 }
 
+                const titleRow = document.createElement('div');
+                titleRow.className = 'incident-map-recent-head';
+                const severityTone = getIncidentMapSeverityTone(incident?.severity);
+                const statusTone = getIncidentMapStatusTone(incident?.incident_status);
+
+                const severityDot = document.createElement('span');
+                severityDot.className = `incident-map-recent-dot severity-${severityTone}`;
+                severityDot.setAttribute('aria-hidden', 'true');
+
                 const title = document.createElement('strong');
                 title.textContent = String(incident?.installation_client_name || `Incidencia #${incident?.id || '-'}`).trim();
-                const meta = document.createElement('span');
+
+                const time = document.createElement('span');
+                time.className = 'incident-map-recent-time';
+                time.textContent = formatIncidentMapRelativeTime(incident?.created_at);
+                titleRow.append(severityDot, title, time);
+
+                const meta = document.createElement('div');
+                meta.className = 'incident-map-recent-meta';
                 const assetCode = String(incident?.asset_code || '').trim();
-                meta.textContent = `${assetCode || `Registro #${incident?.installation_id || '-'}`} · ${formatIncidentMapRelativeTime(incident?.created_at)}`;
-                button.append(title, meta);
+
+                const registration = document.createElement('span');
+                registration.className = 'incident-map-recent-line';
+                registration.textContent = `${assetCode || `Registro #${incident?.installation_id || '-'}`}`;
+
+                const badges = document.createElement('div');
+                badges.className = 'incident-map-recent-badges';
+
+                const statusBadge = document.createElement('span');
+                statusBadge.className = `incident-map-recent-status tone-${statusTone}`;
+                statusBadge.textContent = options.incidentStatusLabel(incident?.incident_status);
+
+                const severityBadge = document.createElement('span');
+                severityBadge.className = `incident-map-recent-severity severity-${severityTone}`;
+                severityBadge.textContent = getIncidentMapSeverityLabel(incident?.severity);
+
+                badges.append(statusBadge, severityBadge);
+                meta.append(registration, badges);
+                button.append(titleRow, meta);
                 button.addEventListener('click', () => {
                     incidentMapState.selectedIncidentId = options.parseStrictInteger(incident?.id);
                     if (incidentMapState.targetSelectionIncidentId) {
@@ -1361,31 +1619,63 @@
                 parseIncidentCoordinateValue(selectedIncident?.target_lng) !== null;
             const selectionActive = incidentMapState.targetSelectionIncidentId === selectedIncidentId;
             const savingSelection = incidentMapState.savingTargetIncidentId === selectedIncidentId;
+            const severityTone = getIncidentMapSeverityTone(selectedIncident?.severity);
+            const statusTone = getIncidentMapStatusTone(selectedIncident?.incident_status);
 
             const header = document.createElement('div');
             header.className = 'incident-map-detail-head';
+
             const eyebrow = document.createElement('span');
             eyebrow.className = 'incident-map-detail-eyebrow';
             eyebrow.textContent = `Incidencia #${selectedIncidentId || '-'}`;
+
             const title = document.createElement('h4');
             title.textContent = String(selectedIncident?.installation_client_name || 'Sin cliente').trim() || 'Sin cliente';
+
             const summary = document.createElement('p');
             const assetCode = String(selectedIncident?.asset_code || '').trim();
-            summary.textContent = `${assetCode || 'Sin equipo'} · ${options.incidentStatusLabel(selectedIncident?.incident_status)} · ${formatIncidentMapRelativeTime(selectedIncident?.created_at)}`;
-            header.append(eyebrow, title, summary);
+            summary.textContent = `${assetCode || 'Sin equipo'} · ${formatIncidentMapRelativeTime(selectedIncident?.created_at)}`;
+
+            const chips = document.createElement('div');
+            chips.className = 'incident-map-detail-chips';
+
+            const severityChip = document.createElement('span');
+            severityChip.className = `incident-map-detail-chip severity-${severityTone}`;
+            severityChip.textContent = getIncidentMapSeverityLabel(selectedIncident?.severity);
+
+            const statusChip = document.createElement('span');
+            statusChip.className = `incident-map-detail-chip tone-${statusTone}`;
+            statusChip.textContent = options.incidentStatusLabel(selectedIncident?.incident_status);
+
+            const recordChip = document.createElement('span');
+            recordChip.className = 'incident-map-detail-chip tone-neutral';
+            recordChip.textContent = `Registro #${options.parseStrictInteger(selectedIncident?.installation_id) || '-'}`;
+
+            chips.append(severityChip, statusChip, recordChip);
+
+            const destination = document.createElement('p');
+            destination.className = 'incident-map-detail-destination';
+            const destinationText = String(
+                selectedIncident?.dispatch_place_name
+                || selectedIncident?.target_label
+                || selectedIncident?.target_notes
+                || '',
+            ).trim();
+            destination.textContent = destinationText || formatIncidentCoordinateLine(selectedIncident);
+
+            header.append(eyebrow, title, summary, chips, destination);
             container.appendChild(header);
 
             const metrics = document.createElement('div');
             metrics.className = 'incident-map-detail-metrics';
             [
-                ['Severidad', getIncidentMapSeverityLabel(selectedIncident?.severity)],
-                ['Técnico', String(selectedIncident?.reporter_username || 'Sin dato').trim() || 'Sin dato'],
+                ['Tecnico', String(selectedIncident?.reporter_username || 'Sin dato').trim() || 'Sin dato'],
                 ['Coordenada', operationalCoordinates?.source === 'target'
                     ? 'Destino operativo'
                     : Number.isFinite(Number(selectedIncident?.gps_accuracy_m))
                         ? `${Math.round(Number(selectedIncident.gps_accuracy_m))} m`
                         : 'Sin dato'],
-                ['Registro', `#${options.parseStrictInteger(selectedIncident?.installation_id) || '-'}`],
+                ['Estado', options.incidentStatusLabel(selectedIncident?.incident_status)],
             ].forEach(([label, value]) => {
                 const metric = document.createElement('div');
                 metric.className = 'incident-map-detail-metric';
@@ -1405,9 +1695,8 @@
 
             const coordinate = document.createElement('p');
             coordinate.className = 'incident-map-detail-coordinate';
-            coordinate.textContent = `Lat ${Number(selectedIncident?.gps_lat).toFixed(5)} · Lng ${Number(selectedIncident?.gps_lng).toFixed(5)}`;
-            container.appendChild(coordinate);
             coordinate.textContent = formatIncidentCoordinateLine(selectedIncident);
+            container.appendChild(coordinate);
 
             const dispatchSummary = document.createElement('p');
             dispatchSummary.className = 'incident-map-detail-note';
@@ -1415,7 +1704,7 @@
                 ? 'Incidencia sin visita en sitio requerida.'
                 : hasTargetCoordinates
                 ? `Destino actual: ${String(selectedIncident?.dispatch_place_name || selectedIncident?.target_label || 'Punto operativo').trim()}`
-                : 'Aún no definiste un destino operativo manual para esta incidencia.';
+                : 'Aun no definiste un destino operativo manual para esta incidencia.';
             container.appendChild(dispatchSummary);
 
             if (selectionActive || savingSelection) {
@@ -1429,6 +1718,9 @@
 
             const actions = document.createElement('div');
             actions.className = 'incident-map-detail-actions';
+
+            const secondaryActions = document.createElement('div');
+            secondaryActions.className = 'incident-map-detail-actions-secondary';
 
             if (canCurrentUserWriteOperationalData()) {
                 const adjustTargetBtn = document.createElement('button');
@@ -1445,7 +1737,7 @@
                     }
                     beginIncidentMapTargetSelection(selectedIncident);
                 });
-                actions.appendChild(adjustTargetBtn);
+                secondaryActions.appendChild(adjustTargetBtn);
 
                 const editDispatchBtn = document.createElement('button');
                 editDispatchBtn.type = 'button';
@@ -1458,19 +1750,8 @@
                         assetId: selectedIncident?.asset_id,
                     });
                 });
-                actions.appendChild(editDispatchBtn);
+                secondaryActions.appendChild(editDispatchBtn);
             }
-
-            const openCaseBtn = document.createElement('button');
-            openCaseBtn.type = 'button';
-            openCaseBtn.className = 'btn-primary';
-            openCaseBtn.innerHTML = '<span class="material-symbols-outlined icon-inline-sm">warning</span> Abrir caso';
-            openCaseBtn.addEventListener('click', async () => {
-                await showIncidentsForInstallation(selectedIncident?.installation_id, {
-                    focusIncidentId: selectedIncidentId,
-                });
-            });
-            actions.appendChild(openCaseBtn);
 
             const mapsUrl = buildIncidentMapsUrl(selectedIncident);
             if (mapsUrl) {
@@ -1480,8 +1761,27 @@
                 mapsLink.target = '_blank';
                 mapsLink.rel = 'noreferrer noopener';
                 mapsLink.innerHTML = '<span class="material-symbols-outlined icon-inline-sm">travel_explore</span> Ver en Maps';
-                actions.appendChild(mapsLink);
+                secondaryActions.appendChild(mapsLink);
             }
+
+            if (secondaryActions.childElementCount) {
+                actions.appendChild(secondaryActions);
+            }
+
+            const primaryActions = document.createElement('div');
+            primaryActions.className = 'incident-map-detail-actions-primary';
+
+            const openCaseBtn = document.createElement('button');
+            openCaseBtn.type = 'button';
+            openCaseBtn.className = 'btn-primary incident-map-open-case-btn';
+            openCaseBtn.innerHTML = '<span class="material-symbols-outlined icon-inline-sm">warning</span> Abrir caso';
+            openCaseBtn.addEventListener('click', async () => {
+                await showIncidentsForInstallation(selectedIncident?.installation_id, {
+                    focusIncidentId: selectedIncidentId,
+                });
+            });
+            primaryActions.appendChild(openCaseBtn);
+            actions.appendChild(primaryActions);
             container.appendChild(actions);
 
             const recentTitle = document.createElement('p');
@@ -1558,6 +1858,9 @@
         }
 
         function renderIncidentMap() {
+            updateIncidentMapFilterFeedback(
+                Array.isArray(incidentMapState.sourceIncidents) ? incidentMapState.sourceIncidents : [],
+            );
             updateIncidentMapSummary(Array.isArray(incidentMapState.incidents) ? incidentMapState.incidents : []);
             const mapReady = ensureIncidentMapInstance();
 
@@ -1604,17 +1907,26 @@
                     ? await options.api.getMyAssignedIncidentsMap()
                     : await options.api.getIncidentMap({
                         days: incidentMapState.days,
-                        status: incidentMapState.status,
-                        severity: incidentMapState.severity,
+                        status: '',
+                        severity: '',
                         limit: INCIDENT_MAP_DEFAULT_LIMIT,
                     });
                 if (requestVersion !== incidentMapRequestVersion) return;
                 incidentMapState.scope = useAssignedMap ? 'assigned' : 'tenant';
                 incidentMapState.linkedTechnician = useAssignedMap ? response?.technician || null : null;
-                incidentMapState.incidents = applyIncidentMapClientFilters(
+                incidentMapState.sourceIncidents = applyIncidentMapClientFilters(
                     Array.isArray(response?.incidents) ? response.incidents : [],
                     {
                         days: incidentMapState.days,
+                        status: '',
+                        severity: '',
+                        limit: INCIDENT_MAP_DEFAULT_LIMIT,
+                    },
+                );
+                incidentMapState.incidents = applyIncidentMapClientFilters(
+                    incidentMapState.sourceIncidents,
+                    {
+                        days: 'all',
                         status: incidentMapState.status,
                         severity: incidentMapState.severity,
                         limit: INCIDENT_MAP_DEFAULT_LIMIT,
@@ -1629,6 +1941,7 @@
             } catch (error) {
                 if (requestVersion !== incidentMapRequestVersion) return;
                 incidentMapState.linkedTechnician = null;
+                incidentMapState.sourceIncidents = [];
                 incidentMapState.incidents = [];
                 options.showNotification(
                     `No se pudo cargar el mapa de incidencias: ${error?.message || error}`,
@@ -1727,7 +2040,14 @@
             urlInput.id = PUBLIC_TRACKING_URL_INPUT_ID;
             urlInput.readOnly = true;
             urlInput.placeholder = 'Aun no hay un enlace activo';
-            urlGroup.append(urlLabel, urlInput);
+            const urlLink = document.createElement('a');
+            urlLink.id = PUBLIC_TRACKING_URL_LINK_ID;
+            urlLink.className = 'public-tracking-link';
+            urlLink.target = '_blank';
+            urlLink.rel = 'noreferrer noopener';
+            urlLink.textContent = 'Abrir seguimiento publico';
+            urlLink.hidden = true;
+            urlGroup.append(urlLabel, urlInput, urlLink);
 
             const expires = document.createElement('p');
             expires.id = PUBLIC_TRACKING_EXPIRES_ID;
@@ -1760,7 +2080,7 @@
         async function openPublicTrackingModal(installationId) {
             if (!options.requireActiveSession()) return;
             if (!canCurrentUserManagePublicTracking()) {
-                options.showNotification('Solo admin o super_admin puede gestionar enlaces públicos.', 'error');
+                options.showNotification('No tienes permisos para gestionar enlaces publicos.', 'error');
                 return;
             }
             const targetInstallationId = options.parseStrictInteger(installationId);
@@ -1791,6 +2111,7 @@
 
             const statusEl = document.getElementById(PUBLIC_TRACKING_STATUS_ID);
             const urlInput = document.getElementById(PUBLIC_TRACKING_URL_INPUT_ID);
+            const urlLink = document.getElementById(PUBLIC_TRACKING_URL_LINK_ID);
             const expiresEl = document.getElementById(PUBLIC_TRACKING_EXPIRES_ID);
             const snapshotEl = document.getElementById(PUBLIC_TRACKING_SNAPSHOT_ID);
             const copyBtn = document.getElementById(PUBLIC_TRACKING_COPY_ID);
@@ -1811,6 +2132,15 @@
                 }
                 if (urlInput instanceof HTMLInputElement) {
                     urlInput.value = hasActiveLink ? String(currentLink.tracking_url) : '';
+                }
+                if (urlLink instanceof HTMLAnchorElement) {
+                    if (hasActiveLink) {
+                        urlLink.href = String(currentLink.tracking_url);
+                        urlLink.hidden = false;
+                    } else {
+                        urlLink.hidden = true;
+                        urlLink.removeAttribute('href');
+                    }
                 }
                 if (expiresEl instanceof HTMLElement) {
                     expiresEl.textContent = hasActiveLink && currentLink?.expires_at
@@ -2010,10 +2340,14 @@
             return select;
         }
 
-        function createGpsCapturePanel({ panelId, statusId, summaryId, buttonId }) {
+        function createGpsCapturePanel({ panelId, statusId, summaryId, buttonId, compact = false }) {
             const wrapper = document.createElement('div');
             wrapper.id = panelId;
             wrapper.className = 'gps-capture-panel';
+            if (compact) {
+                wrapper.classList.add('gps-capture-panel-compact');
+                wrapper.dataset.gpsMode = 'compact';
+            }
             wrapper.dataset.gpsState = 'pending';
 
             const header = document.createElement('div');
@@ -2024,7 +2358,7 @@
 
             const title = document.createElement('strong');
             title.className = 'gps-capture-panel-title';
-            title.textContent = 'Ubicacion puntual';
+            title.textContent = compact ? 'GPS' : 'Ubicacion puntual';
 
             const status = document.createElement('span');
             status.id = statusId;
@@ -2036,15 +2370,17 @@
             const retryButton = document.createElement('button');
             retryButton.type = 'button';
             retryButton.id = buttonId;
-            retryButton.className = 'btn-secondary';
-            retryButton.textContent = 'Capturar ubicación';
+            retryButton.className = compact ? 'btn-secondary gps-capture-panel-inline-retry' : 'btn-secondary';
+            retryButton.textContent = compact ? 'Reintentar' : 'Capturar ubicación';
 
             header.append(copyWrap, retryButton);
 
             const summary = document.createElement('p');
             summary.id = summaryId;
             summary.className = 'gps-capture-panel-summary';
-            summary.textContent = 'Intentamos obtener una ubicación puntual para este formulario. No bloquea el guardado.';
+            summary.textContent = compact
+                ? 'Sin precision disponible.'
+                : 'Intentamos obtener una ubicación puntual para este formulario. No bloquea el guardado.';
 
             wrapper.append(header, summary);
             return wrapper;
@@ -2253,7 +2589,9 @@
             const canSendConformity = count === 0 && (requiresApprovedBudget !== true || hasApprovedBudget === true);
             const shouldDisable = count === 0 && requiresApprovedBudget === true && hasApprovedBudget !== true;
             button.dataset.activeIncidentCount = String(count);
-            button.className = canSendConformity ? 'btn-primary' : 'btn-secondary';
+            button.className = canSendConformity
+                ? 'btn-primary incidents-action-button incidents-action-button-emphasis'
+                : 'btn-secondary incidents-action-button';
             const iconName = canSendConformity ? 'mark_email_read' : 'rule';
             const label = count === 0
                 ? 'Enviar conformidad final'
@@ -2274,13 +2612,26 @@
             }
         }
 
+        function buildConformityHelperText(activeIncidentCount, hasApprovedBudget = false, requiresApprovedBudget = true) {
+            const count = Math.max(0, Number(activeIncidentCount) || 0);
+            if (count > 0) {
+                return `Quedan ${count} incidencia${count === 1 ? '' : 's'} activa${count === 1 ? '' : 's'}. Debes resolverlas antes del cierre.`;
+            }
+            if (requiresApprovedBudget === true && hasApprovedBudget !== true) {
+                return 'Aprobacion comercial pendiente: necesitas presupuesto aprobado antes de cerrar.';
+            }
+            return 'Caso listo. Genera y envia la conformidad final desde este bloque.';
+        }
+
         function applyCreateIncidentButtonState(button, activeIncidentCount) {
             if (!(button instanceof HTMLButtonElement)) return;
             const count = Math.max(0, Number(activeIncidentCount) || 0);
             button.dataset.activeIncidentCount = String(count);
             const iconName = count === 0 ? 'add_alert' : 'add_circle';
             const label = count === 0 ? 'Abrir nueva incidencia' : 'Crear incidencia';
-            button.className = count === 0 ? 'btn-secondary' : 'btn-primary';
+            button.className = count === 0
+                ? 'btn-secondary incidents-action-button'
+                : 'btn-primary incidents-action-button';
             const icon = options.createMaterialIconNode(iconName);
             if (icon) {
                 button.replaceChildren(icon, document.createTextNode(` ${label}`));
@@ -2333,6 +2684,14 @@
             if (conformityButton instanceof HTMLButtonElement) {
                 applyConformityButtonState(
                     conformityButton,
+                    activeIncidentCount,
+                    hasApprovedBudget,
+                    requiresApprovedBudget,
+                );
+            }
+            const conformityHelperText = header.querySelector('[data-role="conformity-helper-text"]');
+            if (conformityHelperText instanceof HTMLElement) {
+                conformityHelperText.textContent = buildConformityHelperText(
                     activeIncidentCount,
                     hasApprovedBudget,
                     requiresApprovedBudget,
@@ -3383,8 +3742,10 @@
             isAssetContext,
         }) {
             const fragment = document.createDocumentFragment();
+            const form = document.createElement('div');
+            form.className = 'incident-create-form';
             const grid = document.createElement('div');
-            grid.className = 'action-modal-grid';
+            grid.className = 'action-modal-grid incident-create-essential-grid';
 
             const installationInput = document.createElement('input');
             installationInput.type = 'text';
@@ -3452,14 +3813,31 @@
                 { htmlFor: 'actionIncidentNote', className: 'full-width' },
             ));
 
-            fragment.appendChild(grid);
-            fragment.appendChild(buildIncidentDispatchTargetFields());
-            fragment.appendChild(createGpsCapturePanel({
+            const essentialsSection = document.createElement('section');
+            essentialsSection.className = 'incident-create-section';
+            essentialsSection.appendChild(grid);
+            form.appendChild(essentialsSection);
+
+            const dispatchSection = document.createElement('section');
+            dispatchSection.className = 'incident-create-section';
+            dispatchSection.appendChild(buildIncidentDispatchTargetFields({}, {
+                collapsible: true,
+                collapsedByDefault: true,
+                defaultDispatchRequired: false,
+                hideDispatchRequiredField: true,
+            }));
+            form.appendChild(dispatchSection);
+
+            const gpsSection = document.createElement('section');
+            gpsSection.className = 'incident-create-section incident-create-gps-section';
+            gpsSection.appendChild(createGpsCapturePanel({
                 panelId: 'actionIncidentGpsPanel',
                 statusId: 'actionIncidentGpsStatus',
                 summaryId: 'actionIncidentGpsSummary',
                 buttonId: 'actionIncidentGpsRetryBtn',
+                compact: true,
             }));
+            form.appendChild(gpsSection);
 
             const applyLabel = document.createElement('label');
             applyLabel.className = 'action-checkbox';
@@ -3471,7 +3849,12 @@
             const applyCopy = document.createElement('span');
             applyCopy.textContent = 'Aplicar nota y tiempo al registro de instalación.';
             applyLabel.append(applyCheckbox, applyCopy);
-            fragment.appendChild(applyLabel);
+            const applySection = document.createElement('section');
+            applySection.className = 'incident-create-section incident-create-footer';
+            applySection.appendChild(applyLabel);
+            form.appendChild(applySection);
+
+            fragment.appendChild(form);
 
             return fragment;
         }
@@ -3550,7 +3933,7 @@
 
         function appendIncidentDispatchTargetSummary(parent, incident) {
             const summary = document.createElement('div');
-            summary.className = 'incident-evidence-block incident-dispatch-block';
+            summary.className = 'incident-evidence-block incident-secondary-panel incident-dispatch-block';
 
             const title = document.createElement('small');
             title.className = 'asset-muted';
@@ -3648,10 +4031,9 @@
         function appendIncidentResolutionSummary(parent, incident) {
             const statusValue = options.normalizeIncidentStatus(incident?.incident_status);
             const resolutionNote = String(incident?.resolution_note || '').trim();
-            if (!resolutionNote && statusValue !== 'resolved') return;
 
             const resolutionPanel = document.createElement('div');
-            resolutionPanel.className = 'incident-resolution-panel';
+            resolutionPanel.className = 'incident-resolution-panel incident-secondary-panel';
             resolutionPanel.dataset.panelRole = 'resolution';
             resolutionPanel.dataset.status = statusValue;
 
@@ -3674,7 +4056,7 @@
 
             const resolutionBody = document.createElement('p');
             resolutionBody.className = 'incident-resolution-text';
-            resolutionBody.textContent = resolutionNote || 'Incidencia marcada como resuelta sin nota de resolución.';
+            resolutionBody.textContent = resolutionNote || 'Sin nota de resolución.';
 
             resolutionPanel.append(resolutionHeader, resolutionBody);
 
@@ -3702,16 +4084,18 @@
                 panel.remove();
             });
 
-            const statusValue = options.normalizeIncidentStatus(incident?.incident_status);
-            const resolutionNote = String(incident?.resolution_note || '').trim();
-            if (!resolutionNote && statusValue !== 'resolved') return;
-
-            const anchor = card.querySelector('.incident-actions');
             const fragmentHost = document.createElement('div');
             appendIncidentResolutionSummary(fragmentHost, incident);
             const resolutionPanel = fragmentHost.firstElementChild;
             if (!(resolutionPanel instanceof HTMLElement)) return;
 
+            const secondaryGrid = card.querySelector('.incident-secondary-grid');
+            if (secondaryGrid instanceof HTMLElement) {
+                secondaryGrid.appendChild(resolutionPanel);
+                return;
+            }
+
+            const anchor = card.querySelector('.incident-actions');
             if (anchor instanceof HTMLElement) {
                 card.insertBefore(resolutionPanel, anchor);
                 return;
@@ -3769,6 +4153,12 @@
             const isSoftDeleted = String(incident?.deleted_at || '').trim().length > 0;
             const statusActions = document.createElement('div');
             statusActions.className = 'incident-actions';
+            const statusGroup = document.createElement('div');
+            statusGroup.className = 'incident-actions-group incident-actions-group-status';
+            const actionsSpacer = document.createElement('div');
+            actionsSpacer.className = 'incident-actions-spacer';
+            const utilityGroup = document.createElement('div');
+            utilityGroup.className = 'incident-actions-group incident-actions-group-utility';
             const incidentStatus = options.normalizeIncidentStatus(incident.incident_status);
             const canUpdateIncident = canCurrentUserWriteOperationalData() && !isSoftDeleted;
             const updateOptions = buildIncidentStatusUpdateOptions(incident, config);
@@ -3839,15 +4229,18 @@
                 });
             }
 
-            statusActions.append(
+            statusGroup.append(
                 makeStatusBtn('open'),
                 makeStatusBtn('in_progress'),
                 makeStatusBtn('paused'),
                 makeStatusBtn('resolved'),
+            );
+            utilityGroup.append(
                 dispatchBtn,
                 evidenceBtn,
             );
-            if (deleteBtn) statusActions.append(deleteBtn);
+            if (deleteBtn) utilityGroup.append(deleteBtn);
+            statusActions.append(statusGroup, actionsSpacer, utilityGroup);
             parent.appendChild(statusActions);
             return statusActions;
         }
@@ -3871,6 +4264,11 @@
                     assetId: options.parseStrictInteger(config.assetId),
                 });
             });
+            const utilityGroup = parent.querySelector('.incident-actions-group-utility');
+            if (utilityGroup instanceof HTMLElement) {
+                utilityGroup.appendChild(uploadPhotoBtn);
+                return;
+            }
             parent.appendChild(uploadPhotoBtn);
         }
 
@@ -3991,7 +4389,7 @@
 
         function appendIncidentEvidenceSummary(parent, incident) {
             const evidenceWrap = document.createElement('div');
-            evidenceWrap.className = 'incident-evidence-block';
+            evidenceWrap.className = 'incident-evidence-block incident-secondary-panel';
 
             const checklistTitle = document.createElement('small');
             checklistTitle.className = 'asset-muted';
@@ -4026,7 +4424,7 @@
 
         function syncIncidentEvidenceSummary(card, incident) {
             if (!(card instanceof HTMLElement)) return;
-            card.querySelectorAll('.incident-evidence-block').forEach((block) => {
+            card.querySelectorAll('.incident-evidence-block:not(.incident-dispatch-block)').forEach((block) => {
                 block.remove();
             });
 
@@ -4034,6 +4432,12 @@
             appendIncidentEvidenceSummary(fragmentHost, incident);
             const evidenceBlock = fragmentHost.firstElementChild;
             if (!(evidenceBlock instanceof HTMLElement)) return;
+
+            const secondaryGrid = card.querySelector('.incident-secondary-grid');
+            if (secondaryGrid instanceof HTMLElement) {
+                secondaryGrid.appendChild(evidenceBlock);
+                return;
+            }
 
             const highlights = card.querySelector('.incident-highlights');
             if (highlights instanceof HTMLElement) {
@@ -4060,6 +4464,12 @@
             appendIncidentDispatchTargetSummary(fragmentHost, incident);
             const dispatchBlock = fragmentHost.firstElementChild;
             if (!(dispatchBlock instanceof HTMLElement)) return;
+
+            const secondaryGrid = card.querySelector('.incident-secondary-grid');
+            if (secondaryGrid instanceof HTMLElement) {
+                secondaryGrid.appendChild(dispatchBlock);
+                return;
+            }
 
             const evidenceBlock = card.querySelector('.incident-evidence-block:not(.incident-dispatch-block)');
             if (evidenceBlock instanceof HTMLElement) {
@@ -4090,24 +4500,37 @@
             if (!cards.length) return;
 
             const statusValue = options.normalizeIncidentStatus(incident?.incident_status);
+            const severityValue = options.normalizeSeverity(incident?.severity || 'medium');
             const canUpdateIncident = canCurrentUserWriteOperationalData();
-            const runtimeText = Number.isInteger(options.resolveIncidentRealDurationSeconds(incident))
-                ? `Tiempo real: ${options.formatDuration(options.resolveIncidentRealDurationSeconds(incident))}${statusValue === 'in_progress'
-                    ? ' (en curso)'
-                    : statusValue === 'paused'
-                        ? ' (en pausa)'
-                        : ''
-                }`
+            const estimatedDurationSeconds = options.resolveIncidentEstimatedDurationSeconds(incident);
+            const estimatedMetricText = estimatedDurationSeconds > 0
+                ? options.formatDuration(estimatedDurationSeconds)
                 : '';
+            const realDurationSeconds = options.resolveIncidentRealDurationSeconds(incident);
+            const runtimeValueText = Number.isInteger(realDurationSeconds) && realDurationSeconds >= 0
+                ? options.formatDuration(realDurationSeconds)
+                : '';
+            const runtimeMetaText = statusValue === 'in_progress'
+                ? 'En curso'
+                : statusValue === 'paused'
+                    ? 'En pausa'
+                    : '';
+            const resolvedByMetricText = formatIncidentResolvedByMetricValue(incident);
 
             cards.forEach((card) => {
                 if (!(card instanceof HTMLElement)) return;
                 card.dataset.status = statusValue;
+                card.dataset.severity = severityValue;
                 card.dataset.updating = 'false';
                 card.__incidentData = buildLiveIncidentCardState(incident, {
                     installationId: options.parseStrictInteger(incident?.installation_id),
                     assetId: options.parseStrictInteger(incident?.asset_id),
                 });
+                const statusStrip = card.querySelector('.incident-status-strip');
+                if (statusStrip instanceof HTMLElement) {
+                    statusStrip.dataset.status = statusValue;
+                    statusStrip.dataset.severity = card.dataset.severity || 'medium';
+                }
                 syncIncidentDispatchTargetSummary(card, incident);
                 syncIncidentEvidenceSummary(card, incident);
                 syncIncidentResolutionPanel(card, incident);
@@ -4123,26 +4546,61 @@
                     );
                 }
 
-                const runtimeChip = card.querySelector('.incident-highlight-chip[data-chip="runtime"]');
-                if (runtimeChip instanceof HTMLElement && runtimeText) {
-                    runtimeChip.dataset.tone = statusValue === 'resolved' ? 'resolved' : statusValue;
-                    runtimeChip.textContent = runtimeText;
-                    pulseIncidentHighlightChip(runtimeChip);
-                    if (statusValue === 'in_progress') {
+                const severityBadge = card.querySelector('.incident-status-strip .badge:not(.incident-status-badge)');
+                if (severityBadge instanceof HTMLElement) {
+                    severityBadge.className = `badge ${severityValue}`;
+                    options.setElementTextWithMaterialIcon(
+                        severityBadge,
+                        getSeverityIconName(incident?.severity),
+                        String(incident?.severity || 'medium').toUpperCase(),
+                    );
+                }
+
+                const estimatedMetricValue = card.querySelector('.incident-metric-value[data-metric="estimated"]');
+                if (estimatedMetricValue instanceof HTMLElement) {
+                    estimatedMetricValue.textContent = estimatedMetricText || '--';
+                }
+
+                const runtimeMetricValue = card.querySelector('.incident-metric-value[data-metric="runtime"]');
+                if (runtimeMetricValue instanceof HTMLElement) {
+                    runtimeMetricValue.textContent = runtimeValueText || '--';
+                    const runtimeMetric = runtimeMetricValue.closest('.incident-metric');
+                    if (runtimeMetric instanceof HTMLElement) {
+                        runtimeMetric.dataset.tone = statusValue === 'resolved' ? 'resolved' : statusValue;
+                        let runtimeMeta = runtimeMetric.querySelector('.incident-metric-meta');
+                        if (runtimeMetaText) {
+                            if (!(runtimeMeta instanceof HTMLElement)) {
+                                runtimeMeta = document.createElement('small');
+                                runtimeMeta.className = 'incident-metric-meta';
+                                runtimeMetric.appendChild(runtimeMeta);
+                            }
+                            runtimeMeta.textContent = runtimeMetaText;
+                            runtimeMeta.hidden = false;
+                        } else if (runtimeMeta instanceof HTMLElement) {
+                            runtimeMeta.textContent = '';
+                            runtimeMeta.hidden = true;
+                        }
+                    }
+                    if (runtimeValueText && statusValue === 'in_progress') {
                         const runtimeStartMs = options.resolveIncidentRuntimeStartMs(incident);
                         if (Number.isFinite(runtimeStartMs) && runtimeStartMs > 0) {
-                            runtimeChip.dataset.runtimeLive = '1';
-                            runtimeChip.dataset.runtimeStartMs = String(runtimeStartMs);
-                            runtimeChip.dataset.runtimeBaseSeconds = String(
+                            runtimeMetricValue.dataset.runtimeLive = '1';
+                            runtimeMetricValue.dataset.runtimeStartMs = String(runtimeStartMs);
+                            runtimeMetricValue.dataset.runtimeBaseSeconds = String(
                                 Math.max(0, Number(incident?.actual_duration_seconds || 0) || 0),
                             );
                             options.ensureIncidentRuntimeTicker();
                         }
                     } else {
-                        delete runtimeChip.dataset.runtimeLive;
-                        delete runtimeChip.dataset.runtimeStartMs;
-                        delete runtimeChip.dataset.runtimeBaseSeconds;
+                        delete runtimeMetricValue.dataset.runtimeLive;
+                        delete runtimeMetricValue.dataset.runtimeStartMs;
+                        delete runtimeMetricValue.dataset.runtimeBaseSeconds;
                     }
+                }
+
+                const resolvedMetricValue = card.querySelector('.incident-metric-value[data-metric="resolved-by"]');
+                if (resolvedMetricValue instanceof HTMLElement) {
+                    resolvedMetricValue.textContent = resolvedByMetricText;
                 }
 
                 ['open', 'in_progress', 'paused', 'resolved'].forEach((targetStatus) => {
@@ -4287,9 +4745,6 @@
             const headingBlock = document.createElement('div');
             headingBlock.className = 'incident-card-heading';
 
-            const leftMeta = document.createElement('div');
-            leftMeta.className = 'incident-card-header-left';
-
             const severityBadge = document.createElement('span');
             severityBadge.className = `badge ${severityValue}`;
             options.setElementTextWithMaterialIcon(
@@ -4313,8 +4768,21 @@
                 ? `Inc #${incidentId}`
                 : 'Incidencia';
 
-            leftMeta.append(severityBadge, statusBadge, incidentRef);
-            headingBlock.appendChild(leftMeta);
+            const createdAt = document.createElement('small');
+            createdAt.className = 'asset-muted incident-status-strip-time';
+            createdAt.textContent = formatIncidentCreatedAtText(incident?.created_at);
+
+            const statusStrip = document.createElement('div');
+            statusStrip.className = 'incident-status-strip';
+            statusStrip.dataset.status = statusValue;
+            statusStrip.dataset.severity = severityValue;
+
+            const statusStripMain = document.createElement('div');
+            statusStripMain.className = 'incident-status-strip-main';
+            statusStripMain.append(severityBadge, statusBadge, incidentRef);
+
+            statusStrip.append(statusStripMain, createdAt);
+            incidentCard.appendChild(statusStrip);
 
             const assignmentContext = await loadContextTechnicianAssignments({
                 incidentId: options.parseStrictInteger(incident?.id),
@@ -4348,11 +4816,10 @@
                 headingBlock.appendChild(assignedLine);
             }
 
-            const createdAt = document.createElement('small');
-            createdAt.className = 'asset-muted';
-            createdAt.textContent = formatIncidentCreatedAtText(incident?.created_at);
-            incidentHeader.append(headingBlock, createdAt);
-            incidentCard.appendChild(incidentHeader);
+            if (headingBlock.childElementCount > 0) {
+                incidentHeader.append(headingBlock);
+                incidentCard.appendChild(incidentHeader);
+            }
 
             appendIncidentContextSummary(incidentCard, incident, {
                 installationId: options.parseStrictInteger(config.installationId ?? incident?.installation_id),
@@ -4371,7 +4838,12 @@
                     : null,
                 assetTone: config.assetTone || 'neutral',
             });
-            appendIncidentDispatchTargetSummary(incidentCard, incident);
+
+            const secondaryGrid = document.createElement('div');
+            secondaryGrid.className = 'incident-secondary-grid';
+            incidentCard.appendChild(secondaryGrid);
+
+            appendIncidentDispatchTargetSummary(secondaryGrid, incident);
 
             if (typeof options.renderEntityTechnicianAssignmentsPanel === 'function') {
                 const incidentTechniciansPanel = await options.renderEntityTechnicianAssignmentsPanel({
@@ -4390,11 +4862,14 @@
                         });
                     },
                 });
-                incidentCard.appendChild(incidentTechniciansPanel);
+                if (incidentTechniciansPanel instanceof HTMLElement) {
+                    incidentTechniciansPanel.classList.add('incident-secondary-panel', 'incident-responsible-block');
+                    secondaryGrid.appendChild(incidentTechniciansPanel);
+                }
             }
 
-            appendIncidentEvidenceSummary(incidentCard, incident);
-            appendIncidentResolutionSummary(incidentCard, incident);
+            appendIncidentEvidenceSummary(secondaryGrid, incident);
+            appendIncidentResolutionSummary(secondaryGrid, incident);
 
             const deletedAtText = String(incident?.deleted_at || '').trim();
             if (deletedAtText) {
@@ -4696,7 +5171,7 @@
 
             const backButton = document.createElement('button');
             backButton.type = 'button';
-            backButton.className = 'btn-secondary';
+            backButton.className = 'btn-secondary incidents-action-button incidents-action-button-quiet';
             const backIcon = options.createMaterialIconNode('arrow_back');
             if (backIcon) {
                 backButton.replaceChildren(backIcon, document.createTextNode(' Volver'));
@@ -4735,7 +5210,7 @@
 
             const budgetBtn = document.createElement('button');
             budgetBtn.type = 'button';
-            budgetBtn.className = 'btn-secondary';
+            budgetBtn.className = 'btn-secondary incidents-action-button';
             budgetBtn.dataset.role = 'budget-trigger';
             const budgetIcon = options.createMaterialIconNode('request_quote');
             if (budgetIcon) {
@@ -4754,7 +5229,7 @@
 
             const approveBudgetBtn = document.createElement('button');
             approveBudgetBtn.type = 'button';
-            approveBudgetBtn.className = 'btn-secondary';
+            approveBudgetBtn.className = 'btn-secondary incidents-action-button';
             approveBudgetBtn.dataset.role = 'budget-approve-trigger';
             const approveBudgetIcon = options.createMaterialIconNode('task_alt');
             if (approveBudgetIcon) {
@@ -4773,7 +5248,7 @@
 
             const commercialClosureBtn = document.createElement('button');
             commercialClosureBtn.type = 'button';
-            commercialClosureBtn.className = 'btn-secondary';
+            commercialClosureBtn.className = 'btn-secondary incidents-action-button';
             commercialClosureBtn.dataset.role = 'commercial-closure-trigger';
             const closureIcon = options.createMaterialIconNode('policy');
             if (closureIcon) {
@@ -4825,7 +5300,7 @@
 
             const shareTrackingBtn = document.createElement('button');
             shareTrackingBtn.type = 'button';
-            shareTrackingBtn.className = 'btn-secondary';
+            shareTrackingBtn.className = 'btn-secondary incidents-action-button';
             shareTrackingBtn.dataset.role = 'public-tracking-trigger';
             const shareTrackingIcon = options.createMaterialIconNode('share');
             if (shareTrackingIcon) {
@@ -4839,14 +5314,85 @@
 
             const actions = document.createElement('div');
             actions.className = 'incidents-header-actions';
-            const utilityActions = document.createElement('div');
-            utilityActions.className = 'incidents-header-utility-actions';
-            const secondaryActions = document.createElement('div');
-            secondaryActions.className = 'incidents-header-secondary-actions';
-            const shareActions = document.createElement('div');
-            shareActions.className = 'incidents-header-share-actions';
-            const primaryActions = document.createElement('div');
-            primaryActions.className = 'incidents-header-primary-actions';
+            const createHeaderActionGroup = ({
+                title,
+                description,
+                tone = 'neutral',
+                role = '',
+            }) => {
+                const group = document.createElement('section');
+                group.className = 'incidents-action-group';
+                group.dataset.tone = tone;
+                if (role) {
+                    group.dataset.role = role;
+                }
+
+                const head = document.createElement('div');
+                head.className = 'incidents-action-group-head';
+
+                const titleEl = document.createElement('p');
+                titleEl.className = 'incidents-action-group-title';
+                titleEl.textContent = title;
+
+                const descriptionEl = document.createElement('p');
+                descriptionEl.className = 'incidents-action-group-description';
+                descriptionEl.textContent = description;
+
+                head.append(titleEl, descriptionEl);
+
+                const body = document.createElement('div');
+                body.className = 'incidents-action-group-body';
+                group.append(head, body);
+
+                return {
+                    group,
+                    body,
+                    descriptionEl,
+                };
+            };
+
+            const primaryGroup = createHeaderActionGroup({
+                title: 'Cierre del caso',
+                description: buildConformityHelperText(
+                    activeIncidentCount,
+                    Boolean(latestApprovedBudget),
+                    requiresApprovedBudget,
+                ),
+                tone: 'primary',
+            });
+            primaryGroup.descriptionEl.dataset.role = 'conformity-helper-text';
+            primaryGroup.body.appendChild(conformityBtn);
+
+            const operationalGroup = createHeaderActionGroup({
+                title: 'Gestion operativa',
+                description: 'Abre incidencias y administra presupuesto, aprobacion y cobertura.',
+                tone: 'operations',
+            });
+            operationalGroup.body.append(
+                createIncidentBtn,
+                budgetBtn,
+                approveBudgetBtn,
+                commercialClosureBtn,
+            );
+
+            const trackingGroup = createHeaderActionGroup({
+                title: 'Seguimiento',
+                description: 'Comparte el estado publico del caso con el cliente.',
+                tone: 'tracking',
+            });
+
+            const utilityGroup = createHeaderActionGroup({
+                title: 'Auditoria',
+                description: 'Activa controles de revision para incidencias eliminadas.',
+                tone: 'utility',
+            });
+
+            const navigationGroup = createHeaderActionGroup({
+                title: 'Navegacion',
+                description: 'Vuelve al listado de registros sin perder este contexto.',
+                tone: 'navigation',
+            });
+            navigationGroup.body.appendChild(backButton);
             const technicianFilterWrap = document.createElement('label');
             technicianFilterWrap.className = 'incidents-technician-filter';
             technicianFilterWrap.hidden = true;
@@ -4879,21 +5425,18 @@
                 auditToggleText.textContent = 'Mostrar eliminadas (auditoría)';
 
                 auditToggleWrap.append(auditToggle, auditToggleText);
-                utilityActions.appendChild(auditToggleWrap);
+                utilityGroup.body.appendChild(auditToggleWrap);
             }
 
+            actions.append(primaryGroup.group, operationalGroup.group);
             if (canCurrentUserManagePublicTracking()) {
-                shareActions.appendChild(shareTrackingBtn);
+                trackingGroup.body.appendChild(shareTrackingBtn);
+                actions.appendChild(trackingGroup.group);
             }
-            secondaryActions.append(
-                createIncidentBtn,
-                budgetBtn,
-                approveBudgetBtn,
-                commercialClosureBtn,
-                backButton,
-            );
-            primaryActions.appendChild(conformityBtn);
-            actions.append(secondaryActions, utilityActions, shareActions, primaryActions);
+            if (utilityGroup.body.childElementCount > 0) {
+                actions.appendChild(utilityGroup.group);
+            }
+            actions.appendChild(navigationGroup.group);
 
             header.append(headerMain, actions);
             fragment.appendChild(header);
@@ -5016,9 +5559,12 @@
             const modalOpened = options.openActionModal({
                 title: isAssetContext ? `Nueva incidencia para equipo #${numericAssetId}` : 'Nueva incidencia',
                 subtitle: isAssetContext
-                    ? 'Completa detalle y severidad. El registro se resolverá automáticamente si no lo indicas.'
-                    : 'Completa detalle, severidad y tiempo estimado.',
+                    ? 'Carga detalle y severidad; el registro se resuelve automáticamente.'
+                    : 'Carga detalle, severidad y tiempo estimado.',
                 submitLabel: 'Crear incidencia',
+                modalWidth: 'wide',
+                modalClassName: 'action-modal-incident-create',
+                hideOnboard: true,
                 focusId: 'actionIncidentNote',
                 fields: buildIncidentCreateFields({
                     defaultApply,
@@ -5101,12 +5647,14 @@
                     }
 
                     const createdIncidentId = options.parseStrictInteger(result?.incident?.id);
+                    const dispatchTouched = document.getElementById('actionIncidentDispatchTouched')?.value === '1';
                     if (
                         Number.isInteger(createdIncidentId)
                         && createdIncidentId > 0
                         && (
                             dispatchTargetResult.payload?.dispatch_required === false
-                            || hasIncidentDispatchTargetData(dispatchTargetResult.payload)
+                                ? dispatchTouched
+                                : hasIncidentDispatchTargetContent(dispatchTargetResult.payload)
                         )
                     ) {
                         const dispatchResult = await options.api.updateIncidentDispatchTarget(
@@ -5164,6 +5712,7 @@
                         statusElement: document.getElementById('actionIncidentGpsStatus'),
                         summaryElement: document.getElementById('actionIncidentGpsSummary'),
                         captureButton: document.getElementById('actionIncidentGpsRetryBtn'),
+                        mode: 'compact-inline',
                         onSnapshotChange: syncIncidentGpsSnapshot,
                     });
                     void gpsController.capture();

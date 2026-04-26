@@ -95,6 +95,29 @@
             return { label: options.normalizeAssetStatusLabel(rawStatus), toneClass: 'unknown' };
         }
 
+        function normalizeNonNegativeInteger(value, fallback = 0) {
+            const parsed = Number(value);
+            if (!Number.isFinite(parsed)) return fallback;
+            return Math.max(0, Math.floor(parsed));
+        }
+
+        function resolveAssetActiveIncidentMeta(asset) {
+            const activeCount = normalizeNonNegativeInteger(
+                asset?.incident_active_count ?? asset?.active_incident_count,
+                0,
+            );
+            const criticalCount = normalizeNonNegativeInteger(
+                asset?.incident_critical_active_count ?? asset?.critical_active_incident_count,
+                0,
+            );
+            return {
+                activeCount,
+                criticalCount,
+                hasActive: activeCount > 0,
+                hasCritical: criticalCount > 0,
+            };
+        }
+
         function createAssetDetailMetaItem(label, value) {
             const item = document.createElement('div');
             item.className = 'asset-meta-item';
@@ -815,13 +838,29 @@
                 equipmentCell.dataset.label = 'Equipo';
                 const equipmentWrap = document.createElement('div');
                 equipmentWrap.className = 'asset-table-equipment';
+                const equipmentTitleRow = document.createElement('div');
+                equipmentTitleRow.className = 'asset-table-title-row';
                 const equipmentTitle = document.createElement('strong');
                 equipmentTitle.className = 'asset-table-title';
                 equipmentTitle.textContent = asset.external_code || `#${asset.id ?? 'N/A'}`;
+                const incidentMeta = resolveAssetActiveIncidentMeta(asset);
+                if (incidentMeta.hasActive) {
+                    row.classList.add('asset-row-has-active-incident');
+                    const activeIncidentIndicator = document.createElement('span');
+                    activeIncidentIndicator.className = 'asset-row-incident-indicator';
+                    if (incidentMeta.hasCritical) {
+                        activeIncidentIndicator.classList.add('is-critical');
+                    }
+                    const suffix = incidentMeta.activeCount === 1 ? 'activa' : 'activas';
+                    activeIncidentIndicator.textContent = `${incidentMeta.activeCount} ${suffix}`;
+                    equipmentTitleRow.append(equipmentTitle, activeIncidentIndicator);
+                } else {
+                    equipmentTitleRow.appendChild(equipmentTitle);
+                }
                 const equipmentMeta = document.createElement('small');
                 equipmentMeta.className = 'asset-table-meta';
                 equipmentMeta.textContent = [asset.brand || '-', asset.model || '-', asset.serial_number || '-'].join(' | ');
-                equipmentWrap.append(equipmentTitle, equipmentMeta);
+                equipmentWrap.append(equipmentTitleRow, equipmentMeta);
                 equipmentCell.appendChild(equipmentWrap);
 
                 const clientCell = document.createElement('td');
@@ -841,7 +880,7 @@
                 statusCell.dataset.label = 'Estado';
                 const statusBadge = document.createElement('span');
                 const stateMeta = resolveAssetOperationalStateMeta(asset.status);
-                statusBadge.className = `badge ${stateMeta.toneClass}`;
+                statusBadge.className = `badge asset-status-badge ${stateMeta.toneClass}`;
                 statusBadge.textContent = stateMeta.label;
                 statusCell.appendChild(statusBadge);
 
@@ -878,6 +917,9 @@
                 incidentBtn.className = 'btn-secondary table-action-btn';
                 incidentBtn.textContent = 'Incidencia';
                 incidentBtn.classList.add('spaced-action-btn');
+                if (incidentMeta.hasActive) {
+                    incidentBtn.classList.add('table-action-btn-incident-hot');
+                }
                 incidentBtn.addEventListener('click', (event) => {
                     event.preventDefault();
                     event.stopPropagation();

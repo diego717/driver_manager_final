@@ -1,22 +1,60 @@
 appId: com.diego717.drivermanager
-name: Smoke - Login and map queue
+name: Smoke - Queue swipe and field actions
 env:
   E2E_TECHNICIAN_USERNAME: e2e-tech
   E2E_TECHNICIAN_PASSWORD: E2ETech#2026
 ---
 - launchApp:
     clearState: true
-- assertVisible: "Acceso seguro"
-- tapOn: "Usuario web para iniciar sesion"
-- inputText: ${E2E_TECHNICIAN_USERNAME}
-- tapOn: "Contrasena web para iniciar sesion"
-- inputText: ${E2E_TECHNICIAN_PASSWORD}
-- tapOn: "Iniciar sesion"
+- runFlow:
+    when:
+      visible: "http://10.0.2.2:8081"
+    commands:
+      - tapOn: "http://10.0.2.2:8081"
+- runFlow:
+    when:
+      visible: "Connect"
+    commands:
+      - tapOn: "Connect"
+- runFlow:
+    when:
+      visible: "Continue"
+    commands:
+      - tapOn: "Continue"
+- runFlow:
+    when:
+      visible: "Go home"
+    commands:
+      - tapOn: "Go home"
+- runFlow:
+    when:
+      visible: "http://10.0.2.2:8081"
+    commands:
+      - tapOn: "http://10.0.2.2:8081"
+- runFlow:
+    when:
+      visible: "Usuario web para iniciar sesion"
+    commands:
+      - tapOn: "Usuario web para iniciar sesion"
+      - inputText: ${E2E_TECHNICIAN_USERNAME}
+      - tapOn: "Contrasena web para iniciar sesion"
+      - inputText: ${E2E_TECHNICIAN_PASSWORD}
+      - tapOn: "Iniciar sesion"
 - extendedWaitUntil:
-    visible: "Centro del turno"
-    timeout: 30000
-- tapOn: "Mapa"
+    visible: "Operacion en campo"
+    timeout: 180000
 - extendedWaitUntil:
-    visible: "Mapa operativo"
+    visible: "Incidencias asignadas"
     timeout: 30000
-- assertVisible: "Tecnico E2E Campo"
+- assertVisible: "Estado actual:"
+- swipe:
+    direction: LEFT
+- assertVisible: "Estado actual:"
+- tapOn: "Detalle"
+- extendedWaitUntil:
+    visible: "Acciones de campo"
+    timeout: 30000
+- tapOn: "Acciones de campo"
+- assertVisible: "Adjuntar foto"
+- assertVisible: "Conformidad final"
+- tapOn: "Cerrar"

@@ -173,6 +173,197 @@ export function createIncidentsRouteHandlers({
     };
   }
 
+  function normalizeWebSessionRole(roleRaw) {
+    const normalized = normalizeOptionalString(roleRaw, "").trim().toLowerCase();
+    if (!normalized) return "";
+    if (normalized === "viewer") return "solo_lectura";
+    return normalized;
+  }
+
+  function isTechnicianWebSession(webSession) {
+    return normalizeWebSessionRole(webSession?.role) === "tecnico";
+  }
+
+  function resolveWebSessionUserId(webSession) {
+    const parsed = Number.parseInt(String(webSession?.user_id ?? ""), 10);
+    if (!Number.isInteger(parsed) || parsed <= 0) return null;
+    return parsed;
+  }
+
+  function technicianIncidentScopeSql(incidentAlias = "i") {
+    return `
+      EXISTS (
+        SELECT 1
+        FROM technician_assignments ta
+        WHERE ta.tenant_id = ${incidentAlias}.tenant_id
+          AND ta.technician_id = ?
+          AND ta.unassigned_at IS NULL
+          AND (
+            (ta.entity_type = 'incident' AND ta.entity_id = CAST(${incidentAlias}.id AS TEXT))
+            OR (ta.entity_type = 'installation' AND ta.entity_id = CAST(${incidentAlias}.installation_id AS TEXT))
+            OR (
+              ta.entity_type = 'asset'
+              AND ${incidentAlias}.asset_id IS NOT NULL
+              AND ta.entity_id = CAST(${incidentAlias}.asset_id AS TEXT)
+            )
+          )
+      )
+    `;
+  }
+
+  async function resolveLinkedTechnicianIdForSession(env, incidentsTenantId, webSession) {
+    if (!isTechnicianWebSession(webSession)) return null;
+    const sessionUserId = resolveWebSessionUserId(webSession);
+    if (!sessionUserId) return null;
+    try {
+      const { results } = await env.DB.prepare(`
+        SELECT id
+        FROM technicians
+        WHERE tenant_id = ?
+          AND web_user_id = ?
+        LIMIT 1
+      `)
+        .bind(incidentsTenantId, sessionUserId)
+        .all();
+      const technicianId = Number(results?.[0]?.id);
+      if (!Number.isInteger(technicianId) || technicianId <= 0) {
+        return null;
+      }
+      return technicianId;
+    } catch (error) {
+      const message = normalizeOptionalString(error?.message, "").toLowerCase();
+      if (message.includes("no such table")) {
+        throw new HttpError(
+          503,
+          "Las asignaciones tecnicas no estan disponibles. Aplica las migraciones del modulo de tecnicos.",
+        );
+      }
+      throw error;
+    }
+  }
+
+  async function canTechnicianAccessIncident(
+    env,
+    {
+      incidentId,
+      incidentsTenantId,
+      technicianId,
+      installationId = null,
+    },
+  ) {
+    if (!Number.isInteger(technicianId) || technicianId <= 0) return false;
+    const conditions = [
+      "i.id = ?",
+      "i.tenant_id = ?",
+      "i.deleted_at IS NULL",
+      technicianIncidentScopeSql("i"),
+    ];
+    const bindings = [incidentId, incidentsTenantId];
+    if (Number.isInteger(installationId) && Number(installationId) > 0) {
+      conditions.splice(2, 0, "i.installation_id = ?");
+      bindings.push(Number(installationId));
+    }
+    bindings.push(technicianId);
+    try {
+      const { results } = await env.DB.prepare(`
+        SELECT 1
+        FROM incidents i
+        WHERE ${conditions.join("\n        AND ")}
+        LIMIT 1
+      `)
+        .bind(...bindings)
+        .all();
+      return Boolean(results?.[0]);
+    } catch (error) {
+      const message = normalizeOptionalString(error?.message, "").toLowerCase();
+      if (message.includes("no such table")) {
+        throw new HttpError(
+          503,
+          "Las asignaciones tecnicas no estan disponibles. Aplica las migraciones del modulo de tecnicos.",
+        );
+      }
+      throw error;
+    }
+  }
+
+  async function enforceTechnicianIncidentAccess(
+    env,
+    {
+      isWebRoute,
+      webSession,
+      incidentsTenantId,
+      incidentId,
+      installationId = null,
+      errorMessage = "No tienes permisos para operar sobre esta incidencia.",
+    },
+  ) {
+    if (!isWebRoute || !isTechnicianWebSession(webSession)) return;
+    const technicianId = await resolveLinkedTechnicianIdForSession(
+      env,
+      incidentsTenantId,
+      webSession,
+    );
+    if (!technicianId) {
+      throw new HttpError(403, errorMessage);
+    }
+    const hasAccess = await canTechnicianAccessIncident(env, {
+      incidentId,
+      incidentsTenantId,
+      technicianId,
+      installationId,
+    });
+    if (!hasAccess) {
+      throw new HttpError(403, errorMessage);
+    }
+  }
+
+  async function canTechnicianOperateInstallation(
+    env,
+    {
+      incidentsTenantId,
+      technicianId,
+      installationId,
+    },
+  ) {
+    if (!Number.isInteger(technicianId) || technicianId <= 0) return false;
+    try {
+      const { results } = await env.DB.prepare(`
+        SELECT 1
+        FROM technician_assignments ta
+        WHERE ta.tenant_id = ?
+          AND ta.technician_id = ?
+          AND ta.unassigned_at IS NULL
+          AND (
+            (ta.entity_type = 'installation' AND ta.entity_id = CAST(? AS TEXT))
+            OR (
+              ta.entity_type = 'asset'
+              AND EXISTS (
+                SELECT 1
+                FROM asset_installation_links links
+                WHERE links.tenant_id = ta.tenant_id
+                  AND links.installation_id = CAST(? AS INTEGER)
+                  AND links.asset_id = CAST(ta.entity_id AS INTEGER)
+                  AND links.unlinked_at IS NULL
+              )
+            )
+          )
+        LIMIT 1
+      `)
+        .bind(incidentsTenantId, technicianId, installationId, installationId)
+        .all();
+      return Boolean(results?.[0]);
+    } catch (error) {
+      const message = normalizeOptionalString(error?.message, "").toLowerCase();
+      if (message.includes("no such table")) {
+        throw new HttpError(
+          503,
+          "Las asignaciones tecnicas no estan disponibles. Aplica las migraciones del modulo de tecnicos.",
+        );
+      }
+      throw error;
+    }
+  }
+
   async function handleIncidentMapRoute(
     request,
     env,
@@ -467,6 +658,8 @@ export function createIncidentsRouteHandlers({
     corsPolicy,
     routeParts,
     incidentsTenantId,
+    isWebRoute = false,
+    webSession = null,
   ) {
     if (!(routeParts.length === 2 && routeParts[0] === "incidents" && request.method === "GET")) {
       return null;
@@ -533,6 +726,14 @@ export function createIncidentsRouteHandlers({
       if (!incident) {
         throw new HttpError(404, "Incidencia no encontrada.");
       }
+      await enforceTechnicianIncidentAccess(env, {
+        isWebRoute,
+        webSession,
+        incidentsTenantId,
+        incidentId,
+        installationId: incident.installation_id,
+        errorMessage: "No tienes permisos para ver esta incidencia.",
+      });
 
       const photos = await loadIncidentPhotosForTenant(env, incidentId, incidentsTenantId);
       return jsonResponse(request, env, corsPolicy, {
@@ -580,7 +781,35 @@ export function createIncidentsRouteHandlers({
           requireSuperAdminRole(webSession?.role);
         }
 
+        let technicianId = null;
+        if (isWebRoute && isTechnicianWebSession(webSession)) {
+          technicianId = await resolveLinkedTechnicianIdForSession(
+            env,
+            incidentsTenantId,
+            webSession,
+          );
+          if (!technicianId) {
+            return jsonResponse(request, env, corsPolicy, {
+              success: true,
+              installation_id: installationId,
+              incidents: [],
+            });
+          }
+        }
+
         try {
+          const incidentWhereConditions = [
+            "i.installation_id = ?",
+            "i.tenant_id = ?",
+          ];
+          const incidentBindings = [installationId, incidentsTenantId];
+          if (!includeDeleted) {
+            incidentWhereConditions.push("i.deleted_at IS NULL");
+          }
+          if (technicianId) {
+            incidentWhereConditions.push(technicianIncidentScopeSql("i"));
+            incidentBindings.push(technicianId);
+          }
           const incidentsQuery = `
             SELECT
               id,
@@ -627,27 +856,35 @@ export function createIncidentsRouteHandlers({
               deleted_at,
               deleted_by,
               deletion_reason
-            FROM incidents
-            WHERE installation_id = ?
-              AND tenant_id = ?
-              ${includeDeleted ? "" : "AND deleted_at IS NULL"}
-            ORDER BY created_at DESC, id DESC
+            FROM incidents i
+            WHERE ${incidentWhereConditions.join("\n              AND ")}
+            ORDER BY i.created_at DESC, i.id DESC
           `;
           const { results: incidents } = await env.DB.prepare(incidentsQuery)
-            .bind(installationId, incidentsTenantId)
+            .bind(...incidentBindings)
             .all();
 
+          const photoWhereConditions = [
+            "i.installation_id = ?",
+            "i.tenant_id = ?",
+          ];
+          const photoBindings = [installationId, incidentsTenantId];
+          if (!includeDeleted) {
+            photoWhereConditions.push("i.deleted_at IS NULL");
+          }
+          if (technicianId) {
+            photoWhereConditions.push(technicianIncidentScopeSql("i"));
+            photoBindings.push(technicianId);
+          }
           const photosQuery = `
             SELECT p.id, p.incident_id, p.r2_key, p.file_name, p.content_type, p.size_bytes, p.sha256, p.created_at
             FROM incident_photos p
             INNER JOIN incidents i ON i.id = p.incident_id
-            WHERE i.installation_id = ?
-              AND i.tenant_id = ?
-              ${includeDeleted ? "" : "AND i.deleted_at IS NULL"}
+            WHERE ${photoWhereConditions.join("\n              AND ")}
             ORDER BY p.created_at ASC, p.id ASC
           `;
           let { results: photos } = await env.DB.prepare(photosQuery)
-            .bind(installationId, incidentsTenantId)
+            .bind(...photoBindings)
             .all();
 
           if ((!photos || photos.length === 0) && incidents.length > 0) {
@@ -658,7 +895,7 @@ export function createIncidentsRouteHandlers({
             );
             if (Number(recoveredCount) > 0) {
               const recoveredPhotosResult = await env.DB.prepare(photosQuery)
-                .bind(installationId, incidentsTenantId)
+                .bind(...photoBindings)
                 .all();
               photos = recoveredPhotosResult?.results || [];
             }
@@ -695,6 +932,30 @@ export function createIncidentsRouteHandlers({
       if (request.method === "POST") {
         if (isWebRoute) {
           requireWebWriteRole(webSession?.role);
+          if (isTechnicianWebSession(webSession)) {
+            const technicianId = await resolveLinkedTechnicianIdForSession(
+              env,
+              incidentsTenantId,
+              webSession,
+            );
+            if (!technicianId) {
+              throw new HttpError(
+                403,
+                "No tienes permisos para crear incidencias fuera de tu alcance operativo.",
+              );
+            }
+            const canOperateInstallation = await canTechnicianOperateInstallation(env, {
+              incidentsTenantId,
+              technicianId,
+              installationId,
+            });
+            if (!canOperateInstallation) {
+              throw new HttpError(
+                403,
+                "No tienes permisos para crear incidencias fuera de tu alcance operativo.",
+              );
+            }
+          }
         }
         const data = await readJsonOrThrowBadRequest(request);
         const payload = validateIncidentPayload(data, {
@@ -1043,6 +1304,13 @@ export function createIncidentsRouteHandlers({
       if (!existingIncident) {
         throw new HttpError(404, "Incidencia no encontrada.");
       }
+      await enforceTechnicianIncidentAccess(env, {
+        isWebRoute,
+        webSession,
+        incidentsTenantId,
+        incidentId,
+        installationId: existingIncident.installation_id,
+      });
 
       const nextChecklistItems = payload.hasChecklistItems
         ? payload.checklistItems
@@ -1143,6 +1411,13 @@ export function createIncidentsRouteHandlers({
     if (!existingIncident) {
       throw new HttpError(404, "Incidencia no encontrada.");
     }
+    await enforceTechnicianIncidentAccess(env, {
+      isWebRoute,
+      webSession,
+      incidentsTenantId,
+      incidentId,
+      installationId: existingIncident.installation_id,
+    });
 
     const updatedAt = nowIso();
     const updatedBy = normalizeOptionalString(webSession?.sub, "web");
@@ -1344,11 +1619,6 @@ export function createIncidentsRouteHandlers({
         throw new HttpError(404, "Incidencia no encontrada.");
       }
 
-      const timingFields = await loadIncidentTimingFieldsForTenant(
-        env,
-        incidentId,
-        incidentsTenantId,
-      );
       const previousStatus = normalizeOptionalString(existingIncident.incident_status, "open")
         .toLowerCase();
       const isReopenAttempt =
@@ -1356,6 +1626,18 @@ export function createIncidentsRouteHandlers({
       if (isWebRoute && isReopenAttempt && !canReopenIncidents(webSession?.role)) {
         throw new HttpError(403, "No tienes permisos para reabrir incidencias.");
       }
+      await enforceTechnicianIncidentAccess(env, {
+        isWebRoute,
+        webSession,
+        incidentsTenantId,
+        incidentId,
+        installationId: existingIncident.installation_id,
+      });
+      const timingFields = await loadIncidentTimingFieldsForTenant(
+        env,
+        incidentId,
+        incidentsTenantId,
+      );
       const parseIsoMillis = (value) => {
         let text = String(value || "").trim();
         if (text && !text.endsWith("Z") && !text.includes("+") && !text.includes("-")) {
@@ -1592,6 +1874,13 @@ export function createIncidentsRouteHandlers({
       if (!incident) {
         throw new HttpError(404, "Incidencia no encontrada.");
       }
+      await enforceTechnicianIncidentAccess(env, {
+        isWebRoute,
+        webSession,
+        incidentsTenantId,
+        incidentId,
+        installationId: incident.installation_id,
+      });
 
       const extension = extensionFromType(contentType);
       const metadata = await resolveIncidentPhotoMetadata(
@@ -1676,6 +1965,13 @@ export function createIncidentsRouteHandlers({
       if (!photo) {
         throw new HttpError(404, "Foto no encontrada.");
       }
+      await enforceTechnicianIncidentAccess(env, {
+        isWebRoute,
+        webSession,
+        incidentsTenantId,
+        incidentId: Number(photo.incident_id),
+        errorMessage: "No tienes permisos para ver esta evidencia.",
+      });
 
       const object = await incidentsBucket.get(photo.r2_key);
       if (!object || !object.body) {

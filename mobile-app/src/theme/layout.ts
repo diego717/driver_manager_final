@@ -36,12 +36,12 @@ export const radii = {
 } as const;
 
 export const sizing = {
-  touchTargetMin: 44,
-  iconButton: 44,
+  touchTargetMin: 56,
+  iconButton: 50,
   headerActionsWidth: 112,
   bootCardMinWidth: 220,
   bootLogoSize: 74,
-  tabBarBaseHeight: 70,
+  tabBarBaseHeight: 78,
   appHeaderBaseHeight: 76,
 } as const;
 

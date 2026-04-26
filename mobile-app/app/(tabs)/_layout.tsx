@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import type { BottomTabBarButtonProps } from "@react-navigation/bottom-tabs";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { Link, Tabs } from "expo-router";
@@ -6,10 +6,7 @@ import { Animated, Easing, Platform, Pressable, StyleSheet, View } from "react-n
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useClientOnlyValue } from "@/components/useClientOnlyValue";
-import { readStoredWebSession } from "@/src/api/webAuth";
-import { canViewAssetCatalog } from "@/src/auth/roles";
 import AppHeaderTitle from "@/src/components/AppHeaderTitle";
-import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { triggerSelectionHaptic } from "@/src/services/haptics";
 import { radii, shadows, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
@@ -20,7 +17,7 @@ function TabBarIcon(props: {
   name: React.ComponentProps<typeof FontAwesome>["name"];
   color: string;
 }) {
-  return <FontAwesome size={21} style={{ marginBottom: -1 }} {...props} />;
+  return <FontAwesome size={22} style={{ marginBottom: -1 }} {...props} />;
 }
 
 function ThemeToggleButton() {
@@ -40,10 +37,6 @@ function ThemeToggleButton() {
   const rotate = spinAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ["0deg", "180deg"],
-  });
-  const scale = spinAnim.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [1, 1.08, 1],
   });
 
   return (
@@ -67,7 +60,7 @@ function ThemeToggleButton() {
         },
       ]}
     >
-      <Animated.View style={{ transform: [{ rotate }, { scale }] }}>
+      <Animated.View style={{ transform: [{ rotate }] }}>
         <FontAwesome
           name={resolvedScheme === "dark" ? "moon-o" : "sun-o"}
           size={20}
@@ -101,93 +94,67 @@ function SettingsButton() {
           },
         ]}
       >
-        <FontAwesome
-          name="cog"
-          size={21}
-          color={palette.accent}
-        />
+        <FontAwesome name="cog" size={21} color={palette.accent} />
       </Pressable>
     </Link>
   );
 }
 
-function AppTabBarButton(props: BottomTabBarButtonProps) {
+type FieldTabBarButtonProps = BottomTabBarButtonProps & {
+  emphasis?: boolean;
+};
+
+function FieldTabBarButton(props: FieldTabBarButtonProps) {
+  const { emphasis = false, ...buttonProps } = props;
   const palette = useAppPalette();
-  const selected = Boolean(props.accessibilityState?.selected);
+  const selected = Boolean(buttonProps.accessibilityState?.selected);
   const selectionAnim = useRef(new Animated.Value(selected ? 1 : 0)).current;
-  const {
-    accessibilityState,
-    accessibilityLabel,
-    accessibilityLargeContentTitle,
-    accessibilityShowsLargeContentViewer,
-    children,
-    delayLongPress,
-    disabled,
-    hitSlop,
-    onLayout,
-    onLongPress,
-    onPress,
-    style,
-    testID,
-  } = props;
-  const markerScale = selectionAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.35, 1],
-  });
-  const itemLift = selectionAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, -2],
-  });
 
   useEffect(() => {
     Animated.timing(selectionAnim, {
       toValue: selected ? 1 : 0,
-      duration: selected ? 220 : 150,
+      duration: selected ? 200 : 150,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
   }, [selected, selectionAnim]);
 
+  const markerScale = selectionAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.4, 1],
+  });
+
   return (
     <Pressable
-      accessibilityState={accessibilityState}
-      accessibilityLabel={accessibilityLabel}
-      accessibilityLargeContentTitle={accessibilityLargeContentTitle}
-      accessibilityShowsLargeContentViewer={accessibilityShowsLargeContentViewer}
-      delayLongPress={delayLongPress}
-      disabled={disabled}
-      hitSlop={hitSlop}
-      onLayout={onLayout}
-      onLongPress={onLongPress}
+      accessibilityState={buttonProps.accessibilityState}
+      accessibilityLabel={buttonProps.accessibilityLabel}
+      accessibilityLargeContentTitle={buttonProps.accessibilityLargeContentTitle}
+      accessibilityShowsLargeContentViewer={buttonProps.accessibilityShowsLargeContentViewer}
+      delayLongPress={buttonProps.delayLongPress}
+      disabled={buttonProps.disabled}
+      hitSlop={buttonProps.hitSlop}
+      onLayout={buttonProps.onLayout}
+      onLongPress={buttonProps.onLongPress}
       onPress={(event) => {
         triggerSelectionHaptic();
-        onPress?.(event);
+        buttonProps.onPress?.(event);
       }}
-      testID={testID}
+      testID={buttonProps.testID}
       style={({ pressed }) => [
         styles.tabButton,
-        style,
+        emphasis && styles.tabButtonEmphasis,
+        buttonProps.style,
         {
           backgroundColor: selected ? palette.heroBg : "transparent",
           borderColor: selected ? palette.heroBorder : "transparent",
-          borderStyle: selected ? "dashed" : "solid",
+          borderStyle: selected ? "solid" : "dashed",
           opacity: pressed ? 0.9 : 1,
           transform: [{ scale: pressed ? 0.98 : 1 }],
         },
       ]}
       android_ripple={{ color: palette.hoverBg }}
     >
-      <Animated.View
-        style={[
-          styles.tabButtonInner,
-          {
-            opacity: selected ? 1 : 0.94,
-            transform: [{ translateY: itemLift }],
-          },
-        ]}
-      >
-        {children}
-      </Animated.View>
+      <View style={styles.tabButtonInner}>{buttonProps.children}</View>
       <Animated.View
         pointerEvents="none"
         style={[
@@ -206,36 +173,8 @@ function AppTabBarButton(props: BottomTabBarButtonProps) {
 export default function TabLayout() {
   const palette = useAppPalette();
   const insets = useSafeAreaInsets();
-  const { hasActiveSession } = useSharedWebSessionState();
-  const [webSessionRole, setWebSessionRole] = useState<string | null>(null);
-  const tabBarBottomInset = Math.max(insets.bottom, Platform.OS === "android" ? 12 : 6);
+  const tabBarBottomInset = Math.max(insets.bottom, Platform.OS === "android" ? 12 : 8);
   const tabBarHeight = sizing.tabBarBaseHeight + tabBarBottomInset;
-  const shouldHideInventoryTab =
-    hasActiveSession && webSessionRole !== null && !canViewAssetCatalog(webSessionRole);
-
-  useEffect(() => {
-    let isMounted = true;
-    if (!hasActiveSession) {
-      setWebSessionRole(null);
-      return () => {
-        isMounted = false;
-      };
-    }
-
-    void readStoredWebSession()
-      .then((session) => {
-        if (!isMounted) return;
-        setWebSessionRole(session.role);
-      })
-      .catch(() => {
-        if (!isMounted) return;
-        setWebSessionRole(null);
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [hasActiveSession]);
 
   return (
     <Tabs
@@ -259,16 +198,15 @@ export default function TabLayout() {
           shadowColor: palette.shadowColor,
           ...shadows.tabBarRaised,
         },
-        tabBarButton: (props) => <AppTabBarButton {...props} />,
+        tabBarButton: (buttonProps) => <FieldTabBarButton {...buttonProps} />,
         tabBarItemStyle: {
-          marginHorizontal: 3,
-          marginTop: 2,
+          marginHorizontal: 2,
           minHeight: sizing.touchTargetMin,
           paddingVertical: 2,
         },
         tabBarLabelStyle: {
           fontFamily: fontFamilies.mono,
-          ...typeScale.buttonMonoTight,
+          ...typeScale.buttonMono,
           letterSpacing: 0.9,
           textTransform: "uppercase",
         },
@@ -279,7 +217,7 @@ export default function TabLayout() {
           borderBottomWidth: 1,
         },
         headerTitleAlign: "left",
-        headerTitle: () => <AppHeaderTitle title="SiteOps" />,
+        headerTitle: () => <AppHeaderTitle title="SiteOps Campo" />,
         headerTitleContainerStyle: {
           left: 12,
           right: 72,
@@ -304,30 +242,47 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: "Inicio",
-          tabBarIcon: ({ color }) => <TabBarIcon name="home" color={color} />,
+          title: "Mi cola",
+          tabBarIcon: ({ color }) => <TabBarIcon name="tasks" color={color} />,
         }}
       />
       <Tabs.Screen
+        name="scan"
+        options={{
+          title: "Escanear",
+          tabBarIcon: ({ color }) => <TabBarIcon name="qrcode" color={color} />,
+          tabBarButton: (buttonProps) => (
+            <FieldTabBarButton
+              {...buttonProps}
+              emphasis
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="new"
+        options={{
+          title: "Nueva",
+          tabBarIcon: ({ color }) => <TabBarIcon name="plus-square-o" color={color} />,
+        }}
+      />
+
+      <Tabs.Screen
         name="work"
         options={{
-          title: "Casos",
-          tabBarIcon: ({ color }) => <TabBarIcon name="briefcase" color={color} />,
+          href: null,
         }}
       />
       <Tabs.Screen
         name="map"
         options={{
-          title: "Mapa",
-          tabBarIcon: ({ color }) => <TabBarIcon name="map-marker" color={color} />,
+          href: null,
         }}
       />
       <Tabs.Screen
         name="explore"
         options={{
-          title: "Inventario",
-          href: shouldHideInventoryTab ? null : undefined,
-          tabBarIcon: ({ color }) => <TabBarIcon name="search" color={color} />,
+          href: null,
         }}
       />
     </Tabs>
@@ -343,8 +298,8 @@ const styles = StyleSheet.create({
     gap: spacing.s8,
   },
   headerButton: {
-    width: Platform.select({ ios: sizing.iconButton, default: sizing.iconButton }),
-    height: Platform.select({ ios: sizing.iconButton, default: sizing.iconButton }),
+    width: sizing.iconButton,
+    height: sizing.iconButton,
     borderRadius: radii.r10,
     borderWidth: 1,
     alignItems: "center",
@@ -357,14 +312,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
   },
+  tabButtonEmphasis: {
+    borderRadius: radii.r12,
+    minHeight: 62,
+    marginTop: -8,
+  },
   tabButtonInner: {
     alignItems: "center",
     justifyContent: "center",
   },
   tabActiveMarker: {
     position: "absolute",
-    left: "20%",
-    right: "20%",
+    left: "18%",
+    right: "18%",
     bottom: 2,
     height: 3,
     borderRadius: radii.full,

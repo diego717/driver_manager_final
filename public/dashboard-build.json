@@ -1,17 +1,17 @@
 {
   "versions": {
-    "css": "53765833cc",
+    "css": "57c6bf4824",
     "chart": "74401d738d",
     "jsqr": "bc40c8a151",
     "xlsx": "1c7abf2993",
     "qr": "961179b0a2",
     "api": "42eff6ba06",
-    "geolocation": "a99f19d896",
+    "geolocation": "f02b868436",
     "scan": "eee9eb93aa",
-    "modals": "6976cff499",
-    "incidents": "00a2ec4587",
-    "assets": "dc2c02524d",
-    "drivers": "107284fd17",
+    "modals": "38ffeb5d8c",
+    "incidents": "2cc7244de3",
+    "assets": "84b179ae12",
+    "drivers": "4101fd2b78",
     "audit": "cb0cf05086",
     "overview": "c278d46315",
     "myCases": "12d40c4c92",
@@ -19,11 +19,11 @@
     "auth": "6ca1f42a1c",
     "navigation": "74eb06359c",
     "bootstrap": "65dba6e7cf",
-    "js": "6b3c529c98",
+    "js": "c17742c208",
     "pwa": "55b84aa40e",
     "manifest": "9130a5f920",
     "sw": "4c87568cf6",
     "materialSymbolsFont": "ee7248184b",
-    "build": "0a38be5545"
+    "build": "be6791e54e"
   }
 }

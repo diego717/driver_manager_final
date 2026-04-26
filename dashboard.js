@@ -394,10 +394,10 @@ const SECTION_REQUIRED_BINDINGS = Object.freeze({
     ],
     visualLab: [
         'visualLabHero',
-        'visualLabFlow',
-        'visualLabTheme',
-        'visualLabFuture',
-        'visualLabMotion',
+        'visualLabTitle',
+        'visualLabOpsBoardTitle',
+        'visualLabThemeLightBtn',
+        'visualLabThemeDarkBtn',
     ],
     tenants: [
         'tenantsList',
@@ -428,10 +428,10 @@ const HEADER_PRIMARY_ACTIONS = {
     settings: { icon: 'description', label: 'Abrir auditoría', action: 'openAudit' },
 };
 const TOAST_TYPE_ICONS = {
-    success: '?',
-    error: '!',
-    warning: '!',
-    info: 'i',
+    success: 'check_circle',
+    error: 'error',
+    warning: 'warning',
+    info: 'info',
 };
 const ACTIVE_KPI_ANIMATIONS = new WeakMap();
 const REPORTED_SECTION_BINDING_WARNINGS = new Set();
@@ -1514,6 +1514,38 @@ function getTenantUserRoleOptions() {
     return options;
 }
 
+function normalizeTenantUserRole(rawRole) {
+    const normalized = String(rawRole || '').trim().toLowerCase();
+    if (normalized === 'viewer') return 'solo_lectura';
+    return normalized || 'solo_lectura';
+}
+
+function resolveTenantUserRoleBadgeMeta(rawRole) {
+    const normalizedRole = normalizeTenantUserRole(rawRole);
+    if (normalizedRole === 'platform_owner') {
+        return { key: 'platform_owner', label: 'Platform owner' };
+    }
+    if (normalizedRole === 'super_admin') {
+        return { key: 'super_admin', label: 'Super admin' };
+    }
+    if (normalizedRole === 'admin') {
+        return { key: 'admin', label: 'Admin' };
+    }
+    if (normalizedRole === 'supervisor') {
+        return { key: 'supervisor', label: 'Supervisor' };
+    }
+    if (normalizedRole === 'tecnico') {
+        return { key: 'tecnico', label: 'Tecnico' };
+    }
+    return { key: 'solo_lectura', label: 'Solo lectura' };
+}
+
+function isProtectedTenantUserForDeletion(user) {
+    const username = String(user?.username || '').trim().toLowerCase();
+    const role = normalizeTenantUserRole(user?.role);
+    return role === 'platform_owner' || username === 'diegosasen';
+}
+
 function buildTenantUserFields(user = null, tenantId = '') {
     const fragment = document.createDocumentFragment();
     const grid = document.createElement('div');
@@ -1728,6 +1760,10 @@ async function confirmDeleteTenantUser(user) {
     const userId = Number(user?.id);
     if (!tenantId || !Number.isInteger(userId) || userId <= 0) {
         showNotification('No pudimos identificar el usuario a eliminar.', 'error');
+        return;
+    }
+    if (isProtectedTenantUserForDeletion(user)) {
+        showNotification('Este usuario esta protegido y no se puede eliminar desde la consola.', 'warning');
         return;
     }
 
@@ -1972,20 +2008,26 @@ function renderTenantDetail() {
 
                 const copyWrap = document.createElement('div');
                 copyWrap.className = 'settings-assignment-copy';
+                const titleRow = document.createElement('div');
+                titleRow.className = 'settings-assignment-title-row';
                 const title = document.createElement('strong');
                 title.className = 'settings-assignment-title';
                 title.textContent = user.username || `Usuario #${user.id}`;
+                const roleBadgeMeta = resolveTenantUserRoleBadgeMeta(user.role);
+                const roleBadge = document.createElement('span');
+                roleBadge.className = `role-badge settings-role-badge settings-role-badge-${roleBadgeMeta.key}`;
+                roleBadge.textContent = roleBadgeMeta.label;
                 const meta = document.createElement('small');
                 meta.className = 'settings-assignment-meta';
                 meta.textContent = [
-                    user.role || 'solo_lectura',
                     user.is_active ? 'activo' : 'inactivo',
                     user.last_login_at ? `último login ${formatDateTime(user.last_login_at)}` : 'sin login',
                 ].join(' · ');
-                copyWrap.append(title, meta);
+                titleRow.append(title, roleBadge);
+                copyWrap.append(titleRow, meta);
 
                 const actions = document.createElement('div');
-                actions.className = 'settings-technician-actions';
+                actions.className = 'settings-technician-actions settings-user-actions';
                 const editUserBtn = document.createElement('button');
                 editUserBtn.type = 'button';
                 editUserBtn.className = 'btn-secondary';
@@ -1993,14 +2035,26 @@ function renderTenantDetail() {
                 editUserBtn.addEventListener('click', () => {
                     openTenantUserEditModal(user);
                 });
+                const isProtectedUser = isProtectedTenantUserForDeletion(user);
                 const deleteUserBtn = document.createElement('button');
                 deleteUserBtn.type = 'button';
-                deleteUserBtn.className = 'btn-secondary';
+                deleteUserBtn.className = 'btn-secondary btn-danger-subtle settings-user-delete-btn';
                 deleteUserBtn.textContent = 'Eliminar';
+                deleteUserBtn.disabled = isProtectedUser;
+                if (isProtectedUser) {
+                    deleteUserBtn.title = 'Usuario protegido: no se puede eliminar.';
+                }
                 deleteUserBtn.addEventListener('click', () => {
+                    if (isProtectedUser) {
+                        showNotification('Este usuario esta protegido y no se puede eliminar.', 'warning');
+                        return;
+                    }
                     confirmDeleteTenantUser(user);
                 });
-                actions.append(editUserBtn, deleteUserBtn);
+                const dangerZone = document.createElement('div');
+                dangerZone.className = 'settings-user-danger-zone';
+                dangerZone.appendChild(deleteUserBtn);
+                actions.append(editUserBtn, dangerZone);
 
                 top.append(copyWrap, actions);
                 card.append(top);
@@ -3986,7 +4040,7 @@ function ensureIncidentRuntimeTicker() {
     if (incidentRuntimeTickerId) return;
     incidentRuntimeTickerId = window.setInterval(() => {
         const liveRuntimeNodes = document.querySelectorAll(
-            '.incident-highlight-chip[data-runtime-live="1"]',
+            '.incident-highlight-chip[data-runtime-live="1"], .incident-metric-value[data-runtime-live="1"]',
         );
         if (!liveRuntimeNodes.length) {
             stopIncidentRuntimeTicker();
@@ -3998,7 +4052,11 @@ function ensureIncidentRuntimeTicker() {
             const baseSeconds = Math.max(0, Number(node.dataset.runtimeBaseSeconds || 0) || 0);
             if (!Number.isFinite(startMs) || startMs <= 0) continue;
             const runtimeSeconds = baseSeconds + Math.max(0, Math.floor((nowMs - startMs) / 1000));
-            node.textContent = `Tiempo real: ${formatDuration(runtimeSeconds)} (en curso)`;
+            if (node.classList.contains('incident-metric-value')) {
+                node.textContent = formatDuration(runtimeSeconds);
+            } else {
+                node.textContent = `Tiempo real: ${formatDuration(runtimeSeconds)} (en curso)`;
+            }
         }
     }, 1000);
 }
@@ -6421,7 +6479,98 @@ function navigateToSectionByKey(section) {
 }
 
 async function activateSection(section) {
+    if (window.matchMedia?.('(max-width: 768px)').matches) {
+        closeHeaderOverflowMenu();
+        closeMobileNavPanel();
+        const utilityActions = document.getElementById('recordsUtilityActions');
+        if (utilityActions instanceof HTMLDetailsElement) {
+            utilityActions.removeAttribute('open');
+        }
+    }
     return dashboardNavigation.activateSection(section);
+}
+
+function setupMobileViewportKeyboardSupport() {
+    if (!window.matchMedia?.('(max-width: 768px)').matches) return;
+    if (document.body.dataset.keyboardAware === 'true') return;
+    document.body.dataset.keyboardAware = 'true';
+
+    const editableSelector = 'input:not([type="hidden"]), textarea, select, [contenteditable="true"]';
+    let activeEditable = null;
+
+    const isEditable = (node) => node instanceof HTMLElement && node.matches(editableSelector);
+
+    const getKeyboardHeight = () => {
+        const visualViewport = window.visualViewport;
+        if (!visualViewport) return 0;
+        const keyboardHeight = window.innerHeight - visualViewport.height - visualViewport.offsetTop;
+        return keyboardHeight > 0 ? keyboardHeight : 0;
+    };
+
+    const nearestScrollContainer = (node) => {
+        if (!(node instanceof HTMLElement)) return null;
+        return node.closest('.flow-panel-content, .modal-content, .main-content');
+    };
+
+    const keepEditableInView = (node, behavior = 'smooth') => {
+        if (!isEditable(node)) return;
+        const target = node;
+        const visualViewport = window.visualViewport;
+        const viewportBottom = visualViewport
+            ? visualViewport.height + visualViewport.offsetTop
+            : window.innerHeight;
+        const rect = target.getBoundingClientRect();
+        const guard = 18;
+        if (rect.bottom <= viewportBottom - guard && rect.top >= guard) {
+            return;
+        }
+
+        target.scrollIntoView({
+            behavior,
+            block: 'center',
+            inline: 'nearest',
+        });
+
+        const container = nearestScrollContainer(target);
+        if (container instanceof HTMLElement && container !== document.body) {
+            const containerRect = container.getBoundingClientRect();
+            const deltaBottom = rect.bottom - (containerRect.bottom - guard);
+            if (deltaBottom > 0) {
+                container.scrollTop += deltaBottom;
+            }
+        }
+    };
+
+    const syncKeyboardState = () => {
+        const keyboardHeight = getKeyboardHeight();
+        const keyboardOpen = keyboardHeight > 88 && isEditable(activeEditable);
+        document.body.classList.toggle('keyboard-open', keyboardOpen);
+        if (keyboardOpen && isEditable(activeEditable)) {
+            keepEditableInView(activeEditable, 'auto');
+        }
+    };
+
+    document.addEventListener('focusin', (event) => {
+        if (!isEditable(event.target)) return;
+        activeEditable = event.target;
+        keepEditableInView(activeEditable, 'auto');
+        window.setTimeout(() => keepEditableInView(activeEditable), 140);
+        window.setTimeout(() => keepEditableInView(activeEditable), 280);
+        syncKeyboardState();
+    });
+
+    document.addEventListener('focusout', (event) => {
+        if (event.target !== activeEditable) return;
+        window.setTimeout(() => {
+            const focused = document.activeElement;
+            activeEditable = isEditable(focused) ? focused : null;
+            syncKeyboardState();
+        }, 50);
+    });
+
+    window.visualViewport?.addEventListener('resize', syncKeyboardState);
+    window.visualViewport?.addEventListener('scroll', syncKeyboardState);
+    window.addEventListener('resize', syncKeyboardState);
 }
 
 // Event Listeners
@@ -6731,7 +6880,8 @@ function showNotification(message, type = 'info') {
     body.className = 'toast-body';
 
     const icon = document.createElement('span');
-    icon.className = 'toast-icon';
+    icon.className = 'material-symbols-outlined toast-icon';
+    icon.setAttribute('aria-hidden', 'true');
     icon.textContent = TOAST_TYPE_ICONS[normalizedType] || TOAST_TYPE_ICONS.info;
 
     const messageNode = document.createElement('div');
@@ -6840,6 +6990,7 @@ const dashboardBootstrap = window.createDashboardBootstrap({
 });
 
 async function init() {
+    setupMobileViewportKeyboardSupport();
     return dashboardBootstrap.init();
 }
 
@@ -6874,6 +7025,7 @@ function setTheme(theme) {
 
     // Update Chart.js colors if charts exist
     updateChartTheme(theme);
+    syncThemeSelectionControls(theme);
 }
 
 function toggleTheme() {
@@ -6898,6 +7050,18 @@ function updateChartTheme(theme) {
     });
 }
 
+function syncThemeSelectionControls(theme) {
+    const normalizedTheme = theme === 'dark' ? 'dark' : 'light';
+    const themeButtons = document.querySelectorAll('[data-theme-value]');
+    themeButtons.forEach((button) => {
+        if (!button || !(button instanceof HTMLElement)) return;
+        const buttonTheme = button.dataset.themeValue === 'dark' ? 'dark' : 'light';
+        const isActive = buttonTheme === normalizedTheme;
+        button.classList.toggle('is-active', isActive);
+        button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+}
+
 function setupThemeToggle() {
     // Set initial theme
     const currentTheme = getCurrentTheme();
@@ -6910,6 +7074,20 @@ function setupThemeToggle() {
     themeToggleTargets.forEach((button) => {
         button.addEventListener('click', toggleTheme);
     });
+
+    const directThemeButtons = Array.from(document.querySelectorAll('[data-theme-value]'));
+    directThemeButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            const requestedTheme = button.dataset.themeValue === 'dark' ? 'dark' : 'light';
+            if (getCurrentTheme() === requestedTheme) {
+                return;
+            }
+            setTheme(requestedTheme);
+            const themeLabel = requestedTheme === 'light' ? 'claro' : 'oscuro';
+            showNotification(`Tema ${themeLabel} activado`, 'info');
+        });
+    });
+    syncThemeSelectionControls(currentTheme);
 
     // Listen for system theme changes
     if (window.matchMedia) {

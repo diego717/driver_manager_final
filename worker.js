@@ -5,6 +5,7 @@ import {
   canDeleteCriticalData,
   canManageAssetLinks,
   canManageAssetLoans,
+  canManagePublicTracking,
   canManagePlatform,
   canManageUsers,
   canViewAssetCatalog,
@@ -2619,6 +2620,12 @@ function requireAssetLoanManagerRole(role) {
   }
 }
 
+function requirePublicTrackingManagerRole(role) {
+  if (!canManagePublicTracking(role)) {
+    throw new HttpError(403, "No tienes permisos para gestionar enlaces publicos.");
+  }
+}
+
 async function upsertDeviceTokenForWebUser(
   env,
   {
@@ -3503,63 +3510,115 @@ async function handleAssetsRoute(
       const cursor = parseTimestampIdCursor(url.searchParams.get("cursor"));
       const filters = parseAssetSearchQuery(url.searchParams);
 
-      let query = `
-            SELECT
-              id,
-              tenant_id,
-              external_code,
-              brand,
-              serial_number,
-              model,
-              client_name,
-              notes,
-              status,
-              created_at,
-              updated_at
-            FROM assets
-            WHERE tenant_id = ?
-          `;
-      const bindings = [assetsTenantId];
-
-      if (filters.code) {
-        query += " AND LOWER(external_code) = ?";
-        bindings.push(filters.code);
-      }
-
-      if (filters.brand) {
-        query += " AND LOWER(brand) = ?";
-        bindings.push(filters.brand);
-      }
-
-      if (filters.status) {
-        query += " AND status = ?";
-        bindings.push(normalizeAssetStatus(filters.status));
-      }
-
-      if (filters.search) {
-        query += `
-              AND (
-                LOWER(external_code) LIKE ?
-                OR LOWER(brand) LIKE ?
-                OR LOWER(serial_number) LIKE ?
-                OR LOWER(model) LIKE ?
-                OR LOWER(client_name) LIKE ?
+      const buildAssetIncidentMatchSql = (includeDirectAssetMatch = true) => {
+        if (includeDirectAssetMatch) {
+          return `
+                (
+                  i.asset_id = assets.id
+                  OR EXISTS (
+                    SELECT 1
+                    FROM asset_installation_links l
+                    WHERE l.tenant_id = i.tenant_id
+                      AND l.asset_id = assets.id
+                      AND l.installation_id = i.installation_id
+                      AND i.created_at >= l.linked_at
+                      AND (l.unlinked_at IS NULL OR i.created_at <= l.unlinked_at)
+                  )
+                )
+              `;
+        }
+        return `
+              EXISTS (
+                SELECT 1
+                FROM asset_installation_links l
+                WHERE l.tenant_id = i.tenant_id
+                  AND l.asset_id = assets.id
+                  AND l.installation_id = i.installation_id
+                  AND i.created_at >= l.linked_at
+                  AND (l.unlinked_at IS NULL OR i.created_at <= l.unlinked_at)
               )
             `;
-        const wildcard = `%${filters.search}%`;
-        bindings.push(wildcard, wildcard, wildcard, wildcard, wildcard);
-      }
+      };
 
-      if (cursor) {
-        query += " AND (updated_at < ? OR (updated_at = ? AND id < ?))";
-        bindings.push(cursor.timestamp, cursor.timestamp, cursor.id);
-      }
+      const buildAssetsListQuery = (includeDirectAssetMatch = true) => {
+        const incidentMatchSql = buildAssetIncidentMatchSql(includeDirectAssetMatch);
+        let query = `
+              SELECT
+                id,
+                tenant_id,
+                external_code,
+                brand,
+                serial_number,
+                model,
+                client_name,
+                notes,
+                status,
+                created_at,
+                updated_at,
+                COALESCE((
+                  SELECT COUNT(1)
+                  FROM incidents i
+                  WHERE i.tenant_id = assets.tenant_id
+                    AND i.deleted_at IS NULL
+                    AND LOWER(COALESCE(i.incident_status, 'open')) IN ('open', 'in_progress', 'paused')
+                    AND ${incidentMatchSql}
+                ), 0) AS incident_active_count,
+                COALESCE((
+                  SELECT COUNT(1)
+                  FROM incidents i
+                  WHERE i.tenant_id = assets.tenant_id
+                    AND i.deleted_at IS NULL
+                    AND LOWER(COALESCE(i.incident_status, 'open')) IN ('open', 'in_progress', 'paused')
+                    AND LOWER(COALESCE(i.severity, '')) = 'critical'
+                    AND ${incidentMatchSql}
+                ), 0) AS incident_critical_active_count
+              FROM assets
+              WHERE tenant_id = ?
+            `;
+        const bindings = [assetsTenantId];
 
-      query += " ORDER BY updated_at DESC, id DESC LIMIT ?";
-      bindings.push(pageSize);
+        if (filters.code) {
+          query += " AND LOWER(external_code) = ?";
+          bindings.push(filters.code);
+        }
+
+        if (filters.brand) {
+          query += " AND LOWER(brand) = ?";
+          bindings.push(filters.brand);
+        }
+
+        if (filters.status) {
+          query += " AND status = ?";
+          bindings.push(normalizeAssetStatus(filters.status));
+        }
+
+        if (filters.search) {
+          query += `
+                AND (
+                  LOWER(external_code) LIKE ?
+                  OR LOWER(brand) LIKE ?
+                  OR LOWER(serial_number) LIKE ?
+                  OR LOWER(model) LIKE ?
+                  OR LOWER(client_name) LIKE ?
+                )
+              `;
+          const wildcard = `%${filters.search}%`;
+          bindings.push(wildcard, wildcard, wildcard, wildcard, wildcard);
+        }
+
+        if (cursor) {
+          query += " AND (updated_at < ? OR (updated_at = ? AND id < ?))";
+          bindings.push(cursor.timestamp, cursor.timestamp, cursor.id);
+        }
+
+        query += " ORDER BY updated_at DESC, id DESC LIMIT ?";
+        bindings.push(pageSize);
+        return { query, bindings };
+      };
 
       let results;
       try {
+        const { query, bindings } = buildAssetsListQuery(true);
         ({ results } = await env.DB.prepare(query).bind(...bindings).all());
       } catch (error) {
         if (isMissingAssetsTableError(error)) {
@@ -3568,7 +3627,11 @@ async function handleAssetsRoute(
             "La tabla de equipos no existe. Ejecuta migraciones para habilitar assets.",
           );
         }
-        throw error;
+        if (!isMissingIncidentAssetColumnError(error)) {
+          throw error;
+        }
+        const { query, bindings } = buildAssetsListQuery(false);
+        ({ results } = await env.DB.prepare(query).bind(...bindings).all());
       }
 
       const rows = results || [];
@@ -3667,7 +3730,7 @@ async function handleAssetsRoute(
 
     if (routeParts.length === 2 && routeParts[1] === "resolve" && request.method === "POST") {
       if (isWebRoute) {
-        requireWebWriteRole(webSession?.role);
+        requireAssetCatalogEditRole(sessionRole);
       }
       const data = await readJsonOrThrowBadRequest(request);
       const externalCode = normalizeAssetExternalCode(
@@ -5985,7 +6048,7 @@ const publicTrackingRouteHandlers = createPublicTrackingRouteHandlers({
   HttpError,
   jsonResponse,
   textResponse,
-  requireAdminRole,
+  requirePublicTrackingManagerRole,
   parsePositiveInt,
   getClientIpForRateLimit,
   issuePublicTrackingLink,
@@ -6439,6 +6502,8 @@ export default {
         corsPolicy,
         routeParts,
         incidentsTenantId,
+        isWebRoute,
+        webSession,
       );
       if (incidentDetailResponse) {
         return incidentDetailResponse;

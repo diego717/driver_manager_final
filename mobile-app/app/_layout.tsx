@@ -409,6 +409,10 @@ export function RootLayoutNav() {
             options={{ title: "Nueva incidencia" }}
           />
           <Stack.Screen
+            name="incident/quick"
+            options={{ title: "Incidencia rapida" }}
+          />
+          <Stack.Screen
             name="incident/detail"
             options={{ title: "Detalle incidencia" }}
           />

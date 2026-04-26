@@ -33,7 +33,6 @@ import { getCurrentLinkedTechnicianContext, getTechnicianAssignmentsByEntity } f
 import { readStoredWebSession } from "@/src/api/webAuth";
 import { canAssignTechnicians, canDeleteCriticalData, canReopenIncidents } from "@/src/auth/roles";
 import EmptyStateCard from "@/src/components/EmptyStateCard";
-import RuntimeChip from "@/src/components/RuntimeChip";
 import ScreenHero from "@/src/components/ScreenHero";
 import ScreenScaffold from "@/src/components/ScreenScaffold";
 import SectionCard from "@/src/components/SectionCard";
@@ -327,6 +326,11 @@ export default function IncidentDetailScreen() {
     );
   }, [incident, router]);
 
+  const onOpenConformity = useCallback(() => {
+    if (!incident?.installation_id) return;
+    router.push(`/case/conformity?installationId=${incident.installation_id}` as never);
+  }, [incident?.installation_id, router]);
+
   const onDeleteIncident = useCallback(() => {
     if (!incident || deletingIncident) return;
 
@@ -372,6 +376,11 @@ export default function IncidentDetailScreen() {
   const photoSnapInterval = photoCardWidth + 12;
   const activePhoto = incident?.photos?.[activePhotoIndex] ?? null;
   const navigationTargets = useMemo(() => buildIncidentNavigationTargets(incident), [incident]);
+  const resolvedByLabel = useMemo(() => {
+    const by = String(incident?.resolved_by || incident?.status_updated_by || "").trim();
+    const at = incident?.resolved_at ? formatDateTime(incident.resolved_at) : "";
+    return [by, at].filter(Boolean).join(" - ") || "--";
+  }, [incident?.resolved_at, incident?.resolved_by, incident?.status_updated_by]);
 
   const openExternalUrl = useCallback(async (targetUrl: string | null, label: string) => {
     if (!targetUrl) {
@@ -493,6 +502,13 @@ export default function IncidentDetailScreen() {
     linkedTechnician?.id &&
       assignmentSummary.some((assignment) => assignment.technician_id === linkedTechnician.id),
   );
+  const onOpenDestination = useCallback(() => {
+    const preferredGoogle = Boolean(navigationTargets.google);
+    void openExternalUrl(
+      navigationTargets.google || navigationTargets.waze || null,
+      preferredGoogle ? "Google Maps" : "Waze",
+    );
+  }, [navigationTargets.google, navigationTargets.waze, openExternalUrl]);
 
   return (
     <ScreenScaffold contentContainerStyle={styles.container}>
@@ -558,101 +574,253 @@ export default function IncidentDetailScreen() {
       ) : incident ? (
         <>
           <SectionCard
-            title="Datos principales"
-            description="El tiempo real y la pausa siguen la misma regla que en web."
+            title="Panel operativo"
+            description="Una sola card con filas separadas para estado, destino, responsables y evidencia."
           >
-            <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-              Instalacion: #{incident.installation_id}
-            </Text>
-            <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-              Usuario: {incident.reporter_username}
-            </Text>
-            <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-              Severidad: {getSeverityLabel(incident.severity)}
-            </Text>
-            <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-              Fuente: {incident.source}
-            </Text>
-            <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-              Fecha: {formatDateTime(incident.created_at)}
-            </Text>
-            {linkedTechnician ? (
-              <Text
-                style={[
-                  styles.cardText,
-                  { color: currentTechnicianAssigned ? palette.successText : palette.textSecondary },
-                ]}
-              >
-                Tu asignacion: {currentTechnicianAssigned ? "en tu cola" : "sin asignacion directa"}
+            <View style={[styles.panelSection, { borderBottomColor: palette.border }]}>
+              <Text style={[styles.dispatchPrimary, { color: palette.textPrimary }]}>
+                {incident.note || "Sin detalle operativo."}
               </Text>
-            ) : null}
-            {incident.resolved_at ? (
               <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-                Resuelta: {formatDateTime(incident.resolved_at)}
+                #{incident.id} - Instalacion #{incident.installation_id} - {getSeverityLabel(incident.severity)}
               </Text>
-            ) : null}
-
-            <View style={styles.runtimeGrid}>
-              <RuntimeChip label="Estado" value={getIncidentStatusLabel(status)} />
-              <RuntimeChip label="Estimado" value={formatDuration(estimated)} />
-              <RuntimeChip label="Real" value={formatDuration(runtime)} />
+              <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                Usuario: {incident.reporter_username || "-"} - Fuente: {incident.source}
+              </Text>
+              <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                Fecha: {formatDateTime(incident.created_at)}
+              </Text>
             </View>
 
-            <View style={styles.statusButtonsRow}>
-              {statusActions.map((action) => {
-                const selected = status === action.key;
-                return (
-                  <ConsoleButton
-                    key={action.key}
-                    variant={selected || action.primary ? "primary" : "ghost"}
-                    size="sm"
-                    style={styles.statusButton}
-                    onPress={() => {
-                      void onChangeStatus(action.key);
-                    }}
-                    disabled={updatingStatus || (status === "resolved" && action.key === "resolved")}
-                    label={action.label}
-                    textStyle={styles.statusButtonText}
-                  />
-                );
-              })}
+            <View style={[styles.panelSection, { borderBottomColor: palette.border }]}>
+              <View style={styles.metricsRow}>
+                <View
+                  style={[
+                    styles.metricCard,
+                    { backgroundColor: palette.surfaceAlt, borderColor: palette.border },
+                  ]}
+                >
+                  <Text style={[styles.metricLabel, { color: palette.textSecondary }]}>Estimado</Text>
+                  <Text style={[styles.metricValue, { color: palette.textPrimary }]}>
+                    {estimated > 0 ? formatDuration(estimated) : "--"}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.metricCard,
+                    { backgroundColor: palette.surfaceAlt, borderColor: palette.border },
+                  ]}
+                >
+                  <Text style={[styles.metricLabel, { color: palette.textSecondary }]}>Real</Text>
+                  <Text style={[styles.metricValue, { color: palette.textPrimary }]}>
+                    {formatDuration(runtime)}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.metricCard,
+                    { backgroundColor: palette.surfaceAlt, borderColor: palette.border },
+                  ]}
+                >
+                  <Text style={[styles.metricLabel, { color: palette.textSecondary }]}>Resuelta por</Text>
+                  <Text style={[styles.metricValue, { color: palette.textPrimary }]} numberOfLines={2}>
+                    {resolvedByLabel}
+                  </Text>
+                </View>
+              </View>
             </View>
-            {status === "resolved" && !canReopenResolvedIncident ? (
-              <Text style={[styles.cardText, { color: palette.textMuted }]}>
-                Solo admin, supervisor o plataforma pueden reabrir una incidencia resuelta.
-              </Text>
-            ) : null}
-            <TextInput
-              value={resolutionNote}
-              onChangeText={setResolutionNote}
-              style={[
-                styles.resolutionInput,
-                {
-                  backgroundColor: palette.inputBg,
-                  borderColor: palette.inputBorder,
-                  color: palette.textPrimary,
-                },
-              ]}
-              multiline
-              placeholder="Nota de resolucion (opcional)"
-              placeholderTextColor={palette.textMuted}
-              selectionColor={textInputAccentColor}
-              cursorColor={textInputAccentColor}
-            />
-          </SectionCard>
 
-          {assignmentSummary.length ? (
-            <SectionCard
-              title="Responsables"
-              description="Asignaciones heredadas de la incidencia, del caso o del activo."
-            >
-              {assignmentSummary.map((assignment) => (
-                <Text key={assignment.id} style={[styles.cardText, { color: palette.textSecondary }]}>
-                  {assignment.technician_display_name || `Tecnico #${assignment.technician_id}`} - {assignment.assignment_role} - {assignment.entity_type}
+            <View style={[styles.panelSection, { borderBottomColor: palette.border }]}>
+              <Text style={[styles.panelHeading, { color: palette.textPrimary }]}>Responsables</Text>
+              {assignmentSummary.length ? (
+                assignmentSummary.map((assignment) => (
+                  <Text key={assignment.id} style={[styles.cardText, { color: palette.textSecondary }]}>
+                    {assignment.technician_display_name || `Tecnico #${assignment.technician_id}`} - {assignment.assignment_role} - {assignment.entity_type}
+                  </Text>
+                ))
+              ) : (
+                <Text style={[styles.cardText, { color: palette.textMuted }]}>
+                  Sin responsables directos o heredados.
                 </Text>
-              ))}
-            </SectionCard>
-          ) : null}
+              )}
+              {linkedTechnician ? (
+                <Text
+                  style={[
+                    styles.cardText,
+                    { color: currentTechnicianAssigned ? palette.successText : palette.textSecondary },
+                  ]}
+                >
+                  Tu asignacion: {currentTechnicianAssigned ? "en tu cola" : "sin asignacion directa"}
+                </Text>
+              ) : null}
+            </View>
+
+            <View style={[styles.panelSection, { borderBottomColor: palette.border }]}>
+              <Text style={[styles.panelHeading, { color: palette.textPrimary }]}>Destino operativo</Text>
+              {incident.dispatch_required === false ? (
+                <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                  Esta incidencia no requiere visita en sitio ni datos de despacho operativo.
+                </Text>
+              ) : (
+                <>
+                  <Text style={[styles.dispatchPrimary, { color: palette.textPrimary }]}>
+                    {incident.dispatch_place_name?.trim() ||
+                      incident.target_label?.trim() ||
+                      "Sin destino operativo definido"}
+                  </Text>
+                  <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                    Direccion: {incident.dispatch_address?.trim() || "Falta direccion legible"}
+                  </Text>
+                  <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                    Referencia: {incident.dispatch_reference?.trim() || "Falta referencia de acceso"}
+                  </Text>
+                  {(incident.dispatch_contact_name || incident.dispatch_contact_phone) ? (
+                    <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                      Contacto: {[incident.dispatch_contact_name, incident.dispatch_contact_phone]
+                        .map((value) => String(value || "").trim())
+                        .filter(Boolean)
+                        .join(" | ")}
+                    </Text>
+                  ) : null}
+                  {incident.dispatch_notes?.trim() ? (
+                    <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                      Notas: {incident.dispatch_notes.trim()}
+                    </Text>
+                  ) : null}
+                  {incident.target_source?.trim() ? (
+                    <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                      Origen: {incident.target_source.trim()}
+                    </Text>
+                  ) : null}
+                  {(incident.target_lat !== null && incident.target_lat !== undefined && incident.target_lng !== null && incident.target_lng !== undefined) ? (
+                    <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                      Coordenadas: {incident.target_lat}, {incident.target_lng}
+                    </Text>
+                  ) : null}
+                </>
+              )}
+            </View>
+
+            <View style={[styles.panelSection, { borderBottomColor: palette.border }]}>
+              <Text style={[styles.panelHeading, { color: palette.textPrimary }]}>Checklist y evidencia</Text>
+              {incident.checklist_items?.length ? (
+                incident.checklist_items.map((item, index) => (
+                  <Text key={`${item}-${index}`} style={[styles.cardText, { color: palette.textSecondary }]}>
+                    - {item}
+                  </Text>
+                ))
+              ) : (
+                <Text style={[styles.cardText, { color: palette.textMuted }]}>
+                  Sin checklist guardado.
+                </Text>
+              )}
+              <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                Nota operativa: {incident.evidence_note?.trim() ? incident.evidence_note : "Sin nota operativa."}
+              </Text>
+            </View>
+
+            <View style={[styles.panelSection, { borderBottomColor: palette.border }]}>
+              <Text style={[styles.panelHeading, { color: palette.textPrimary }]}>Resolucion</Text>
+              <Text style={[styles.cardText, { color: palette.textSecondary }]}>
+                Estado actual: {getIncidentStatusLabel(status)}
+              </Text>
+              {status === "resolved" && !canReopenResolvedIncident ? (
+                <Text style={[styles.cardText, { color: palette.textMuted }]}>
+                  Solo admin, supervisor o plataforma pueden reabrir una incidencia resuelta.
+                </Text>
+              ) : null}
+              <TextInput
+                value={resolutionNote}
+                onChangeText={setResolutionNote}
+                style={[
+                  styles.resolutionInput,
+                  {
+                    backgroundColor: palette.inputBg,
+                    borderColor: palette.inputBorder,
+                    color: palette.textPrimary,
+                  },
+                ]}
+                multiline
+                placeholder="Nota de resolucion (opcional)"
+                placeholderTextColor={palette.textMuted}
+                selectionColor={textInputAccentColor}
+                cursorColor={textInputAccentColor}
+              />
+            </View>
+
+            <View style={styles.panelSectionLast}>
+              <View style={styles.actionGroupsRow}>
+                <View
+                  style={[
+                    styles.actionGroupPrimary,
+                    { backgroundColor: palette.surfaceAlt, borderColor: palette.border },
+                  ]}
+                >
+                  <Text style={[styles.actionGroupLabel, { color: palette.textPrimary }]}>Estado</Text>
+                  <View style={styles.statusButtonsRow}>
+                    {statusActions.map((action) => {
+                      const selected = status === action.key;
+                      return (
+                        <ConsoleButton
+                          key={action.key}
+                          variant={selected || action.primary ? "primary" : "secondary"}
+                          size="sm"
+                          style={styles.statusButton}
+                          onPress={() => {
+                            void onChangeStatus(action.key);
+                          }}
+                          disabled={updatingStatus || (status === "resolved" && action.key === "resolved")}
+                          label={action.label}
+                          textStyle={styles.statusButtonText}
+                        />
+                      );
+                    })}
+                  </View>
+                </View>
+
+                <View
+                  style={[
+                    styles.actionGroupSecondary,
+                    { backgroundColor: palette.surfaceAlt, borderColor: palette.border },
+                  ]}
+                >
+                  <Text style={[styles.actionGroupLabel, { color: palette.textPrimary }]}>Secundarias</Text>
+                  <ConsoleButton
+                    variant="subtle"
+                    size="sm"
+                    style={styles.secondaryActionButton}
+                    onPress={onOpenDestination}
+                    label="Destino"
+                    textStyle={styles.secondaryActionText}
+                  />
+                  <ConsoleButton
+                    variant="subtle"
+                    size="sm"
+                    style={styles.secondaryActionButton}
+                    onPress={onAddEvidence}
+                    label="Evidencia"
+                    textStyle={styles.secondaryActionText}
+                  />
+                  <ConsoleButton
+                    variant="ghost"
+                    size="sm"
+                    style={styles.secondaryActionButton}
+                    onPress={onAddEvidence}
+                    label="Subir fotos"
+                    textStyle={styles.secondaryActionText}
+                  />
+                  <ConsoleButton
+                    variant="ghost"
+                    size="sm"
+                    style={styles.secondaryActionButton}
+                    onPress={onOpenConformity}
+                    label="Conformidad"
+                    textStyle={styles.secondaryActionText}
+                  />
+                </View>
+              </View>
+            </View>
+          </SectionCard>
 
           {canManageTechnicianAssignments ? (
             <SectionCard
@@ -670,101 +838,6 @@ export default function IncidentDetailScreen() {
               />
             </SectionCard>
           ) : null}
-
-          <SectionCard title="Nota" description="Contexto principal de la incidencia.">
-            <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-              {incident.note}
-            </Text>
-          </SectionCard>
-
-          <SectionCard
-            title="Destino operativo"
-            description="Prioriza lugar, direccion y referencia para la visita antes que la coordenada sola."
-          >
-            {incident.dispatch_required === false ? (
-              <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-                Esta incidencia no requiere visita en sitio ni datos de despacho operativo.
-              </Text>
-            ) : (
-              <>
-                <Text style={[styles.dispatchPrimary, { color: palette.textPrimary }]}>
-                  {incident.dispatch_place_name?.trim() ||
-                    incident.target_label?.trim() ||
-                    "Sin destino operativo definido"}
-                </Text>
-                <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-                  Direccion: {incident.dispatch_address?.trim() || "Falta direccion legible"}
-                </Text>
-                <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-                  Referencia: {incident.dispatch_reference?.trim() || "Falta referencia de acceso"}
-                </Text>
-                {(incident.dispatch_contact_name || incident.dispatch_contact_phone) ? (
-                  <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-                    Contacto: {[incident.dispatch_contact_name, incident.dispatch_contact_phone]
-                      .map((value) => String(value || "").trim())
-                      .filter(Boolean)
-                      .join(" | ")}
-                  </Text>
-                ) : null}
-                {incident.dispatch_notes?.trim() ? (
-                  <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-                    Notas: {incident.dispatch_notes.trim()}
-                  </Text>
-                ) : null}
-                {incident.target_source?.trim() ? (
-                  <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-                    Origen: {incident.target_source.trim()}
-                  </Text>
-                ) : null}
-                {(incident.target_lat !== null && incident.target_lat !== undefined && incident.target_lng !== null && incident.target_lng !== undefined) ? (
-                  <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-                    Coordenadas: {incident.target_lat}, {incident.target_lng}
-                  </Text>
-                ) : null}
-
-                <View style={styles.navigationButtonsRow}>
-                  <ConsoleButton
-                    variant="primary"
-                    size="sm"
-                    style={styles.statusButton}
-                    onPress={() => {
-                      void openExternalUrl(navigationTargets.google, "Google Maps");
-                    }}
-                    label="Abrir en Google Maps"
-                    textStyle={styles.statusButtonText}
-                  />
-                  <ConsoleButton
-                    variant="ghost"
-                    size="sm"
-                    style={styles.statusButton}
-                    onPress={() => {
-                      void openExternalUrl(navigationTargets.waze, "Waze");
-                    }}
-                    label="Abrir en Waze"
-                    textStyle={styles.statusButtonText}
-                  />
-                </View>
-              </>
-            )}
-          </SectionCard>
-
-          <SectionCard title="Checklist y evidencia" description="Resumen rapido del trabajo realizado.">
-            {incident.checklist_items?.length ? (
-              incident.checklist_items.map((item, index) => (
-                <Text key={`${item}-${index}`} style={[styles.cardText, { color: palette.textSecondary }]}>
-                  - {item}
-                </Text>
-              ))
-            ) : (
-              <EmptyStateCard
-                title="Sin checklist guardado."
-                body="Todavia no se registro una validacion guiada para esta incidencia."
-              />
-            )}
-            <Text style={[styles.cardText, { color: palette.textSecondary }]}>
-              Nota operativa: {incident.evidence_note?.trim() ? incident.evidence_note : "Sin nota operativa."}
-            </Text>
-          </SectionCard>
 
           <SectionCard
             title={`Fotos (${incident.photos?.length ?? 0})`}
@@ -837,16 +910,6 @@ export default function IncidentDetailScreen() {
               </>
             )}
           </SectionCard>
-
-          <ConsoleButton
-            variant="primary"
-            style={styles.primaryButton}
-            onPress={onAddEvidence}
-            accessibilityLabel="Adjuntar evidencia fotografica"
-            accessibilityState={{ disabled: false }}
-            label="Adjuntar evidencia"
-            textStyle={styles.primaryButtonText}
-          />
           {canDeleteIncident ? (
             <ConsoleButton
               variant="warning"
@@ -923,25 +986,77 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.semibold,
     ...typeScale.titleStrong,
   },
-  runtimeGrid: {
+  panelSection: {
+    borderBottomWidth: 1,
+    paddingBottom: spacing.s10,
+    gap: spacing.s5,
+  },
+  panelSectionLast: {
+    gap: spacing.s8,
+  },
+  panelHeading: {
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.body,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  metricsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: spacing.s8,
   },
-  navigationButtonsRow: {
+  metricCard: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: "30%",
+    borderWidth: 1,
+    borderRadius: radii.r10,
+    paddingHorizontal: spacing.s8,
+    paddingVertical: spacing.s8,
+    gap: spacing.s2,
+  },
+  metricLabel: {
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    textTransform: "uppercase",
+  },
+  metricValue: {
+    fontFamily: fontFamilies.semibold,
+    ...typeScale.body,
+  },
+  actionGroupsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: spacing.s8,
-    marginTop: spacing.s8,
+  },
+  actionGroupPrimary: {
+    flex: 1.25,
+    minWidth: 220,
+    borderWidth: 1,
+    borderRadius: radii.r12,
+    padding: spacing.s8,
+    gap: spacing.s6,
+  },
+  actionGroupSecondary: {
+    flex: 1,
+    minWidth: 170,
+    borderWidth: 1,
+    borderRadius: radii.r12,
+    padding: spacing.s8,
+    gap: spacing.s6,
+  },
+  actionGroupLabel: {
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMonoTight,
+    textTransform: "uppercase",
   },
   statusButtonsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: spacing.s8,
-    marginTop: spacing.s6,
+    gap: spacing.s6,
   },
   statusButton: {
-    minWidth: "47%",
+    minWidth: "48%",
     flexGrow: 1,
     minHeight: MIN_TOUCH_TARGET_SIZE,
     borderRadius: radii.r10,
@@ -954,10 +1069,20 @@ const styles = StyleSheet.create({
     ...typeScale.buttonMono,
     textTransform: "uppercase",
   },
+  secondaryActionButton: {
+    minHeight: MIN_TOUCH_TARGET_SIZE,
+    borderRadius: radii.r10,
+    justifyContent: "center",
+  },
+  secondaryActionText: {
+    fontFamily: fontFamilies.mono,
+    ...typeScale.buttonMono,
+    textTransform: "uppercase",
+  },
   resolutionInput: {
     borderWidth: 1,
     borderRadius: radii.r14,
-    minHeight: MIN_TOUCH_TARGET_SIZE * 1.4,
+    minHeight: MIN_TOUCH_TARGET_SIZE * 1.35,
     marginTop: spacing.s6,
     paddingHorizontal: spacing.s10,
     paddingVertical: spacing.s8,
@@ -1042,19 +1167,6 @@ const styles = StyleSheet.create({
   photoRailHint: {
     fontFamily: fontFamilies.regular,
     ...typeScale.bodyCompact,
-  },
-  primaryButton: {
-    marginTop: spacing.s4,
-    borderRadius: radii.r10,
-    minHeight: MIN_TOUCH_TARGET_SIZE,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: spacing.s14,
-  },
-  primaryButtonText: {
-    fontFamily: fontFamilies.mono,
-    ...typeScale.buttonMono,
-    textTransform: "uppercase",
   },
   secondaryDangerButton: {
     marginTop: spacing.s4,
