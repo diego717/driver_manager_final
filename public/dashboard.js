@@ -3774,7 +3774,7 @@ function updateFilterChips() {
     chipsContainer.replaceChildren();
     let hasFilters = Object.keys(filters).length > 0;
 
-    if (clearBtn instanceof HTMLButtonElement) {
+    if (clearBtn instanceof HTMLElement && clearBtn.tagName === 'BUTTON') {
         clearBtn.disabled = !hasFilters;
         clearBtn.classList.toggle('is-disabled', !hasFilters);
     }

@@ -1,5 +1,5 @@
 // Service Worker for SiteOps Dashboard PWA
-const CACHE_NAME = 'driver-manager-be6791e54e';
+const CACHE_NAME = 'driver-manager-1be2189827';
 const STATIC_ASSETS = [
   '/web/dashboard',
   '/dashboard.css?v=57c6bf4824',
@@ -10,7 +10,9 @@ const STATIC_ASSETS = [
   '/dashboard-geolocation.js?v=f02b868436',
   '/dashboard-scan.js?v=eee9eb93aa',
   '/dashboard-modals.js?v=38ffeb5d8c',
-  '/dashboard-incidents.js?v=2cc7244de3',
+  '/dashboard-incidents-map.js?v=dd3d1b698a',
+  '/dashboard-incidents-commercial.js?v=ddc305d121',
+  '/dashboard-incidents.js?v=4d01326c93',
   '/dashboard-assets.js?v=84b179ae12',
   '/dashboard-drivers.js?v=4101fd2b78',
   '/dashboard-audit.js?v=cb0cf05086',
@@ -20,7 +22,7 @@ const STATIC_ASSETS = [
   '/dashboard-auth.js?v=6ca1f42a1c',
   '/dashboard-navigation.js?v=74eb06359c',
   '/dashboard-bootstrap.js?v=65dba6e7cf',
-  '/dashboard.js?v=c17742c208',
+  '/dashboard.js?v=c9ced77841',
   '/dashboard-pwa.js?v=55b84aa40e',
   '/manifest.json?v=9130a5f920',
   '/assets/fonts/material-symbols-outlined.ttf'
@@ -36,6 +38,8 @@ const STATIC_ASSET_PATHS = new Set([
   '/dashboard-geolocation.js',
   '/dashboard-scan.js',
   '/dashboard-modals.js',
+  '/dashboard-incidents-map.js',
+  '/dashboard-incidents-commercial.js',
   '/dashboard-incidents.js',
   '/dashboard-assets.js',
   '/dashboard-drivers.js',

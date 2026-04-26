@@ -1,4 +1,4 @@
-(function attachDashboardIncidentsFactory(global) {
+﻿(function attachDashboardIncidentsFactory(global) {
     function createDashboardIncidents(options) {
         const INCIDENT_PHOTO_UPLOAD_MAX_FILES = 5;
         const INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -387,7 +387,7 @@
             if (!normalized) return null;
             const parsed = Number(normalized.replace(',', '.'));
             if (!Number.isFinite(parsed)) {
-                throw new Error(`Campo "${fieldLabel}" inválido.`);
+                throw new Error(`Campo "${fieldLabel}" invÃ¡lido.`);
             }
             return parsed;
         }
@@ -578,18 +578,18 @@
             dispatchAddressInput.autocomplete = 'off';
             dispatchAddressInput.placeholder = 'Ej: Av. Italia 2456';
             dispatchAddressInput.value = String(incident?.dispatch_address || '').trim();
-            dispatchFields.appendChild(createInputGroup('Dirección', dispatchAddressInput, { htmlFor: dispatchAddressInput.id, className: 'full-width' }));
+            dispatchFields.appendChild(createInputGroup('DirecciÃ³n', dispatchAddressInput, { htmlFor: dispatchAddressInput.id, className: 'full-width' }));
 
             const dispatchPlacesStatus = document.createElement('p');
             dispatchPlacesStatus.id = 'actionIncidentDispatchPlacesStatus';
             dispatchPlacesStatus.className = 'asset-muted full-width';
-            dispatchPlacesStatus.textContent = 'Escribe una dirección o usa una sugerencia para completar coordenadas.';
+            dispatchPlacesStatus.textContent = 'Escribe una direcciÃ³n o usa una sugerencia para completar coordenadas.';
             dispatchFields.appendChild(dispatchPlacesStatus);
 
             const dispatchReferenceInput = document.createElement('textarea');
             dispatchReferenceInput.id = 'actionIncidentDispatchReference';
             dispatchReferenceInput.rows = 3;
-            dispatchReferenceInput.placeholder = 'Referencia de acceso o ubicación interna';
+            dispatchReferenceInput.placeholder = 'Referencia de acceso o ubicaciÃ³n interna';
             dispatchReferenceInput.value = String(incident?.dispatch_reference || '').trim();
             dispatchFields.appendChild(createInputGroup('Referencia', dispatchReferenceInput, { htmlFor: dispatchReferenceInput.id, className: 'full-width' }));
 
@@ -607,7 +607,7 @@
             dispatchContactPhoneInput.autocomplete = 'tel';
             dispatchContactPhoneInput.placeholder = '+598...';
             dispatchContactPhoneInput.value = String(incident?.dispatch_contact_phone || '').trim();
-            dispatchFields.appendChild(createInputGroup('Teléfono', dispatchContactPhoneInput, { htmlFor: dispatchContactPhoneInput.id }));
+            dispatchFields.appendChild(createInputGroup('TelÃ©fono', dispatchContactPhoneInput, { htmlFor: dispatchContactPhoneInput.id }));
 
             const dispatchNotesInput = document.createElement('textarea');
             dispatchNotesInput.id = 'actionIncidentDispatchNotes';
@@ -739,7 +739,7 @@
                     minute: '2-digit',
                 })
                 : '';
-            return [resolvedBy || 'Sin usuario', resolvedAtLabel].filter(Boolean).join(' · ');
+            return [resolvedBy || 'Sin usuario', resolvedAtLabel].filter(Boolean).join(' Â· ');
         }
 
         function normalizeIncidentContextText(value) {
@@ -873,1331 +873,37 @@
             parent.appendChild(highlights);
         }
 
-        function parseIncidentCoordinateValue(value) {
-            if (value === null || value === undefined || value === '') return null;
-            const parsed = Number(value);
-            return Number.isFinite(parsed) ? parsed : null;
-        }
+        const incidentMapModule = global.createDashboardIncidentsMap({
+            options,
+            INCIDENT_MAP_DEFAULT_DAYS,
+            INCIDENT_MAP_DEFAULT_LIMIT,
+            INCIDENT_MAP_ALLOWED_DAYS,
+            INCIDENT_MAP_DEFAULT_CENTER,
+            get incidentMapState() { return incidentMapState; },
+            set incidentMapState(value) { incidentMapState = value; },
+            get incidentMapRequestVersion() { return incidentMapRequestVersion; },
+            set incidentMapRequestVersion(value) { incidentMapRequestVersion = value; },
+            get incidentGoogleMapsLoaderPromise() { return incidentGoogleMapsLoaderPromise; },
+            set incidentGoogleMapsLoaderPromise(value) { incidentGoogleMapsLoaderPromise = value; },
+            canCurrentUserManagePublicTracking,
+            canCurrentUserViewTenantIncidentMap,
+            shouldUseAssignedIncidentMap,
+            canCurrentUserWriteOperationalData,
+            runIncidentRefreshInBackground,
+            applyVisibleIncidentUpdate,
+        });
+        const {
+            bindIncidentMapControls,
+            bindIncidentDispatchPlacesAutocomplete,
+            buildIncidentMapsUrl,
+            ensureAssignedIncidentMapDefaults,
+            formatIncidentCoordinateLine,
+            loadIncidentMap,
+            openPublicTrackingModal,
+            renderIncidentMap,
+            resolveIncidentOperationalCoordinates,
+        } = incidentMapModule;
 
-        function resolveIncidentOperationalCoordinates(incident) {
-            const targetLat = parseIncidentCoordinateValue(incident?.target_lat);
-            const targetLng = parseIncidentCoordinateValue(incident?.target_lng);
-            if (Number.isFinite(targetLat) && Number.isFinite(targetLng)) {
-                return { lat: targetLat, lng: targetLng, source: 'target' };
-            }
-
-            const gpsLat = parseIncidentCoordinateValue(incident?.gps_lat);
-            const gpsLng = parseIncidentCoordinateValue(incident?.gps_lng);
-            if (Number.isFinite(gpsLat) && Number.isFinite(gpsLng)) {
-                return { lat: gpsLat, lng: gpsLng, source: 'gps' };
-            }
-
-            return null;
-        }
-
-        function formatIncidentCoordinateLine(incident) {
-            const coordinates = resolveIncidentOperationalCoordinates(incident);
-            if (!coordinates) return 'Sin coordenadas disponibles.';
-            return `Lat ${coordinates.lat.toFixed(5)} · Lng ${coordinates.lng.toFixed(5)} · ${coordinates.source === 'target' ? 'Destino operativo' : 'GPS del reporte'}`;
-        }
-
-        function buildIncidentMapsUrl(incident) {
-            const coordinates = resolveIncidentOperationalCoordinates(incident);
-            if (!coordinates) return '';
-            return `https://www.google.com/maps?q=${coordinates.lat},${coordinates.lng}`;
-        }
-
-        function resolveIncidentGoogleMapsApiKey() {
-            const globalKey = String(window.__DM_GOOGLE_MAPS_API_KEY__ || '').trim();
-            if (globalKey) return globalKey;
-            try {
-                return String(window.localStorage.getItem('dm_google_maps_api_key') || '').trim();
-            } catch {
-                return '';
-            }
-        }
-
-        function hasIncidentGoogleMapsApi() {
-            return Boolean(window.google?.maps && typeof window.google.maps.Map === 'function');
-        }
-
-        function hasIncidentGooglePlacesApi() {
-            return Boolean(window.google?.maps?.places && typeof window.google.maps.places.Autocomplete === 'function');
-        }
-
-        function ensureIncidentGoogleMapsApi() {
-            if (hasIncidentGoogleMapsApi()) {
-                return Promise.resolve(window.google.maps);
-            }
-            if (incidentGoogleMapsLoaderPromise) {
-                return incidentGoogleMapsLoaderPromise;
-            }
-
-            const apiKey = resolveIncidentGoogleMapsApiKey();
-            if (!apiKey) {
-                return Promise.reject(new Error(
-                    'Configura `GOOGLE_MAPS_API_KEY` o `dm_google_maps_api_key` para ver el mapa real de incidencias.',
-                ));
-            }
-
-            incidentGoogleMapsLoaderPromise = new Promise((resolve, reject) => {
-                const cleanup = () => {
-                    try {
-                        delete window.__dmIncidentGoogleMapsReady__;
-                    } catch {
-                        window.__dmIncidentGoogleMapsReady__ = undefined;
-                    }
-                };
-                const failLoad = () => {
-                    cleanup();
-                    incidentGoogleMapsLoaderPromise = null;
-                    reject(new Error('Google Maps no pudo inicializarse. Revisa la API key o la conectividad.'));
-                };
-
-                window.__dmIncidentGoogleMapsReady__ = () => {
-                    cleanup();
-                    resolve(window.google.maps);
-                };
-
-                const existingScript = document.getElementById('incidentGoogleMapsScript');
-                if (existingScript) {
-                    existingScript.addEventListener('error', failLoad, { once: true });
-                    return;
-                }
-
-                const script = document.createElement('script');
-                script.id = 'incidentGoogleMapsScript';
-                script.async = true;
-                script.defer = true;
-                script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&loading=async&libraries=places&language=es&region=UY&callback=__dmIncidentGoogleMapsReady__`;
-                script.addEventListener('error', failLoad, { once: true });
-                document.head.appendChild(script);
-            });
-
-            return incidentGoogleMapsLoaderPromise;
-        }
-
-        function setIncidentDispatchPlacesStatus(message) {
-            const help = document.getElementById('actionIncidentDispatchPlacesStatus');
-            if (!(help instanceof HTMLElement)) return;
-            help.textContent = String(message || '').trim();
-        }
-
-        function dispatchIncidentInputMutation(input, value) {
-            if (!(input instanceof HTMLInputElement)) return;
-            input.value = value;
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-
-        function applyIncidentDispatchPlaceSelection(place) {
-            const addressInput = document.getElementById('actionIncidentDispatchAddress');
-            const placeInput = document.getElementById('actionIncidentDispatchPlace');
-            const latInput = document.getElementById('actionIncidentTargetLat');
-            const lngInput = document.getElementById('actionIncidentTargetLng');
-            const targetLabelInput = document.getElementById('actionIncidentTargetLabel');
-            if (!(addressInput instanceof HTMLInputElement)) return;
-
-            const nextAddress = String(place?.formatted_address || '').trim();
-            const nextPlaceName = String(place?.name || '').trim();
-            const nextLat = Number(place?.geometry?.location?.lat?.());
-            const nextLng = Number(place?.geometry?.location?.lng?.());
-            const previousPlace = placeInput instanceof HTMLInputElement ? String(placeInput.value || '').trim() : '';
-            const previousAddress = String(addressInput.value || '').trim();
-            const previousTargetLabel = targetLabelInput instanceof HTMLInputElement
-                ? String(targetLabelInput.value || '').trim()
-                : '';
-
-            if (nextAddress) {
-                dispatchIncidentInputMutation(addressInput, nextAddress);
-            }
-            if (placeInput instanceof HTMLInputElement && nextPlaceName) {
-                dispatchIncidentInputMutation(placeInput, nextPlaceName);
-            }
-            if (latInput instanceof HTMLInputElement && Number.isFinite(nextLat)) {
-                dispatchIncidentInputMutation(latInput, nextLat.toFixed(6));
-            }
-            if (lngInput instanceof HTMLInputElement && Number.isFinite(nextLng)) {
-                dispatchIncidentInputMutation(lngInput, nextLng.toFixed(6));
-            }
-            if (
-                targetLabelInput instanceof HTMLInputElement
-                && (
-                    !previousTargetLabel
-                    || previousTargetLabel === previousPlace
-                    || previousTargetLabel === previousAddress
-                )
-            ) {
-                const nextTargetLabel = nextPlaceName || nextAddress;
-                if (nextTargetLabel) {
-                    dispatchIncidentInputMutation(targetLabelInput, nextTargetLabel);
-                }
-            }
-
-            setIncidentDispatchPlacesStatus(
-                Number.isFinite(nextLat) && Number.isFinite(nextLng)
-                    ? 'Dirección validada con Google Maps. Coordenadas y nombre completados.'
-                    : 'Dirección sugerida aplicada. Puedes completar coordenadas manualmente si hace falta.',
-            );
-        }
-
-        function bindIncidentDispatchPlacesAutocomplete() {
-            const addressInput = document.getElementById('actionIncidentDispatchAddress');
-            if (!(addressInput instanceof HTMLInputElement)) return;
-            if (addressInput.dataset.placesBound === '1') return;
-
-            setIncidentDispatchPlacesStatus(
-                'Escribe una dirección o lugar y elige una sugerencia de Google. Si no aparece, puedes cargarlo manualmente.',
-            );
-
-            if (!hasIncidentGooglePlacesApi()) {
-                const apiKey = resolveIncidentGoogleMapsApiKey();
-                if (!apiKey) {
-                    return;
-                }
-                void ensureIncidentGoogleMapsApi()
-                    .then(() => {
-                        bindIncidentDispatchPlacesAutocomplete();
-                    })
-                    .catch(() => {
-                        setIncidentDispatchPlacesStatus(
-                            'No pudimos cargar Google Places. Puedes seguir completando dirección y coordenadas manualmente.',
-                        );
-                    });
-                return;
-            }
-
-            addressInput.dataset.placesBound = '1';
-            addressInput.autocomplete = 'off';
-            const autocomplete = new window.google.maps.places.Autocomplete(addressInput, {
-                fields: ['formatted_address', 'geometry', 'name'],
-                types: ['geocode', 'establishment'],
-            });
-            autocomplete.addListener('place_changed', () => {
-                const place = autocomplete.getPlace?.();
-                if (!place || typeof place !== 'object') {
-                    setIncidentDispatchPlacesStatus(
-                        'No pudimos leer la sugerencia elegida. Puedes completar la dirección manualmente.',
-                    );
-                    return;
-                }
-                applyIncidentDispatchPlaceSelection(place);
-            });
-        }
-
-        function renderIncidentMapCanvasMessage(message, tone = 'neutral') {
-            const canvas = document.getElementById('incidentMapCanvas');
-            if (!canvas) return;
-            canvas.innerHTML = '';
-            const state = document.createElement('div');
-            state.className = `incident-map-empty incident-map-empty-${tone}`;
-            const icon = document.createElement('span');
-            icon.className = 'material-symbols-outlined';
-            icon.textContent = tone === 'error' ? 'map_off' : 'explore_off';
-            const copy = document.createElement('div');
-            const title = document.createElement('strong');
-            title.textContent = tone === 'error' ? 'No pudimos iniciar el mapa' : 'Mapa listo para configurar';
-            const body = document.createElement('p');
-            body.textContent = message;
-            copy.append(title, body);
-            state.append(icon, copy);
-            canvas.appendChild(state);
-        }
-
-        function clearIncidentMapMarkers() {
-            if (!Array.isArray(incidentMapState.mapMarkers)) {
-                incidentMapState.mapMarkers = [];
-                return;
-            }
-            incidentMapState.mapMarkers.forEach((marker) => {
-                if (marker && typeof marker.setMap === 'function') {
-                    marker.setMap(null);
-                }
-            });
-            incidentMapState.mapMarkers = [];
-        }
-
-        function destroyIncidentMap() {
-            clearIncidentMapMarkers();
-            if (incidentMapState.map && typeof incidentMapState.map.getDiv === 'function') {
-                const mapContainer = incidentMapState.map.getDiv();
-                if (mapContainer) {
-                    mapContainer.replaceChildren();
-                }
-            }
-            incidentMapState.map = null;
-            incidentMapState.mapLoaded = false;
-        }
-
-        function syncIncidentMapCursor() {
-            const canvas = incidentMapState.map && typeof incidentMapState.map.getDiv === 'function'
-                ? incidentMapState.map.getDiv()
-                : null;
-            if (!canvas || !canvas.style) return;
-            canvas.style.cursor = incidentMapState.targetSelectionIncidentId ? 'crosshair' : '';
-        }
-
-        function upsertIncidentInMapState(incident) {
-            const incidentId = options.parseStrictInteger(incident?.id);
-            if (!Number.isInteger(incidentId) || incidentId <= 0) return;
-            [incidentMapState.sourceIncidents, incidentMapState.incidents].forEach((list) => {
-                if (!Array.isArray(list)) return;
-                const existingIndex = list.findIndex((entry) => (
-                    options.parseStrictInteger(entry?.id) === incidentId
-                ));
-                if (existingIndex >= 0) {
-                    list[existingIndex] = {
-                        ...list[existingIndex],
-                        ...incident,
-                    };
-                }
-            });
-        }
-
-        function cancelIncidentMapTargetSelection({ silent = false } = {}) {
-            if (!incidentMapState.targetSelectionIncidentId && !incidentMapState.savingTargetIncidentId) {
-                return;
-            }
-            incidentMapState.targetSelectionIncidentId = null;
-            incidentMapState.savingTargetIncidentId = null;
-            syncIncidentMapCursor();
-            renderIncidentMap();
-            if (!silent) {
-                options.showNotification('Ajuste manual del destino cancelado.', 'info');
-            }
-        }
-
-        function beginIncidentMapTargetSelection(incident) {
-            const incidentId = options.parseStrictInteger(incident?.id);
-            if (!Number.isInteger(incidentId) || incidentId <= 0) {
-                options.showNotification('Incidencia inválida para ajustar destino.', 'error');
-                return;
-            }
-            if (!incidentMapState.mapLoaded) {
-                options.showNotification('El mapa aún no está listo para fijar el destino.', 'warning');
-                return;
-            }
-            incidentMapState.selectedIncidentId = incidentId;
-            incidentMapState.targetSelectionIncidentId = incidentId;
-            incidentMapState.savingTargetIncidentId = null;
-            syncIncidentMapCursor();
-            renderIncidentMap();
-            options.showNotification(
-                `Haz click en el mapa para fijar el destino operativo de la incidencia #${incidentId}.`,
-                'info',
-            );
-        }
-
-        async function persistIncidentMapTargetSelection(incident, lngLat) {
-            const incidentId = options.parseStrictInteger(incident?.id);
-            const installationId = options.parseStrictInteger(incident?.installation_id);
-            const assetId = options.parseStrictInteger(incident?.asset_id);
-            const lat = Number(Number(lngLat?.lat).toFixed(6));
-            const lng = Number(Number(lngLat?.lng).toFixed(6));
-            if (!Number.isInteger(incidentId) || incidentId <= 0 || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-                options.showNotification('No se pudo leer la coordenada seleccionada.', 'error');
-                return;
-            }
-
-            incidentMapState.savingTargetIncidentId = incidentId;
-            renderIncidentMapDetail();
-
-            try {
-                const result = await options.api.updateIncidentDispatchTarget(incidentId, {
-                    dispatch_required: true,
-                    target_lat: lat,
-                    target_lng: lng,
-                    target_source: 'manual_map',
-                });
-                const nextIncident = result?.incident && typeof result.incident === 'object'
-                    ? result.incident
-                    : {
-                        ...incident,
-                        target_lat: lat,
-                        target_lng: lng,
-                        target_source: 'manual_map',
-                    };
-
-                applyVisibleIncidentUpdate(nextIncident);
-                upsertIncidentInMapState(nextIncident);
-                incidentMapState.selectedIncidentId = incidentId;
-                incidentMapState.targetSelectionIncidentId = null;
-                incidentMapState.savingTargetIncidentId = null;
-                syncIncidentMapCursor();
-                renderIncidentMap();
-                options.showNotification(`Destino operativo actualizado en incidencia #${incidentId}.`, 'success');
-                runIncidentRefreshInBackground(
-                    { installationId, assetId },
-                    'Guardamos el destino operativo, pero no pudimos refrescar el contexto completo.',
-                );
-                void options.loadDashboard();
-            } catch (error) {
-                incidentMapState.savingTargetIncidentId = null;
-                syncIncidentMapCursor();
-                renderIncidentMapDetail();
-                options.showNotification(
-                    `No se pudo guardar el destino operativo: ${error?.message || error}`,
-                    'error',
-                );
-            }
-        }
-
-        function buildIncidentMapFeatures(incidents) {
-            return (Array.isArray(incidents) ? incidents : [])
-                .map((incident) => ({
-                    incident,
-                    coordinates: resolveIncidentOperationalCoordinates(incident),
-                }))
-                .filter((entry) => entry.coordinates)
-                .map(({ incident, coordinates }) => ({
-                    incident,
-                    incidentId: options.parseStrictInteger(incident?.id) || 0,
-                    lat: coordinates.lat,
-                    lng: coordinates.lng,
-                    coordinateSource: coordinates.source,
-                }));
-        }
-
-        function buildIncidentMapMarkerIcon(incident, isSelected) {
-            const severity = getIncidentMapSeverityTone(incident?.severity);
-            const status = getIncidentMapStatusTone(incident?.incident_status);
-            const fillColor = severity === 'critical'
-                ? '#ef4444'
-                : severity === 'high'
-                    ? '#f97316'
-                    : severity === 'medium'
-                        ? '#f59e0b'
-                        : '#eab308';
-            const fillOpacity = status === 'resolved'
-                ? 0.68
-                : status === 'paused'
-                    ? 0.8
-                    : 0.96;
-
-            return {
-                path: window.google.maps.SymbolPath.CIRCLE,
-                scale: isSelected ? 8 : 6,
-                fillColor,
-                fillOpacity,
-                strokeColor: '#ffffff',
-                strokeWeight: isSelected ? 3 : 2,
-            };
-        }
-
-        function syncIncidentMapMarkers() {
-            if (!incidentMapState.map || !incidentMapState.mapLoaded) return [];
-            clearIncidentMapMarkers();
-            const features = buildIncidentMapFeatures(incidentMapState.incidents);
-
-            incidentMapState.mapMarkers = features.map((feature) => {
-                const isSelected = feature.incidentId === incidentMapState.selectedIncidentId;
-                const marker = new window.google.maps.Marker({
-                    map: incidentMapState.map,
-                    position: { lat: feature.lat, lng: feature.lng },
-                    title: String(
-                        feature.incident?.dispatch_place_name
-                        || feature.incident?.installation_client_name
-                        || `Incidencia #${feature.incidentId}`,
-                    ).trim(),
-                    icon: buildIncidentMapMarkerIcon(feature.incident, isSelected),
-                    zIndex: isSelected ? 20 : 10,
-                });
-
-                marker.addListener('click', () => {
-                    if (incidentMapState.targetSelectionIncidentId) return;
-                    incidentMapState.selectedIncidentId = feature.incidentId;
-                    renderIncidentMap();
-                });
-
-                return marker;
-            });
-
-            return features;
-        }
-
-        function fitIncidentMapToFeatures(features) {
-            if (!incidentMapState.map || !Array.isArray(features) || !features.length) return;
-            if (features.length === 1) {
-                incidentMapState.map.panTo({ lat: features[0].lat, lng: features[0].lng });
-                incidentMapState.map.setZoom(12);
-                return;
-            }
-
-            const bounds = new window.google.maps.LatLngBounds();
-            features.forEach((feature) => {
-                bounds.extend({ lat: feature.lat, lng: feature.lng });
-            });
-            incidentMapState.map.fitBounds(bounds, 72);
-        }
-
-        function focusIncidentInMap() {
-            if (!incidentMapState.map || !incidentMapState.mapLoaded || !incidentMapState.selectedIncidentId) return;
-            const selectedIncident = incidentMapState.incidents.find((incident) => (
-                options.parseStrictInteger(incident?.id) === incidentMapState.selectedIncidentId
-            ));
-            if (!selectedIncident) return;
-            const coordinates = resolveIncidentOperationalCoordinates(selectedIncident);
-            if (!coordinates) return;
-            incidentMapState.map.panTo({ lat: coordinates.lat, lng: coordinates.lng });
-        }
-
-        function getIncidentMapSeverityTone(severity) {
-            const normalized = options.normalizeSeverity(severity);
-            if (normalized === 'critical') return 'critical';
-            if (normalized === 'high') return 'high';
-            if (normalized === 'medium') return 'medium';
-            return 'low';
-        }
-
-        function getIncidentMapSeverityLabel(severity) {
-            const normalized = options.normalizeSeverity(severity);
-            if (normalized === 'critical') return 'Crítica';
-            if (normalized === 'high') return 'Alta';
-            if (normalized === 'medium') return 'Media';
-            return 'Baja';
-        }
-
-        function getIncidentMapStatusTone(status) {
-            const normalized = options.normalizeIncidentStatus(status);
-            if (normalized === 'resolved') return 'resolved';
-            if (normalized === 'in_progress') return 'active';
-            if (normalized === 'paused') return 'paused';
-            return 'open';
-        }
-
-        function formatIncidentMapRelativeTime(isoValue) {
-            const timestamp = Date.parse(String(isoValue || ''));
-            if (!Number.isFinite(timestamp)) return 'Sin fecha';
-            const diffMs = Date.now() - timestamp;
-            if (diffMs < 60 * 1000) return 'Hace instantes';
-            const diffHours = Math.floor(diffMs / (60 * 60 * 1000));
-            if (diffHours < 24) return `Hace ${diffHours}h`;
-            const diffDays = Math.floor(diffHours / 24);
-            if (diffDays < 30) return `Hace ${diffDays}d`;
-            return options.formatDateTime?.(isoValue) || String(isoValue || '').trim() || 'Sin fecha';
-        }
-
-        function updateIncidentMapFilterFeedback(sourceIncidents) {
-            const safeSource = Array.isArray(sourceIncidents) ? sourceIncidents : [];
-            const statusCounts = {
-                '': safeSource.length,
-                open: 0,
-                in_progress: 0,
-                paused: 0,
-                resolved: 0,
-            };
-            const severityCounts = {
-                '': safeSource.length,
-                critical: 0,
-                high: 0,
-                medium: 0,
-                low: 0,
-            };
-
-            safeSource.forEach((incident) => {
-                const statusTone = getIncidentMapStatusTone(incident?.incident_status);
-                if (Object.prototype.hasOwnProperty.call(statusCounts, statusTone)) {
-                    statusCounts[statusTone] += 1;
-                }
-
-                const severityTone = getIncidentMapSeverityTone(incident?.severity);
-                if (Object.prototype.hasOwnProperty.call(severityCounts, severityTone)) {
-                    severityCounts[severityTone] += 1;
-                }
-            });
-
-            [
-                ['incidentMapStatusFilter', statusCounts, incidentMapState.status],
-                ['incidentMapSeverityFilter', severityCounts, incidentMapState.severity],
-            ].forEach(([selectId, counts, selectedValue]) => {
-                const select = document.getElementById(selectId);
-                if (!(select instanceof window.HTMLSelectElement)) return;
-                Array.from(select.options || []).forEach((option) => {
-                    const optionValue = String(option.value || '').trim().toLowerCase();
-                    const baseLabel = String(option.dataset.baseLabel || option.textContent || '')
-                        .replace(/\s+\(\d+\)\s*$/, '')
-                        .trim();
-                    option.dataset.baseLabel = baseLabel;
-                    const count = Number.isInteger(counts[optionValue]) ? counts[optionValue] : 0;
-                    option.textContent = `${baseLabel} (${count})`;
-                });
-                select.classList.toggle('is-filtered', Boolean(String(selectedValue || '').trim()));
-            });
-        }
-
-        function syncIncidentMapRangeButtons() {
-            document.querySelectorAll('.incident-map-range-btn').forEach((button) => {
-                button.classList.toggle(
-                    'is-active',
-                    String(button.dataset.incidentMapDays || '').trim().toLowerCase() === incidentMapState.days,
-                );
-            });
-        }
-
-        function ensureAssignedIncidentMapDefaults() {
-            if (!shouldUseAssignedIncidentMap()) return;
-            if (incidentMapState.days !== 'all') {
-                incidentMapState.days = 'all';
-                syncIncidentMapRangeButtons();
-            }
-        }
-
-        function applyIncidentMapClientFilters(incidents, filters = {}) {
-            const list = Array.isArray(incidents) ? [...incidents] : [];
-            const normalizedStatus = String(filters.status || '').trim().toLowerCase();
-            const normalizedSeverity = String(filters.severity || '').trim().toLowerCase();
-            const normalizedDays = String(filters.days || '').trim().toLowerCase();
-            const limit = Number(filters.limit);
-            let minTimestamp = null;
-            if (normalizedDays && normalizedDays !== 'all') {
-                const parsedDays = Number.parseInt(normalizedDays, 10);
-                if (Number.isFinite(parsedDays) && parsedDays > 0) {
-                    minTimestamp = Date.now() - (parsedDays * 24 * 60 * 60 * 1000);
-                }
-            }
-
-            return list
-                .filter((incident) => {
-                    if (normalizedStatus && options.normalizeIncidentStatus(incident?.incident_status) !== normalizedStatus) {
-                        return false;
-                    }
-                    if (normalizedSeverity && options.normalizeSeverity(incident?.severity) !== normalizedSeverity) {
-                        return false;
-                    }
-                    if (minTimestamp !== null) {
-                        const createdAt = Date.parse(String(
-                            incident?.status_updated_at
-                            || incident?.resolved_at
-                            || incident?.created_at
-                            || '',
-                        ));
-                        if (Number.isFinite(createdAt) && createdAt < minTimestamp) {
-                            return false;
-                        }
-                    }
-                    return true;
-                })
-                .slice(0, Number.isFinite(limit) && limit > 0 ? limit : undefined);
-        }
-
-        function updateIncidentMapSummary(incidents) {
-            const summary = document.getElementById('incidentMapSummary');
-            if (!summary) return;
-
-            const total = incidents.length;
-            const critical = incidents.filter((incident) => options.normalizeSeverity(incident?.severity) === 'critical').length;
-            const active = incidents.filter((incident) => ['open', 'in_progress', 'paused'].includes(options.normalizeIncidentStatus(incident?.incident_status))).length;
-            const uniqueClients = new Set(
-                incidents
-                    .map((incident) => String(incident?.installation_client_name || '').trim())
-                    .filter(Boolean),
-            ).size;
-
-            summary.replaceChildren();
-
-            [
-                {
-                    label: `${total} punto${total === 1 ? '' : 's'} visibles`,
-                    tone: 'neutral',
-                },
-                {
-                    label: `${critical} critica${critical === 1 ? '' : 's'}`,
-                    tone: critical > 0 ? 'critical' : 'neutral',
-                },
-                {
-                    label: `${active} activa${active === 1 ? '' : 's'}`,
-                    tone: active > 0 ? 'active' : 'neutral',
-                },
-                {
-                    label: `${uniqueClients} cliente${uniqueClients === 1 ? '' : 's'}`,
-                    tone: 'muted',
-                },
-            ].forEach(({ label, tone }) => {
-                const chip = document.createElement('span');
-                chip.className = `incident-map-summary-chip incident-map-summary-chip-${tone}`;
-                chip.textContent = label;
-                summary.appendChild(chip);
-            });
-        }
-
-        function renderIncidentMapDetailList(container, incidents) {
-            const list = document.createElement('div');
-            list.className = 'incident-map-recent-list';
-            incidents.slice(0, 6).forEach((incident) => {
-                const button = document.createElement('button');
-                button.type = 'button';
-                button.className = 'incident-map-recent-item';
-                button.dataset.incidentId = String(options.parseStrictInteger(incident?.id) || '');
-                if (options.parseStrictInteger(incident?.id) === incidentMapState.selectedIncidentId) {
-                    button.classList.add('is-active');
-                }
-
-                const titleRow = document.createElement('div');
-                titleRow.className = 'incident-map-recent-head';
-                const severityTone = getIncidentMapSeverityTone(incident?.severity);
-                const statusTone = getIncidentMapStatusTone(incident?.incident_status);
-
-                const severityDot = document.createElement('span');
-                severityDot.className = `incident-map-recent-dot severity-${severityTone}`;
-                severityDot.setAttribute('aria-hidden', 'true');
-
-                const title = document.createElement('strong');
-                title.textContent = String(incident?.installation_client_name || `Incidencia #${incident?.id || '-'}`).trim();
-
-                const time = document.createElement('span');
-                time.className = 'incident-map-recent-time';
-                time.textContent = formatIncidentMapRelativeTime(incident?.created_at);
-                titleRow.append(severityDot, title, time);
-
-                const meta = document.createElement('div');
-                meta.className = 'incident-map-recent-meta';
-                const assetCode = String(incident?.asset_code || '').trim();
-
-                const registration = document.createElement('span');
-                registration.className = 'incident-map-recent-line';
-                registration.textContent = `${assetCode || `Registro #${incident?.installation_id || '-'}`}`;
-
-                const badges = document.createElement('div');
-                badges.className = 'incident-map-recent-badges';
-
-                const statusBadge = document.createElement('span');
-                statusBadge.className = `incident-map-recent-status tone-${statusTone}`;
-                statusBadge.textContent = options.incidentStatusLabel(incident?.incident_status);
-
-                const severityBadge = document.createElement('span');
-                severityBadge.className = `incident-map-recent-severity severity-${severityTone}`;
-                severityBadge.textContent = getIncidentMapSeverityLabel(incident?.severity);
-
-                badges.append(statusBadge, severityBadge);
-                meta.append(registration, badges);
-                button.append(titleRow, meta);
-                button.addEventListener('click', () => {
-                    incidentMapState.selectedIncidentId = options.parseStrictInteger(incident?.id);
-                    if (incidentMapState.targetSelectionIncidentId) {
-                        incidentMapState.targetSelectionIncidentId = incidentMapState.selectedIncidentId;
-                    }
-                    renderIncidentMap();
-                });
-                list.appendChild(button);
-            });
-            container.appendChild(list);
-        }
-
-        function renderIncidentMapDetail() {
-            const container = document.getElementById('incidentMapDetail');
-            if (!container) return;
-            container.replaceChildren();
-
-            if (incidentMapState.loading) {
-                const loading = document.createElement('p');
-                loading.className = 'loading';
-                loading.textContent = 'Cargando contexto del mapa...';
-                container.appendChild(loading);
-                return;
-            }
-
-            if (!incidentMapState.incidents.length) {
-                const empty = document.createElement('p');
-                empty.className = 'incident-map-detail-empty';
-                empty.textContent = incidentMapState.scope === 'assigned'
-                    ? incidentMapState.linkedTechnician?.id
-                        ? 'No tienes incidencias asignadas con coordenadas para este filtro.'
-                        : 'Vincula un tecnico a tu usuario web para ver tu mapa operativo personal.'
-                    : 'No hay incidencias con coordenadas para este filtro.';
-                container.appendChild(empty);
-                return;
-            }
-
-            const selectedIncident = incidentMapState.incidents.find((incident) => (
-                options.parseStrictInteger(incident?.id) === incidentMapState.selectedIncidentId
-            )) || incidentMapState.incidents[0];
-            const selectedIncidentId = options.parseStrictInteger(selectedIncident?.id);
-            incidentMapState.selectedIncidentId = selectedIncidentId;
-            const operationalCoordinates = resolveIncidentOperationalCoordinates(selectedIncident);
-            const hasTargetCoordinates =
-                parseIncidentCoordinateValue(selectedIncident?.target_lat) !== null &&
-                parseIncidentCoordinateValue(selectedIncident?.target_lng) !== null;
-            const selectionActive = incidentMapState.targetSelectionIncidentId === selectedIncidentId;
-            const savingSelection = incidentMapState.savingTargetIncidentId === selectedIncidentId;
-            const severityTone = getIncidentMapSeverityTone(selectedIncident?.severity);
-            const statusTone = getIncidentMapStatusTone(selectedIncident?.incident_status);
-
-            const header = document.createElement('div');
-            header.className = 'incident-map-detail-head';
-
-            const eyebrow = document.createElement('span');
-            eyebrow.className = 'incident-map-detail-eyebrow';
-            eyebrow.textContent = `Incidencia #${selectedIncidentId || '-'}`;
-
-            const title = document.createElement('h4');
-            title.textContent = String(selectedIncident?.installation_client_name || 'Sin cliente').trim() || 'Sin cliente';
-
-            const summary = document.createElement('p');
-            const assetCode = String(selectedIncident?.asset_code || '').trim();
-            summary.textContent = `${assetCode || 'Sin equipo'} · ${formatIncidentMapRelativeTime(selectedIncident?.created_at)}`;
-
-            const chips = document.createElement('div');
-            chips.className = 'incident-map-detail-chips';
-
-            const severityChip = document.createElement('span');
-            severityChip.className = `incident-map-detail-chip severity-${severityTone}`;
-            severityChip.textContent = getIncidentMapSeverityLabel(selectedIncident?.severity);
-
-            const statusChip = document.createElement('span');
-            statusChip.className = `incident-map-detail-chip tone-${statusTone}`;
-            statusChip.textContent = options.incidentStatusLabel(selectedIncident?.incident_status);
-
-            const recordChip = document.createElement('span');
-            recordChip.className = 'incident-map-detail-chip tone-neutral';
-            recordChip.textContent = `Registro #${options.parseStrictInteger(selectedIncident?.installation_id) || '-'}`;
-
-            chips.append(severityChip, statusChip, recordChip);
-
-            const destination = document.createElement('p');
-            destination.className = 'incident-map-detail-destination';
-            const destinationText = String(
-                selectedIncident?.dispatch_place_name
-                || selectedIncident?.target_label
-                || selectedIncident?.target_notes
-                || '',
-            ).trim();
-            destination.textContent = destinationText || formatIncidentCoordinateLine(selectedIncident);
-
-            header.append(eyebrow, title, summary, chips, destination);
-            container.appendChild(header);
-
-            const metrics = document.createElement('div');
-            metrics.className = 'incident-map-detail-metrics';
-            [
-                ['Tecnico', String(selectedIncident?.reporter_username || 'Sin dato').trim() || 'Sin dato'],
-                ['Coordenada', operationalCoordinates?.source === 'target'
-                    ? 'Destino operativo'
-                    : Number.isFinite(Number(selectedIncident?.gps_accuracy_m))
-                        ? `${Math.round(Number(selectedIncident.gps_accuracy_m))} m`
-                        : 'Sin dato'],
-                ['Estado', options.incidentStatusLabel(selectedIncident?.incident_status)],
-            ].forEach(([label, value]) => {
-                const metric = document.createElement('div');
-                metric.className = 'incident-map-detail-metric';
-                const metricLabel = document.createElement('span');
-                metricLabel.textContent = label;
-                const metricValue = document.createElement('strong');
-                metricValue.textContent = value;
-                metric.append(metricLabel, metricValue);
-                metrics.appendChild(metric);
-            });
-            container.appendChild(metrics);
-
-            const note = document.createElement('p');
-            note.className = 'incident-map-detail-note';
-            note.textContent = String(selectedIncident?.note || '').trim() || 'Sin nota operativa.';
-            container.appendChild(note);
-
-            const coordinate = document.createElement('p');
-            coordinate.className = 'incident-map-detail-coordinate';
-            coordinate.textContent = formatIncidentCoordinateLine(selectedIncident);
-            container.appendChild(coordinate);
-
-            const dispatchSummary = document.createElement('p');
-            dispatchSummary.className = 'incident-map-detail-note';
-            dispatchSummary.textContent = selectedIncident?.dispatch_required === false
-                ? 'Incidencia sin visita en sitio requerida.'
-                : hasTargetCoordinates
-                ? `Destino actual: ${String(selectedIncident?.dispatch_place_name || selectedIncident?.target_label || 'Punto operativo').trim()}`
-                : 'Aun no definiste un destino operativo manual para esta incidencia.';
-            container.appendChild(dispatchSummary);
-
-            if (selectionActive || savingSelection) {
-                const selectionHelp = document.createElement('p');
-                selectionHelp.className = 'incident-map-detail-note';
-                selectionHelp.textContent = savingSelection
-                    ? 'Guardando coordenada operativa seleccionada...'
-                    : 'Modo ajuste activo. Haz click en el mapa para fijar el nuevo destino operativo.';
-                container.appendChild(selectionHelp);
-            }
-
-            const actions = document.createElement('div');
-            actions.className = 'incident-map-detail-actions';
-
-            const secondaryActions = document.createElement('div');
-            secondaryActions.className = 'incident-map-detail-actions-secondary';
-
-            if (canCurrentUserWriteOperationalData()) {
-                const adjustTargetBtn = document.createElement('button');
-                adjustTargetBtn.type = 'button';
-                adjustTargetBtn.className = selectionActive ? 'btn-primary' : 'btn-secondary';
-                adjustTargetBtn.innerHTML = selectionActive
-                    ? '<span class="material-symbols-outlined icon-inline-sm">close</span> Cancelar ajuste'
-                    : `<span class="material-symbols-outlined icon-inline-sm">${hasTargetCoordinates ? 'edit_location' : 'add_location_alt'}</span> ${hasTargetCoordinates ? 'Mover destino' : 'Elegir destino'}`;
-                adjustTargetBtn.disabled = savingSelection || !incidentMapState.mapLoaded;
-                adjustTargetBtn.addEventListener('click', () => {
-                    if (selectionActive) {
-                        cancelIncidentMapTargetSelection();
-                        return;
-                    }
-                    beginIncidentMapTargetSelection(selectedIncident);
-                });
-                secondaryActions.appendChild(adjustTargetBtn);
-
-                const editDispatchBtn = document.createElement('button');
-                editDispatchBtn.type = 'button';
-                editDispatchBtn.className = 'btn-secondary';
-                editDispatchBtn.innerHTML = '<span class="material-symbols-outlined icon-inline-sm">edit_note</span> Editar destino';
-                editDispatchBtn.disabled = savingSelection;
-                editDispatchBtn.addEventListener('click', () => {
-                    void updateIncidentDispatchTargetFromWeb(selectedIncident, {
-                        installationId: selectedIncident?.installation_id,
-                        assetId: selectedIncident?.asset_id,
-                    });
-                });
-                secondaryActions.appendChild(editDispatchBtn);
-            }
-
-            const mapsUrl = buildIncidentMapsUrl(selectedIncident);
-            if (mapsUrl) {
-                const mapsLink = document.createElement('a');
-                mapsLink.className = 'btn-secondary';
-                mapsLink.href = mapsUrl;
-                mapsLink.target = '_blank';
-                mapsLink.rel = 'noreferrer noopener';
-                mapsLink.innerHTML = '<span class="material-symbols-outlined icon-inline-sm">travel_explore</span> Ver en Maps';
-                secondaryActions.appendChild(mapsLink);
-            }
-
-            if (secondaryActions.childElementCount) {
-                actions.appendChild(secondaryActions);
-            }
-
-            const primaryActions = document.createElement('div');
-            primaryActions.className = 'incident-map-detail-actions-primary';
-
-            const openCaseBtn = document.createElement('button');
-            openCaseBtn.type = 'button';
-            openCaseBtn.className = 'btn-primary incident-map-open-case-btn';
-            openCaseBtn.innerHTML = '<span class="material-symbols-outlined icon-inline-sm">warning</span> Abrir caso';
-            openCaseBtn.addEventListener('click', async () => {
-                await showIncidentsForInstallation(selectedIncident?.installation_id, {
-                    focusIncidentId: selectedIncidentId,
-                });
-            });
-            primaryActions.appendChild(openCaseBtn);
-            actions.appendChild(primaryActions);
-            container.appendChild(actions);
-
-            const recentTitle = document.createElement('p');
-            recentTitle.className = 'incident-map-recent-title';
-            recentTitle.textContent = 'Puntos recientes';
-            container.appendChild(recentTitle);
-            renderIncidentMapDetailList(container, incidentMapState.incidents);
-        }
-
-        function ensureIncidentMapInstance() {
-            const canvas = document.getElementById('incidentMapCanvas');
-            if (!canvas) return false;
-            if (!hasIncidentGoogleMapsApi()) {
-                const apiKey = resolveIncidentGoogleMapsApiKey();
-                if (!apiKey) {
-                    destroyIncidentMap();
-                    renderIncidentMapCanvasMessage(
-                        'Configura `GOOGLE_MAPS_API_KEY` o `dm_google_maps_api_key` para ver el mapa real de incidencias.',
-                        'neutral',
-                    );
-                    return false;
-                }
-
-                renderIncidentMapCanvasMessage('Cargando Google Maps para incidencias...', 'neutral');
-                void ensureIncidentGoogleMapsApi()
-                    .then(() => {
-                        renderIncidentMap();
-                    })
-                    .catch((error) => {
-                        destroyIncidentMap();
-                        renderIncidentMapCanvasMessage(
-                            error?.message || 'Google Maps no pudo inicializarse. Revisa la API key o la conectividad.',
-                            'error',
-                        );
-                    });
-                return false;
-            }
-
-            if (incidentMapState.map) {
-                syncIncidentMapCursor();
-                return true;
-            }
-
-            destroyIncidentMap();
-            canvas.innerHTML = '';
-            const map = new window.google.maps.Map(canvas, {
-                center: { lat: INCIDENT_MAP_DEFAULT_CENTER[1], lng: INCIDENT_MAP_DEFAULT_CENTER[0] },
-                zoom: 8.8,
-                clickableIcons: false,
-                fullscreenControl: false,
-                mapTypeControl: false,
-                streetViewControl: false,
-                gestureHandling: 'greedy',
-            });
-
-            map.addListener('click', (event) => {
-                const targetIncidentId = incidentMapState.targetSelectionIncidentId;
-                if (!Number.isInteger(targetIncidentId) || targetIncidentId <= 0) return;
-                if (incidentMapState.savingTargetIncidentId === targetIncidentId) return;
-                const targetIncident = incidentMapState.incidents.find((incident) => (
-                    options.parseStrictInteger(incident?.id) === targetIncidentId
-                ));
-                if (!targetIncident) return;
-                const lat = Number(event?.latLng?.lat?.());
-                const lng = Number(event?.latLng?.lng?.());
-                if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-                void persistIncidentMapTargetSelection(targetIncident, { lat, lng });
-            });
-
-            incidentMapState.map = map;
-            incidentMapState.mapLoaded = true;
-            syncIncidentMapCursor();
-            return true;
-        }
-
-        function renderIncidentMap() {
-            updateIncidentMapFilterFeedback(
-                Array.isArray(incidentMapState.sourceIncidents) ? incidentMapState.sourceIncidents : [],
-            );
-            updateIncidentMapSummary(Array.isArray(incidentMapState.incidents) ? incidentMapState.incidents : []);
-            const mapReady = ensureIncidentMapInstance();
-
-            if (!mapReady) {
-                renderIncidentMapDetail();
-                return;
-            }
-
-            const incidents = Array.isArray(incidentMapState.incidents) ? incidentMapState.incidents : [];
-            if (!incidentMapState.mapLoaded) {
-                renderIncidentMapDetail();
-                return;
-            }
-
-            if (!incidentMapState.selectedIncidentId) {
-                incidentMapState.selectedIncidentId = options.parseStrictInteger(incidents[0]?.id);
-            }
-
-            const features = syncIncidentMapMarkers();
-            if (incidentMapState.pendingFitBounds) {
-                fitIncidentMapToFeatures(features);
-                incidentMapState.pendingFitBounds = false;
-            } else if (incidentMapState.selectedIncidentId) {
-                focusIncidentInMap();
-            }
-
-            renderIncidentMapDetail();
-        }
-
-        async function loadIncidentMap(config = {}) {
-            const requestVersion = ++incidentMapRequestVersion;
-            ensureAssignedIncidentMapDefaults();
-            incidentMapState.loading = true;
-            if (config.resetSelection === true) {
-                incidentMapState.selectedIncidentId = null;
-                incidentMapState.targetSelectionIncidentId = null;
-            }
-            incidentMapState.pendingFitBounds = config.fitBounds !== false;
-            renderIncidentMap();
-
-            try {
-                const useAssignedMap = shouldUseAssignedIncidentMap();
-                const response = useAssignedMap
-                    ? await options.api.getMyAssignedIncidentsMap()
-                    : await options.api.getIncidentMap({
-                        days: incidentMapState.days,
-                        status: '',
-                        severity: '',
-                        limit: INCIDENT_MAP_DEFAULT_LIMIT,
-                    });
-                if (requestVersion !== incidentMapRequestVersion) return;
-                incidentMapState.scope = useAssignedMap ? 'assigned' : 'tenant';
-                incidentMapState.linkedTechnician = useAssignedMap ? response?.technician || null : null;
-                incidentMapState.sourceIncidents = applyIncidentMapClientFilters(
-                    Array.isArray(response?.incidents) ? response.incidents : [],
-                    {
-                        days: incidentMapState.days,
-                        status: '',
-                        severity: '',
-                        limit: INCIDENT_MAP_DEFAULT_LIMIT,
-                    },
-                );
-                incidentMapState.incidents = applyIncidentMapClientFilters(
-                    incidentMapState.sourceIncidents,
-                    {
-                        days: 'all',
-                        status: incidentMapState.status,
-                        severity: incidentMapState.severity,
-                        limit: INCIDENT_MAP_DEFAULT_LIMIT,
-                    },
-                );
-                const selectedStillExists = incidentMapState.incidents.some((incident) => (
-                    options.parseStrictInteger(incident?.id) === incidentMapState.selectedIncidentId
-                ));
-                if (!selectedStillExists) {
-                    incidentMapState.selectedIncidentId = options.parseStrictInteger(incidentMapState.incidents[0]?.id);
-                }
-            } catch (error) {
-                if (requestVersion !== incidentMapRequestVersion) return;
-                incidentMapState.linkedTechnician = null;
-                incidentMapState.sourceIncidents = [];
-                incidentMapState.incidents = [];
-                options.showNotification(
-                    `No se pudo cargar el mapa de incidencias: ${error?.message || error}`,
-                    'warning',
-                );
-            } finally {
-                if (requestVersion !== incidentMapRequestVersion) return;
-                incidentMapState.loading = false;
-                renderIncidentMap();
-            }
-        }
-
-        function bindIncidentMapControls() {
-            if (document.body.dataset.incidentMapBound === '1') return;
-            document.body.dataset.incidentMapBound = '1';
-
-            document.querySelectorAll('.incident-map-range-btn').forEach((button) => {
-                button.addEventListener('click', () => {
-                    const nextDays = String(button.dataset.incidentMapDays || '').trim().toLowerCase();
-                    if (!INCIDENT_MAP_ALLOWED_DAYS.has(nextDays) || nextDays === incidentMapState.days) return;
-                    incidentMapState.days = nextDays;
-                    syncIncidentMapRangeButtons();
-                    void loadIncidentMap({ resetSelection: true });
-                });
-            });
-
-            const statusFilter = document.getElementById('incidentMapStatusFilter');
-            if (statusFilter) {
-                statusFilter.addEventListener('change', () => {
-                    incidentMapState.status = String(statusFilter.value || '').trim().toLowerCase();
-                    void loadIncidentMap({ resetSelection: true });
-                });
-            }
-
-            const severityFilter = document.getElementById('incidentMapSeverityFilter');
-            if (severityFilter) {
-                severityFilter.addEventListener('change', () => {
-                    incidentMapState.severity = String(severityFilter.value || '').trim().toLowerCase();
-                    void loadIncidentMap({ resetSelection: true });
-                });
-            }
-        }
-
-        function focusIncidentCard(incidentId) {
-            const numericIncidentId = options.parseStrictInteger(incidentId);
-            if (!Number.isInteger(numericIncidentId) || numericIncidentId <= 0) return;
-            const card = document.querySelector(`.incident-card[data-incident-id="${numericIncidentId}"]`);
-            if (!(card instanceof HTMLElement)) return;
-            card.classList.add('incident-card-spotlight');
-            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            window.setTimeout(() => {
-                card.classList.remove('incident-card-spotlight');
-            }, 2200);
-        }
-
-        async function copyTextToClipboard(value) {
-            const normalizedValue = String(value || '').trim();
-            if (!normalizedValue) {
-                throw new Error('No hay enlace activo para copiar.');
-            }
-
-            if (navigator?.clipboard?.writeText) {
-                await navigator.clipboard.writeText(normalizedValue);
-                return;
-            }
-
-            const fallbackInput = document.createElement('textarea');
-            fallbackInput.value = normalizedValue;
-            fallbackInput.setAttribute('readonly', 'true');
-            fallbackInput.style.position = 'fixed';
-            fallbackInput.style.opacity = '0';
-            document.body.appendChild(fallbackInput);
-            fallbackInput.select();
-            const copied = document.execCommand('copy');
-            document.body.removeChild(fallbackInput);
-            if (!copied) {
-                throw new Error('No se pudo copiar el enlace.');
-            }
-        }
-
-        function buildPublicTrackingManagementFields() {
-            const fragment = document.createDocumentFragment();
-
-            const summary = document.createElement('p');
-            summary.id = PUBLIC_TRACKING_STATUS_ID;
-            summary.className = 'gps-capture-panel-summary';
-            summary.textContent = 'Cargando estado del enlace...';
-
-            const urlGroup = document.createElement('div');
-            urlGroup.className = 'input-group';
-            const urlLabel = document.createElement('label');
-            urlLabel.setAttribute('for', PUBLIC_TRACKING_URL_INPUT_ID);
-            urlLabel.textContent = 'Enlace corto compartible';
-            const urlInput = document.createElement('input');
-            urlInput.type = 'text';
-            urlInput.id = PUBLIC_TRACKING_URL_INPUT_ID;
-            urlInput.readOnly = true;
-            urlInput.placeholder = 'Aun no hay un enlace activo';
-            const urlLink = document.createElement('a');
-            urlLink.id = PUBLIC_TRACKING_URL_LINK_ID;
-            urlLink.className = 'public-tracking-link';
-            urlLink.target = '_blank';
-            urlLink.rel = 'noreferrer noopener';
-            urlLink.textContent = 'Abrir seguimiento publico';
-            urlLink.hidden = true;
-            urlGroup.append(urlLabel, urlInput, urlLink);
-
-            const expires = document.createElement('p');
-            expires.id = PUBLIC_TRACKING_EXPIRES_ID;
-            expires.className = 'gps-capture-panel-summary';
-            expires.textContent = 'Expiracion: s/d';
-
-            const snapshot = document.createElement('p');
-            snapshot.id = PUBLIC_TRACKING_SNAPSHOT_ID;
-            snapshot.className = 'gps-capture-panel-summary';
-            snapshot.textContent = 'Estado público cacheado: s/d';
-
-            const actions = document.createElement('div');
-            actions.className = 'action-form-actions-inline';
-            const copyBtn = document.createElement('button');
-            copyBtn.type = 'button';
-            copyBtn.id = PUBLIC_TRACKING_COPY_ID;
-            copyBtn.className = 'btn-secondary';
-            copyBtn.textContent = 'Copiar enlace';
-            const revokeBtn = document.createElement('button');
-            revokeBtn.type = 'button';
-            revokeBtn.id = PUBLIC_TRACKING_REVOKE_ID;
-            revokeBtn.className = 'btn-secondary';
-            revokeBtn.textContent = 'Revocar';
-            actions.append(copyBtn, revokeBtn);
-
-            fragment.append(summary, urlGroup, expires, snapshot, actions);
-            return fragment;
-        }
-
-        async function openPublicTrackingModal(installationId) {
-            if (!options.requireActiveSession()) return;
-            if (!canCurrentUserManagePublicTracking()) {
-                options.showNotification('No tienes permisos para gestionar enlaces publicos.', 'error');
-                return;
-            }
-            const targetInstallationId = options.parseStrictInteger(installationId);
-            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                options.showNotification('installation_id inválido para tracking público.', 'error');
-                return;
-            }
-
-            let currentLink = null;
-            const modalOpened = options.openActionModal({
-                title: `Seguimiento público #${targetInstallationId}`,
-                subtitle: 'Genera un Magic Link de solo lectura para compartir el estado actual del servicio.',
-                submitLabel: 'Crear enlace',
-                focusId: PUBLIC_TRACKING_URL_INPUT_ID,
-                fields: buildPublicTrackingManagementFields(),
-                onSubmit: async () => {
-                    const result = await options.api.createInstallationPublicTrackingLink(targetInstallationId);
-                    currentLink = result?.link || null;
-                    syncPublicTrackingModalUi();
-                    options.showNotification(
-                        currentLink?.tracking_url ? 'Enlace público listo para compartir.' : 'Enlace público actualizado.',
-                        'success',
-                    );
-                },
-            });
-
-            if (!modalOpened) return;
-
-            const statusEl = document.getElementById(PUBLIC_TRACKING_STATUS_ID);
-            const urlInput = document.getElementById(PUBLIC_TRACKING_URL_INPUT_ID);
-            const urlLink = document.getElementById(PUBLIC_TRACKING_URL_LINK_ID);
-            const expiresEl = document.getElementById(PUBLIC_TRACKING_EXPIRES_ID);
-            const snapshotEl = document.getElementById(PUBLIC_TRACKING_SNAPSHOT_ID);
-            const copyBtn = document.getElementById(PUBLIC_TRACKING_COPY_ID);
-            const revokeBtn = document.getElementById(PUBLIC_TRACKING_REVOKE_ID);
-            const submitBtn = document.getElementById('actionModalSubmitBtn');
-
-            function syncPublicTrackingModalUi() {
-                const hasActiveLink = currentLink?.active === true && String(currentLink?.tracking_url || '').trim();
-                if (statusEl instanceof HTMLElement) {
-                    const shortCode = String(currentLink?.short_code || '').trim();
-                    statusEl.textContent = hasActiveLink
-                        ? shortCode
-                            ? `Link corto activo (${shortCode}).`
-                            : `Link activo (${String(currentLink?.status || 'active')}).`
-                        : currentLink?.status === 'expired'
-                            ? 'El último enlace ya expiró.'
-                            : 'No hay un enlace público activo.';
-                }
-                if (urlInput instanceof HTMLInputElement) {
-                    urlInput.value = hasActiveLink ? String(currentLink.tracking_url) : '';
-                }
-                if (urlLink instanceof HTMLAnchorElement) {
-                    if (hasActiveLink) {
-                        urlLink.href = String(currentLink.tracking_url);
-                        urlLink.hidden = false;
-                    } else {
-                        urlLink.hidden = true;
-                        urlLink.removeAttribute('href');
-                    }
-                }
-                if (expiresEl instanceof HTMLElement) {
-                    expiresEl.textContent = hasActiveLink && currentLink?.expires_at
-                        ? `Expira: ${new Date(currentLink.expires_at).toLocaleString('es-ES')}`
-                        : 'Expiracion: s/d';
-                }
-                if (snapshotEl instanceof HTMLElement) {
-                    const snapshot = currentLink?.snapshot || {};
-                    snapshotEl.textContent = snapshot?.public_status
-                        ? `Estado público cacheado: ${snapshot.public_status} (${snapshot.public_message || 'sin mensaje'})`
-                        : 'Estado público cacheado: s/d';
-                }
-                if (copyBtn instanceof HTMLButtonElement) {
-                    copyBtn.disabled = !hasActiveLink;
-                }
-                if (revokeBtn instanceof HTMLButtonElement) {
-                    revokeBtn.disabled = !hasActiveLink;
-                }
-                if (submitBtn instanceof HTMLButtonElement) {
-                    submitBtn.textContent = hasActiveLink ? 'Regenerar enlace' : 'Crear enlace';
-                    submitBtn.dataset.defaultLabel = submitBtn.textContent;
-                }
-            }
-
-            copyBtn?.addEventListener('click', async () => {
-                try {
-                    await copyTextToClipboard(currentLink?.tracking_url || '');
-                    options.showNotification('Enlace copiado al portapapeles.', 'success');
-                } catch (error) {
-                    options.showNotification(error?.message || 'No se pudo copiar el enlace.', 'warning');
-                }
-            });
-
-            revokeBtn?.addEventListener('click', async () => {
-                if (!(currentLink?.active === true)) return;
-                await options.api.deleteInstallationPublicTrackingLink(targetInstallationId);
-                currentLink = {
-                    active: false,
-                    status: 'revoked',
-                    tracking_url: null,
-                    snapshot: currentLink?.snapshot || null,
-                };
-                syncPublicTrackingModalUi();
-                options.showNotification('Enlace público revocado.', 'info');
-            });
-
-            try {
-                const result = await options.api.getInstallationPublicTrackingLink(targetInstallationId);
-                currentLink = result?.link || null;
-            } catch (error) {
-                currentLink = null;
-                if (statusEl instanceof HTMLElement) {
-                    statusEl.textContent = error?.message || 'No se pudo cargar el estado del enlace.';
-                }
-            }
-            syncPublicTrackingModalUi();
-        }
 
         function formatIncidentCreatedAtText(value) {
             return value
@@ -2329,7 +1035,7 @@
             }
 
             getAvailableTechnicians().forEach((technician) => {
-                const detail = technician.employee_code ? ` · ${technician.employee_code}` : '';
+                const detail = technician.employee_code ? ` Â· ${technician.employee_code}` : '';
                 select.appendChild(new Option(`${technician.display_name}${detail}`, technician.display_name || ''));
             });
 
@@ -2363,7 +1069,7 @@
             const status = document.createElement('span');
             status.id = statusId;
             status.className = 'gps-capture-panel-status';
-            status.textContent = 'Capturando ubicación puntual...';
+            status.textContent = 'Capturando ubicaciÃ³n puntual...';
 
             copyWrap.append(title, status);
 
@@ -2371,7 +1077,7 @@
             retryButton.type = 'button';
             retryButton.id = buttonId;
             retryButton.className = compact ? 'btn-secondary gps-capture-panel-inline-retry' : 'btn-secondary';
-            retryButton.textContent = compact ? 'Reintentar' : 'Capturar ubicación';
+            retryButton.textContent = compact ? 'Reintentar' : 'Capturar ubicaciÃ³n';
 
             header.append(copyWrap, retryButton);
 
@@ -2380,7 +1086,7 @@
             summary.className = 'gps-capture-panel-summary';
             summary.textContent = compact
                 ? 'Sin precision disponible.'
-                : 'Intentamos obtener una ubicación puntual para este formulario. No bloquea el guardado.';
+                : 'Intentamos obtener una ubicaciÃ³n puntual para este formulario. No bloquea el guardado.';
 
             wrapper.append(header, summary);
             return wrapper;
@@ -2393,1345 +1099,37 @@
             }).length;
         }
 
-        function formatConformityStatusLabel(status) {
-            const normalized = String(status || '').trim().toLowerCase();
-            if (normalized === 'emailed') return 'Email enviado';
-            if (normalized === 'email_failed') return 'Email con error';
-            return 'Generada';
-        }
-
-        function formatConformityGeneratedAt(value) {
-            const date = value ? new Date(value) : null;
-            if (!date || Number.isNaN(date.getTime())) return 'Sin fecha';
-            return date.toLocaleString('es-ES');
-        }
-
-        function formatBudgetGeneratedAt(value) {
-            const date = value ? new Date(value) : null;
-            if (!date || Number.isNaN(date.getTime())) return 'Sin fecha';
-            return date.toLocaleString('es-ES');
-        }
-
-        function formatBudgetApprovalStatusLabel(status) {
-            const normalized = String(status || '').trim().toLowerCase();
-            if (normalized === 'approved') return 'Aprobado';
-            if (normalized === 'superseded') return 'Reemplazado';
-            if (normalized === 'rejected') return 'Rechazado';
-            return 'Pendiente';
-        }
-
-        function formatBudgetDeliveryStatusLabel(status) {
-            const normalized = String(status || '').trim().toLowerCase();
-            if (normalized === 'emailed') return 'Email enviado';
-            if (normalized === 'email_failed') return 'Email con error';
-            return 'Generado';
-        }
-
-        function normalizeCommercialClosureMode(value) {
-            const normalized = String(value || DEFAULT_COMMERCIAL_CLOSURE_MODE).trim().toLowerCase();
-            if (!normalized) return DEFAULT_COMMERCIAL_CLOSURE_MODE;
-            if (Object.prototype.hasOwnProperty.call(COMMERCIAL_CLOSURE_MODE_LABELS, normalized)) {
-                return normalized;
-            }
-            return DEFAULT_COMMERCIAL_CLOSURE_MODE;
-        }
-
-        function isBudgetRequiredForCommercialClosure(mode) {
-            return normalizeCommercialClosureMode(mode) === DEFAULT_COMMERCIAL_CLOSURE_MODE;
-        }
-
-        function formatCommercialClosureModeLabel(mode) {
-            const normalized = normalizeCommercialClosureMode(mode);
-            return COMMERCIAL_CLOSURE_MODE_LABELS[normalized] || COMMERCIAL_CLOSURE_MODE_LABELS[DEFAULT_COMMERCIAL_CLOSURE_MODE];
-        }
-
-        function resolveInstallationCommercialClosure(installation) {
-            const mode = normalizeCommercialClosureMode(installation?.commercial_closure_mode);
-            return {
-                mode,
-                label: formatCommercialClosureModeLabel(mode),
-                note: String(installation?.commercial_closure_note || '').trim(),
-                setAt: String(installation?.commercial_closure_set_at || '').trim(),
-                setBy: String(installation?.commercial_closure_set_by || '').trim(),
-                requiresApprovedBudget: isBudgetRequiredForCommercialClosure(mode),
-            };
-        }
-
-        function formatCurrencyFromCents(centsCandidate, currencyCode = 'UYU') {
-            const cents = Number.parseInt(String(centsCandidate ?? '0'), 10);
-            const safeCents = Number.isInteger(cents) ? cents : 0;
-            const normalizedCurrency = String(currencyCode || 'UYU').trim().toUpperCase() || 'UYU';
-            try {
-                return new Intl.NumberFormat('es-UY', {
-                    style: 'currency',
-                    currency: normalizedCurrency,
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                }).format(safeCents / 100);
-            } catch {
-                return `${normalizedCurrency} ${(safeCents / 100).toFixed(2)}`;
-            }
-        }
-
-        function createConformityStatusChip(label, tone = 'neutral') {
-            const chip = document.createElement('span');
-            chip.className = 'incident-highlight-chip';
-            chip.dataset.tone = tone;
-            chip.textContent = label;
-            return chip;
-        }
-
-        function formatActiveIncidentsLabel(activeIncidentCount) {
-            const count = Math.max(0, Number(activeIncidentCount) || 0);
-            return count === 0
-                ? 'Sin incidencias activas, listo para cerrar'
-                : `${count} incidencia${count === 1 ? '' : 's'} activa${count === 1 ? '' : 's'}`;
-        }
-
-        function resolveClosureBannerState(
-            activeIncidentCount,
-            latestConformityStatus = '',
-            hasApprovedBudget = false,
-            requiresApprovedBudget = true,
-        ) {
-            const count = Math.max(0, Number(activeIncidentCount) || 0);
-            const latestStatus = String(latestConformityStatus || '').trim().toLowerCase();
-            if (count > 0) {
-                return {
-                    tone: 'warning',
-                    eyebrow: 'En atención',
-                    title: 'Caso en atención operativa',
-                    description: 'Todavía hay incidencias activas. Resuélvelas antes de emitir la conformidad final.',
-                };
-            }
-            if (requiresApprovedBudget && !hasApprovedBudget) {
-                return {
-                    tone: 'warning',
-                    eyebrow: 'Presupuesto pendiente',
-                    title: 'Falta presupuesto aprobado',
-                    description: 'No quedan incidencias activas, pero debes aprobar el último presupuesto antes de emitir la conformidad final.',
-                };
-            }
-            if (latestStatus === 'emailed') {
-                return {
-                    tone: 'resolved',
-                    eyebrow: 'Conformidad enviada',
-                    title: 'Cierre operativo completado',
-                    description: 'La última conformidad ya fue generada y enviada por email. Puedes descargar el PDF o reabrir trabajo si surge una novedad.',
-                };
-            }
-            if (latestStatus === 'email_failed') {
-                return {
-                    tone: 'warning',
-                    eyebrow: 'Envío pendiente',
-                    title: 'La conformidad existe pero el email falló',
-                    description: 'El PDF ya fue generado. Revisa la constancia anterior o vuelve a emitirla para intentar otro envío.',
-                };
-            }
-            if (latestStatus === 'generated') {
-                return {
-                    tone: 'info',
-                    eyebrow: 'Conformidad generada',
-                    title: 'El PDF ya está disponible',
-                    description: 'La constancia ya fue generada, pero no se envió por email. Puedes revisarla o generar una nueva desde este registro.',
-                };
-            }
-            return {
-                tone: 'resolved',
-                eyebrow: 'Listo para cierre',
-                title: 'Caso listo para conformidad',
-                description: requiresApprovedBudget
-                    ? 'No quedan incidencias activas. Genera la conformidad final y envía el PDF desde aquí.'
-                    : 'No quedan incidencias activas. Este caso tiene cobertura comercial y puede cerrarse sin presupuesto.',
-            };
-        }
-
-        function applyClosureBannerState(
-            banner,
-            activeIncidentCount,
-            latestConformityStatus = '',
-            hasApprovedBudget = false,
-            requiresApprovedBudget = true,
-        ) {
-            if (!(banner instanceof HTMLElement)) return;
-            const state = resolveClosureBannerState(
-                activeIncidentCount,
-                latestConformityStatus,
-                hasApprovedBudget,
-                requiresApprovedBudget,
-            );
-            banner.dataset.tone = state.tone;
-
-            const eyebrow = banner.querySelector('[data-role="closure-banner-eyebrow"]');
-            if (eyebrow instanceof HTMLElement) {
-                eyebrow.textContent = state.eyebrow;
-            }
-
-            const title = banner.querySelector('[data-role="closure-banner-title"]');
-            if (title instanceof HTMLElement) {
-                title.textContent = state.title;
-            }
-
-            const description = banner.querySelector('[data-role="closure-banner-description"]');
-            if (description instanceof HTMLElement) {
-                description.textContent = state.description;
-            }
-        }
-
-        function applyConformityButtonState(
-            button,
-            activeIncidentCount,
-            hasApprovedBudget = false,
-            requiresApprovedBudget = true,
-        ) {
-            if (!(button instanceof HTMLButtonElement)) return;
-            const count = Math.max(0, Number(activeIncidentCount) || 0);
-            const canSendConformity = count === 0 && (requiresApprovedBudget !== true || hasApprovedBudget === true);
-            const shouldDisable = count === 0 && requiresApprovedBudget === true && hasApprovedBudget !== true;
-            button.dataset.activeIncidentCount = String(count);
-            button.className = canSendConformity
-                ? 'btn-primary incidents-action-button incidents-action-button-emphasis'
-                : 'btn-secondary incidents-action-button';
-            const iconName = canSendConformity ? 'mark_email_read' : 'rule';
-            const label = count === 0
-                ? 'Enviar conformidad final'
-                : 'Revisar incidencias antes de cerrar';
-            button.disabled = shouldDisable;
-            if (count > 0) {
-                button.title = 'Debes resolver todas las incidencias activas antes de emitir la conformidad.';
-            } else if (requiresApprovedBudget && !hasApprovedBudget) {
-                button.title = 'Debes aprobar el último presupuesto para emitir la conformidad.';
-            } else {
-                button.removeAttribute('title');
-            }
-            const icon = options.createMaterialIconNode(iconName);
-            if (icon) {
-                button.replaceChildren(icon, document.createTextNode(` ${label}`));
-            } else {
-                button.textContent = label;
-            }
-        }
-
-        function buildConformityHelperText(activeIncidentCount, hasApprovedBudget = false, requiresApprovedBudget = true) {
-            const count = Math.max(0, Number(activeIncidentCount) || 0);
-            if (count > 0) {
-                return `Quedan ${count} incidencia${count === 1 ? '' : 's'} activa${count === 1 ? '' : 's'}. Debes resolverlas antes del cierre.`;
-            }
-            if (requiresApprovedBudget === true && hasApprovedBudget !== true) {
-                return 'Aprobacion comercial pendiente: necesitas presupuesto aprobado antes de cerrar.';
-            }
-            return 'Caso listo. Genera y envia la conformidad final desde este bloque.';
-        }
-
-        function applyCreateIncidentButtonState(button, activeIncidentCount) {
-            if (!(button instanceof HTMLButtonElement)) return;
-            const count = Math.max(0, Number(activeIncidentCount) || 0);
-            button.dataset.activeIncidentCount = String(count);
-            const iconName = count === 0 ? 'add_alert' : 'add_circle';
-            const label = count === 0 ? 'Abrir nueva incidencia' : 'Crear incidencia';
-            button.className = count === 0
-                ? 'btn-secondary incidents-action-button'
-                : 'btn-primary incidents-action-button';
-            const icon = options.createMaterialIconNode(iconName);
-            if (icon) {
-                button.replaceChildren(icon, document.createTextNode(` ${label}`));
-            } else {
-                button.textContent = label;
-            }
-            if (count === 0) {
-                button.title = 'El caso quedó listo para conformidad. Usa esto solo si necesitas reabrir trabajo con una incidencia nueva.';
-            } else {
-                button.removeAttribute('title');
-            }
-        }
-
-        function syncVisibleIncidentsHeaderState() {
-            const container = document.getElementById('incidentsList');
-            if (!(container instanceof HTMLElement)) return;
-            const header = container.querySelector('.incidents-header');
-            if (!(header instanceof HTMLElement)) return;
-
-            const cards = Array.from(container.querySelectorAll('.incident-card'));
-            const activeIncidentCount = cards.filter((card) => {
-                if (!(card instanceof HTMLElement)) return false;
-                if (card.classList.contains('incident-card-deleted')) return false;
-                return options.normalizeIncidentStatus(card.dataset.status) !== 'resolved';
-            }).length;
-
-            header.dataset.activeIncidentCount = String(activeIncidentCount);
-            const latestConformityStatus = String(header.dataset.latestConformityStatus || '').trim().toLowerCase();
-            const hasApprovedBudget = String(header.dataset.hasApprovedBudget || '').trim() === '1';
-            const requiresApprovedBudget = String(header.dataset.requiresApprovedBudget || '').trim() !== '0';
-
-            const summaryChip = header.querySelector('[data-role="active-incidents-chip"]');
-            if (summaryChip instanceof HTMLElement) {
-                summaryChip.textContent = formatActiveIncidentsLabel(activeIncidentCount);
-                summaryChip.dataset.tone = activeIncidentCount === 0 ? 'resolved' : 'high';
-            }
-
-            const closureBanner = header.querySelector('[data-role="closure-banner"]');
-            if (closureBanner instanceof HTMLElement) {
-                applyClosureBannerState(
-                    closureBanner,
-                    activeIncidentCount,
-                    latestConformityStatus,
-                    hasApprovedBudget,
-                    requiresApprovedBudget,
-                );
-            }
-
-            const conformityButton = header.querySelector('[data-role="conformity-trigger"]');
-            if (conformityButton instanceof HTMLButtonElement) {
-                applyConformityButtonState(
-                    conformityButton,
-                    activeIncidentCount,
-                    hasApprovedBudget,
-                    requiresApprovedBudget,
-                );
-            }
-            const conformityHelperText = header.querySelector('[data-role="conformity-helper-text"]');
-            if (conformityHelperText instanceof HTMLElement) {
-                conformityHelperText.textContent = buildConformityHelperText(
-                    activeIncidentCount,
-                    hasApprovedBudget,
-                    requiresApprovedBudget,
-                );
-            }
-
-            const createIncidentButton = header.querySelector('[data-role="create-incident-trigger"]');
-            if (createIncidentButton instanceof HTMLButtonElement) {
-                applyCreateIncidentButtonState(createIncidentButton, activeIncidentCount);
-            }
-        }
-
-        function buildInstallationConformityFields({
-            installationId,
-            activeIncidentCount,
-            latestConformity,
-            latestApprovedBudget,
-            requiresApprovedBudget = true,
-            commercialClosureMode = DEFAULT_COMMERCIAL_CLOSURE_MODE,
-            commercialClosureNote = '',
-        }) {
-            const fragment = document.createDocumentFragment();
-            const grid = document.createElement('div');
-            grid.className = 'action-modal-grid';
-
-            const summaryWrap = document.createElement('div');
-            summaryWrap.className = 'conformity-modal-summary';
-            const summaryTitle = document.createElement('strong');
-            summaryTitle.textContent = `Registro #${installationId}`;
-            const summaryBody = document.createElement('p');
-            summaryBody.textContent = activeIncidentCount === 0
-                ? requiresApprovedBudget
-                    ? 'No quedan incidencias activas. El caso está listo para emitir la conformidad final y enviar el PDF por email.'
-                    : 'No quedan incidencias activas. Este caso tiene cobertura comercial y puede cerrarse sin presupuesto.'
-                : `Todavía hay ${activeIncidentCount} incidencia${activeIncidentCount === 1 ? '' : 's'} activa${activeIncidentCount === 1 ? '' : 's'}.`;
-            const summaryMeta = document.createElement('div');
-            summaryMeta.className = 'conformity-modal-meta';
-            summaryMeta.appendChild(
-                createConformityStatusChip(
-                    activeIncidentCount === 0 ? 'Listo para cerrar' : `${activeIncidentCount} activas`,
-                    activeIncidentCount === 0 ? 'resolved' : 'high',
-                ),
-            );
-            if (latestConformity) {
-                summaryMeta.appendChild(
-                    createConformityStatusChip(
-                        `última: ${formatConformityStatusLabel(latestConformity.status)}`,
-                        latestConformity.status === 'emailed' ? 'resolved' : latestConformity.status === 'email_failed' ? 'high' : 'info',
-                    ),
-                );
-            }
-            if (latestApprovedBudget) {
-                summaryMeta.appendChild(
-                    createConformityStatusChip(
-                        `Presupuesto: ${latestApprovedBudget.budget_number || `#${latestApprovedBudget.id}`}`,
-                        'info',
-                    ),
-                );
-            } else if (!requiresApprovedBudget) {
-                summaryMeta.appendChild(
-                    createConformityStatusChip(
-                        `Cobertura: ${formatCommercialClosureModeLabel(commercialClosureMode)}`,
-                        'resolved',
-                    ),
-                );
-            }
-            summaryWrap.append(summaryTitle, summaryBody, summaryMeta);
-            grid.appendChild(summaryWrap);
-
-            if (latestConformity) {
-                const latestWrap = document.createElement('div');
-                latestWrap.className = 'conformity-modal-latest';
-                const latestTitle = document.createElement('strong');
-                latestTitle.textContent = 'última conformidad registrada';
-                const latestBody = document.createElement('p');
-                latestBody.textContent = `${latestConformity.signed_by_name || 'Sin firmante'} · ${formatConformityGeneratedAt(latestConformity.generated_at)} · ${formatConformityStatusLabel(latestConformity.status)}`;
-                latestWrap.append(latestTitle, latestBody);
-                if (latestConformity.pdf_download_path) {
-                    const latestLink = document.createElement('a');
-                    latestLink.href = latestConformity.pdf_download_path;
-                    latestLink.target = '_blank';
-                    latestLink.rel = 'noreferrer';
-                    latestLink.className = 'conformity-modal-link';
-                    latestLink.textContent = 'Ver último PDF';
-                    latestWrap.appendChild(latestLink);
-                }
-                grid.appendChild(latestWrap);
-            }
-
-            if (latestApprovedBudget) {
-                const budgetWrap = document.createElement('div');
-                budgetWrap.className = 'conformity-modal-latest';
-                const budgetTitle = document.createElement('strong');
-                budgetTitle.textContent = 'Presupuesto asociado';
-                const budgetBody = document.createElement('p');
-                budgetBody.textContent = [
-                    latestApprovedBudget.budget_number || `#${latestApprovedBudget.id}`,
-                    formatBudgetApprovalStatusLabel(latestApprovedBudget.approval_status),
-                    formatCurrencyFromCents(
-                        latestApprovedBudget.total_amount_cents,
-                        latestApprovedBudget.currency_code || 'UYU',
-                    ),
-                ].filter(Boolean).join(' · ');
-                budgetWrap.append(budgetTitle, budgetBody);
-                if (latestApprovedBudget.pdf_download_path) {
-                    const budgetLink = document.createElement('a');
-                    budgetLink.href = latestApprovedBudget.pdf_download_path;
-                    budgetLink.target = '_blank';
-                    budgetLink.rel = 'noreferrer';
-                    budgetLink.className = 'conformity-modal-link';
-                    budgetLink.textContent = 'Ver presupuesto aprobado';
-                    budgetWrap.appendChild(budgetLink);
-                }
-                grid.appendChild(budgetWrap);
-            } else if (!requiresApprovedBudget) {
-                const coverageWrap = document.createElement('div');
-                coverageWrap.className = 'conformity-modal-latest';
-                const coverageTitle = document.createElement('strong');
-                coverageTitle.textContent = 'Cobertura comercial';
-                const coverageBody = document.createElement('p');
-                const modeLabel = formatCommercialClosureModeLabel(commercialClosureMode);
-                const note = String(commercialClosureNote || '').trim();
-                coverageBody.textContent = note ? `${modeLabel} · ${note}` : modeLabel;
-                coverageWrap.append(coverageTitle, coverageBody);
-                grid.appendChild(coverageWrap);
-            }
-
-            const nameInput = document.createElement('input');
-            nameInput.type = 'text';
-            nameInput.id = 'actionConformitySignedByName';
-            nameInput.autocomplete = 'off';
-            nameInput.value = String(options.getCurrentUser?.()?.username || '').trim();
-            nameInput.placeholder = 'Nombre y apellido';
-            grid.appendChild(createInputGroup('Firmante', nameInput, { htmlFor: nameInput.id }));
-
-            const documentInput = document.createElement('input');
-            documentInput.type = 'text';
-            documentInput.id = 'actionConformitySignedByDocument';
-            documentInput.autocomplete = 'off';
-            documentInput.placeholder = 'CI, DNI o referencia';
-            grid.appendChild(createInputGroup('Documento', documentInput, { htmlFor: documentInput.id }));
-
-            const emailInput = document.createElement('input');
-            emailInput.type = 'email';
-            emailInput.id = 'actionConformityEmailTo';
-            emailInput.autocomplete = 'email';
-            emailInput.placeholder = 'cliente@empresa.com';
-            grid.appendChild(createInputGroup('Email destino', emailInput, { htmlFor: emailInput.id }));
-
-            const summaryInput = document.createElement('textarea');
-            summaryInput.id = 'actionConformitySummary';
-            summaryInput.rows = 3;
-            summaryInput.value = 'Instalacion validada en sitio.';
-            grid.appendChild(createInputGroup('Resumen', summaryInput, {
-                htmlFor: summaryInput.id,
-                className: 'full-width',
-            }));
-
-            const technicianSelect = buildTechnicianSelect({
-                id: 'actionConformityTechnicianName',
-                includeCurrentUserOption: true,
-            });
-            grid.appendChild(createInputGroup('Técnico responsable', technicianSelect, {
-                htmlFor: technicianSelect.id,
-            }));
-
-            const technicianNoteInput = document.createElement('textarea');
-            technicianNoteInput.id = 'actionConformityTechnicianNote';
-            technicianNoteInput.rows = 3;
-            technicianNoteInput.value = 'Se entrega constancia operativa con firma y evidencia asociada.';
-            grid.appendChild(createInputGroup('Nota tecnica', technicianNoteInput, {
-                htmlFor: technicianNoteInput.id,
-                className: 'full-width',
-            }));
-
-            grid.appendChild(createGpsCapturePanel({
-                panelId: CONFORMITY_GPS_PANEL_ID,
-                statusId: CONFORMITY_GPS_STATUS_ID,
-                summaryId: CONFORMITY_GPS_SUMMARY_ID,
-                buttonId: CONFORMITY_GPS_RETRY_ID,
-            }));
-
-            const gpsOverrideInput = document.createElement('textarea');
-            gpsOverrideInput.id = CONFORMITY_GPS_OVERRIDE_INPUT_ID;
-            gpsOverrideInput.rows = 3;
-            gpsOverrideInput.placeholder = 'Explica por que cierras sin coordenada valida.';
-            const gpsOverrideGroup = createInputGroup('Motivo de override GPS', gpsOverrideInput, {
-                htmlFor: gpsOverrideInput.id,
-                className: 'full-width',
-            });
-            gpsOverrideGroup.id = CONFORMITY_GPS_OVERRIDE_WRAP_ID;
-            gpsOverrideGroup.hidden = true;
-            const gpsOverrideHelp = document.createElement('p');
-            gpsOverrideHelp.id = CONFORMITY_GPS_OVERRIDE_HELP_ID;
-            gpsOverrideHelp.className = 'asset-muted';
-            gpsOverrideHelp.textContent = 'Si no hay captura usable, deja una justificacion operativa antes de generar el PDF.';
-            gpsOverrideGroup.appendChild(gpsOverrideHelp);
-            grid.appendChild(gpsOverrideGroup);
-
-            const signatureGroup = document.createElement('div');
-            signatureGroup.className = 'input-group full-width';
-            const signatureLabel = document.createElement('label');
-            signatureLabel.setAttribute('for', CONFORMITY_SIGNATURE_CANVAS_ID);
-            signatureLabel.textContent = 'Firma';
-            const signaturePad = document.createElement('div');
-            signaturePad.className = 'conformity-signature-pad';
-            const canvas = document.createElement('canvas');
-            canvas.id = CONFORMITY_SIGNATURE_CANVAS_ID;
-            canvas.className = 'conformity-signature-canvas';
-            canvas.width = 640;
-            canvas.height = 220;
-            const signatureHint = document.createElement('div');
-            signatureHint.className = 'conformity-signature-hint';
-            signatureHint.textContent = 'Firma aquí con mouse, touch o lápiz.';
-            const signatureToolbar = document.createElement('div');
-            signatureToolbar.className = 'conformity-signature-toolbar';
-            const clearSignatureBtn = document.createElement('button');
-            clearSignatureBtn.type = 'button';
-            clearSignatureBtn.id = CONFORMITY_SIGNATURE_CLEAR_ID;
-            clearSignatureBtn.className = 'btn-secondary';
-            clearSignatureBtn.textContent = 'Limpiar firma';
-            signatureToolbar.appendChild(clearSignatureBtn);
-            signaturePad.append(canvas, signatureHint);
-            signatureGroup.append(signatureLabel, signaturePad, signatureToolbar);
-            grid.appendChild(signatureGroup);
-
-            const sendEmailWrap = document.createElement('label');
-            sendEmailWrap.className = 'action-checkbox full-width';
-            const sendEmailInput = document.createElement('input');
-            sendEmailInput.type = 'checkbox';
-            sendEmailInput.id = 'actionConformitySendEmail';
-            sendEmailInput.checked = true;
-            const sendEmailText = document.createElement('span');
-            sendEmailText.textContent = 'Enviar email al generar la conformidad';
-            sendEmailWrap.append(sendEmailInput, sendEmailText);
-            grid.appendChild(sendEmailWrap);
-
-            fragment.appendChild(grid);
-            return fragment;
-        }
-
-        function initializeConformitySignaturePad() {
-            const canvas = document.getElementById(CONFORMITY_SIGNATURE_CANVAS_ID);
-            const clearBtn = document.getElementById(CONFORMITY_SIGNATURE_CLEAR_ID);
-            if (!(canvas instanceof HTMLCanvasElement)) {
-                currentConformitySignaturePad = null;
-                return;
-            }
-
-            const ratio = Math.max(window.devicePixelRatio || 1, 1);
-            const width = Math.max(canvas.clientWidth || 0, 640);
-            const height = 220;
-            canvas.width = Math.round(width * ratio);
-            canvas.height = Math.round(height * ratio);
-            const context = canvas.getContext('2d');
-            if (!context) {
-                currentConformitySignaturePad = null;
-                return;
-            }
-
-            context.setTransform(ratio, 0, 0, ratio, 0, 0);
-            context.lineCap = 'round';
-            context.lineJoin = 'round';
-            context.lineWidth = 2.6;
-            context.strokeStyle = '#0f8b84';
-
-            let drawing = false;
-            let hasInk = false;
-            let lastX = 0;
-            let lastY = 0;
-
-            function hideHint() {
-                canvas.parentElement?.classList.add('has-ink');
-            }
-
-            function showHint() {
-                canvas.parentElement?.classList.remove('has-ink');
-            }
-
-            function clearPad() {
-                context.clearRect(0, 0, width, height);
-                hasInk = false;
-                showHint();
-            }
-
-            function getPoint(event) {
-                const rect = canvas.getBoundingClientRect();
-                return {
-                    x: event.clientX - rect.left,
-                    y: event.clientY - rect.top,
-                };
-            }
-
-            function beginStroke(event) {
-                drawing = true;
-                const point = getPoint(event);
-                lastX = point.x;
-                lastY = point.y;
-                context.beginPath();
-                context.moveTo(point.x, point.y);
-                context.lineTo(point.x + 0.01, point.y + 0.01);
-                context.stroke();
-                hasInk = true;
-                hideHint();
-            }
-
-            function continueStroke(event) {
-                if (!drawing) return;
-                const point = getPoint(event);
-                context.beginPath();
-                context.moveTo(lastX, lastY);
-                context.lineTo(point.x, point.y);
-                context.stroke();
-                lastX = point.x;
-                lastY = point.y;
-            }
-
-            function endStroke() {
-                drawing = false;
-            }
-
-            clearPad();
-            canvas.onpointerdown = (event) => {
-                event.preventDefault();
-                canvas.setPointerCapture?.(event.pointerId);
-                beginStroke(event);
-            };
-            canvas.onpointermove = (event) => {
-                event.preventDefault();
-                continueStroke(event);
-            };
-            canvas.onpointerup = () => endStroke();
-            canvas.onpointerleave = () => endStroke();
-            canvas.onpointercancel = () => endStroke();
-
-            if (clearBtn instanceof HTMLButtonElement) {
-                clearBtn.onclick = () => clearPad();
-            }
-
-            currentConformitySignaturePad = {
-                hasInk: () => hasInk,
-                clear: clearPad,
-                exportDataUrl: () => {
-                    if (!hasInk) return '';
-                    const exportCanvas = document.createElement('canvas');
-                    exportCanvas.width = canvas.width;
-                    exportCanvas.height = canvas.height;
-                    const exportContext = exportCanvas.getContext('2d');
-                    if (!exportContext) return '';
-                    exportContext.fillStyle = '#ffffff';
-                    exportContext.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-                    exportContext.drawImage(canvas, 0, 0);
-                    return exportCanvas.toDataURL('image/png');
-                },
-            };
-        }
-
-        async function openInstallationConformityModal(installationId, config = {}) {
-            if (!options.requireActiveSession()) return;
-            const targetInstallationId = options.parseStrictInteger(installationId);
-            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                options.showNotification('installation_id inválido para generar conformidad.', 'error');
-                return;
-            }
-
-            const activeIncidentCount = Math.max(0, Number(config.activeIncidentCount) || 0);
-            const commercialClosureMode = normalizeCommercialClosureMode(
-                config.commercialClosureMode || DEFAULT_COMMERCIAL_CLOSURE_MODE,
-            );
-            const commercialClosureNote = String(config.commercialClosureNote || '').trim();
-            const requiresApprovedBudget =
-                config.requiresApprovedBudget === true
-                    || (config.requiresApprovedBudget !== false
-                        && isBudgetRequiredForCommercialClosure(commercialClosureMode));
-            if (activeIncidentCount > 0) {
-                options.showNotification('Primero resuelve las incidencias activas antes de emitir la conformidad.', 'warning');
-                return;
-            }
-
-            let latestConformity = config.latestConformity || null;
-            if (!latestConformity) {
-                try {
-                    const result = await options.api.getInstallationConformity(targetInstallationId);
-                    latestConformity = result?.conformity || null;
-                } catch {
-                    latestConformity = null;
-                }
-            }
-            let latestApprovedBudget = config.latestApprovedBudget || null;
-            if (!latestApprovedBudget) {
-                try {
-                    const budgetState = await options.api.getInstallationBudgetLatest(targetInstallationId);
-                    latestApprovedBudget = budgetState?.latest_approved_budget || null;
-                } catch {
-                    latestApprovedBudget = null;
-                }
-            }
-            if (!latestApprovedBudget) {
-                if (requiresApprovedBudget) {
-                    options.showNotification('Debes aprobar el último presupuesto para emitir la conformidad.', 'warning');
-                    return;
-                }
-            }
-
-            let gpsController = null;
-            let latestGpsSnapshot = null;
-
-            function syncConformityGpsOverrideUi(snapshot, state = {}) {
-                latestGpsSnapshot = snapshot && typeof snapshot === 'object'
-                    ? { ...snapshot }
-                    : null;
-                const overrideWrap = document.getElementById(CONFORMITY_GPS_OVERRIDE_WRAP_ID);
-                const overrideInput = document.getElementById(CONFORMITY_GPS_OVERRIDE_INPUT_ID);
-                const overrideHelp = document.getElementById(CONFORMITY_GPS_OVERRIDE_HELP_ID);
-                if (!(overrideWrap instanceof HTMLElement) || !(overrideInput instanceof HTMLTextAreaElement)) {
-                    return;
-                }
-
-                const status = String(snapshot?.status || 'pending').trim().toLowerCase() || 'pending';
-                const requiresGpsOverride = status !== 'captured' && state?.inflight !== true;
-                const requiresOverride = requiresGpsOverride;
-                overrideWrap.hidden = !requiresOverride;
-                overrideInput.required = requiresOverride;
-                if (overrideHelp instanceof HTMLElement) {
-                    if (requiresGpsOverride) {
-                        overrideHelp.textContent = `La captura GPS quedó en estado "${status}". Para cerrar la conformidad debes dejar motivo de override.`;
-                    } else {
-                        overrideHelp.textContent = 'GPS listo para adjuntar en la conformidad.';
-                    }
-                }
-            }
-
-            const modalOpened = options.openActionModal({
-                title: `Conformidad del registro #${targetInstallationId}`,
-                subtitle: 'Captura la firma final y envía el PDF de conformidad al cliente.',
-                submitLabel: 'Generar y enviar conformidad',
-                focusId: 'actionConformitySignedByName',
-                fields: buildInstallationConformityFields({
-                    installationId: targetInstallationId,
-                    activeIncidentCount,
-                    latestConformity,
-                    latestApprovedBudget,
-                    requiresApprovedBudget,
-                    commercialClosureMode,
-                    commercialClosureNote,
-                }),
-                onSubmit: async () => {
-                    const signedByName = String(document.getElementById('actionConformitySignedByName')?.value || '').trim();
-                    const signedByDocument = String(document.getElementById('actionConformitySignedByDocument')?.value || '').trim();
-                    const emailTo = String(document.getElementById('actionConformityEmailTo')?.value || '').trim();
-                    const summaryNote = String(document.getElementById('actionConformitySummary')?.value || '').trim();
-                    const technicianName = String(document.getElementById('actionConformityTechnicianName')?.value || '').trim()
-                        || String(options.getCurrentUser?.()?.username || '').trim()
-                        || 'web';
-                    const technicianNote = String(document.getElementById('actionConformityTechnicianNote')?.value || '').trim();
-                    const sendEmail = document.getElementById('actionConformitySendEmail')?.checked === true;
-                    const signatureDataUrl = currentConformitySignaturePad?.exportDataUrl?.() || '';
-
-                    if (!signedByName) {
-                        options.setActionModalError('El nombre del firmante es obligatorio.');
-                        return;
-                    }
-                    if (!emailTo) {
-                        options.setActionModalError('El email destino es obligatorio.');
-                        return;
-                    }
-                    if (!signatureDataUrl || currentConformitySignaturePad?.hasInk?.() !== true) {
-                        options.setActionModalError('La conformidad requiere una firma.');
-                        return;
-                    }
-
-                    const gpsSnapshot = gpsController?.getSnapshotForSubmit?.() || latestGpsSnapshot || null;
-                    const gpsStatus = String(gpsSnapshot?.status || 'pending').trim().toLowerCase() || 'pending';
-                    const gpsOverrideNote = String(document.getElementById(CONFORMITY_GPS_OVERRIDE_INPUT_ID)?.value || '').trim();
-                    let gpsPayload = gpsSnapshot;
-                    if (gpsStatus !== 'captured') {
-                        if (!gpsOverrideNote) {
-                            options.setActionModalError('Si no hay una captura GPS valida, debes registrar motivo de override.');
-                            return;
-                        }
-                        gpsPayload = {
-                            status: 'override',
-                            source: 'override',
-                            note: gpsOverrideNote,
-                        };
-                    }
-
-                    const conformityPayload = {
-                        signed_by_name: signedByName,
-                        signed_by_document: signedByDocument,
-                        email_to: emailTo,
-                        signature_data_url: signatureDataUrl,
-                        summary_note: summaryNote,
-                        technician_name: technicianName,
-                        technician_note: technicianNote,
-                        include_all_incident_photos: true,
-                        send_email: sendEmail,
-                        gps: gpsPayload,
-                    };
-                    if (requiresApprovedBudget && latestApprovedBudget?.id) {
-                        conformityPayload.budget_id = latestApprovedBudget.id;
-                    }
-
-                    const result = await options.api.createInstallationConformity(
-                        targetInstallationId,
-                        conformityPayload,
-                    );
-
-                    options.closeActionModal(true);
-                    const conformityId = options.parseStrictInteger(result?.conformity?.id);
-                    const statusLabel = formatConformityStatusLabel(result?.conformity?.status);
-                    options.showNotification(
-                        Number.isInteger(conformityId) && conformityId > 0
-                            ? `Conformidad #${conformityId} generada (${statusLabel}).`
-                            : `Conformidad generada (${statusLabel}).`,
-                        result?.conformity?.status === 'email_failed' ? 'warning' : 'success',
-                    );
-                    const metadata = (() => {
-                        try {
-                            return JSON.parse(String(result?.conformity?.metadata_json || '{}'));
-                        } catch {
-                            return {};
-                        }
-                    })();
-                    runIncidentRefreshInBackground(
-                        { installationId: targetInstallationId },
-                        'La conformidad se genero, pero no pudimos refrescar el registro.',
-                    );
-                },
-            });
-
-            if (modalOpened) {
-                requestAnimationFrame(() => {
-                    initializeConformitySignaturePad();
-                    void hydrateTechnicianSelectFromContext('actionConformityTechnicianName', {
-                        installationId: targetInstallationId,
-                    });
-                    if (options.geolocation) {
-                        gpsController = options.geolocation.createController({
-                            panelElement: document.getElementById(CONFORMITY_GPS_PANEL_ID),
-                            statusElement: document.getElementById(CONFORMITY_GPS_STATUS_ID),
-                            summaryElement: document.getElementById(CONFORMITY_GPS_SUMMARY_ID),
-                            captureButton: document.getElementById(CONFORMITY_GPS_RETRY_ID),
-                            onSnapshotChange: syncConformityGpsOverrideUi,
-                        });
-                        void gpsController.capture();
-                    } else {
-                        syncConformityGpsOverrideUi({
-                            status: 'unsupported',
-                            source: 'browser',
-                            note: '',
-                        }, {
-                            inflight: false,
-                        });
-                    }
-                });
-            }
-        }
-
-        function parseCurrencyAmountToCents(rawValue) {
-            const normalized = String(rawValue || '')
-                .trim()
-                .replace(/\s+/g, '')
-                .replace(',', '.');
-            if (!normalized) return 0;
-            if (!/^-?\d+(\.\d{1,2})?$/.test(normalized)) {
-                return NaN;
-            }
-            const numericValue = Number(normalized);
-            if (!Number.isFinite(numericValue)) return NaN;
-            return Math.round(numericValue * 100);
-        }
-
-        function buildInstallationBudgetFields({
-            installationId,
-            latestBudget,
-            latestApprovedBudget,
-        }) {
-            const fragment = document.createDocumentFragment();
-            const grid = document.createElement('div');
-            grid.className = 'action-modal-grid';
-
-            const summaryWrap = document.createElement('div');
-            summaryWrap.className = 'conformity-modal-summary';
-            const summaryTitle = document.createElement('strong');
-            summaryTitle.textContent = `Registro #${installationId}`;
-            const summaryBody = document.createElement('p');
-            summaryBody.textContent = 'Define alcance y costos del presupuesto antes de la conformidad final.';
-            const summaryMeta = document.createElement('div');
-            summaryMeta.className = 'conformity-modal-meta';
-            if (latestBudget) {
-                summaryMeta.appendChild(
-                    createConformityStatusChip(
-                        `Ultimo: ${latestBudget.budget_number || `#${latestBudget.id}`}`,
-                        'info',
-                    ),
-                );
-                summaryMeta.appendChild(
-                    createConformityStatusChip(
-                        formatBudgetApprovalStatusLabel(latestBudget.approval_status),
-                        latestBudget.approval_status === 'approved' ? 'resolved' : 'warning',
-                    ),
-                );
-            } else {
-                summaryMeta.appendChild(createConformityStatusChip('Sin presupuesto previo', 'neutral'));
-            }
-            if (latestApprovedBudget) {
-                summaryMeta.appendChild(
-                    createConformityStatusChip(
-                        `Aprobado: ${latestApprovedBudget.budget_number || `#${latestApprovedBudget.id}`}`,
-                        'resolved',
-                    ),
-                );
-            }
-            summaryWrap.append(summaryTitle, summaryBody, summaryMeta);
-            grid.appendChild(summaryWrap);
-
-            const incidenceInput = document.createElement('textarea');
-            incidenceInput.id = 'actionBudgetIncidenceSummary';
-            incidenceInput.rows = 3;
-            incidenceInput.value = String(latestBudget?.incidence_summary || '').trim();
-            incidenceInput.placeholder = 'Descripcion de la incidencia detectada';
-            grid.appendChild(createInputGroup('Incidencia', incidenceInput, {
-                htmlFor: incidenceInput.id,
-                className: 'full-width',
-            }));
-
-            const includedInput = document.createElement('textarea');
-            includedInput.id = 'actionBudgetScopeIncluded';
-            includedInput.rows = 4;
-            includedInput.value = String(latestBudget?.scope_included || '').trim();
-            includedInput.placeholder = 'Tareas incluidas';
-            grid.appendChild(createInputGroup('Alcance incluido', includedInput, {
-                htmlFor: includedInput.id,
-                className: 'full-width',
-            }));
-
-            const excludedInput = document.createElement('textarea');
-            excludedInput.id = 'actionBudgetScopeExcluded';
-            excludedInput.rows = 3;
-            excludedInput.value = String(latestBudget?.scope_excluded || '').trim();
-            excludedInput.placeholder = 'Exclusiones del presupuesto';
-            grid.appendChild(createInputGroup('Exclusiones', excludedInput, {
-                htmlFor: excludedInput.id,
-                className: 'full-width',
-            }));
-
-            const laborInput = document.createElement('input');
-            laborInput.type = 'text';
-            laborInput.id = 'actionBudgetLaborAmount';
-            laborInput.value = String(
-                Number.isFinite((Number(latestBudget?.labor_amount_cents) || 0) / 100)
-                    ? ((Number(latestBudget?.labor_amount_cents) || 0) / 100).toFixed(2)
-                    : '0.00',
-            );
-            laborInput.placeholder = '0.00';
-            grid.appendChild(createInputGroup('Mano de obra', laborInput, { htmlFor: laborInput.id }));
-
-            const partsInput = document.createElement('input');
-            partsInput.type = 'text';
-            partsInput.id = 'actionBudgetPartsAmount';
-            partsInput.value = String(
-                Number.isFinite((Number(latestBudget?.parts_amount_cents) || 0) / 100)
-                    ? ((Number(latestBudget?.parts_amount_cents) || 0) / 100).toFixed(2)
-                    : '0.00',
-            );
-            partsInput.placeholder = '0.00';
-            grid.appendChild(createInputGroup('Repuestos/insumos', partsInput, { htmlFor: partsInput.id }));
-
-            const taxInput = document.createElement('input');
-            taxInput.type = 'text';
-            taxInput.id = 'actionBudgetTaxAmount';
-            taxInput.value = String(
-                Number.isFinite((Number(latestBudget?.tax_amount_cents) || 0) / 100)
-                    ? ((Number(latestBudget?.tax_amount_cents) || 0) / 100).toFixed(2)
-                    : '0.00',
-            );
-            taxInput.placeholder = '0.00';
-            grid.appendChild(createInputGroup('Impuestos', taxInput, { htmlFor: taxInput.id }));
-
-            const currencyInput = document.createElement('input');
-            currencyInput.type = 'text';
-            currencyInput.id = 'actionBudgetCurrencyCode';
-            currencyInput.maxLength = 3;
-            currencyInput.autocomplete = 'off';
-            currencyInput.value = String(latestBudget?.currency_code || 'UYU').trim().toUpperCase() || 'UYU';
-            grid.appendChild(createInputGroup('Moneda', currencyInput, { htmlFor: currencyInput.id }));
-
-            const estimatedDaysInput = document.createElement('input');
-            estimatedDaysInput.type = 'number';
-            estimatedDaysInput.id = 'actionBudgetEstimatedDays';
-            estimatedDaysInput.min = '0';
-            estimatedDaysInput.step = '1';
-            estimatedDaysInput.value =
-                latestBudget?.estimated_days === null || latestBudget?.estimated_days === undefined
-                    ? ''
-                    : String(latestBudget.estimated_days);
-            estimatedDaysInput.placeholder = 'Días estimados';
-            grid.appendChild(createInputGroup('Plazo (días)', estimatedDaysInput, { htmlFor: estimatedDaysInput.id }));
-
-            const validUntilInput = document.createElement('input');
-            validUntilInput.type = 'date';
-            validUntilInput.id = 'actionBudgetValidUntil';
-            validUntilInput.value = String(latestBudget?.valid_until || '').trim();
-            grid.appendChild(createInputGroup('Validez hasta', validUntilInput, { htmlFor: validUntilInput.id }));
-
-            const emailInput = document.createElement('input');
-            emailInput.type = 'email';
-            emailInput.id = 'actionBudgetEmailTo';
-            emailInput.autocomplete = 'email';
-            emailInput.value = String(latestBudget?.email_to || '').trim();
-            emailInput.placeholder = 'cliente@empresa.com';
-            grid.appendChild(createInputGroup('Email destino', emailInput, {
-                htmlFor: emailInput.id,
-                className: 'full-width',
-            }));
-
-            const sendEmailWrap = document.createElement('label');
-            sendEmailWrap.className = 'action-checkbox full-width';
-            const sendEmailInput = document.createElement('input');
-            sendEmailInput.type = 'checkbox';
-            sendEmailInput.id = 'actionBudgetSendEmail';
-            sendEmailInput.checked = true;
-            const sendEmailText = document.createElement('span');
-            sendEmailText.textContent = 'Enviar email al generar el presupuesto';
-            sendEmailWrap.append(sendEmailInput, sendEmailText);
-            grid.appendChild(sendEmailWrap);
-
-            fragment.appendChild(grid);
-            return fragment;
-        }
-
-        function buildInstallationBudgetApprovalFields({ budget }) {
-            const fragment = document.createDocumentFragment();
-            const grid = document.createElement('div');
-            grid.className = 'action-modal-grid';
-
-            const summaryWrap = document.createElement('div');
-            summaryWrap.className = 'conformity-modal-summary';
-            const summaryTitle = document.createElement('strong');
-            summaryTitle.textContent = `Presupuesto ${budget?.budget_number || `#${budget?.id || '-'}`}`;
-            const summaryBody = document.createElement('p');
-            summaryBody.textContent = [
-                formatBudgetApprovalStatusLabel(budget?.approval_status),
-                formatBudgetDeliveryStatusLabel(budget?.delivery_status),
-                formatCurrencyFromCents(budget?.total_amount_cents, budget?.currency_code || 'UYU'),
-            ].filter(Boolean).join(' · ');
-            summaryWrap.append(summaryTitle, summaryBody);
-            grid.appendChild(summaryWrap);
-
-            const approvedByInput = document.createElement('input');
-            approvedByInput.type = 'text';
-            approvedByInput.id = 'actionBudgetApprovedByName';
-            approvedByInput.autocomplete = 'off';
-            approvedByInput.value = String(options.getCurrentUser?.()?.username || '').trim();
-            approvedByInput.placeholder = 'Nombre de quien aprueba';
-            grid.appendChild(createInputGroup('Aprobado por', approvedByInput, { htmlFor: approvedByInput.id }));
-
-            const channelSelect = document.createElement('select');
-            channelSelect.id = 'actionBudgetApprovedByChannel';
-            channelSelect.appendChild(new Option('Email', 'email'));
-            channelSelect.appendChild(new Option('WhatsApp', 'whatsapp'));
-            channelSelect.appendChild(new Option('Firma', 'firma'));
-            channelSelect.appendChild(new Option('Teléfono', 'telefono'));
-            channelSelect.appendChild(new Option('Otro', 'otro'));
-            grid.appendChild(createInputGroup('Canal', channelSelect, { htmlFor: channelSelect.id }));
-
-            const noteInput = document.createElement('textarea');
-            noteInput.id = 'actionBudgetApprovalNote';
-            noteInput.rows = 3;
-            noteInput.placeholder = 'Nota opcional de aprobación';
-            grid.appendChild(createInputGroup('Nota', noteInput, {
-                htmlFor: noteInput.id,
-                className: 'full-width',
-            }));
-
-            fragment.appendChild(grid);
-            return fragment;
-        }
-
-        async function openInstallationBudgetModal(installationId, config = {}) {
-            if (!options.requireActiveSession()) return;
-            const targetInstallationId = options.parseStrictInteger(installationId);
-            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                options.showNotification('installation_id inválido para crear presupuesto.', 'error');
-                return;
-            }
-
-            let budgetState = config.budgetState || null;
-            if (!budgetState) {
-                try {
-                    budgetState = await options.api.getInstallationBudgetLatest(targetInstallationId);
-                } catch {
-                    budgetState = null;
-                }
-            }
-            const latestBudget = budgetState?.latest_budget || null;
-            const latestApprovedBudget = budgetState?.latest_approved_budget || null;
-
-            options.openActionModal({
-                title: `Presupuesto del registro #${targetInstallationId}`,
-                subtitle: 'Genera un presupuesto separado y déjalo listo para aprobación del cliente.',
-                submitLabel: 'Generar presupuesto',
-                focusId: 'actionBudgetIncidenceSummary',
-                fields: buildInstallationBudgetFields({
-                    installationId: targetInstallationId,
-                    latestBudget,
-                    latestApprovedBudget,
-                }),
-                onSubmit: async () => {
-                    const incidenceSummary = String(document.getElementById('actionBudgetIncidenceSummary')?.value || '').trim();
-                    const scopeIncluded = String(document.getElementById('actionBudgetScopeIncluded')?.value || '').trim();
-                    const scopeExcluded = String(document.getElementById('actionBudgetScopeExcluded')?.value || '').trim();
-                    const laborAmountCents = parseCurrencyAmountToCents(document.getElementById('actionBudgetLaborAmount')?.value);
-                    const partsAmountCents = parseCurrencyAmountToCents(document.getElementById('actionBudgetPartsAmount')?.value);
-                    const taxAmountCents = parseCurrencyAmountToCents(document.getElementById('actionBudgetTaxAmount')?.value);
-                    const currencyCode = String(document.getElementById('actionBudgetCurrencyCode')?.value || 'UYU')
-                        .trim()
-                        .toUpperCase();
-                    const estimatedDaysRaw = String(document.getElementById('actionBudgetEstimatedDays')?.value || '').trim();
-                    const validUntil = String(document.getElementById('actionBudgetValidUntil')?.value || '').trim();
-                    const emailTo = String(document.getElementById('actionBudgetEmailTo')?.value || '').trim();
-                    const sendEmail = document.getElementById('actionBudgetSendEmail')?.checked === true;
-
-                    if (!incidenceSummary) {
-                        options.setActionModalError('Debes describir la incidencia.');
-                        return;
-                    }
-                    if (!scopeIncluded) {
-                        options.setActionModalError('Debes describir el alcance incluido.');
-                        return;
-                    }
-                    if (!Number.isInteger(laborAmountCents) || laborAmountCents < 0) {
-                        options.setActionModalError('Monto inválido en mano de obra.');
-                        return;
-                    }
-                    if (!Number.isInteger(partsAmountCents) || partsAmountCents < 0) {
-                        options.setActionModalError('Monto inválido en repuestos/insumos.');
-                        return;
-                    }
-                    if (!Number.isInteger(taxAmountCents) || taxAmountCents < 0) {
-                        options.setActionModalError('Monto inválido en impuestos.');
-                        return;
-                    }
-                    if (!/^[A-Z]{3}$/.test(currencyCode)) {
-                        options.setActionModalError('Moneda inválida. Usa codigo ISO de 3 letras (ej: UYU).');
-                        return;
-                    }
-                    let estimatedDays = null;
-                    if (estimatedDaysRaw) {
-                        estimatedDays = Number.parseInt(estimatedDaysRaw, 10);
-                        if (!Number.isInteger(estimatedDays) || estimatedDays < 0) {
-                            options.setActionModalError('Plazo inválido. Usa un número entero de días.');
-                            return;
-                        }
-                    }
-
-                    const result = await options.api.createInstallationBudget(targetInstallationId, {
-                        incidence_summary: incidenceSummary,
-                        scope_included: scopeIncluded,
-                        scope_excluded: scopeExcluded,
-                        labor_amount_cents: laborAmountCents,
-                        parts_amount_cents: partsAmountCents,
-                        tax_amount_cents: taxAmountCents,
-                        currency_code: currencyCode,
-                        estimated_days: estimatedDays,
-                        valid_until: validUntil || null,
-                        email_to: emailTo,
-                        send_email: sendEmail,
-                    });
-
-                    options.closeActionModal(true);
-                    const budgetNumber = String(result?.budget?.budget_number || `#${result?.budget?.id || '-'}`).trim();
-                    options.showNotification(`Presupuesto ${budgetNumber} generado.`, 'success');
-                    runIncidentRefreshInBackground(
-                        { installationId: targetInstallationId },
-                        'El presupuesto se genero, pero no pudimos refrescar la vista.',
-                    );
-                },
-            });
-        }
-
-        async function openInstallationBudgetApprovalModal(installationId, budget) {
-            if (!options.requireActiveSession()) return;
-            const targetInstallationId = options.parseStrictInteger(installationId);
-            const targetBudgetId = options.parseStrictInteger(budget?.id);
-            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                options.showNotification('installation_id inválido para aprobar presupuesto.', 'error');
-                return;
-            }
-            if (!Number.isInteger(targetBudgetId) || targetBudgetId <= 0) {
-                options.showNotification('budget_id inválido para aprobar presupuesto.', 'error');
-                return;
-            }
-
-            options.openActionModal({
-                title: `Aprobar presupuesto #${targetBudgetId}`,
-                subtitle: 'Registra aprobación del cliente para habilitar la conformidad final.',
-                submitLabel: 'Registrar aprobación',
-                focusId: 'actionBudgetApprovedByName',
-                fields: buildInstallationBudgetApprovalFields({ budget }),
-                onSubmit: async () => {
-                    const approvedByName = String(document.getElementById('actionBudgetApprovedByName')?.value || '').trim();
-                    const approvedByChannel = String(document.getElementById('actionBudgetApprovedByChannel')?.value || '').trim().toLowerCase();
-                    const approvalNote = String(document.getElementById('actionBudgetApprovalNote')?.value || '').trim();
-
-                    if (!approvedByName) {
-                        options.setActionModalError('El nombre de quien aprueba es obligatorio.');
-                        return;
-                    }
-                    if (!approvedByChannel) {
-                        options.setActionModalError('Debes indicar un canal de aprobación.');
-                        return;
-                    }
-
-                    const result = await options.api.approveInstallationBudget(
-                        targetInstallationId,
-                        targetBudgetId,
-                        {
-                            approved_by_name: approvedByName,
-                            approved_by_channel: approvedByChannel,
-                            approval_note: approvalNote,
-                        },
-                    );
-                    options.closeActionModal(true);
-                    const budgetNumber = String(result?.budget?.budget_number || `#${targetBudgetId}`).trim();
-                    options.showNotification(`Presupuesto ${budgetNumber} aprobado.`, 'success');
-                    runIncidentRefreshInBackground(
-                        { installationId: targetInstallationId },
-                        'La aprobación se registró, pero no pudimos refrescar la vista.',
-                    );
-                },
-            });
-        }
-
-        function buildInstallationCommercialClosureFields({ installationId, commercialClosure }) {
-            const fragment = document.createDocumentFragment();
-            const grid = document.createElement('div');
-            grid.className = 'action-modal-grid';
-
-            const summaryWrap = document.createElement('div');
-            summaryWrap.className = 'conformity-modal-summary';
-            const summaryTitle = document.createElement('strong');
-            summaryTitle.textContent = `Registro #${installationId}`;
-            const summaryBody = document.createElement('p');
-            summaryBody.textContent = 'Define si este caso requiere presupuesto aprobado antes de la conformidad final.';
-            const summaryMeta = document.createElement('div');
-            summaryMeta.className = 'conformity-modal-meta';
-            summaryMeta.appendChild(
-                createConformityStatusChip(
-                    `Actual: ${commercialClosure.label}`,
-                    commercialClosure.requiresApprovedBudget ? 'warning' : 'resolved',
-                ),
-            );
-            if (commercialClosure.setBy || commercialClosure.setAt) {
-                const setByText = commercialClosure.setBy ? `por ${commercialClosure.setBy}` : '';
-                const setAtText = commercialClosure.setAt
-                    ? `el ${new Date(commercialClosure.setAt).toLocaleString('es-ES')}`
-                    : '';
-                summaryMeta.appendChild(
-                    createConformityStatusChip(
-                        [setByText, setAtText].filter(Boolean).join(' ') || 'Configuración registrada',
-                        'neutral',
-                    ),
-                );
-            }
-            summaryWrap.append(summaryTitle, summaryBody, summaryMeta);
-            grid.appendChild(summaryWrap);
-
-            const modeSelect = document.createElement('select');
-            modeSelect.id = 'actionCommercialClosureMode';
-            Object.entries(COMMERCIAL_CLOSURE_MODE_LABELS).forEach(([value, label]) => {
-                modeSelect.appendChild(new Option(label, value, value === commercialClosure.mode, value === commercialClosure.mode));
-            });
-            grid.appendChild(createInputGroup('Cobertura comercial', modeSelect, { htmlFor: modeSelect.id }));
-
-            const noteInput = document.createElement('textarea');
-            noteInput.id = 'actionCommercialClosureNote';
-            noteInput.rows = 3;
-            noteInput.placeholder = 'Justificacion comercial (obligatoria cuando no requiere presupuesto).';
-            noteInput.value = commercialClosure.note || '';
-            grid.appendChild(createInputGroup('Motivo comercial', noteInput, {
-                htmlFor: noteInput.id,
-                className: 'full-width',
-            }));
-
-            fragment.appendChild(grid);
-            return fragment;
-        }
-
-        async function openInstallationCommercialClosureModal(installationId, config = {}) {
-            if (!options.requireActiveSession()) return;
-            const targetInstallationId = options.parseStrictInteger(installationId);
-            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                options.showNotification('installation_id inválido para configurar cobertura.', 'error');
-                return;
-            }
-
-            const targetInstallation = config.installation || options.getInstallationById?.(targetInstallationId) || null;
-            const commercialClosure = resolveInstallationCommercialClosure(targetInstallation);
-
-            options.openActionModal({
-                title: `Cobertura comercial #${targetInstallationId}`,
-                subtitle: 'Controla si la conformidad final requiere presupuesto aprobado.',
-                submitLabel: 'Guardar cobertura',
-                focusId: 'actionCommercialClosureMode',
-                fields: buildInstallationCommercialClosureFields({
-                    installationId: targetInstallationId,
-                    commercialClosure,
-                }),
-                onSubmit: async () => {
-                    const mode = normalizeCommercialClosureMode(
-                        document.getElementById('actionCommercialClosureMode')?.value,
-                    );
-                    const note = String(document.getElementById('actionCommercialClosureNote')?.value || '').trim();
-                    if (mode !== DEFAULT_COMMERCIAL_CLOSURE_MODE && !note) {
-                        options.setActionModalError('Debes registrar el motivo comercial para cerrar sin presupuesto.');
-                        return;
-                    }
-
-                    await options.api.updateInstallation(targetInstallationId, {
-                        commercial_closure_mode: mode,
-                        commercial_closure_note: mode === DEFAULT_COMMERCIAL_CLOSURE_MODE ? '' : note,
-                    });
-
-                    options.closeActionModal(true);
-                    options.showNotification(
-                        mode === DEFAULT_COMMERCIAL_CLOSURE_MODE
-                            ? 'El caso vuelve a requerir presupuesto aprobado para la conformidad.'
-                            : `Cobertura comercial actualizada: ${formatCommercialClosureModeLabel(mode)}.`,
-                        'success',
-                    );
-                    runIncidentRefreshInBackground(
-                        { installationId: targetInstallationId },
-                        'La cobertura se guardo, pero no pudimos refrescar la vista.',
-                    );
-                    void options.loadInstallations?.();
-                },
-            });
-        }
+        const incidentCommercialModule = global.createDashboardIncidentsCommercial({
+            options,
+            createInputGroup,
+            buildTechnicianSelect,
+            createGpsCapturePanel,
+            hydrateTechnicianSelectFromContext,
+            runIncidentRefreshInBackground,
+        });
+        const {
+            applyConformityButtonState,
+            applyClosureBannerState,
+            buildConformityHelperText,
+            applyCreateIncidentButtonState,
+            createConformityStatusChip,
+            formatCurrencyFromCents,
+            formatBudgetApprovalStatusLabel,
+            formatBudgetDeliveryStatusLabel,
+            formatActiveIncidentsLabel,
+            formatBudgetGeneratedAt,
+            formatCommercialClosureModeLabel,
+            formatConformityGeneratedAt,
+            formatConformityStatusLabel,
+            isBudgetRequiredForCommercialClosure,
+            normalizeCommercialClosureMode,
+            openInstallationBudgetApprovalModal,
+            openInstallationBudgetModal,
+            openInstallationCommercialClosureModal,
+            openInstallationConformityModal,
+            resolveInstallationCommercialClosure,
+            syncVisibleIncidentsHeaderState,
+        } = incidentCommercialModule;
 
         function buildIncidentCreateFields({
             defaultApply,
@@ -3753,7 +1151,7 @@
             installationInput.value = defaultInstallationId;
             installationInput.autocomplete = 'off';
             installationInput.placeholder = isAssetContext
-                ? 'Opcional. Se usa vínculo activo o se crea contexto automático'
+                ? 'Opcional. Se usa vÃ­nculo activo o se crea contexto automÃ¡tico'
                 : 'Ej: 245';
             grid.appendChild(createInputGroup(
                 isAssetContext ? 'ID de registro (opcional)' : 'ID de registro',
@@ -3774,7 +1172,7 @@
                 id: 'actionIncidentTechnicianName',
                 includeCurrentUserOption: true,
             });
-            grid.appendChild(createInputGroup('Técnico responsable', technicianSelect, { htmlFor: technicianSelect.id }));
+            grid.appendChild(createInputGroup('TÃ©cnico responsable', technicianSelect, { htmlFor: technicianSelect.id }));
 
             const estimatedPresetSelect = document.createElement('select');
             estimatedPresetSelect.id = 'actionIncidentEstimatedPreset';
@@ -3847,7 +1245,7 @@
             applyCheckbox.id = 'actionIncidentApplyToRecord';
             applyCheckbox.checked = defaultApply;
             const applyCopy = document.createElement('span');
-            applyCopy.textContent = 'Aplicar nota y tiempo al registro de instalación.';
+            applyCopy.textContent = 'Aplicar nota y tiempo al registro de instalaciÃ³n.';
             applyLabel.append(applyCheckbox, applyCopy);
             const applySection = document.createElement('section');
             applySection.className = 'incident-create-section incident-create-footer';
@@ -3895,7 +1293,7 @@
             const customChecklistTextarea = document.createElement('textarea');
             customChecklistTextarea.id = 'actionIncidentChecklistCustom';
             customChecklistTextarea.rows = 3;
-            customChecklistTextarea.placeholder = 'Ej: Foto del serial\nValidación con supervisor';
+            customChecklistTextarea.placeholder = 'Ej: Foto del serial\nValidaciÃ³n con supervisor';
             customChecklistTextarea.value = customChecklistItems.join('\n');
             grid.appendChild(createInputGroup(
                 'Checklist adicional (una linea por item)',
@@ -3922,10 +1320,10 @@
             const resolutionNoteTextarea = document.createElement('textarea');
             resolutionNoteTextarea.id = 'actionIncidentResolutionNote';
             resolutionNoteTextarea.rows = 4;
-            resolutionNoteTextarea.placeholder = 'Resumen de la solución aplicada';
+            resolutionNoteTextarea.placeholder = 'Resumen de la soluciÃ³n aplicada';
             resolutionNoteTextarea.value = defaultNote;
             return createInputGroup(
-                'Nota de resolución (opcional)',
+                'Nota de resoluciÃ³n (opcional)',
                 resolutionNoteTextarea,
                 { htmlFor: 'actionIncidentResolutionNote' },
             );
@@ -3948,7 +1346,7 @@
 
                 const helpLine = document.createElement('small');
                 helpLine.className = 'asset-muted incident-meta-line';
-                helpLine.textContent = 'No se solicitaron dirección, referencia ni coordenadas operativas para esta incidencia.';
+                helpLine.textContent = 'No se solicitaron direcciÃ³n, referencia ni coordenadas operativas para esta incidencia.';
                 summary.appendChild(helpLine);
 
                 const chips = document.createElement('div');
@@ -3984,7 +1382,7 @@
             } else {
                 const missingAddress = document.createElement('small');
                 missingAddress.className = 'asset-muted incident-meta-line';
-                missingAddress.textContent = 'Falta dirección legible para la visita';
+                missingAddress.textContent = 'Falta direcciÃ³n legible para la visita';
                 summary.appendChild(missingAddress);
             }
 
@@ -4021,7 +1419,7 @@
                 chips.appendChild(createIncidentHighlightChip(`Origen: ${targetSource}`, 'info'));
             }
             if (!address || !reference) {
-                chips.appendChild(createIncidentHighlightChip('Información de visita incompleta', 'warning'));
+                chips.appendChild(createIncidentHighlightChip('InformaciÃ³n de visita incompleta', 'warning'));
             }
             summary.appendChild(chips);
 
@@ -4042,7 +1440,7 @@
 
             const resolutionLabel = document.createElement('small');
             resolutionLabel.className = 'asset-muted';
-            resolutionLabel.textContent = 'Resolución';
+            resolutionLabel.textContent = 'ResoluciÃ³n';
 
             const resolutionState = document.createElement('span');
             resolutionState.className = 'incident-resolution-state';
@@ -4056,7 +1454,7 @@
 
             const resolutionBody = document.createElement('p');
             resolutionBody.className = 'incident-resolution-text';
-            resolutionBody.textContent = resolutionNote || 'Sin nota de resolución.';
+            resolutionBody.textContent = resolutionNote || 'Sin nota de resoluciÃ³n.';
 
             resolutionPanel.append(resolutionHeader, resolutionBody);
 
@@ -4108,6 +1506,10 @@
             button.classList.add('incident-action-btn');
             button.dataset.action = String(actionKey || 'custom').trim() || 'custom';
             options.setElementTextWithMaterialIcon(button, iconName, label);
+        }
+
+        function isIncidentButtonElement(element) {
+            return element instanceof HTMLElement && element.tagName === 'BUTTON';
         }
 
         function buildIncidentStatusActionMeta(currentStatus, targetStatus) {
@@ -4522,6 +1924,19 @@
                 card.dataset.status = statusValue;
                 card.dataset.severity = severityValue;
                 card.dataset.updating = 'false';
+                const statusLabel = options.incidentStatusLabel(statusValue);
+                let liveStatusLabel = card.querySelector('[data-role="incident-live-status-label"]');
+                if (!(liveStatusLabel instanceof HTMLElement)) {
+                    liveStatusLabel = document.createElement('span');
+                    liveStatusLabel.dataset.role = 'incident-live-status-label';
+                    liveStatusLabel.style.position = 'absolute';
+                    liveStatusLabel.style.width = '1px';
+                    liveStatusLabel.style.height = '1px';
+                    liveStatusLabel.style.overflow = 'hidden';
+                    liveStatusLabel.style.clip = 'rect(0 0 0 0)';
+                    card.prepend(liveStatusLabel);
+                }
+                liveStatusLabel.textContent = [statusLabel, runtimeMetaText].filter(Boolean).join(' ');
                 card.__incidentData = buildLiveIncidentCardState(incident, {
                     installationId: options.parseStrictInteger(incident?.installation_id),
                     assetId: options.parseStrictInteger(incident?.asset_id),
@@ -4542,8 +1957,12 @@
                     options.setElementTextWithMaterialIcon(
                         statusBadge,
                         options.recordAttentionStateIconName(statusValue),
-                        options.incidentStatusLabel(statusValue),
+                        statusLabel,
                     );
+                    statusBadge.setAttribute('aria-label', statusLabel);
+                    if (!statusBadge.textContent.includes(statusLabel)) {
+                        statusBadge.textContent = statusLabel;
+                    }
                 }
 
                 const severityBadge = card.querySelector('.incident-status-strip .badge:not(.incident-status-badge)');
@@ -4605,7 +2024,7 @@
 
                 ['open', 'in_progress', 'paused', 'resolved'].forEach((targetStatus) => {
                     const actionBtn = card.querySelector(`.incident-action-btn[data-action="${targetStatus}"]`);
-                    if (!(actionBtn instanceof HTMLButtonElement)) return;
+                    if (!isIncidentButtonElement(actionBtn)) return;
                     const actionMeta = buildIncidentStatusActionMeta(statusValue, targetStatus);
                     decorateIncidentActionButton(actionBtn, targetStatus, actionMeta.label, actionMeta.icon);
                     actionBtn.dataset.current = statusValue === targetStatus ? 'true' : 'false';
@@ -4616,6 +2035,12 @@
                         actionBtn.removeAttribute('title');
                     }
                 });
+                if (statusValue === 'paused') {
+                    const resumeBtn = card.querySelector('.incident-action-btn[data-action="in_progress"]');
+                    if (isIncidentButtonElement(resumeBtn) && !resumeBtn.textContent.includes('Reanudar')) {
+                        decorateIncidentActionButton(resumeBtn, 'in_progress', 'Reanudar', 'play_circle');
+                    }
+                }
             });
 
             upsertIncidentInMapState(incident);
@@ -4633,7 +2058,7 @@
                 card.dataset.updating = isUpdating ? 'true' : 'false';
                 const currentStatus = options.normalizeIncidentStatus(card.dataset.status);
                 card.querySelectorAll('.incident-action-btn').forEach((button) => {
-                    if (!(button instanceof HTMLButtonElement)) return;
+                    if (!isIncidentButtonElement(button)) return;
                     if (isUpdating) {
                         button.disabled = true;
                         return;
@@ -4710,7 +2135,7 @@
                 });
             });
 
-            select.replaceChildren(new Option('Todos los técnicos', ''));
+            select.replaceChildren(new Option('Todos los tÃ©cnicos', ''));
             Array.from(optionMap.values())
                 .sort((left, right) => left.localeCompare(right, 'es'))
                 .forEach((label) => {
@@ -4809,7 +2234,7 @@
             if (assignedTechnicianNames.length) {
                 const assignedLine = document.createElement('small');
                 assignedLine.className = 'incident-reporter-line incident-assigned-line';
-                assignedLine.textContent = 'Técnico asignado: ';
+                assignedLine.textContent = 'TÃ©cnico asignado: ';
                 const assignedStrong = document.createElement('strong');
                 assignedStrong.textContent = assignedTechnicianNames.join(', ');
                 assignedLine.appendChild(assignedStrong);
@@ -4851,7 +2276,7 @@
                     entityId: incidentId,
                     entityLabel: `incidencia #${incidentId}`,
                     title: 'Responsables de la incidencia',
-                    emptyText: 'Sin técnicos asignados directamente a esta incidencia.',
+                    emptyText: 'Sin tÃ©cnicos asignados directamente a esta incidencia.',
                     compact: true,
                     defaultRole: 'owner',
                     showEmptyMessage: false,
@@ -4883,7 +2308,7 @@
 
                 const deletedLabel = document.createElement('small');
                 deletedLabel.className = 'asset-muted';
-                deletedLabel.textContent = 'Auditoría';
+                deletedLabel.textContent = 'AuditorÃ­a';
 
                 const deletedState = document.createElement('span');
                 deletedState.className = 'incident-resolution-state';
@@ -5013,7 +2438,7 @@
                 );
                 headerMeta.appendChild(
                     createConformityStatusChip(
-                        `${formatBudgetApprovalStatusLabel(latestBudget.approval_status)} · ${formatBudgetDeliveryStatusLabel(latestBudget.delivery_status)}`,
+                        `${formatBudgetApprovalStatusLabel(latestBudget.approval_status)} Â· ${formatBudgetDeliveryStatusLabel(latestBudget.delivery_status)}`,
                         latestBudget.approval_status === 'approved' ? 'resolved' : 'warning',
                     ),
                 );
@@ -5116,7 +2541,7 @@
                 const budgetSummaryPrimary = document.createElement('strong');
                 budgetSummaryPrimary.className = 'incidents-conformity-summary-primary';
                 budgetSummaryPrimary.textContent = latestBudget
-                    ? `${latestBudget.budget_number || `#${latestBudget.id}`} · ${formatBudgetApprovalStatusLabel(latestBudget.approval_status)}`
+                    ? `${latestBudget.budget_number || `#${latestBudget.id}`} Â· ${formatBudgetApprovalStatusLabel(latestBudget.approval_status)}`
                     : 'Sin presupuesto generado';
 
                 const budgetSummaryMeta = document.createElement('div');
@@ -5154,7 +2579,7 @@
                     budgetSummaryLink.target = '_blank';
                     budgetSummaryLink.rel = 'noreferrer';
                     budgetSummaryLink.className = 'conformity-modal-link';
-                    budgetSummaryLink.textContent = 'Descargar último presupuesto';
+                    budgetSummaryLink.textContent = 'Descargar Ãºltimo presupuesto';
                     budgetSummary.appendChild(budgetSummaryLink);
                 }
                 closureBanner.appendChild(budgetSummary);
@@ -5194,7 +2619,7 @@
                 if (currentActiveIncidentCount === 0) {
                     options.openActionConfirmModal({
                         title: `Reabrir trabajo en registro #${installationId}`,
-                        subtitle: 'Este registro ya quedó listo para conformidad. Crear una nueva incidencia vuelve a abrir el trabajo operativo.',
+                        subtitle: 'Este registro ya quedÃ³ listo para conformidad. Crear una nueva incidencia vuelve a abrir el trabajo operativo.',
                         submitLabel: 'Abrir nueva incidencia',
                         acknowledgementText: 'Confirmo que necesito reabrir el trabajo con una nueva incidencia.',
                         missingConfirmationMessage: 'Debes confirmar la reapertura para continuar.',
@@ -5279,13 +2704,13 @@
                 );
                 if (currentActiveIncidentCount > 0) {
                     options.showNotification(
-                        `Quedan ${currentActiveIncidentCount} incidencia${currentActiveIncidentCount === 1 ? '' : 's'} activa${currentActiveIncidentCount === 1 ? '' : 's'}. Resuélvelas antes de emitir la conformidad.`,
+                        `Quedan ${currentActiveIncidentCount} incidencia${currentActiveIncidentCount === 1 ? '' : 's'} activa${currentActiveIncidentCount === 1 ? '' : 's'}. ResuÃ©lvelas antes de emitir la conformidad.`,
                         'warning',
                     );
                     return;
                 }
                 if (requiresApprovedBudget && !latestApprovedBudget) {
-                    options.showNotification('Debes aprobar el último presupuesto para emitir la conformidad.', 'warning');
+                    options.showNotification('Debes aprobar el Ãºltimo presupuesto para emitir la conformidad.', 'warning');
                     return;
                 }
                 void openInstallationConformityModal(installationId, {
@@ -5398,11 +2823,11 @@
             technicianFilterWrap.hidden = true;
 
             const technicianFilterLabel = document.createElement('span');
-            technicianFilterLabel.textContent = 'Técnico';
+            technicianFilterLabel.textContent = 'TÃ©cnico';
 
             const technicianFilterSelect = document.createElement('select');
             technicianFilterSelect.id = 'incidentsTechnicianFilter';
-            technicianFilterSelect.appendChild(new Option('Todos los técnicos', ''));
+            technicianFilterSelect.appendChild(new Option('Todos los tÃ©cnicos', ''));
             technicianFilterSelect.addEventListener('change', () => {
                 applyIncidentTechnicianFilter(container, technicianFilterSelect.value);
             });
@@ -5411,7 +2836,7 @@
             if (canCurrentUserAuditDeletedIncidents()) {
                 const auditToggleWrap = document.createElement('label');
                 auditToggleWrap.className = 'action-checkbox';
-                auditToggleWrap.title = 'Incluye incidencias eliminadas para auditoría';
+                auditToggleWrap.title = 'Incluye incidencias eliminadas para auditorÃ­a';
 
                 const auditToggle = document.createElement('input');
                 auditToggle.type = 'checkbox';
@@ -5422,7 +2847,7 @@
                 });
 
                 const auditToggleText = document.createElement('span');
-                auditToggleText.textContent = 'Mostrar eliminadas (auditoría)';
+                auditToggleText.textContent = 'Mostrar eliminadas (auditorÃ­a)';
 
                 auditToggleWrap.append(auditToggle, auditToggleText);
                 utilityGroup.body.appendChild(auditToggleWrap);
@@ -5450,7 +2875,7 @@
                 const emptyStateHost = document.createElement('div');
                 options.renderContextualEmptyState(emptyStateHost, {
                     title: 'Sin incidencias para este registro',
-                    description: 'Si detectas un problema, crea la primera incidencia desde aquí. Si ya cerraste el caso, puedes emitir la conformidad desde el encabezado.',
+                    description: 'Si detectas un problema, crea la primera incidencia desde aquÃ­. Si ya cerraste el caso, puedes emitir la conformidad desde el encabezado.',
                     actionLabel: 'Crear incidencia',
                     onAction: () => createIncidentBtn.click(),
                     tone: 'neutral',
@@ -5559,7 +2984,7 @@
             const modalOpened = options.openActionModal({
                 title: isAssetContext ? `Nueva incidencia para equipo #${numericAssetId}` : 'Nueva incidencia',
                 subtitle: isAssetContext
-                    ? 'Carga detalle y severidad; el registro se resuelve automáticamente.'
+                    ? 'Carga detalle y severidad; el registro se resuelve automÃ¡ticamente.'
                     : 'Carga detalle, severidad y tiempo estimado.',
                 submitLabel: 'Crear incidencia',
                 modalWidth: 'wide',
@@ -5734,7 +3159,7 @@
             const targetId = options.parseStrictInteger(installationId);
             const numericAssetId = options.parseStrictInteger(config.assetId);
             if ((!Number.isInteger(targetId) || targetId <= 0) && (!Number.isInteger(numericAssetId) || numericAssetId <= 0)) {
-                options.showNotification('installation_id inválido para crear incidencia.', 'error');
+                options.showNotification('installation_id invÃ¡lido para crear incidencia.', 'error');
                 return;
             }
 
@@ -5785,7 +3210,7 @@
         async function selectAndUploadIncidentPhoto(incidentId, installationId, config = {}) {
             const targetIncidentId = Number.parseInt(String(incidentId), 10);
             if (!Number.isInteger(targetIncidentId) || targetIncidentId <= 0) {
-                options.showNotification('incident_id inválido para subir foto.', 'error');
+                options.showNotification('incident_id invÃ¡lido para subir foto.', 'error');
                 return;
             }
             const targetInstallationId = options.parseStrictInteger(installationId);
@@ -5817,7 +3242,7 @@
                 );
                 if (totalBatchBytes > INCIDENT_PHOTO_UPLOAD_MAX_BATCH_BYTES) {
                     options.showNotification(
-                        `La carga seleccionada pesa ${formatPhotoBytes(totalBatchBytes)} y supera el máximo de ${formatPhotoBytes(INCIDENT_PHOTO_UPLOAD_MAX_BATCH_BYTES)} por tanda.`,
+                        `La carga seleccionada pesa ${formatPhotoBytes(totalBatchBytes)} y supera el mÃ¡ximo de ${formatPhotoBytes(INCIDENT_PHOTO_UPLOAD_MAX_BATCH_BYTES)} por tanda.`,
                         'error',
                     );
                     return;
@@ -5840,7 +3265,7 @@
                         const uploadFile = optimized.file;
                         if (Math.max(0, Number(uploadFile?.size) || 0) > INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES) {
                             throw new Error(
-                                `La foto ${uploadFile?.name || 'seleccionada'} supera el máximo de ${formatPhotoBytes(INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES)} luego de optimizarla.`,
+                                `La foto ${uploadFile?.name || 'seleccionada'} supera el mÃ¡ximo de ${formatPhotoBytes(INCIDENT_PHOTO_UPLOAD_MAX_FILE_BYTES)} luego de optimizarla.`,
                             );
                         }
                         await options.api.uploadIncidentPhoto(targetIncidentId, uploadFile);
@@ -5901,7 +3326,7 @@
             if (!options.requireActiveSession()) return;
             const incidentId = options.parseStrictInteger(incident?.id);
             if (!Number.isInteger(incidentId) || incidentId <= 0) {
-                options.showNotification('Incidencia inválida para actualizar evidencia.', 'error');
+                options.showNotification('Incidencia invÃ¡lida para actualizar evidencia.', 'error');
                 return;
             }
             if (!canCurrentUserWriteOperationalData()) {
@@ -5957,7 +3382,7 @@
             if (!options.requireActiveSession()) return;
             const incidentId = options.parseStrictInteger(incident?.id);
             if (!Number.isInteger(incidentId) || incidentId <= 0) {
-                options.showNotification('Incidencia inválida para actualizar destino operativo.', 'error');
+                options.showNotification('Incidencia invÃ¡lida para actualizar destino operativo.', 'error');
                 return;
             }
             if (!canCurrentUserWriteOperationalData()) {
@@ -5967,7 +3392,7 @@
 
             const modalOpened = options.openActionModal({
                 title: `Destino operativo #${incidentId}`,
-                subtitle: 'Define dirección, referencia y coordenadas operativas para el despacho.',
+                subtitle: 'Define direcciÃ³n, referencia y coordenadas operativas para el despacho.',
                 submitLabel: 'Guardar destino',
                 modalWidth: 'wide',
                 focusId: 'actionIncidentDispatchRequired',
@@ -6006,7 +3431,7 @@
             if (!options.requireActiveSession()) return;
             const incidentId = Number.parseInt(String(incident?.id), 10);
             if (!Number.isInteger(incidentId) || incidentId <= 0) {
-                options.showNotification('Incidencia inválida para actualizar estado.', 'error');
+                options.showNotification('Incidencia invÃ¡lida para actualizar estado.', 'error');
                 return;
             }
 
@@ -6022,6 +3447,15 @@
                     });
                     if (result?.incident && typeof result.incident === 'object') {
                         applyVisibleIncidentUpdate(result.incident);
+                        if (normalizedStatus === 'paused') {
+                            document
+                                .querySelectorAll(`.incident-card[data-incident-id="${incidentId}"] .incident-action-btn[data-action="in_progress"]`)
+                                .forEach((resumeBtn) => {
+                                    if (isIncidentButtonElement(resumeBtn)) {
+                                        decorateIncidentActionButton(resumeBtn, 'in_progress', 'Reanudar', 'play_circle');
+                                    }
+                                });
+                        }
                         rememberRecentLocalStatusUpdate(result.incident);
                     } else {
                         rememberRecentLocalStatusUpdate(
@@ -6032,7 +3466,7 @@
                     options.showNotification(`Incidencia #${incidentId} actualizada a "${options.incidentStatusLabel(normalizedStatus)}".`, 'success');
                     runIncidentRefreshInBackground(
                         config,
-                        'El estado se actualizó, pero no pudimos refrescar la vista.',
+                        'El estado se actualizÃ³, pero no pudimos refrescar la vista.',
                     );
                     void options.loadDashboard();
                 } catch (error) {
@@ -6045,7 +3479,7 @@
                 const defaultNote = String(incident?.resolution_note || '').trim();
                 options.openActionModal({
                     title: `Resolver incidencia #${incidentId}`,
-                    subtitle: 'Agrega una nota de resolución opcional antes de cerrar la incidencia.',
+                    subtitle: 'Agrega una nota de resoluciÃ³n opcional antes de cerrar la incidencia.',
                     submitLabel: 'Resolver incidencia',
                     focusId: 'actionIncidentResolutionNote',
                     fields: buildIncidentResolutionFields(defaultNote),
@@ -6062,7 +3496,7 @@
                 const targetStatusLabel = options.incidentStatusLabel(normalizedStatus);
                 options.openActionConfirmModal({
                     title: `Reabrir incidencia #${incidentId}`,
-                    subtitle: `La incidencia volverá al flujo activo y pasará a "${targetStatusLabel}".`,
+                    subtitle: `La incidencia volverÃ¡ al flujo activo y pasarÃ¡ a "${targetStatusLabel}".`,
                     submitLabel: `Cambiar a ${targetStatusLabel}`,
                     acknowledgementText: `Confirmo que quiero reabrir esta incidencia y moverla a "${targetStatusLabel}".`,
                     missingConfirmationMessage: 'Debes confirmar la reapertura para continuar.',
@@ -6084,10 +3518,10 @@
 
             options.openActionConfirmModal({
                 title: `Eliminar incidencia #${incidentId}`,
-                subtitle: 'Esta acción marcará la incidencia como eliminada y dejará rastro en el registro de auditoría.',
+                subtitle: 'Esta acciÃ³n marcarÃ¡ la incidencia como eliminada y dejarÃ¡ rastro en el registro de auditorÃ­a.',
                 submitLabel: 'Eliminar incidencia',
                 acknowledgementText: 'Confirmo que deseo eliminar esta incidencia de los listados activos.',
-                missingConfirmationMessage: 'Debes confirmar la eliminación para continuar.',
+                missingConfirmationMessage: 'Debes confirmar la eliminaciÃ³n para continuar.',
                 onSubmit: async () => {
                     options.closeActionModal(true);
                     try {
@@ -6112,7 +3546,7 @@
             if (!options.requireActiveSession()) return;
             const numericAssetId = Number.parseInt(String(assetId), 10);
             if (!Number.isInteger(numericAssetId) || numericAssetId <= 0) {
-                options.showNotification('asset_id inválido.', 'error');
+                options.showNotification('asset_id invÃ¡lido.', 'error');
                 return;
             }
 

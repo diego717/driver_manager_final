@@ -34,6 +34,8 @@ test("GET /web/dashboard returns versioned static dashboard and strict CSP", asy
   assert.equal(scripts.some((src) => /^\/chart\.umd\.js\?v=[a-f0-9]{10}$/.test(src)), false);
   assert.equal(scripts.some((src) => /^\/jsqr\.js\?v=[a-f0-9]{10}$/.test(src)), false);
   assert.ok(scripts.some((src) => /^\/dashboard-modals\.js\?v=[a-f0-9]{10}$/.test(src)));
+  assert.ok(scripts.some((src) => /^\/dashboard-incidents-map\.js\?v=[a-f0-9]{10}$/.test(src)));
+  assert.ok(scripts.some((src) => /^\/dashboard-incidents-commercial\.js\?v=[a-f0-9]{10}$/.test(src)));
   assert.ok(scripts.some((src) => /^\/dashboard-incidents\.js\?v=[a-f0-9]{10}$/.test(src)));
   assert.ok(scripts.some((src) => /^\/dashboard-auth\.js\?v=[a-f0-9]{10}$/.test(src)));
   assert.ok(scripts.some((src) => /^\/dashboard-navigation\.js\?v=[a-f0-9]{10}$/.test(src)));

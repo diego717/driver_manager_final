@@ -347,6 +347,16 @@ function runPublicDashboardScripts(dom) {
   });
   modalsScript.runInContext(context);
 
+  const incidentsMapScript = new vm.Script(readPublicTextAsset("dashboard-incidents-map.js"), {
+    filename: "public/dashboard-incidents-map.js",
+  });
+  incidentsMapScript.runInContext(context);
+
+  const incidentsCommercialScript = new vm.Script(readPublicTextAsset("dashboard-incidents-commercial.js"), {
+    filename: "public/dashboard-incidents-commercial.js",
+  });
+  incidentsCommercialScript.runInContext(context);
+
   const incidentsScript = new vm.Script(readPublicTextAsset("dashboard-incidents.js"), {
     filename: "public/dashboard-incidents.js",
   });

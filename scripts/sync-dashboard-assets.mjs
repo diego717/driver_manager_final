@@ -16,6 +16,8 @@ const sources = {
   geolocation: path.join(rootDir, "dashboard-geolocation.js"),
   scan: path.join(rootDir, "dashboard-scan.js"),
   modals: path.join(rootDir, "dashboard-modals.js"),
+  incidentsMap: path.join(rootDir, "dashboard-incidents-map.js"),
+  incidentsCommercial: path.join(rootDir, "dashboard-incidents-commercial.js"),
   incidents: path.join(rootDir, "dashboard-incidents.js"),
   assets: path.join(rootDir, "dashboard-assets.js"),
   drivers: path.join(rootDir, "dashboard-drivers.js"),
@@ -58,6 +60,14 @@ function rewriteDashboardHtml(content, versions) {
     .replace(/src="\/dashboard-geolocation\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-geolocation.js?v=${versions.geolocation}"`)
     .replace(/src="\/dashboard-scan\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-scan.js?v=${versions.scan}"`)
     .replace(/src="\/dashboard-modals\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-modals.js?v=${versions.modals}"`)
+    .replace(
+      /src="\/dashboard-incidents-map\.js(?:\?v=[^"]+)?"/g,
+      `src="/dashboard-incidents-map.js?v=${versions.incidentsMap}"`,
+    )
+    .replace(
+      /src="\/dashboard-incidents-commercial\.js(?:\?v=[^"]+)?"/g,
+      `src="/dashboard-incidents-commercial.js?v=${versions.incidentsCommercial}"`,
+    )
     .replace(/src="\/dashboard-incidents\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-incidents.js?v=${versions.incidents}"`)
     .replace(/src="\/dashboard-assets\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-assets.js?v=${versions.assets}"`)
     .replace(/src="\/dashboard-drivers\.js(?:\?v=[^"]+)?"/g, `src="/dashboard-drivers.js?v=${versions.drivers}"`)
@@ -94,6 +104,8 @@ function rewriteServiceWorker(content, versions) {
     `/dashboard-geolocation.js?v=${versions.geolocation}`,
     `/dashboard-scan.js?v=${versions.scan}`,
     `/dashboard-modals.js?v=${versions.modals}`,
+    `/dashboard-incidents-map.js?v=${versions.incidentsMap}`,
+    `/dashboard-incidents-commercial.js?v=${versions.incidentsCommercial}`,
     `/dashboard-incidents.js?v=${versions.incidents}`,
     `/dashboard-assets.js?v=${versions.assets}`,
     `/dashboard-drivers.js?v=${versions.drivers}`,
@@ -150,6 +162,8 @@ function main() {
   const geolocation = readFile(sources.geolocation);
   const scan = readFile(sources.scan);
   const modals = readFile(sources.modals);
+  const incidentsMap = readFile(sources.incidentsMap);
+  const incidentsCommercial = readFile(sources.incidentsCommercial);
   const incidents = readFile(sources.incidents);
   const assets = readFile(sources.assets);
   const drivers = readFile(sources.drivers);
@@ -178,6 +192,8 @@ function main() {
     geolocation: hashOf(geolocation),
     scan: hashOf(scan),
     modals: hashOf(modals),
+    incidentsMap: hashOf(incidentsMap),
+    incidentsCommercial: hashOf(incidentsCommercial),
     incidents: hashOf(incidents),
     assets: hashOf(assets),
     drivers: hashOf(drivers),
@@ -205,6 +221,8 @@ function main() {
       versions.geolocation,
       versions.scan,
       versions.modals,
+      versions.incidentsMap,
+      versions.incidentsCommercial,
       versions.incidents,
       versions.assets,
       versions.drivers,
@@ -232,6 +250,8 @@ function main() {
   writeFile("dashboard-geolocation.js", geolocation);
   writeFile("dashboard-scan.js", scan);
   writeFile("dashboard-modals.js", modals);
+  writeFile("dashboard-incidents-map.js", incidentsMap);
+  writeFile("dashboard-incidents-commercial.js", incidentsCommercial);
   writeFile("dashboard-incidents.js", incidents);
   writeFile("dashboard-assets.js", assets);
   writeFile("dashboard-drivers.js", drivers);
