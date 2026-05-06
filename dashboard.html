@@ -32,6 +32,7 @@
         <nav class="sidebar">
             <div class="logo">
                 <div class="logo-lockup" aria-label="SiteOps">
+                    <img id="tenantBrandLogo" class="tenant-brand-logo is-hidden" src="" alt="Logo tenant">
                     <div class="logo-mark" aria-hidden="true">
                         <span class="logo-mark-ring"></span>
                         <span class="logo-mark-axis logo-mark-axis-horizontal"></span>
@@ -39,8 +40,8 @@
                         <span class="logo-mark-node"></span>
                     </div>
                     <div class="logo-copy">
-                        <h1>SiteOps</h1>
-                        <p class="logo-tag">Field Control Console</p>
+                        <h1 id="tenantBrandName">SiteOps</h1>
+                        <p id="tenantBrandTagline" class="logo-tag">Field Control Console</p>
                     </div>
                 </div>
             </div>
@@ -246,6 +247,93 @@
                         <strong id="kpiLastSyncTimeValue">-</strong>
                         <span id="kpiSyncMeta">OK</span>
                     </p>
+
+                    <section class="executive-panel" aria-labelledby="executivePanelTitle">
+                        <div class="executive-panel-head">
+                            <div>
+                                <p class="gps-ops-eyebrow">Dashboard ejecutivo</p>
+                                <h3 id="executivePanelTitle">KPIs por tenant</h3>
+                            </div>
+                            <div class="executive-panel-actions">
+                                <button id="execExportCsvBtn" class="btn-secondary" type="button">
+                                    <span class="material-symbols-outlined icon-inline-sm">download</span> CSV
+                                </button>
+                                <button id="execExportXlsxBtn" class="btn-secondary" type="button">
+                                    <span class="material-symbols-outlined icon-inline-sm">table_view</span> XLSX
+                                </button>
+                            </div>
+                        </div>
+                        <div class="executive-filter-grid">
+                            <label for="execStartDate" class="sr-only">Fecha inicio</label>
+                            <input id="execStartDate" type="date">
+                            <label for="execEndDate" class="sr-only">Fecha fin</label>
+                            <input id="execEndDate" type="date">
+                            <label for="execSiteFilter" class="sr-only">Sede</label>
+                            <select id="execSiteFilter">
+                                <option value="">Sede: todas</option>
+                            </select>
+                            <label for="execTeamFilter" class="sr-only">Equipo</label>
+                            <select id="execTeamFilter">
+                                <option value="">Equipo: todos</option>
+                            </select>
+                            <label for="execTechnicianFilter" class="sr-only">Técnico</label>
+                            <select id="execTechnicianFilter">
+                                <option value="">Técnico: todos</option>
+                            </select>
+                            <button id="execApplyFiltersBtn" class="btn-primary" type="button">
+                                <span class="material-symbols-outlined icon-inline-sm">filter_alt</span> Aplicar
+                            </button>
+                            <button id="execResetFiltersBtn" class="btn-secondary" type="button">
+                                <span class="material-symbols-outlined icon-inline-sm">restart_alt</span> Reset
+                            </button>
+                        </div>
+                        <div id="executiveKpisGrid" class="executive-kpis-grid">
+                            <article class="gps-ops-card gps-ops-card-success">
+                                <p class="gps-ops-label">MTTR</p>
+                                <p id="execMttrValue" class="gps-ops-value">-</p>
+                                <p class="gps-ops-meta">Promedio minutos de resolución</p>
+                            </article>
+                            <article class="gps-ops-card gps-ops-card-success">
+                                <p class="gps-ops-label">SLA en tiempo</p>
+                                <p id="execSlaOnTimeValue" class="gps-ops-value">-</p>
+                                <p class="gps-ops-meta">Cumplimiento por severidad</p>
+                            </article>
+                            <article class="gps-ops-card gps-ops-card-warning">
+                                <p class="gps-ops-label">SLA fuera de tiempo</p>
+                                <p id="execSlaLateValue" class="gps-ops-value">-</p>
+                                <p class="gps-ops-meta">Casos fuera de objetivo</p>
+                            </article>
+                            <article class="gps-ops-card gps-ops-card-info">
+                                <p class="gps-ops-label">FCR (7d)</p>
+                                <p id="execFcrValue" class="gps-ops-value">-</p>
+                                <p class="gps-ops-meta">Resuelto sin reapertura</p>
+                            </article>
+                        </div>
+                        <div class="executive-data-grid">
+                            <article class="recent-section executive-card">
+                                <h4><span class="material-symbols-outlined">trending_up</span> Tendencia</h4>
+                                <canvas id="executiveTrendChart"></canvas>
+                            </article>
+                            <article class="recent-section executive-card">
+                                <h4><span class="material-symbols-outlined">leaderboard</span> Top causales</h4>
+                                <div id="execTopCausesList" class="table-container">
+                                    <p class="loading">Sin datos.</p>
+                                </div>
+                            </article>
+                            <article class="recent-section executive-card">
+                                <h4><span class="material-symbols-outlined">engineering</span> Productividad por técnico</h4>
+                                <div id="execProductivityTable" class="table-container">
+                                    <p class="loading">Sin datos.</p>
+                                </div>
+                            </article>
+                            <article class="recent-section executive-card">
+                                <h4><span class="material-symbols-outlined">repeat</span> Reincidencia</h4>
+                                <div id="execReincidenceSummary" class="table-container">
+                                    <p class="loading">Sin datos.</p>
+                                </div>
+                            </article>
+                        </div>
+                    </section>
 
                     <section class="gps-ops-panel" aria-labelledby="gpsOpsTitle">
                         <div class="gps-ops-head">
@@ -802,6 +890,9 @@
                         <div class="incident-actions settings-actions">
                             <button id="tenantsEditBtn" class="btn-secondary" type="button">
                                 <span class="material-symbols-outlined icon-inline-sm">edit</span> Editar tenant
+                            </button>
+                            <button id="tenantsBrandingBtn" class="btn-secondary" type="button">
+                                <span class="material-symbols-outlined icon-inline-sm">palette</span> Branding
                             </button>
                             <button id="tenantsDeleteBtn" class="btn-secondary" type="button">
                                 <span class="material-symbols-outlined icon-inline-sm">delete</span> Eliminar tenant

@@ -1,4 +1,4 @@
-import {
+﻿import {
   addUtcDays,
   canonicalizeWebRole,
   canEditAssetCatalog,
@@ -59,9 +59,11 @@ import { createMaintenanceRouteHandlers } from "./worker/routes/maintenance.js";
 import { createRecordsRouteHandlers } from "./worker/routes/records.js";
 import { createScanRouteHandlers } from "./worker/routes/scan.js";
 import { createStatisticsRouteHandlers } from "./worker/routes/statistics.js";
+import { createAnalyticsRouteHandlers } from "./worker/routes/analytics.js";
 import { createSystemRouteHandlers } from "./worker/routes/system.js";
 import { createTechniciansRouteHandlers } from "./worker/routes/technicians.js";
 import { createTenantsRouteHandlers } from "./worker/routes/tenants.js";
+import { createBrandingRouteHandlers } from "./worker/routes/branding.js";
 import { createPublicTrackingRouteHandlers } from "./worker/routes/public-tracking.js";
 import {
   ALLOWED_INCIDENT_PHOTO_TYPES,
@@ -128,6 +130,7 @@ import {
   storeConformityPdf,
   storeSignatureAsset,
 } from "./worker/services/conformities.js";
+import { refreshIncidentKpiDaily } from "./worker/services/analytics.js";
 
 const AUTH_WINDOW_SECONDS = 300;
 const AUTH_NONCE_TTL_SECONDS = AUTH_WINDOW_SECONDS + 60;
@@ -267,6 +270,75 @@ function resolveDashboardAssetPath(routeParts) {
   return null;
 }
 
+async function handleTenantSlugDashboardAliasRoute(request, env, routeParts) {
+  if (request.method !== "GET" && request.method !== "HEAD") return null;
+  if (!Array.isArray(routeParts) || routeParts.length !== 1) return null;
+  if (!env?.DB || typeof env.DB.prepare !== "function") return null;
+
+  const slug = normalizeOptionalString(routeParts[0], "").toLowerCase();
+  if (!slug) return null;
+
+  const reserved = new Set([
+    "web",
+    "health",
+    "dashboard",
+    "events",
+    "track",
+    "installations",
+    "incidents",
+    "assets",
+    "drivers",
+    "records",
+    "statistics",
+    "lookup",
+    "photos",
+    "auth",
+    "maintenance",
+    "system",
+    "scan",
+    "devices",
+    "audit-logs",
+    "tenants",
+    "technicians",
+    "branding",
+    "analytics",
+    "manifest.json",
+    "sw.js",
+  ]);
+  if (reserved.has(slug)) return null;
+
+  let results = null;
+  try {
+    const queryResult = await env.DB.prepare(`
+      SELECT slug
+      FROM tenants
+      WHERE slug = ?
+        AND status = 'active'
+      LIMIT 1
+    `)
+      .bind(slug)
+      .all();
+    results = queryResult?.results || null;
+  } catch (error) {
+    const message = normalizeOptionalString(error?.message, "").toLowerCase();
+    const isRecoverableLookupError =
+      message.includes("no such table") ||
+      message.includes("no such column") ||
+      message.includes("unexpected query for .all()");
+    if (isRecoverableLookupError) {
+      return null;
+    }
+    throw error;
+  }
+  if (!results?.length) return null;
+
+  const target = new URL(request.url);
+  target.pathname = "/dashboard";
+  target.searchParams.set("tenant_slug", slug);
+
+  return Response.redirect(target.toString(), 302);
+}
+
 function dashboardAssetContentType(assetPath) {
   if (assetPath === "/dashboard" || assetPath === "/dashboard.html") return "text/html; charset=utf-8";
   if (assetPath === "/dashboard.css") return "text/css; charset=utf-8";
@@ -322,7 +394,7 @@ function dashboardFallbackHtml() {
 <body>
   <main>
     <h1>SiteOps Dashboard</h1>
-    <p>No se encontró el binding de assets estáticos. Revisa wrangler.toml ([assets]).</p>
+    <p>No se encontrÃ³ el binding de assets estÃ¡ticos. Revisa wrangler.toml ([assets]).</p>
   </main>
 </body>
 </html>`;
@@ -422,7 +494,7 @@ async function serveDashboardStaticAsset(request, env, corsPolicy, routeParts) {
 function parsePositiveInt(value, label) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new HttpError(400, `${label} inválido.`);
+    throw new HttpError(400, `${label} invÃ¡lido.`);
   }
   return parsed;
 }
@@ -1298,6 +1370,9 @@ async function getIncidentsAfterId(
         id,
         installation_id,
         asset_id,
+        site_id,
+        category_code,
+        cause_code,
         reporter_username,
         note,
         time_adjustment_seconds,
@@ -1376,6 +1451,9 @@ async function getIncidentsAfterId(
     return (results || []).map((incident) => mapIncidentRow({
       ...incident,
       asset_id: null,
+      site_id: null,
+      category_code: "uncategorized",
+      cause_code: "unknown",
     }));
   }
 }
@@ -1656,7 +1734,7 @@ export class RealtimeEventsBroker {
     const reconnectTimer = setTimeout(() => {
       this.closeClient(clientId, {
         type: "reconnect",
-        message: "Reconexión requerida",
+        message: "ReconexiÃ³n requerida",
         reconnect_after_ms: reconnectAfterMs,
         timestamp: nowIso(),
       }).catch(() => { });
@@ -1675,7 +1753,7 @@ export class RealtimeEventsBroker {
 
     await this.writeData(writer, {
       type: "connected",
-      message: "Conexión en tiempo real establecida",
+      message: "ConexiÃ³n en tiempo real establecida",
       tenant_id: normalizeRealtimeTenantId(tenantId),
       reconnect_after_ms: reconnectAfterMs,
       timestamp: nowIso(),
@@ -3175,7 +3253,7 @@ function mapIncidentRow(incident, photos = undefined) {
 
 function validateIncidentPayload(data, options = {}) {
   if (!data || typeof data !== "object") {
-    throw new HttpError(400, "Payload inválido.");
+    throw new HttpError(400, "Payload invalido.");
   }
 
   const note = typeof data.note === "string" ? data.note.trim() : "";
@@ -3183,13 +3261,13 @@ function validateIncidentPayload(data, options = {}) {
     throw new HttpError(400, "Campo 'note' es obligatorio.");
   }
   if (note.length > 5000) {
-    throw new HttpError(400, "Campo 'note' supera el límite permitido.");
+    throw new HttpError(400, "Campo 'note' supera el limite permitido.");
   }
 
   const timeAdjustment =
     data.time_adjustment_seconds === undefined ? 0 : Number(data.time_adjustment_seconds);
   if (!Number.isInteger(timeAdjustment) || timeAdjustment < -86400 || timeAdjustment > 86400) {
-    throw new HttpError(400, "Campo 'time_adjustment_seconds' inválido.");
+    throw new HttpError(400, "Campo 'time_adjustment_seconds' invalido.");
   }
 
   const estimatedDurationSeconds =
@@ -3206,13 +3284,22 @@ function validateIncidentPayload(data, options = {}) {
 
   const severity = data.severity || "medium";
   if (!["low", "medium", "high", "critical"].includes(severity)) {
-    throw new HttpError(400, "Campo 'severity' inválido.");
+    throw new HttpError(400, "Campo 'severity' invalido.");
   }
 
   const source = data.source || options.defaultSource || "mobile";
   if (!["desktop", "mobile", "web"].includes(source)) {
-    throw new HttpError(400, "Campo 'source' inválido.");
+    throw new HttpError(400, "Campo 'source' invalido.");
   }
+
+  const categoryCode = normalizeOptionalString(data.category_code, "uncategorized")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "_")
+    .slice(0, 80) || "uncategorized";
+  const causeCode = normalizeOptionalString(data.cause_code, "unknown")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "_")
+    .slice(0, 80) || "unknown";
 
   return {
     note,
@@ -3220,6 +3307,8 @@ function validateIncidentPayload(data, options = {}) {
     estimatedDurationSeconds,
     severity,
     source,
+    categoryCode,
+    causeCode,
     incidentStatus: "open",
     applyToInstallation: Boolean(data.apply_to_installation),
     reporterUsername: normalizeOptionalString(
@@ -5981,6 +6070,10 @@ const statisticsRouteHandlers = createStatisticsRouteHandlers({
   textResponse,
 });
 
+const analyticsRouteHandlers = createAnalyticsRouteHandlers({
+  jsonResponse,
+});
+
 const lookupRouteHandlers = createLookupRouteHandlers({
   jsonResponse,
   isMissingAssetsTableError,
@@ -6030,6 +6123,16 @@ const tenantsRouteHandlers = createTenantsRouteHandlers({
   logAuditEvent,
   getClientIpForRateLimit,
   nowIso,
+});
+
+const brandingRouteHandlers = createBrandingRouteHandlers({
+  jsonResponse,
+  corsHeaders,
+  canManageAllTenants,
+  assertSameTenantOrSuperAdmin,
+  nowIso,
+  logAuditEvent,
+  getClientIpForRateLimit,
 });
 
 const auditLogsRouteHandlers = createAuditLogsRouteHandlers({
@@ -6241,6 +6344,15 @@ export default {
         return healthCheckResponse;
       }
 
+      const tenantSlugAliasResponse = await handleTenantSlugDashboardAliasRoute(
+        request,
+        env,
+        routeParts,
+      );
+      if (tenantSlugAliasResponse) {
+        return tenantSlugAliasResponse;
+      }
+
       const dashboardAssetResponse = await serveDashboardStaticAsset(request, env, corsPolicy, routeParts);
       if (dashboardAssetResponse) {
         return dashboardAssetResponse;
@@ -6320,6 +6432,20 @@ export default {
       );
       if (scanAssetLabelResponse) {
         return scanAssetLabelResponse;
+      }
+
+      const analyticsResponse = await analyticsRouteHandlers.handleAnalyticsRoute(
+        request,
+        env,
+        url,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+        realtimeTenantId,
+      );
+      if (analyticsResponse) {
+        return analyticsResponse;
       }
 
       const assetsResponse = await handleAssetsRoute(
@@ -6408,6 +6534,18 @@ export default {
       );
       if (tenantsResponse) {
         return tenantsResponse;
+      }
+      const brandingResponse = await brandingRouteHandlers.handleBrandingRoute(
+        request,
+        env,
+        url,
+        corsPolicy,
+        routeParts,
+        isWebRoute,
+        webSession,
+      );
+      if (brandingResponse) {
+        return brandingResponse;
       }
       const technicianAssignmentsResponse =
         await techniciansRouteHandlers.handleTechnicianAssignmentsRoute(
@@ -6673,20 +6811,57 @@ export default {
     }
   },
   async scheduled(controller, env, ctx) {
-    const run = processAssetLoanReminders(env, nowIso());
+    const remindersRun = processAssetLoanReminders(env, nowIso());
+    const kpiRefreshRun = refreshIncidentKpiDaily(env, {
+      lookbackDays: 45,
+      backfillDays: 365,
+    });
+    const run = Promise.allSettled([remindersRun, kpiRefreshRun]);
     if (ctx && typeof ctx.waitUntil === "function") {
       ctx.waitUntil(run);
     }
 
     try {
-      const summary = await run;
+      const [reminderResult, kpiResult] = await run;
+      const reminderSummary =
+        reminderResult?.status === "fulfilled"
+          ? reminderResult.value
+          : {
+            success: false,
+            sentCount: 0,
+            skippedCount: 0,
+            dueSoonCount: 0,
+            overdueCount: 0,
+            error: reminderResult?.reason instanceof Error
+              ? reminderResult.reason.message
+              : String(reminderResult?.reason || "unknown"),
+          };
+      const kpiSummary =
+        kpiResult?.status === "fulfilled"
+          ? kpiResult.value
+          : {
+            success: false,
+            processedDays: 0,
+            deletedRows: 0,
+            insertedRows: 0,
+            error: kpiResult?.reason instanceof Error
+              ? kpiResult.reason.message
+              : String(kpiResult?.reason || "unknown"),
+          };
       console.info("[asset-loans] reminder run completed", {
         cron: controller?.cron || null,
-        ...summary,
+        ...reminderSummary,
       });
-      return summary;
+      console.info("[analytics] incident_kpi_daily refresh completed", {
+        cron: controller?.cron || null,
+        ...kpiSummary,
+      });
+      return {
+        ...reminderSummary,
+        analytics: kpiSummary,
+      };
     } catch (error) {
-      console.error("[asset-loans] reminder run failed", {
+      console.error("[scheduled] maintenance run failed", {
         cron: controller?.cron || null,
         message: error instanceof Error ? error.message : String(error),
       });
@@ -6694,3 +6869,4 @@ export default {
     }
   },
 };
+

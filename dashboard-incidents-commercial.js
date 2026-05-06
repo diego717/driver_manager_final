@@ -686,13 +686,81 @@
             };
         }
 
+        function parsePositiveIntegerOrNotify(rawValue, invalidMessage) {
+            const parsedValue = options.parseStrictInteger(rawValue);
+            if (!Number.isInteger(parsedValue) || parsedValue <= 0) {
+                options.showNotification(invalidMessage, 'error');
+                return null;
+            }
+            return parsedValue;
+        }
+
+        function readModalFieldValue(fieldId, fallback = '') {
+            return String(document.getElementById(fieldId)?.value ?? fallback).trim();
+        }
+
+        function readModalCheckboxValue(fieldId) {
+            return document.getElementById(fieldId)?.checked === true;
+        }
+
+        function collectConformityModalValues() {
+            const technicianName = readModalFieldValue('actionConformityTechnicianName')
+                || String(options.getCurrentUser?.()?.username || '').trim()
+                || 'web';
+            return {
+                signedByName: readModalFieldValue('actionConformitySignedByName'),
+                signedByDocument: readModalFieldValue('actionConformitySignedByDocument'),
+                emailTo: readModalFieldValue('actionConformityEmailTo'),
+                summaryNote: readModalFieldValue('actionConformitySummary'),
+                technicianName,
+                technicianNote: readModalFieldValue('actionConformityTechnicianNote'),
+                sendEmail: readModalCheckboxValue('actionConformitySendEmail'),
+                signatureDataUrl: currentConformitySignaturePad?.exportDataUrl?.() || '',
+                hasSignatureInk: currentConformitySignaturePad?.hasInk?.() === true,
+                gpsOverrideNote: readModalFieldValue(CONFORMITY_GPS_OVERRIDE_INPUT_ID),
+            };
+        }
+
+        function validateConformityModalValues(values) {
+            if (!values.signedByName) return 'El nombre del firmante es obligatorio.';
+            if (!values.emailTo) return 'El email destino es obligatorio.';
+            if (!values.signatureDataUrl || values.hasSignatureInk !== true) {
+                return 'La conformidad requiere una firma.';
+            }
+            return '';
+        }
+
+        function resolveConformityGpsPayload(gpsSnapshot, gpsOverrideNote) {
+            const gpsStatus = String(gpsSnapshot?.status || 'pending').trim().toLowerCase() || 'pending';
+            if (gpsStatus === 'captured') {
+                return {
+                    gpsPayload: gpsSnapshot,
+                    errorMessage: '',
+                };
+            }
+            if (!gpsOverrideNote) {
+                return {
+                    gpsPayload: null,
+                    errorMessage: 'Si no hay una captura GPS valida, debes registrar motivo de override.',
+                };
+            }
+            return {
+                gpsPayload: {
+                    status: 'override',
+                    source: 'override',
+                    note: gpsOverrideNote,
+                },
+                errorMessage: '',
+            };
+        }
+
         async function openInstallationConformityModal(installationId, config = {}) {
             if (!options.requireActiveSession()) return;
-            const targetInstallationId = options.parseStrictInteger(installationId);
-            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                options.showNotification('installation_id invÃ¡lido para generar conformidad.', 'error');
-                return;
-            }
+            const targetInstallationId = parsePositiveIntegerOrNotify(
+                installationId,
+                'installation_id invÃ¡lido para generar conformidad.',
+            );
+            if (!targetInstallationId) return;
 
             const activeIncidentCount = Math.max(0, Number(config.activeIncidentCount) || 0);
             const commercialClosureMode = normalizeCommercialClosureMode(
@@ -776,57 +844,31 @@
                     commercialClosureNote,
                 }),
                 onSubmit: async () => {
-                    const signedByName = String(document.getElementById('actionConformitySignedByName')?.value || '').trim();
-                    const signedByDocument = String(document.getElementById('actionConformitySignedByDocument')?.value || '').trim();
-                    const emailTo = String(document.getElementById('actionConformityEmailTo')?.value || '').trim();
-                    const summaryNote = String(document.getElementById('actionConformitySummary')?.value || '').trim();
-                    const technicianName = String(document.getElementById('actionConformityTechnicianName')?.value || '').trim()
-                        || String(options.getCurrentUser?.()?.username || '').trim()
-                        || 'web';
-                    const technicianNote = String(document.getElementById('actionConformityTechnicianNote')?.value || '').trim();
-                    const sendEmail = document.getElementById('actionConformitySendEmail')?.checked === true;
-                    const signatureDataUrl = currentConformitySignaturePad?.exportDataUrl?.() || '';
-
-                    if (!signedByName) {
-                        options.setActionModalError('El nombre del firmante es obligatorio.');
-                        return;
-                    }
-                    if (!emailTo) {
-                        options.setActionModalError('El email destino es obligatorio.');
-                        return;
-                    }
-                    if (!signatureDataUrl || currentConformitySignaturePad?.hasInk?.() !== true) {
-                        options.setActionModalError('La conformidad requiere una firma.');
+                    const formValues = collectConformityModalValues();
+                    const formValidationError = validateConformityModalValues(formValues);
+                    if (formValidationError) {
+                        options.setActionModalError(formValidationError);
                         return;
                     }
 
                     const gpsSnapshot = gpsController?.getSnapshotForSubmit?.() || latestGpsSnapshot || null;
-                    const gpsStatus = String(gpsSnapshot?.status || 'pending').trim().toLowerCase() || 'pending';
-                    const gpsOverrideNote = String(document.getElementById(CONFORMITY_GPS_OVERRIDE_INPUT_ID)?.value || '').trim();
-                    let gpsPayload = gpsSnapshot;
-                    if (gpsStatus !== 'captured') {
-                        if (!gpsOverrideNote) {
-                            options.setActionModalError('Si no hay una captura GPS valida, debes registrar motivo de override.');
-                            return;
-                        }
-                        gpsPayload = {
-                            status: 'override',
-                            source: 'override',
-                            note: gpsOverrideNote,
-                        };
+                    const gpsResolution = resolveConformityGpsPayload(gpsSnapshot, formValues.gpsOverrideNote);
+                    if (gpsResolution.errorMessage) {
+                        options.setActionModalError(gpsResolution.errorMessage);
+                        return;
                     }
 
                     const conformityPayload = {
-                        signed_by_name: signedByName,
-                        signed_by_document: signedByDocument,
-                        email_to: emailTo,
-                        signature_data_url: signatureDataUrl,
-                        summary_note: summaryNote,
-                        technician_name: technicianName,
-                        technician_note: technicianNote,
+                        signed_by_name: formValues.signedByName,
+                        signed_by_document: formValues.signedByDocument,
+                        email_to: formValues.emailTo,
+                        signature_data_url: formValues.signatureDataUrl,
+                        summary_note: formValues.summaryNote,
+                        technician_name: formValues.technicianName,
+                        technician_note: formValues.technicianNote,
                         include_all_incident_photos: true,
-                        send_email: sendEmail,
-                        gps: gpsPayload,
+                        send_email: formValues.sendEmail,
+                        gps: gpsResolution.gpsPayload,
                     };
                     if (requiresApprovedBudget && latestApprovedBudget?.id) {
                         conformityPayload.budget_id = latestApprovedBudget.id;
@@ -846,13 +888,6 @@
                             : `Conformidad generada (${statusLabel}).`,
                         result?.conformity?.status === 'email_failed' ? 'warning' : 'success',
                     );
-                    const metadata = (() => {
-                        try {
-                            return JSON.parse(String(result?.conformity?.metadata_json || '{}'));
-                        } catch {
-                            return {};
-                        }
-                    })();
                     runIncidentRefreshInBackground(
                         { installationId: targetInstallationId },
                         'La conformidad se genero, pero no pudimos refrescar el registro.',
@@ -900,6 +935,61 @@
             const numericValue = Number(normalized);
             if (!Number.isFinite(numericValue)) return NaN;
             return Math.round(numericValue * 100);
+        }
+
+        function collectBudgetModalValues() {
+            return {
+                incidenceSummary: readModalFieldValue('actionBudgetIncidenceSummary'),
+                scopeIncluded: readModalFieldValue('actionBudgetScopeIncluded'),
+                scopeExcluded: readModalFieldValue('actionBudgetScopeExcluded'),
+                laborAmountCents: parseCurrencyAmountToCents(readModalFieldValue('actionBudgetLaborAmount')),
+                partsAmountCents: parseCurrencyAmountToCents(readModalFieldValue('actionBudgetPartsAmount')),
+                taxAmountCents: parseCurrencyAmountToCents(readModalFieldValue('actionBudgetTaxAmount')),
+                currencyCode: (readModalFieldValue('actionBudgetCurrencyCode', 'UYU') || 'UYU').toUpperCase(),
+                estimatedDaysRaw: readModalFieldValue('actionBudgetEstimatedDays'),
+                validUntil: readModalFieldValue('actionBudgetValidUntil'),
+                emailTo: readModalFieldValue('actionBudgetEmailTo'),
+                sendEmail: readModalCheckboxValue('actionBudgetSendEmail'),
+            };
+        }
+
+        function validateBudgetModalValues(values) {
+            if (!values.incidenceSummary) {
+                return { estimatedDays: null, errorMessage: 'Debes describir la incidencia.' };
+            }
+            if (!values.scopeIncluded) {
+                return { estimatedDays: null, errorMessage: 'Debes describir el alcance incluido.' };
+            }
+            if (!Number.isInteger(values.laborAmountCents) || values.laborAmountCents < 0) {
+                return { estimatedDays: null, errorMessage: 'Monto invÃ¡lido en mano de obra.' };
+            }
+            if (!Number.isInteger(values.partsAmountCents) || values.partsAmountCents < 0) {
+                return { estimatedDays: null, errorMessage: 'Monto invÃ¡lido en repuestos/insumos.' };
+            }
+            if (!Number.isInteger(values.taxAmountCents) || values.taxAmountCents < 0) {
+                return { estimatedDays: null, errorMessage: 'Monto invÃ¡lido en impuestos.' };
+            }
+            if (!/^[A-Z]{3}$/.test(values.currencyCode)) {
+                return { estimatedDays: null, errorMessage: 'Moneda invÃ¡lida. Usa codigo ISO de 3 letras (ej: UYU).' };
+            }
+
+            let estimatedDays = null;
+            if (values.estimatedDaysRaw) {
+                estimatedDays = Number.parseInt(values.estimatedDaysRaw, 10);
+                if (!Number.isInteger(estimatedDays) || estimatedDays < 0) {
+                    return { estimatedDays: null, errorMessage: 'Plazo invÃ¡lido. Usa un nÃºmero entero de dÃ­as.' };
+                }
+            }
+
+            return { estimatedDays, errorMessage: '' };
+        }
+
+        function collectBudgetApprovalModalValues() {
+            return {
+                approvedByName: readModalFieldValue('actionBudgetApprovedByName'),
+                approvedByChannel: readModalFieldValue('actionBudgetApprovedByChannel').toLowerCase(),
+                approvalNote: readModalFieldValue('actionBudgetApprovalNote'),
+            };
         }
 
         function buildInstallationBudgetFields({
@@ -1111,11 +1201,11 @@
 
         async function openInstallationBudgetModal(installationId, config = {}) {
             if (!options.requireActiveSession()) return;
-            const targetInstallationId = options.parseStrictInteger(installationId);
-            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                options.showNotification('installation_id invÃ¡lido para crear presupuesto.', 'error');
-                return;
-            }
+            const targetInstallationId = parsePositiveIntegerOrNotify(
+                installationId,
+                'installation_id invÃ¡lido para crear presupuesto.',
+            );
+            if (!targetInstallationId) return;
 
             let budgetState = config.budgetState || null;
             if (!budgetState) {
@@ -1139,65 +1229,25 @@
                     latestApprovedBudget,
                 }),
                 onSubmit: async () => {
-                    const incidenceSummary = String(document.getElementById('actionBudgetIncidenceSummary')?.value || '').trim();
-                    const scopeIncluded = String(document.getElementById('actionBudgetScopeIncluded')?.value || '').trim();
-                    const scopeExcluded = String(document.getElementById('actionBudgetScopeExcluded')?.value || '').trim();
-                    const laborAmountCents = parseCurrencyAmountToCents(document.getElementById('actionBudgetLaborAmount')?.value);
-                    const partsAmountCents = parseCurrencyAmountToCents(document.getElementById('actionBudgetPartsAmount')?.value);
-                    const taxAmountCents = parseCurrencyAmountToCents(document.getElementById('actionBudgetTaxAmount')?.value);
-                    const currencyCode = String(document.getElementById('actionBudgetCurrencyCode')?.value || 'UYU')
-                        .trim()
-                        .toUpperCase();
-                    const estimatedDaysRaw = String(document.getElementById('actionBudgetEstimatedDays')?.value || '').trim();
-                    const validUntil = String(document.getElementById('actionBudgetValidUntil')?.value || '').trim();
-                    const emailTo = String(document.getElementById('actionBudgetEmailTo')?.value || '').trim();
-                    const sendEmail = document.getElementById('actionBudgetSendEmail')?.checked === true;
-
-                    if (!incidenceSummary) {
-                        options.setActionModalError('Debes describir la incidencia.');
+                    const formValues = collectBudgetModalValues();
+                    const validation = validateBudgetModalValues(formValues);
+                    if (validation.errorMessage) {
+                        options.setActionModalError(validation.errorMessage);
                         return;
-                    }
-                    if (!scopeIncluded) {
-                        options.setActionModalError('Debes describir el alcance incluido.');
-                        return;
-                    }
-                    if (!Number.isInteger(laborAmountCents) || laborAmountCents < 0) {
-                        options.setActionModalError('Monto invÃ¡lido en mano de obra.');
-                        return;
-                    }
-                    if (!Number.isInteger(partsAmountCents) || partsAmountCents < 0) {
-                        options.setActionModalError('Monto invÃ¡lido en repuestos/insumos.');
-                        return;
-                    }
-                    if (!Number.isInteger(taxAmountCents) || taxAmountCents < 0) {
-                        options.setActionModalError('Monto invÃ¡lido en impuestos.');
-                        return;
-                    }
-                    if (!/^[A-Z]{3}$/.test(currencyCode)) {
-                        options.setActionModalError('Moneda invÃ¡lida. Usa codigo ISO de 3 letras (ej: UYU).');
-                        return;
-                    }
-                    let estimatedDays = null;
-                    if (estimatedDaysRaw) {
-                        estimatedDays = Number.parseInt(estimatedDaysRaw, 10);
-                        if (!Number.isInteger(estimatedDays) || estimatedDays < 0) {
-                            options.setActionModalError('Plazo invÃ¡lido. Usa un nÃºmero entero de dÃ­as.');
-                            return;
-                        }
                     }
 
                     const result = await options.api.createInstallationBudget(targetInstallationId, {
-                        incidence_summary: incidenceSummary,
-                        scope_included: scopeIncluded,
-                        scope_excluded: scopeExcluded,
-                        labor_amount_cents: laborAmountCents,
-                        parts_amount_cents: partsAmountCents,
-                        tax_amount_cents: taxAmountCents,
-                        currency_code: currencyCode,
-                        estimated_days: estimatedDays,
-                        valid_until: validUntil || null,
-                        email_to: emailTo,
-                        send_email: sendEmail,
+                        incidence_summary: formValues.incidenceSummary,
+                        scope_included: formValues.scopeIncluded,
+                        scope_excluded: formValues.scopeExcluded,
+                        labor_amount_cents: formValues.laborAmountCents,
+                        parts_amount_cents: formValues.partsAmountCents,
+                        tax_amount_cents: formValues.taxAmountCents,
+                        currency_code: formValues.currencyCode,
+                        estimated_days: validation.estimatedDays,
+                        valid_until: formValues.validUntil || null,
+                        email_to: formValues.emailTo,
+                        send_email: formValues.sendEmail,
                     });
 
                     options.closeActionModal(true);
@@ -1213,16 +1263,16 @@
 
         async function openInstallationBudgetApprovalModal(installationId, budget) {
             if (!options.requireActiveSession()) return;
-            const targetInstallationId = options.parseStrictInteger(installationId);
-            const targetBudgetId = options.parseStrictInteger(budget?.id);
-            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                options.showNotification('installation_id invÃ¡lido para aprobar presupuesto.', 'error');
-                return;
-            }
-            if (!Number.isInteger(targetBudgetId) || targetBudgetId <= 0) {
-                options.showNotification('budget_id invÃ¡lido para aprobar presupuesto.', 'error');
-                return;
-            }
+            const targetInstallationId = parsePositiveIntegerOrNotify(
+                installationId,
+                'installation_id invÃ¡lido para aprobar presupuesto.',
+            );
+            if (!targetInstallationId) return;
+            const targetBudgetId = parsePositiveIntegerOrNotify(
+                budget?.id,
+                'budget_id invÃ¡lido para aprobar presupuesto.',
+            );
+            if (!targetBudgetId) return;
 
             options.openActionModal({
                 title: `Aprobar presupuesto #${targetBudgetId}`,
@@ -1231,15 +1281,13 @@
                 focusId: 'actionBudgetApprovedByName',
                 fields: buildInstallationBudgetApprovalFields({ budget }),
                 onSubmit: async () => {
-                    const approvedByName = String(document.getElementById('actionBudgetApprovedByName')?.value || '').trim();
-                    const approvedByChannel = String(document.getElementById('actionBudgetApprovedByChannel')?.value || '').trim().toLowerCase();
-                    const approvalNote = String(document.getElementById('actionBudgetApprovalNote')?.value || '').trim();
+                    const formValues = collectBudgetApprovalModalValues();
 
-                    if (!approvedByName) {
+                    if (!formValues.approvedByName) {
                         options.setActionModalError('El nombre de quien aprueba es obligatorio.');
                         return;
                     }
-                    if (!approvedByChannel) {
+                    if (!formValues.approvedByChannel) {
                         options.setActionModalError('Debes indicar un canal de aprobaciÃ³n.');
                         return;
                     }
@@ -1248,9 +1296,9 @@
                         targetInstallationId,
                         targetBudgetId,
                         {
-                            approved_by_name: approvedByName,
-                            approved_by_channel: approvedByChannel,
-                            approval_note: approvalNote,
+                            approved_by_name: formValues.approvedByName,
+                            approved_by_channel: formValues.approvedByChannel,
+                            approval_note: formValues.approvalNote,
                         },
                     );
                     options.closeActionModal(true);
@@ -1321,11 +1369,11 @@
 
         async function openInstallationCommercialClosureModal(installationId, config = {}) {
             if (!options.requireActiveSession()) return;
-            const targetInstallationId = options.parseStrictInteger(installationId);
-            if (!Number.isInteger(targetInstallationId) || targetInstallationId <= 0) {
-                options.showNotification('installation_id invÃ¡lido para configurar cobertura.', 'error');
-                return;
-            }
+            const targetInstallationId = parsePositiveIntegerOrNotify(
+                installationId,
+                'installation_id invÃ¡lido para configurar cobertura.',
+            );
+            if (!targetInstallationId) return;
 
             const targetInstallation = config.installation || options.getInstallationById?.(targetInstallationId) || null;
             const commercialClosure = resolveInstallationCommercialClosure(targetInstallation);

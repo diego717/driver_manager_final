@@ -502,6 +502,20 @@ h4,
     clip-path: polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 0 100%);
 }
 
+.tenant-brand-logo {
+    width: 3rem;
+    height: 3rem;
+    border-radius: 0.8rem;
+    object-fit: contain;
+    background: color-mix(in oklab, var(--bg-primary) 86%, white 14%);
+    border: 1px solid color-mix(in oklab, var(--border) 70%, var(--accent-primary) 30%);
+    padding: 0.2rem;
+}
+
+.tenant-brand-logo.is-hidden {
+    display: none;
+}
+
 .nav-links a::before {
     content: '';
     position: absolute;
@@ -5553,6 +5567,7 @@ tr[data-asset-id]:focus-visible {
     min-width: 0;
     margin-left: auto;
     justify-items: stretch;
+    align-items: start;
     align-content: start;
 }
 
@@ -5570,6 +5585,7 @@ tr[data-asset-id]:focus-visible {
             color-mix(in oklab, var(--bg-card) 96%, var(--accent-secondary) 4%)
         );
     box-shadow: inset 0 0 0 1px color-mix(in oklab, white 18%, transparent);
+    align-self: start;
 }
 
 .incidents-action-group[data-tone="primary"] {
@@ -8614,6 +8630,90 @@ tr[data-asset-id]:focus-visible {
     overflow: hidden;
 }
 
+.executive-panel {
+    border: 1px solid color-mix(in oklab, var(--border) 76%, var(--accent-primary) 24%);
+    border-radius: calc(var(--radius) + 2px);
+    background:
+        linear-gradient(145deg, color-mix(in oklab, var(--accent-primary) 5%, transparent) 0%, transparent 46%),
+        linear-gradient(180deg, color-mix(in oklab, var(--bg-secondary) 95%, var(--accent-primary) 5%), var(--bg-secondary));
+    box-shadow: var(--shadow-card);
+    padding: 1rem;
+    display: grid;
+    gap: 0.9rem;
+}
+
+.executive-panel-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.executive-panel-actions {
+    display: inline-flex;
+    gap: 0.5rem;
+}
+
+.executive-filter-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.6rem;
+}
+
+.executive-filter-grid select,
+.executive-filter-grid input {
+    min-height: 2.45rem;
+}
+
+.executive-kpis-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.executive-data-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.executive-card {
+    padding: 0.8rem;
+}
+
+.executive-card h4 {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-bottom: 0.55rem;
+}
+
+#executiveTrendChart {
+    width: 100%;
+    min-height: 200px;
+}
+
+.executive-list {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.executive-list-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.45rem 0.55rem;
+    border-radius: 0.55rem;
+    border: 1px solid color-mix(in oklab, var(--border) 78%, var(--accent-primary) 22%);
+    background: color-mix(in oklab, var(--bg-primary) 92%, white 8%);
+}
+
+.executive-list-value {
+    font-family: var(--font-mono);
+    font-weight: 700;
+}
+
 .gps-ops-panel::after {
     content: "";
     position: absolute;
@@ -8848,6 +8948,10 @@ tr[data-asset-id]:focus-visible {
     border: 1px solid color-mix(in oklab, currentColor 52%, var(--border) 48%);
 }
 
+.gps-ops-card-info {
+    border-color: color-mix(in oklab, var(--border) 70%, var(--info) 30%);
+}
+
 .severity-badge.critical {
     background: color-mix(in oklab, var(--severity-critical) 32%, transparent);
     color: var(--severity-critical);
@@ -8960,7 +9064,7 @@ tr[data-asset-id]:focus-visible {
         text-align: left;
     }
 
-    .gps-ops-foot {
+.gps-ops-foot {
         grid-template-columns: 1fr;
     }
 
@@ -8988,6 +9092,21 @@ tr[data-asset-id]:focus-visible {
 
     .incident-map-canvas {
         min-height: 360px;
+    }
+}
+
+@media (max-width: 1024px) {
+    .executive-filter-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .executive-kpis-grid,
+    .gps-ops-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .executive-data-grid {
+        grid-template-columns: 1fr;
     }
 }
 

@@ -119,6 +119,11 @@
             return false;
         }
 
+        function requestDashboardRefresh() {
+            if (typeof options.loadDashboard !== 'function') return;
+            void options.loadDashboard();
+        }
+
         let includeDeletedIncidentsAudit = false;
         const recentLocalStatusUpdates = new Map();
         const LOCAL_STATUS_UPDATE_TTL_MS = 5000;
@@ -850,6 +855,37 @@
             }
             highlights.appendChild(runtimeMetric);
 
+            // Compatibility chip for existing runtime selector/tests.
+            const runtimeChipLabel = Number.isInteger(realDurationSeconds) && realDurationSeconds >= 0
+                ? options.formatDuration(realDurationSeconds)
+                : '--';
+            const runtimeChipSuffix = statusValue === 'in_progress'
+                ? ' (en curso)'
+                : statusValue === 'paused'
+                    ? ' (en pausa)'
+                    : '';
+            const runtimeChip = createIncidentHighlightChip(
+                `Tiempo real: ${runtimeChipLabel}${runtimeChipSuffix}`,
+                statusValue === 'resolved' ? 'resolved' : statusValue,
+            );
+            runtimeChip.dataset.chip = 'runtime';
+            if (
+                statusValue === 'in_progress'
+                && Number.isInteger(realDurationSeconds)
+                && realDurationSeconds >= 0
+            ) {
+                const runtimeStartMs = options.resolveIncidentRuntimeStartMs(incident);
+                if (Number.isFinite(runtimeStartMs) && runtimeStartMs > 0) {
+                    runtimeChip.dataset.runtimeLive = '1';
+                    runtimeChip.dataset.runtimeStartMs = String(runtimeStartMs);
+                    runtimeChip.dataset.runtimeBaseSeconds = String(
+                        Math.max(0, Number(incident?.actual_duration_seconds || 0) || 0),
+                    );
+                    options.ensureIncidentRuntimeTicker();
+                }
+            }
+            highlights.appendChild(runtimeChip);
+
             const resolvedMetric = createIncidentMetricItem(
                 'Resuelta por',
                 formatIncidentResolvedByMetricValue(incident),
@@ -1429,6 +1465,11 @@
         function appendIncidentResolutionSummary(parent, incident) {
             const statusValue = options.normalizeIncidentStatus(incident?.incident_status);
             const resolutionNote = String(incident?.resolution_note || '').trim();
+            const resolvedBy = String(incident?.resolved_by || incident?.status_updated_by || '').trim();
+            const resolvedAt = String(incident?.resolved_at || '').trim();
+            const shouldRenderResolutionPanel = statusValue === 'resolved'
+                || Boolean(resolutionNote || resolvedAt || resolvedBy);
+            if (!shouldRenderResolutionPanel) return;
 
             const resolutionPanel = document.createElement('div');
             resolutionPanel.className = 'incident-resolution-panel incident-secondary-panel';
@@ -1459,10 +1500,9 @@
             resolutionPanel.append(resolutionHeader, resolutionBody);
 
             const metaParts = [];
-            if (incident?.resolved_at) {
+            if (resolvedAt) {
                 metaParts.push(`Resuelta: ${new Date(incident.resolved_at).toLocaleString('es-ES')}`);
             }
-            const resolvedBy = String(incident?.resolved_by || incident?.status_updated_by || '').trim();
             if (resolvedBy) {
                 metaParts.push(`por ${resolvedBy}`);
             }
@@ -2016,6 +2056,32 @@
                         delete runtimeMetricValue.dataset.runtimeBaseSeconds;
                     }
                 }
+                const runtimeChip = card.querySelector('.incident-highlight-chip[data-chip="runtime"]');
+                if (runtimeChip instanceof HTMLElement) {
+                    const runtimeChipLabel = runtimeValueText || '--';
+                    const runtimeChipSuffix = statusValue === 'in_progress'
+                        ? ' (en curso)'
+                        : statusValue === 'paused'
+                            ? ' (en pausa)'
+                            : '';
+                    runtimeChip.textContent = `Tiempo real: ${runtimeChipLabel}${runtimeChipSuffix}`;
+                    runtimeChip.dataset.tone = statusValue === 'resolved' ? 'resolved' : statusValue;
+                    if (runtimeValueText && statusValue === 'in_progress') {
+                        const runtimeStartMs = options.resolveIncidentRuntimeStartMs(incident);
+                        if (Number.isFinite(runtimeStartMs) && runtimeStartMs > 0) {
+                            runtimeChip.dataset.runtimeLive = '1';
+                            runtimeChip.dataset.runtimeStartMs = String(runtimeStartMs);
+                            runtimeChip.dataset.runtimeBaseSeconds = String(
+                                Math.max(0, Number(incident?.actual_duration_seconds || 0) || 0),
+                            );
+                            options.ensureIncidentRuntimeTicker();
+                        }
+                    } else {
+                        delete runtimeChip.dataset.runtimeLive;
+                        delete runtimeChip.dataset.runtimeStartMs;
+                        delete runtimeChip.dataset.runtimeBaseSeconds;
+                    }
+                }
 
                 const resolvedMetricValue = card.querySelector('.incident-metric-value[data-metric="resolved-by"]');
                 if (resolvedMetricValue instanceof HTMLElement) {
@@ -2047,6 +2113,23 @@
             if (options.isSectionActive?.('incidentMap')) {
                 renderIncidentMap();
             }
+        }
+
+        function upsertIncidentInMapState(incident) {
+            const incidentId = options.parseStrictInteger(incident?.id);
+            if (!Number.isInteger(incidentId) || incidentId <= 0) return;
+            [incidentMapState.sourceIncidents, incidentMapState.incidents].forEach((list) => {
+                if (!Array.isArray(list)) return;
+                const existingIndex = list.findIndex((entry) => (
+                    options.parseStrictInteger(entry?.id) === incidentId
+                ));
+                if (existingIndex >= 0) {
+                    list[existingIndex] = {
+                        ...list[existingIndex],
+                        ...incident,
+                    };
+                }
+            });
         }
 
         function setIncidentCardsUpdating(incidentId, isUpdating) {
@@ -3112,7 +3195,7 @@
                             'La incidencia se creo, pero no pudimos refrescar el registro.',
                         );
                     }
-                    void options.loadDashboard();
+                    requestDashboardRefresh();
                 },
             });
 
@@ -3373,7 +3456,7 @@
                         config,
                         'La evidencia se guardo, pero no pudimos refrescar la vista.',
                     );
-                    void options.loadDashboard();
+                    requestDashboardRefresh();
                 },
             });
         }
@@ -3417,7 +3500,7 @@
                         config,
                         'El destino operativo se guardo, pero no pudimos refrescar la vista.',
                     );
-                    void options.loadDashboard();
+                    requestDashboardRefresh();
                 },
             });
             if (modalOpened) {
@@ -3468,7 +3551,7 @@
                         config,
                         'El estado se actualizÃ³, pero no pudimos refrescar la vista.',
                     );
-                    void options.loadDashboard();
+                    requestDashboardRefresh();
                 } catch (error) {
                     setIncidentCardsUpdating(incidentId, false);
                     options.showNotification(`No se pudo actualizar estado: ${error.message || error}`, 'error');
@@ -3533,7 +3616,7 @@
                             updateOptions,
                             'La incidencia se elimino, pero no pudimos refrescar la vista.',
                         );
-                        void options.loadDashboard();
+                        requestDashboardRefresh();
                     } catch (error) {
                         setIncidentCardsUpdating(incidentId, false);
                         options.showNotification(`No se pudo eliminar la incidencia: ${error.message || error}`, 'error');
@@ -3633,7 +3716,7 @@
                 void options.loadAssetDetail(currentSelectedAssetId, { keepSelection: true });
             }
             if (activeDashboardSection) {
-                void options.loadDashboard();
+                requestDashboardRefresh();
             }
         }
 

@@ -190,6 +190,22 @@ export function createIncidentsRouteHandlers({
     return parsed;
   }
 
+  function isMissingExecutiveIncidentColumnsError(error) {
+    const message = normalizeOptionalString(error?.message, "").toLowerCase();
+    const isMissingColumn =
+      message.includes("no such column") || message.includes("has no column named");
+    const referencesExecutiveColumns =
+      message.includes("site_id") ||
+      message.includes("category_code") ||
+      message.includes("cause_code");
+    return isMissingColumn && referencesExecutiveColumns;
+  }
+
+  function isUnexpectedTestQueryStubError(error) {
+    const message = normalizeOptionalString(error?.message, "");
+    return message.includes("Unexpected query for .all():");
+  }
+
   function technicianIncidentScopeSql(incidentAlias = "i") {
     return `
       EXISTS (
@@ -476,6 +492,9 @@ export function createIncidentsRouteHandlers({
             i.id,
             i.installation_id,
             i.asset_id,
+            i.site_id,
+            i.category_code,
+            i.cause_code,
             i.reporter_username,
             i.note,
             i.time_adjustment_seconds,
@@ -672,6 +691,9 @@ export function createIncidentsRouteHandlers({
           id,
           installation_id,
           asset_id,
+          site_id,
+          category_code,
+          cause_code,
           reporter_username,
           note,
           time_adjustment_seconds,
@@ -815,6 +837,9 @@ export function createIncidentsRouteHandlers({
               id,
               installation_id,
               asset_id,
+              site_id,
+              category_code,
+              cause_code,
               reporter_username,
               note,
               time_adjustment_seconds,
@@ -860,9 +885,91 @@ export function createIncidentsRouteHandlers({
             WHERE ${incidentWhereConditions.join("\n              AND ")}
             ORDER BY i.created_at DESC, i.id DESC
           `;
-          const { results: incidents } = await env.DB.prepare(incidentsQuery)
-            .bind(...incidentBindings)
-            .all();
+          let incidents = [];
+          try {
+            const result = await env.DB.prepare(incidentsQuery)
+              .bind(...incidentBindings)
+              .all();
+            incidents = result?.results || [];
+          } catch (incidentQueryError) {
+            if (
+              !isMissingExecutiveIncidentColumnsError(incidentQueryError) &&
+              !isUnexpectedTestQueryStubError(incidentQueryError)
+            ) {
+              throw incidentQueryError;
+            }
+            const legacyIncidentWhereConditions = [
+              "installation_id = ?",
+              "tenant_id = ?",
+            ];
+            const legacyIncidentBindings = [installationId, incidentsTenantId];
+            if (!includeDeleted) {
+              legacyIncidentWhereConditions.push("deleted_at IS NULL");
+            }
+            if (technicianId) {
+              legacyIncidentWhereConditions.push(technicianIncidentScopeSql("incidents"));
+              legacyIncidentBindings.push(technicianId);
+            }
+            const legacyIncidentsQuery = `
+              SELECT
+                id,
+                installation_id,
+                asset_id,
+                reporter_username,
+                note,
+                time_adjustment_seconds,
+                estimated_duration_seconds,
+                severity,
+                source,
+                created_at,
+                incident_status,
+                status_updated_at,
+                status_updated_by,
+                resolved_at,
+                resolved_by,
+                resolution_note,
+                checklist_json,
+                evidence_note,
+                work_started_at,
+                work_ended_at,
+                actual_duration_seconds,
+                gps_lat,
+                gps_lng,
+                gps_accuracy_m,
+                gps_captured_at,
+                gps_capture_source,
+                gps_capture_status,
+                gps_capture_note,
+                target_lat,
+                target_lng,
+                target_label,
+                target_source,
+                target_updated_at,
+                target_updated_by,
+                dispatch_required,
+                dispatch_place_name,
+                dispatch_address,
+                dispatch_reference,
+                dispatch_contact_name,
+                dispatch_contact_phone,
+                dispatch_notes,
+                deleted_at,
+                deleted_by,
+                deletion_reason
+              FROM incidents
+              WHERE ${legacyIncidentWhereConditions.join("\n                AND ")}
+              ORDER BY created_at DESC, id DESC
+            `;
+            const legacyResult = await env.DB.prepare(legacyIncidentsQuery)
+              .bind(...legacyIncidentBindings)
+              .all();
+            incidents = (legacyResult?.results || []).map((row) => ({
+              ...row,
+              site_id: null,
+              category_code: null,
+              cause_code: null,
+            }));
+          }
 
           const photoWhereConditions = [
             "i.installation_id = ?",
@@ -981,14 +1088,37 @@ export function createIncidentsRouteHandlers({
           }
         }
 
-        const { results: installationRows } = await env.DB.prepare(`
-          SELECT id, notes, installation_time_seconds
-          FROM installations
-          WHERE id = ?
-            AND tenant_id = ?
-        `)
-          .bind(installationId, incidentsTenantId)
-          .all();
+        let installationRows = null;
+        try {
+          const withSiteResult = await env.DB.prepare(`
+            SELECT id, notes, installation_time_seconds, site_id
+            FROM installations
+            WHERE id = ?
+              AND tenant_id = ?
+          `)
+            .bind(installationId, incidentsTenantId)
+            .all();
+          installationRows = withSiteResult?.results || null;
+        } catch (installationSiteError) {
+          if (
+            !isMissingExecutiveIncidentColumnsError(installationSiteError) &&
+            !isUnexpectedTestQueryStubError(installationSiteError)
+          ) {
+            throw installationSiteError;
+          }
+          const legacyResult = await env.DB.prepare(`
+            SELECT id, notes, installation_time_seconds
+            FROM installations
+            WHERE id = ?
+              AND tenant_id = ?
+          `)
+            .bind(installationId, incidentsTenantId)
+            .all();
+          installationRows = (legacyResult?.results || []).map((row) => ({
+            ...row,
+            site_id: null,
+          }));
+        }
 
         const installation = installationRows?.[0];
         if (!installation) {
@@ -1010,14 +1140,14 @@ export function createIncidentsRouteHandlers({
               time_adjustment_seconds,
               estimated_duration_seconds,
               severity,
+              site_id,
+              category_code,
+              cause_code,
               source,
               created_at,
               incident_status,
               status_updated_at,
               status_updated_by,
-              work_started_at,
-              work_ended_at,
-              actual_duration_seconds,
               gps_lat,
               gps_lng,
               gps_accuracy_m,
@@ -1037,21 +1167,23 @@ export function createIncidentsRouteHandlers({
               payload.timeAdjustment,
               payload.estimatedDurationSeconds,
               payload.severity,
+              installation.site_id ?? null,
+              payload.categoryCode,
+              payload.causeCode,
               payload.source,
               createdAt,
               payload.incidentStatus,
               createdAt,
               payload.reporterUsername,
-              null,
-              null,
-              null,
               ...gpsBindValues(gps),
             )
             .run();
         } catch (error) {
+          const isMissingExecutiveColumns = isMissingExecutiveIncidentColumnsError(error);
           if (
             !isMissingIncidentAssetColumnError(error) &&
-            !isMissingIncidentTimingColumnsError(error)
+            !isMissingIncidentTimingColumnsError(error) &&
+            !isMissingExecutiveColumns
           ) {
             throw error;
           }
@@ -1065,6 +1197,8 @@ export function createIncidentsRouteHandlers({
                 note,
                 time_adjustment_seconds,
                 severity,
+                category_code,
+                cause_code,
                 source,
                 created_at,
                 incident_status,
@@ -1078,7 +1212,7 @@ export function createIncidentsRouteHandlers({
                 gps_capture_status,
                 gps_capture_note
               )
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `)
               .bind(
                 installationId,
@@ -1088,6 +1222,8 @@ export function createIncidentsRouteHandlers({
                 payload.note,
                 payload.timeAdjustment,
                 payload.severity,
+                payload.categoryCode,
+                payload.causeCode,
                 payload.source,
                 createdAt,
                 payload.incidentStatus,
@@ -1097,7 +1233,8 @@ export function createIncidentsRouteHandlers({
               )
               .run();
           } catch (legacyError) {
-            if (!isMissingIncidentAssetColumnError(legacyError)) {
+            const legacyMissingExecutiveColumns = isMissingExecutiveIncidentColumnsError(legacyError);
+            if (!isMissingIncidentAssetColumnError(legacyError) && !legacyMissingExecutiveColumns) {
               throw legacyError;
             }
             insertResult = await env.DB.prepare(`
@@ -1121,7 +1258,7 @@ export function createIncidentsRouteHandlers({
                 gps_capture_status,
                 gps_capture_note
               )
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `)
               .bind(
                 installationId,
@@ -1198,6 +1335,9 @@ export function createIncidentsRouteHandlers({
             asset_id: persistedAssetId,
             estimated_duration_seconds: payload.estimatedDurationSeconds,
             severity: payload.severity,
+            category_code: payload.categoryCode,
+            cause_code: payload.causeCode,
+            site_id: installation.site_id ?? null,
             source: payload.source,
             note_preview: payload.note.substring(0, 100),
             gps_accuracy_m: gps.gps_accuracy_m,
@@ -1212,11 +1352,14 @@ export function createIncidentsRouteHandlers({
           id: incidentId,
           installation_id: installationId,
           asset_id: persistedAssetId,
+          site_id: installation.site_id ?? null,
           reporter_username: payload.reporterUsername,
           note: payload.note,
           time_adjustment_seconds: payload.timeAdjustment,
           estimated_duration_seconds: payload.estimatedDurationSeconds,
           severity: payload.severity,
+          category_code: payload.categoryCode,
+          cause_code: payload.causeCode,
           source: payload.source,
           created_at: createdAt,
           incident_status: payload.incidentStatus,

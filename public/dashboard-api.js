@@ -518,6 +518,60 @@
                 const suffix = query.toString();
                 return request(suffix ? `/web/statistics/trend?${suffix}` : '/web/statistics/trend');
             },
+            getExecutiveAnalytics(params = {}) {
+                const query = new URLSearchParams();
+                Object.entries(params || {}).forEach(([key, value]) => {
+                    if (value === undefined || value === null || value === '') return;
+                    query.set(key, String(value));
+                });
+                const suffix = query.toString();
+                return request(suffix ? `/web/analytics/executive?${suffix}` : '/web/analytics/executive');
+            },
+            getExecutiveMetricDefinitions() {
+                return request('/web/analytics/definitions');
+            },
+            getBranding() {
+                return request('/web/branding');
+            },
+            getTenantBranding(tenantId) {
+                return request(`/web/tenants/${encodeURIComponent(String(tenantId || '').trim())}/branding`);
+            },
+            updateTenantBranding(tenantId, payload) {
+                return request(`/web/tenants/${encodeURIComponent(String(tenantId || '').trim())}/branding`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(payload || {}),
+                });
+            },
+            async uploadTenantBrandingLogo(tenantId, file) {
+                if (!(file instanceof Blob)) {
+                    throw new Error('Archivo de logo inválido.');
+                }
+                const authHeaders = getAccessToken()
+                    ? { Authorization: `Bearer ${getAccessToken()}` }
+                    : {};
+                const response = await fetch(
+                    buildUrl(`/web/tenants/${encodeURIComponent(String(tenantId || '').trim())}/branding/logo`),
+                    {
+                        method: 'POST',
+                        headers: {
+                            ...authHeaders,
+                            'Content-Type': file.type || 'application/octet-stream',
+                        },
+                        body: file,
+                        credentials,
+                    },
+                );
+                const payload = await parseApiResponsePayload(response);
+
+                if (response.status === 401) {
+                    onUnauthorized();
+                    throw new Error(extractApiErrorMessage(payload, response) || 'No autorizado');
+                }
+                if (!response.ok) {
+                    throw new Error(extractApiErrorMessage(payload, response));
+                }
+                return payload || {};
+            },
             login(username, password) {
                 return request('/web/auth/login', {
                     method: 'POST',

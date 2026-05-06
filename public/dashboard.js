@@ -96,6 +96,7 @@ let currentTenantsData = [];
 let currentSelectedTenantId = null;
 let currentTenantDetail = null;
 let currentTenantUsersData = [];
+let currentTenantBranding = null;
 const technicianAssignmentsByTechnicianId = new Map();
 const technicianAssignmentsByEntityKey = new Map();
 const expandedTechnicianAssignmentPanels = new Set();
@@ -104,6 +105,9 @@ let currentTrendRangeDays = 7;
 let dashboardLoadPromise = null;
 let dashboardRefreshRetryTimer = null;
 let dashboardLoadingRequests = 0;
+let executiveLoadPromise = null;
+let currentExecutiveAnalytics = null;
+let executiveTrendChart = null;
 const LAZY_ASSET_PATHS = {
     chart: '/chart.umd.js',
     jsqr: '/jsqr.js',
@@ -344,6 +348,19 @@ const SECTION_REQUIRED_BINDINGS = Object.freeze({
         'trendChart',
         'recentInstallations',
         'attentionPanel',
+        'execStartDate',
+        'execEndDate',
+        'execSiteFilter',
+        'execTeamFilter',
+        'execTechnicianFilter',
+        'execMttrValue',
+        'execSlaOnTimeValue',
+        'execSlaLateValue',
+        'execFcrValue',
+        'executiveTrendChart',
+        'execTopCausesList',
+        'execProductivityTable',
+        'execReincidenceSummary',
     ],
     myCases: [
         'myCasesRefreshBtn',
@@ -433,6 +450,18 @@ const TOAST_TYPE_ICONS = {
     warning: 'warning',
     info: 'info',
 };
+const BRANDING_COLOR_VAR_MAP = Object.freeze({
+    primary_color: '--accent-primary',
+    secondary_color: '--accent-secondary',
+    success: '--success',
+    warning: '--warning',
+    error: '--error',
+    info: '--info',
+    critical: '--severity-critical',
+    high: '--severity-high',
+    medium: '--severity-medium',
+    low: '--severity-low',
+});
 const ACTIVE_KPI_ANIMATIONS = new WeakMap();
 const REPORTED_SECTION_BINDING_WARNINGS = new Set();
 const NOTIFIED_SECTION_BINDING_ERRORS = new Set();
@@ -724,6 +753,76 @@ const api = apiFactory({
         showLogin();
     },
 });
+
+function buildQuerySuffix(params = {}) {
+    const query = new URLSearchParams();
+    Object.entries(params || {}).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === '') return;
+        query.set(key, String(value));
+    });
+    const encoded = query.toString();
+    return encoded ? `?${encoded}` : '';
+}
+
+async function getExecutiveAnalyticsCompat(params = {}) {
+    if (typeof api.getExecutiveAnalytics === 'function') {
+        return api.getExecutiveAnalytics(params);
+    }
+    return api.request(`/web/analytics/executive${buildQuerySuffix(params)}`);
+}
+
+async function getBrandingCompat() {
+    if (typeof api.getBranding === 'function') {
+        return api.getBranding();
+    }
+    return api.request('/web/branding');
+}
+
+async function getTenantBrandingCompat(tenantId) {
+    if (typeof api.getTenantBranding === 'function') {
+        return api.getTenantBranding(tenantId);
+    }
+    const encodedTenantId = encodeURIComponent(String(tenantId || '').trim());
+    return api.request(`/web/tenants/${encodedTenantId}/branding`);
+}
+
+async function updateTenantBrandingCompat(tenantId, payload) {
+    if (typeof api.updateTenantBranding === 'function') {
+        return api.updateTenantBranding(tenantId, payload);
+    }
+    const encodedTenantId = encodeURIComponent(String(tenantId || '').trim());
+    return api.request(`/web/tenants/${encodedTenantId}/branding`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload || {}),
+    });
+}
+
+async function uploadTenantBrandingLogoCompat(tenantId, file) {
+    if (typeof api.uploadTenantBrandingLogo === 'function') {
+        return api.uploadTenantBrandingLogo(tenantId, file);
+    }
+    if (!(file instanceof Blob)) {
+        throw new Error('Archivo de logo inválido.');
+    }
+    const encodedTenantId = encodeURIComponent(String(tenantId || '').trim());
+    const authHeaders = webAccessToken
+        ? { Authorization: `Bearer ${webAccessToken}` }
+        : {};
+    const response = await fetch(`${API_BASE}/web/tenants/${encodedTenantId}/branding/logo`, {
+        method: 'POST',
+        headers: {
+            ...authHeaders,
+            'Content-Type': file.type || 'application/octet-stream',
+        },
+        body: file,
+        credentials: 'include',
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(payload?.error?.message || payload?.message || `HTTP ${response.status}`);
+    }
+    return payload || {};
+}
 
 dashboardGeolocation = typeof window.createDashboardGeolocation === 'function'
     ? window.createDashboardGeolocation()
@@ -1037,6 +1136,8 @@ dashboardAuth = window.createDashboardAuth({
     clearSessionState: () => {
         currentUser = null;
         webAccessToken = '';
+        currentTenantBranding = null;
+        applyRuntimeBranding(null);
     },
     clearWebAccessToken: () => {
         webAccessToken = '';
@@ -1203,6 +1304,7 @@ function applyAuthenticatedUser(user) {
     const result = dashboardAuth.applyAuthenticatedUser(user);
     renderTechniciansSection();
     renderTenantsSection();
+    void loadRuntimeBranding({ silent: true });
     return result;
 }
 
@@ -1862,12 +1964,14 @@ async function confirmDeleteTenant(tenant = null) {
 function renderTenantDetail() {
     const detailEl = document.getElementById('tenantDetail');
     const editBtn = document.getElementById('tenantsEditBtn');
+    const brandingBtn = document.getElementById('tenantsBrandingBtn');
     const deleteBtn = document.getElementById('tenantsDeleteBtn');
-    if (!detailEl || !editBtn || !deleteBtn) return;
+    if (!detailEl || !editBtn || !deleteBtn || !brandingBtn) return;
 
     if (!hasActiveSession()) {
         detailEl.innerHTML = '<p class="settings-empty-state">Selecciona un tenant para ver su detalle.</p>';
         editBtn.disabled = true;
+        brandingBtn.disabled = true;
         deleteBtn.disabled = true;
         return;
     }
@@ -1875,6 +1979,7 @@ function renderTenantDetail() {
     if (!canCurrentUserManageTenants()) {
         detailEl.innerHTML = '<p class="settings-empty-state">Solo plataforma puede gestionar tenants.</p>';
         editBtn.disabled = true;
+        brandingBtn.disabled = true;
         deleteBtn.disabled = true;
         return;
     }
@@ -1883,11 +1988,13 @@ function renderTenantDetail() {
     if (!tenant) {
         detailEl.innerHTML = '<p class="settings-empty-state">Selecciona un tenant para ver su detalle.</p>';
         editBtn.disabled = true;
+        brandingBtn.disabled = true;
         deleteBtn.disabled = true;
         return;
     }
 
     editBtn.disabled = false;
+    brandingBtn.disabled = false;
     deleteBtn.disabled = String(tenant.id || '').trim().toLowerCase() === 'default';
     const latestUsage = currentTenantDetail?.latest_usage || null;
     const admins = Array.isArray(currentTenantDetail?.admins) ? currentTenantDetail.admins : [];
@@ -2849,6 +2956,119 @@ function openTenantEditorModal(tenant = null) {
     });
 }
 
+function buildTenantBrandingModalFields(branding = null) {
+    const fragment = document.createDocumentFragment();
+    const grid = document.createElement('div');
+    grid.className = 'action-modal-grid';
+
+    const displayNameInput = document.createElement('input');
+    displayNameInput.type = 'text';
+    displayNameInput.id = 'actionTenantBrandDisplayName';
+    displayNameInput.value = String(branding?.display_name || '');
+    displayNameInput.placeholder = 'Nombre comercial';
+    grid.append(createModalInputGroup('Nombre comercial', displayNameInput, { htmlFor: displayNameInput.id }));
+
+    const primaryColorInput = document.createElement('input');
+    primaryColorInput.type = 'color';
+    primaryColorInput.id = 'actionTenantBrandPrimaryColor';
+    primaryColorInput.value = normalizeHexColor(branding?.primary_color, '#d97706') || '#d97706';
+    grid.append(createModalInputGroup('Color primario', primaryColorInput, { htmlFor: primaryColorInput.id }));
+
+    const secondaryColorInput = document.createElement('input');
+    secondaryColorInput.type = 'color';
+    secondaryColorInput.id = 'actionTenantBrandSecondaryColor';
+    secondaryColorInput.value = normalizeHexColor(branding?.secondary_color, '#b45309') || '#b45309';
+    grid.append(createModalInputGroup('Color secundario', secondaryColorInput, { htmlFor: secondaryColorInput.id }));
+
+    const statusPalette = branding?.status_colors && typeof branding.status_colors === 'object'
+        ? branding.status_colors
+        : {};
+
+    const successColorInput = document.createElement('input');
+    successColorInput.type = 'color';
+    successColorInput.id = 'actionTenantBrandSuccessColor';
+    successColorInput.value = normalizeHexColor(statusPalette?.success, '#16a34a') || '#16a34a';
+    grid.append(createModalInputGroup('Estado éxito', successColorInput, { htmlFor: successColorInput.id }));
+
+    const warningColorInput = document.createElement('input');
+    warningColorInput.type = 'color';
+    warningColorInput.id = 'actionTenantBrandWarningColor';
+    warningColorInput.value = normalizeHexColor(statusPalette?.warning, '#f59e0b') || '#f59e0b';
+    grid.append(createModalInputGroup('Estado alerta', warningColorInput, { htmlFor: warningColorInput.id }));
+
+    const errorColorInput = document.createElement('input');
+    errorColorInput.type = 'color';
+    errorColorInput.id = 'actionTenantBrandErrorColor';
+    errorColorInput.value = normalizeHexColor(statusPalette?.error, '#dc2626') || '#dc2626';
+    grid.append(createModalInputGroup('Estado error', errorColorInput, { htmlFor: errorColorInput.id }));
+
+    const logoInput = document.createElement('input');
+    logoInput.type = 'file';
+    logoInput.id = 'actionTenantBrandLogoFile';
+    logoInput.accept = 'image/png,image/jpeg,image/webp,image/svg+xml';
+    fragment.append(grid, createModalInputGroup('Logo (opcional, 1MB máximo)', logoInput, { htmlFor: logoInput.id }));
+    return fragment;
+}
+
+async function openTenantBrandingModal(tenant = null) {
+    if (!canCurrentUserManageTenants()) {
+        showNotification('Solo plataforma puede editar branding de tenants.', 'error');
+        return;
+    }
+    const targetTenant = tenant || currentTenantDetail?.tenant || null;
+    const tenantId = String(targetTenant?.id || '').trim().toLowerCase();
+    if (!tenantId) {
+        showNotification('Selecciona un tenant primero.', 'warning');
+        return;
+    }
+
+    let brandingSnapshot = null;
+    try {
+        const result = await getTenantBrandingCompat(tenantId);
+        brandingSnapshot = result?.branding || null;
+    } catch (error) {
+        showNotification(`No se pudo cargar branding del tenant: ${error?.message || error}`, 'error');
+        return;
+    }
+
+    openActionModal({
+        title: `Branding tenant ${targetTenant?.name || tenantId}`,
+        subtitle: 'Configura nombre comercial, paleta y logo sin redeploy.',
+        submitLabel: 'Guardar branding',
+        focusId: 'actionTenantBrandDisplayName',
+        fields: buildTenantBrandingModalFields(brandingSnapshot),
+        onSubmit: async () => {
+            const payload = {
+                display_name: String(document.getElementById('actionTenantBrandDisplayName')?.value || '').trim(),
+                primary_color: normalizeHexColor(document.getElementById('actionTenantBrandPrimaryColor')?.value, '#d97706'),
+                secondary_color: normalizeHexColor(document.getElementById('actionTenantBrandSecondaryColor')?.value, '#b45309'),
+                status_colors: {
+                    success: normalizeHexColor(document.getElementById('actionTenantBrandSuccessColor')?.value, '#16a34a'),
+                    warning: normalizeHexColor(document.getElementById('actionTenantBrandWarningColor')?.value, '#f59e0b'),
+                    error: normalizeHexColor(document.getElementById('actionTenantBrandErrorColor')?.value, '#dc2626'),
+                },
+            };
+
+            await updateTenantBrandingCompat(tenantId, payload);
+
+            const logoInput = document.getElementById('actionTenantBrandLogoFile');
+            const logoFile = logoInput instanceof HTMLInputElement
+                ? logoInput.files?.[0] || null
+                : null;
+            if (logoFile) {
+                await uploadTenantBrandingLogoCompat(tenantId, logoFile);
+            }
+
+            closeActionModal(true);
+            showNotification(`Branding actualizado para ${targetTenant?.name || tenantId}.`, 'success');
+            await selectTenantDetail(tenantId, { silent: true });
+            if (String(currentUser?.tenant_id || '').trim().toLowerCase() === tenantId) {
+                await loadRuntimeBranding({ silent: true });
+            }
+        },
+    });
+}
+
 function buildTechnicianModalFields(technician = null) {
     const fragment = document.createDocumentFragment();
     const grid = document.createElement('div');
@@ -3745,6 +3965,506 @@ async function loadDashboard(config = {}) {
 
 function renderRecentInstallations(installations) {
     return dashboardOverview.renderRecentInstallations(installations);
+}
+
+function normalizeHexColor(value, fallback = '') {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return fallback;
+    const normalized = raw.startsWith('#') ? raw : `#${raw}`;
+    return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : fallback;
+}
+
+function asIsoDate(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+    return date.toISOString().slice(0, 10);
+}
+
+function getDefaultExecutiveDateRange() {
+    const end = new Date();
+    const start = new Date(end);
+    start.setUTCDate(start.getUTCDate() - 29);
+    return {
+        start: asIsoDate(start),
+        end: asIsoDate(end),
+    };
+}
+
+function ensureExecutiveFiltersDefaults() {
+    const startInput = document.getElementById('execStartDate');
+    const endInput = document.getElementById('execEndDate');
+    if (!(startInput instanceof HTMLInputElement) || !(endInput instanceof HTMLInputElement)) return;
+    const defaults = getDefaultExecutiveDateRange();
+    if (!startInput.value) startInput.value = defaults.start;
+    if (!endInput.value) endInput.value = defaults.end;
+}
+
+function resetExecutiveDashboardUi(message = 'Sin datos para el rango seleccionado.') {
+    const mttrEl = document.getElementById('execMttrValue');
+    const slaOnTimeEl = document.getElementById('execSlaOnTimeValue');
+    const slaLateEl = document.getElementById('execSlaLateValue');
+    const fcrEl = document.getElementById('execFcrValue');
+    if (mttrEl) mttrEl.textContent = '-';
+    if (slaOnTimeEl) slaOnTimeEl.textContent = '-';
+    if (slaLateEl) slaLateEl.textContent = '-';
+    if (fcrEl) fcrEl.textContent = '-';
+
+    const placeholders = [
+        ['execTopCausesList', message],
+        ['execProductivityTable', message],
+        ['execReincidenceSummary', message],
+    ];
+    placeholders.forEach(([id, text]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.innerHTML = `<p class="loading">${text}</p>`;
+    });
+
+    if (executiveTrendChart) {
+        executiveTrendChart.destroy();
+        executiveTrendChart = null;
+    }
+}
+
+function formatPercent(value) {
+    const normalized = Number(value || 0);
+    if (!Number.isFinite(normalized)) return '0%';
+    return `${normalized.toFixed(2)}%`;
+}
+
+function formatMinutes(value) {
+    const normalized = Number(value || 0);
+    if (!Number.isFinite(normalized)) return '0 min';
+    return `${normalized.toFixed(2)} min`;
+}
+
+function buildExecutiveFiltersFromUi() {
+    ensureExecutiveFiltersDefaults();
+    const startDate = String(document.getElementById('execStartDate')?.value || '').trim();
+    const endDate = String(document.getElementById('execEndDate')?.value || '').trim();
+    const siteIdRaw = String(document.getElementById('execSiteFilter')?.value || '').trim();
+    const teamName = String(document.getElementById('execTeamFilter')?.value || '').trim();
+    const technicianRaw = String(document.getElementById('execTechnicianFilter')?.value || '').trim();
+    const params = {};
+    if (startDate) params.start_date = startDate;
+    if (endDate) params.end_date = endDate;
+    if (siteIdRaw) params.site_id = siteIdRaw;
+    if (teamName) params.team_name = teamName;
+    if (technicianRaw) params.technician_id = technicianRaw;
+    return params;
+}
+
+function fillExecutiveFilterOptions(payload = {}) {
+    const sites = Array.isArray(payload?.sites) ? payload.sites : [];
+    const teams = Array.isArray(payload?.teams) ? payload.teams : [];
+    const technicians = Array.isArray(payload?.technicians) ? payload.technicians : [];
+
+    const siteSelect = document.getElementById('execSiteFilter');
+    const teamSelect = document.getElementById('execTeamFilter');
+    const technicianSelect = document.getElementById('execTechnicianFilter');
+    const selectedSite = String(siteSelect?.value || '').trim();
+    const selectedTeam = String(teamSelect?.value || '').trim();
+    const selectedTechnician = String(technicianSelect?.value || '').trim();
+
+    if (siteSelect) {
+        siteSelect.innerHTML = '<option value="">Sede: todas</option>';
+        sites.forEach((site) => {
+            const option = document.createElement('option');
+            option.value = String(site?.id || '').trim();
+            option.textContent = String(site?.name || site?.code || site?.id || 'Sede').trim();
+            if (option.value === selectedSite) option.selected = true;
+            siteSelect.append(option);
+        });
+    }
+    if (teamSelect) {
+        teamSelect.innerHTML = '<option value="">Equipo: todos</option>';
+        teams.forEach((team) => {
+            const value = String(team || '').trim();
+            if (!value) return;
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = value;
+            if (value === selectedTeam) option.selected = true;
+            teamSelect.append(option);
+        });
+    }
+    if (technicianSelect) {
+        technicianSelect.innerHTML = '<option value="">Técnico: todos</option>';
+        technicians.forEach((technician) => {
+            const id = String(technician?.id || '').trim();
+            if (!id) return;
+            const displayName = String(technician?.display_name || `#${id}`).trim();
+            const team = String(technician?.team_name || '').trim();
+            const option = document.createElement('option');
+            option.value = id;
+            option.textContent = team ? `${displayName} · ${team}` : displayName;
+            if (id === selectedTechnician) option.selected = true;
+            technicianSelect.append(option);
+        });
+    }
+}
+
+function renderExecutiveTopCauses(topCauses = []) {
+    const container = document.getElementById('execTopCausesList');
+    if (!container) return;
+    if (!Array.isArray(topCauses) || !topCauses.length) {
+        container.innerHTML = '<p class="loading">Sin causales para este rango.</p>';
+        return;
+    }
+    const list = document.createElement('div');
+    list.className = 'executive-list';
+    topCauses.forEach((item, index) => {
+        const row = document.createElement('div');
+        row.className = 'executive-list-item';
+        const label = document.createElement('span');
+        label.textContent = `${index + 1}. ${item?.cause_label || item?.cause_code || 'Sin causal'}`;
+        const value = document.createElement('span');
+        value.className = 'executive-list-value';
+        value.textContent = `${Number(item?.incidents || 0)} casos`;
+        row.append(label, value);
+        list.append(row);
+    });
+    container.replaceChildren(list);
+}
+
+function renderExecutiveProductivityTable(rows = []) {
+    const container = document.getElementById('execProductivityTable');
+    if (!container) return;
+    if (!Array.isArray(rows) || !rows.length) {
+        container.innerHTML = '<p class="loading">Sin productividad para este rango.</p>';
+        return;
+    }
+    const table = document.createElement('table');
+    table.innerHTML = `
+        <thead>
+            <tr>
+                <th>Técnico</th>
+                <th>Equipo</th>
+                <th>Cerrados</th>
+                <th>FCR</th>
+            </tr>
+        </thead>
+    `;
+    const tbody = document.createElement('tbody');
+    rows.forEach((row) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${String(row?.technician_label || 'Sin técnico')}</td>
+            <td>${String(row?.team_name || '-')}</td>
+            <td>${Number(row?.closed_tickets || 0)}</td>
+            <td>${formatPercent(row?.fcr_pct || 0)}</td>
+        `;
+        tbody.append(tr);
+    });
+    table.append(tbody);
+    container.replaceChildren(table);
+}
+
+function renderExecutiveReincidence(reincidence = {}) {
+    const container = document.getElementById('execReincidenceSummary');
+    if (!container) return;
+    const byAsset = reincidence?.by_asset || {};
+    const bySite = reincidence?.by_site || {};
+    const byCategory = reincidence?.by_category || {};
+    const card = document.createElement('div');
+    card.className = 'executive-list';
+    const groups = [
+        ['Assets repetidos', byAsset?.repeated_groups || 0, byAsset?.repeated_tickets || 0],
+        ['Sedes repetidas', bySite?.repeated_groups || 0, bySite?.repeated_tickets || 0],
+        ['Categorías repetidas', byCategory?.repeated_groups || 0, byCategory?.repeated_tickets || 0],
+    ];
+    groups.forEach(([label, groupCount, ticketCount]) => {
+        const row = document.createElement('div');
+        row.className = 'executive-list-item';
+        const left = document.createElement('span');
+        left.textContent = String(label);
+        const right = document.createElement('span');
+        right.className = 'executive-list-value';
+        right.textContent = `${groupCount} grupos · ${ticketCount} tickets`;
+        row.append(left, right);
+        card.append(row);
+    });
+    container.replaceChildren(card);
+}
+
+async function renderExecutiveTrendChart(trendRows = []) {
+    const canvas = document.getElementById('executiveTrendChart');
+    if (!(canvas instanceof HTMLCanvasElement)) return;
+
+    if (executiveTrendChart) {
+        executiveTrendChart.destroy();
+        executiveTrendChart = null;
+    }
+    if (!Array.isArray(trendRows) || !trendRows.length) {
+        const context = canvas.getContext('2d');
+        context?.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+    }
+    const canRenderCharts = await ensureChartLibrary();
+    if (!canRenderCharts || !isChartAvailable()) return;
+
+    const labels = trendRows.map((row) => String(row?.day || ''));
+    const resolvedSeries = trendRows.map((row) => Number(row?.resolved_count || 0));
+    const mttrSeries = trendRows.map((row) => Number(row?.mttr_minutes || 0));
+    const slaSeries = trendRows.map((row) => Number(row?.sla_on_time_pct || 0));
+
+    executiveTrendChart = new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: 'Cerrados',
+                    data: resolvedSeries,
+                    borderColor: readThemeToken('--accent-primary', '#d97706'),
+                    backgroundColor: 'transparent',
+                    tension: 0.28,
+                    yAxisID: 'y',
+                },
+                {
+                    label: 'MTTR (min)',
+                    data: mttrSeries,
+                    borderColor: readThemeToken('--warning', '#f59e0b'),
+                    backgroundColor: 'transparent',
+                    tension: 0.28,
+                    yAxisID: 'y',
+                },
+                {
+                    label: 'SLA %',
+                    data: slaSeries,
+                    borderColor: readThemeToken('--success', '#16a34a'),
+                    backgroundColor: 'transparent',
+                    tension: 0.28,
+                    yAxisID: 'y1',
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                },
+                y1: {
+                    position: 'right',
+                    beginAtZero: true,
+                    suggestedMax: 100,
+                    grid: {
+                        drawOnChartArea: false,
+                    },
+                },
+            },
+        },
+    });
+}
+
+function renderExecutivePayload(payload = {}) {
+    const kpis = payload?.kpis || {};
+    const mttrEl = document.getElementById('execMttrValue');
+    const slaOnTimeEl = document.getElementById('execSlaOnTimeValue');
+    const slaLateEl = document.getElementById('execSlaLateValue');
+    const fcrEl = document.getElementById('execFcrValue');
+    if (mttrEl) mttrEl.textContent = formatMinutes(kpis?.mttr_minutes || 0);
+    if (slaOnTimeEl) slaOnTimeEl.textContent = formatPercent(kpis?.sla_on_time_pct || 0);
+    if (slaLateEl) slaLateEl.textContent = formatPercent(kpis?.sla_late_pct || 0);
+    if (fcrEl) fcrEl.textContent = formatPercent(kpis?.fcr_pct || 0);
+
+    fillExecutiveFilterOptions(payload?.filter_options || {});
+    renderExecutiveTopCauses(payload?.top_causes || []);
+    renderExecutiveProductivityTable(payload?.productivity_by_technician || []);
+    renderExecutiveReincidence(payload?.reincidence || {});
+    void renderExecutiveTrendChart(payload?.trend || []);
+}
+
+async function loadExecutiveDashboard(options = {}) {
+    if (!hasActiveSession()) {
+        currentExecutiveAnalytics = null;
+        resetExecutiveDashboardUi('Inicia sesión para ver KPIs ejecutivos.');
+        return null;
+    }
+    if (!canCurrentUserViewTenantIncidentMap()) {
+        currentExecutiveAnalytics = null;
+        resetExecutiveDashboardUi('No tienes permisos para ver analítica ejecutiva.');
+        return null;
+    }
+
+    if (executiveLoadPromise) {
+        return executiveLoadPromise;
+    }
+
+    executiveLoadPromise = Promise.resolve()
+        .then(async () => {
+            ensureExecutiveFiltersDefaults();
+            const params = buildExecutiveFiltersFromUi();
+            const response = await getExecutiveAnalyticsCompat(params);
+            currentExecutiveAnalytics = response || null;
+            renderExecutivePayload(response || {});
+            return response;
+        })
+        .catch((error) => {
+            currentExecutiveAnalytics = null;
+            resetExecutiveDashboardUi('No se pudo cargar el dashboard ejecutivo.');
+            if (options?.silent !== true) {
+                showNotification(`No se pudo cargar analítica ejecutiva: ${error?.message || error}`, 'error');
+            }
+            return null;
+        })
+        .finally(() => {
+            executiveLoadPromise = null;
+        });
+
+    return executiveLoadPromise;
+}
+
+function toCsvValue(value) {
+    const raw = String(value ?? '');
+    if (!raw.includes('"') && !raw.includes(',') && !raw.includes('\n')) return raw;
+    return `"${raw.replace(/"/g, '""')}"`;
+}
+
+function buildExecutiveExportRows(payload) {
+    if (!payload || typeof payload !== 'object') return [];
+    const rows = [];
+    const kpis = payload?.kpis || {};
+    rows.push(['Sección', 'Métrica', 'Valor']);
+    rows.push(['KPI', 'MTTR minutos', Number(kpis?.mttr_minutes || 0)]);
+    rows.push(['KPI', 'SLA on time %', Number(kpis?.sla_on_time_pct || 0)]);
+    rows.push(['KPI', 'SLA late %', Number(kpis?.sla_late_pct || 0)]);
+    rows.push(['KPI', 'FCR %', Number(kpis?.fcr_pct || 0)]);
+    rows.push(['KPI', 'Tickets resueltos', Number(kpis?.resolved_tickets || 0)]);
+
+    (payload?.top_causes || []).forEach((cause) => {
+        rows.push(['Top causal', String(cause?.cause_label || cause?.cause_code || ''), Number(cause?.incidents || 0)]);
+    });
+    (payload?.productivity_by_technician || []).forEach((row) => {
+        rows.push(['Productividad', String(row?.technician_label || ''), Number(row?.closed_tickets || 0)]);
+    });
+    (payload?.trend || []).forEach((row) => {
+        rows.push(['Tendencia', String(row?.day || ''), Number(row?.resolved_count || 0)]);
+    });
+    return rows;
+}
+
+function exportExecutiveCsv() {
+    if (!currentExecutiveAnalytics) {
+        showNotification('No hay analítica ejecutiva para exportar.', 'warning');
+        return;
+    }
+    const rows = buildExecutiveExportRows(currentExecutiveAnalytics);
+    const csv = rows.map((row) => row.map(toCsvValue).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `executive_${asIsoDate(new Date())}.csv`;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    showNotification('Exportado dashboard ejecutivo (CSV).', 'success');
+}
+
+async function exportExecutiveXlsx() {
+    if (!currentExecutiveAnalytics) {
+        showNotification('No hay analítica ejecutiva para exportar.', 'warning');
+        return;
+    }
+    const canUseXlsx = await ensureXlsxLibrary();
+    if (!canUseXlsx) {
+        showNotification('No se pudo cargar el exportador XLSX.', 'error');
+        return;
+    }
+    const rows = buildExecutiveExportRows(currentExecutiveAnalytics);
+    const worksheet = window.XLSX.utils.aoa_to_sheet(rows);
+    const workbook = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(workbook, worksheet, 'Ejecutivo');
+    window.XLSX.writeFile(workbook, `executive_${asIsoDate(new Date())}.xlsx`, { compression: true });
+    showNotification('Exportado dashboard ejecutivo (XLSX).', 'success');
+}
+
+function applyRuntimeBrandingTheme(branding = null) {
+    const rootStyle = document.documentElement?.style;
+    if (!rootStyle) return;
+
+    const primaryColor = normalizeHexColor(branding?.primary_color, '');
+    const secondaryColor = normalizeHexColor(branding?.secondary_color, '');
+    if (primaryColor) {
+        rootStyle.setProperty(BRANDING_COLOR_VAR_MAP.primary_color, primaryColor);
+    } else {
+        rootStyle.removeProperty(BRANDING_COLOR_VAR_MAP.primary_color);
+    }
+    if (secondaryColor) {
+        rootStyle.setProperty(BRANDING_COLOR_VAR_MAP.secondary_color, secondaryColor);
+    } else {
+        rootStyle.removeProperty(BRANDING_COLOR_VAR_MAP.secondary_color);
+    }
+
+    const statusColors = branding?.status_colors && typeof branding.status_colors === 'object'
+        ? branding.status_colors
+        : {};
+    ['success', 'warning', 'error', 'info', 'critical', 'high', 'medium', 'low'].forEach((key) => {
+        const cssVar = BRANDING_COLOR_VAR_MAP[key];
+        const value = normalizeHexColor(statusColors?.[key], '');
+        if (value) {
+            rootStyle.setProperty(cssVar, value);
+        } else {
+            rootStyle.removeProperty(cssVar);
+        }
+    });
+
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeMeta) {
+        themeMeta.setAttribute('content', primaryColor || '#d97706');
+    }
+}
+
+function applyRuntimeBranding(branding = null) {
+    const normalizedBranding = branding && typeof branding === 'object' ? branding : null;
+    const displayName = String(normalizedBranding?.display_name || 'SiteOps').trim() || 'SiteOps';
+    const nameEl = document.getElementById('tenantBrandName');
+    if (nameEl) nameEl.textContent = displayName;
+
+    const taglineEl = document.getElementById('tenantBrandTagline');
+    if (taglineEl) {
+        taglineEl.textContent = normalizedBranding?.tenant_id
+            ? `Tenant ${String(normalizedBranding.tenant_id).toUpperCase()}`
+            : 'Field Control Console';
+    }
+
+    const logoEl = document.getElementById('tenantBrandLogo');
+    const logoUrl = String(normalizedBranding?.logo_url || '').trim();
+    if (logoEl instanceof HTMLImageElement) {
+        if (logoUrl) {
+            logoEl.src = logoUrl;
+            logoEl.classList.remove('is-hidden');
+        } else {
+            logoEl.src = '';
+            logoEl.classList.add('is-hidden');
+        }
+    }
+    applyRuntimeBrandingTheme(normalizedBranding);
+}
+
+async function loadRuntimeBranding(options = {}) {
+    if (!hasActiveSession()) {
+        currentTenantBranding = null;
+        applyRuntimeBranding(null);
+        return null;
+    }
+    try {
+        const response = await getBrandingCompat();
+        currentTenantBranding = response?.branding || null;
+        applyRuntimeBranding(currentTenantBranding);
+        return currentTenantBranding;
+    } catch (error) {
+        currentTenantBranding = null;
+        applyRuntimeBranding(null);
+        if (options?.silent !== true) {
+            showNotification(`No se pudo cargar branding del tenant: ${error?.message || error}`, 'warning');
+        }
+        return null;
+    }
 }
 
 // Advanced Filters Functions
@@ -6690,6 +7410,16 @@ document.getElementById('tenantsEditBtn')?.addEventListener('click', () => {
     openTenantEditorModal(tenant);
 });
 
+document.getElementById('tenantsBrandingBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    const tenant = currentTenantDetail?.tenant || null;
+    if (!tenant) {
+        showNotification('Selecciona un tenant primero.', 'warning');
+        return;
+    }
+    void openTenantBrandingModal(tenant);
+});
+
 document.getElementById('tenantsDeleteBtn')?.addEventListener('click', () => {
     if (!requireActiveSession()) return;
     const tenant = currentTenantDetail?.tenant || null;
@@ -6698,6 +7428,37 @@ document.getElementById('tenantsDeleteBtn')?.addEventListener('click', () => {
         return;
     }
     confirmDeleteTenant(tenant);
+});
+
+document.getElementById('execApplyFiltersBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    void loadExecutiveDashboard({ silent: false });
+});
+
+document.getElementById('execResetFiltersBtn')?.addEventListener('click', () => {
+    const startInput = document.getElementById('execStartDate');
+    const endInput = document.getElementById('execEndDate');
+    const siteSelect = document.getElementById('execSiteFilter');
+    const teamSelect = document.getElementById('execTeamFilter');
+    const technicianSelect = document.getElementById('execTechnicianFilter');
+    const defaults = getDefaultExecutiveDateRange();
+    if (startInput instanceof HTMLInputElement) startInput.value = defaults.start;
+    if (endInput instanceof HTMLInputElement) endInput.value = defaults.end;
+    if (siteSelect instanceof HTMLSelectElement) siteSelect.value = '';
+    if (teamSelect instanceof HTMLSelectElement) teamSelect.value = '';
+    if (technicianSelect instanceof HTMLSelectElement) technicianSelect.value = '';
+    if (!requireActiveSession()) return;
+    void loadExecutiveDashboard({ silent: false });
+});
+
+document.getElementById('execExportCsvBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    exportExecutiveCsv();
+});
+
+document.getElementById('execExportXlsxBtn')?.addEventListener('click', () => {
+    if (!requireActiveSession()) return;
+    void exportExecutiveXlsx();
 });
 
 
@@ -6991,6 +7752,9 @@ const dashboardBootstrap = window.createDashboardBootstrap({
 
 async function init() {
     setupMobileViewportKeyboardSupport();
+    applyRuntimeBranding(null);
+    ensureExecutiveFiltersDefaults();
+    resetExecutiveDashboardUi();
     return dashboardBootstrap.init();
 }
 

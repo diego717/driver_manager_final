@@ -134,6 +134,8 @@ export function buildCorsPolicy(isWebRoute, routeParts) {
     first === "scan" ||
     first === "drivers" ||
     first === "devices" ||
+    first === "tenants" ||
+    first === "branding" ||
     first === "audit-logs" ||
     first === "auth" ||
     first === "installations" ||
@@ -175,6 +177,15 @@ export function buildCorsPolicy(isWebRoute, routeParts) {
     methods.add("POST");
     methods.add("PATCH");
     methods.add("DELETE");
+  } else if (first === "tenants") {
+    methods.add("GET");
+    methods.add("POST");
+    methods.add("PATCH");
+    methods.add("DELETE");
+  } else if (first === "branding" || first === "analytics") {
+    methods.add("GET");
+    methods.add("POST");
+    methods.add("PATCH");
   } else if (first === "scan") {
     methods.add("POST");
   } else if (first === "drivers") {

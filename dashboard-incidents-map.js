@@ -44,6 +44,11 @@
         }
         let incidentGoogleMapsLoaderPromise = null;
 
+        function requestDashboardRefresh() {
+            if (typeof options.loadDashboard !== 'function') return;
+            void options.loadDashboard();
+        }
+
         function parseIncidentCoordinateValue(value) {
             if (value === null || value === undefined || value === '') return null;
             const parsed = Number(value);
@@ -401,7 +406,7 @@
                     { installationId, assetId },
                     'Guardamos el destino operativo, pero no pudimos refrescar el contexto completo.',
                 );
-                void options.loadDashboard();
+                requestDashboardRefresh();
             } catch (error) {
                 incidentMapState.savingTargetIncidentId = null;
                 syncIncidentMapCursor();
