@@ -1850,9 +1850,11 @@ export function createIncidentsRouteHandlers({
           actualDurationSeconds = accumulatedDurationSeconds;
           workStartedAt = null;
           workEndedAt = statusUpdatedAt;
-        } else {
+        } else if (previousStatus === "in_progress" || workStartedAt) {
           if (!workStartedAt) {
-            workStartedAt = normalizeOptionalString(existingIncident.created_at, "").trim() || statusUpdatedAt;
+            workStartedAt =
+              normalizeOptionalString(existingIncident.status_updated_at, "").trim() ||
+              statusUpdatedAt;
           }
           workEndedAt = statusUpdatedAt;
           const segmentElapsedSeconds = computeElapsedSeconds(workStartedAt, workEndedAt);
@@ -1863,6 +1865,10 @@ export function createIncidentsRouteHandlers({
           } else {
             actualDurationSeconds = null;
           }
+        } else {
+          actualDurationSeconds = accumulatedDurationSeconds > 0 ? accumulatedDurationSeconds : null;
+          workStartedAt = null;
+          workEndedAt = statusUpdatedAt;
         }
       }
 

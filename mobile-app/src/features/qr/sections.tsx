@@ -131,6 +131,8 @@ function FormInput(props: {
           style,
         ]}
         placeholderTextColor={palette.placeholder}
+        selectionColor={palette.accent}
+        cursorColor={palette.accent}
       />
     </>
   );

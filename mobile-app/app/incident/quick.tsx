@@ -22,7 +22,7 @@ import { enqueueCreateIncident, registerIncidentExecutors } from "@/src/services
 import { runSync } from "@/src/services/sync/sync-runner";
 import { radii, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies, inputFontFamily, textInputAccentColor, typeScale } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, typeScale } from "@/src/theme/typography";
 import { type GpsCapturePayload, type IncidentSeverity, type InstallationRecord } from "@/src/types/api";
 
 registerIncidentExecutors();
@@ -290,8 +290,8 @@ export default function QuickIncidentScreen() {
             },
           ]}
           multiline
-          selectionColor={textInputAccentColor}
-          cursorColor={textInputAccentColor}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
         />
       </SectionCard>
 

@@ -53,6 +53,9 @@ const PREVIEW_FIELDS: Array<keyof ParsedAssetLabelData> = [
   "client_name",
   "notes",
 ];
+const SERIAL_SCAN_MIN_LENGTH = 4;
+const SERIAL_SCAN_MAX_LENGTH = 128;
+const SERIAL_SCAN_PATTERN = /^[A-Z0-9][A-Z0-9\-_.:/]*$/i;
 
 function parsePositiveInteger(value: unknown): number | null {
   const parsed = Number.parseInt(String(value ?? ""), 10);
@@ -67,6 +70,39 @@ function normalizeConfidenceValue(value: unknown): number | null {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return null;
   return Math.max(0, Math.min(1, parsed));
+}
+
+function buildPreviewDraftFromRawValues(values: {
+  external_code?: string;
+  brand?: string;
+  model?: string;
+  serial_number?: string;
+  client_name?: string;
+  notes?: string;
+}): ParsedAssetLabelData | null {
+  const externalCode = String(values.external_code || "").trim();
+  const serialNumber = String(values.serial_number || externalCode).trim();
+  if (!externalCode) return null;
+  return {
+    external_code: externalCode,
+    brand: String(values.brand || "").trim(),
+    model: String(values.model || "").trim(),
+    serial_number: serialNumber,
+    client_name: String(values.client_name || "").trim(),
+    notes: String(values.notes || "").trim(),
+  };
+}
+
+function buildPreviewDraftFromSerialCandidate(value: string): ParsedAssetLabelData | null {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return null;
+  if (trimmed.includes("://")) return null;
+  if (trimmed.length < SERIAL_SCAN_MIN_LENGTH || trimmed.length > SERIAL_SCAN_MAX_LENGTH) return null;
+  if (!SERIAL_SCAN_PATTERN.test(trimmed)) return null;
+  return buildPreviewDraftFromRawValues({
+    external_code: trimmed.toUpperCase(),
+    serial_number: trimmed.toUpperCase(),
+  });
 }
 
 export default function ScanScreen() {
@@ -116,6 +152,26 @@ export default function ScanScreen() {
     setPendingLabelConfidence(null);
     setPendingLabelRequiresReview(false);
     setPendingLabelReviewConfirmed(false);
+  };
+
+  const openPendingLabelPreview = (
+    draft: ParsedAssetLabelData,
+    options?: {
+      confidence?: number | null;
+      requiresReview?: boolean;
+      reviewConfirmed?: boolean;
+    },
+  ) => {
+    const normalizedDraft = normalizePreviewLabelDraft(draft);
+    setPendingLabelPreview(normalizedDraft);
+    setPendingLabelOriginal(normalizedDraft);
+    setPendingLabelErrors({});
+    setPendingLabelConfidence(options?.confidence ?? null);
+    setPendingLabelRequiresReview(options?.requiresReview ?? false);
+    setPendingLabelReviewConfirmed(options?.reviewConfirmed ?? true);
+    setLocked(false);
+    setResolving(false);
+    setResolvingLabel("Resolviendo codigo...");
   };
 
   const onPreviewFieldChange = (field: keyof ParsedAssetLabelData, value: string) => {
@@ -223,16 +279,36 @@ export default function ScanScreen() {
     router.replace((query ? `/case/context?${query}` : "/case/context") as never);
   };
 
-  const resolveAndNavigate = async (rawValue: string, label = "Resolviendo codigo...") => {
+  const resolveAndNavigate = async (
+    rawValue: string,
+    label = "Resolviendo codigo...",
+    options?: { allowAssetDataAutocreate?: boolean },
+  ) => {
     setResolvingLabel(label);
     const parsed = parseScannedPayload(rawValue);
     if (!parsed) {
       void triggerWarningHaptic();
       Alert.alert(
         "Codigo invalido",
-        "Formato esperado: dm://installation/{id}, dm://asset/{external_code} o dm://asset/{external_code}?v=2&brand=...",
+        "Formato esperado: dm://installation/{id}, dm://asset/{external_code}, o escaneo de serie/codigo del equipo.",
       );
       setLocked(false);
+      return;
+    }
+
+    if (parsed.type === "asset" && parsed.assetData && !options?.allowAssetDataAutocreate) {
+      const previewDraft = buildPreviewDraftFromRawValues(parsed.assetData);
+      if (!previewDraft) {
+        void triggerWarningHaptic();
+        Alert.alert("Etiqueta invalida", "No se pudo preparar la vista previa del equipo escaneado.");
+        setLocked(false);
+        return;
+      }
+      openPendingLabelPreview(previewDraft, {
+        confidence: null,
+        requiresReview: false,
+        reviewConfirmed: true,
+      });
       return;
     }
 
@@ -368,35 +444,17 @@ export default function ScanScreen() {
         );
       }
 
-      const externalCode = String(label?.external_code || "").trim();
-      if (!externalCode) {
+      const previewDraft = buildPreviewDraftFromRawValues(label || {});
+      if (!previewDraft) {
         throw new Error("No pudimos detectar un codigo de equipo en la etiqueta.");
       }
-      setPendingLabelPreview({
-        external_code: externalCode,
-        brand: String(label.brand || "").trim(),
-        model: String(label.model || "").trim(),
-        serial_number: String(label.serial_number || externalCode).trim(),
-        client_name: String(label.client_name || "").trim(),
-        notes: String(label.notes || "").trim(),
-      });
-      setPendingLabelOriginal({
-        external_code: externalCode,
-        brand: String(label.brand || "").trim(),
-        model: String(label.model || "").trim(),
-        serial_number: String(label.serial_number || externalCode).trim(),
-        client_name: String(label.client_name || "").trim(),
-        notes: String(label.notes || "").trim(),
-      });
-      setPendingLabelErrors({});
-      setPendingLabelConfidence(detectedConfidence);
       const requiresManualReview = OCR_STRICT_REVIEW_ENABLED
         && (detectedConfidence === null || detectedConfidence < OCR_LOW_CONFIDENCE_THRESHOLD);
-      setPendingLabelRequiresReview(requiresManualReview);
-      setPendingLabelReviewConfirmed(!requiresManualReview);
-      setLocked(false);
-      setResolving(false);
-      setResolvingLabel("Resolviendo codigo...");
+      openPendingLabelPreview(previewDraft, {
+        confidence: detectedConfidence,
+        requiresReview: requiresManualReview,
+        reviewConfirmed: !requiresManualReview,
+      });
     } catch (error) {
       void triggerWarningHaptic();
       Alert.alert("No se pudo detectar etiqueta", extractApiError(error));
@@ -408,17 +466,37 @@ export default function ScanScreen() {
 
   const onBarcodeScanned = (result: BarcodeScanningResult) => {
     if (locked || resolving || pendingLabelPreview) return;
+    const rawScan = String(result.data || "").trim();
+    const previewFromSerial = buildPreviewDraftFromSerialCandidate(rawScan);
+    if (result.type !== "qr" && previewFromSerial) {
+      openPendingLabelPreview(previewFromSerial, {
+        confidence: null,
+        requiresReview: true,
+        reviewConfirmed: false,
+      });
+      return;
+    }
     setLocked(true);
-    void resolveAndNavigate(result.data);
+    void resolveAndNavigate(rawScan);
   };
 
   const onManualSubmit = () => {
-    if (!manualCode.trim()) return;
+    const rawValue = manualCode.trim();
+    if (!rawValue) return;
     if (pendingLabelPreview) {
       clearPendingLabelPreview();
     }
+    const previewFromSerial = buildPreviewDraftFromSerialCandidate(rawValue);
+    if (previewFromSerial) {
+      openPendingLabelPreview(previewFromSerial, {
+        confidence: null,
+        requiresReview: true,
+        reviewConfirmed: false,
+      });
+      return;
+    }
     setLocked(true);
-    void resolveAndNavigate(manualCode);
+    void resolveAndNavigate(rawValue);
   };
 
   const onConfirmLabelPreview = async () => {
@@ -493,7 +571,9 @@ export default function ScanScreen() {
 
       const payload = buildAssetPayloadFromLabel(normalizedDraft);
       clearPendingLabelPreview();
-      await resolveAndNavigate(payload, "Resolviendo etiqueta confirmada...");
+      await resolveAndNavigate(payload, "Resolviendo etiqueta confirmada...", {
+        allowAssetDataAutocreate: true,
+      });
     } catch (error) {
       void triggerWarningHaptic();
       Alert.alert("No se pudo validar", extractApiError(error));
@@ -520,7 +600,7 @@ export default function ScanScreen() {
       <ScreenHero
         eyebrow="Captura en campo"
         title="Escanear QR o codigo"
-        description="El escaneo ya no cae en un formulario largo. Primero resuelve el contexto y despues decide si continuas el caso o cargas una incidencia."
+        description="Cada escaneo de equipo ahora pasa por vista previa antes de crear o actualizar. Primero validas datos, luego continuas el flujo."
         aside={
           <View
             style={[
@@ -657,6 +737,8 @@ export default function ScanScreen() {
               }}
               placeholder="EQ-0001"
               placeholderTextColor={palette.placeholder}
+              selectionColor={palette.accent}
+              cursorColor={palette.accent}
               style={[
                 styles.input,
                 {
@@ -692,6 +774,8 @@ export default function ScanScreen() {
               }}
               placeholder="Entrust"
               placeholderTextColor={palette.placeholder}
+              selectionColor={palette.accent}
+              cursorColor={palette.accent}
               style={[
                 styles.input,
                 {
@@ -716,6 +800,8 @@ export default function ScanScreen() {
               }}
               placeholder="Sigma SL3"
               placeholderTextColor={palette.placeholder}
+              selectionColor={palette.accent}
+              cursorColor={palette.accent}
               style={[
                 styles.input,
                 {
@@ -740,6 +826,8 @@ export default function ScanScreen() {
               }}
               placeholder="SN-0001"
               placeholderTextColor={palette.placeholder}
+              selectionColor={palette.accent}
+              cursorColor={palette.accent}
               style={[
                 styles.input,
                 {
@@ -775,6 +863,8 @@ export default function ScanScreen() {
               }}
               placeholder="Cliente destino"
               placeholderTextColor={palette.placeholder}
+              selectionColor={palette.accent}
+              cursorColor={palette.accent}
               style={[
                 styles.input,
                 {
@@ -799,6 +889,8 @@ export default function ScanScreen() {
               }}
               placeholder="Notas detectadas"
               placeholderTextColor={palette.placeholder}
+              selectionColor={palette.accent}
+              cursorColor={palette.accent}
               style={[
                 styles.input,
                 {
@@ -831,12 +923,14 @@ export default function ScanScreen() {
           </View>
         ) : null}
 
-        <Text style={[styles.label, { color: palette.textPrimary }]}>Fallback manual</Text>
+        <Text style={[styles.label, { color: palette.textPrimary }]}>Ingreso manual / serie</Text>
         <TextInput
           value={manualCode}
           onChangeText={setManualCode}
-          placeholder="dm://installation/12 o dm://asset/ABC-001?v=2&brand=Entrust"
+          placeholder="dm://installation/12 o serie/codigo del equipo"
           placeholderTextColor={palette.placeholder}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
           style={[
             styles.input,
             { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.textPrimary },

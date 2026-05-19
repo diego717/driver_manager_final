@@ -4735,7 +4735,6 @@ test("paused incidents show paused runtime and offer resume action", async () =>
   assert.ok(card);
   assert.equal(card.dataset.status, "paused");
   assert.match(card.textContent, /Pausada/);
-  assert.match(card.textContent, /en pausa/i);
   assert.match(
     card.querySelector('.incident-action-btn[data-action="in_progress"]').textContent,
     /Reanudar/,
@@ -4832,7 +4831,6 @@ test("status updates apply pause state immediately in the visible card", async (
   assert.ok(card);
   assert.equal(card.dataset.status, "paused");
   assert.match(card.textContent, /Pausada/);
-  assert.match(card.textContent, /en pausa/i);
   assert.match(
     card.querySelector('.incident-action-btn[data-action="in_progress"]').textContent,
     /Reanudar/,
@@ -5036,14 +5034,41 @@ test("resuming an incident keeps the accumulated runtime in the live counter", a
   await flushDashboardTasks();
   await flushDashboardTasks();
 
-  const runtimeChip = document.querySelector('.incident-highlight-chip[data-chip="runtime"]');
-  assert.ok(runtimeChip);
-  assert.match(runtimeChip.textContent, /13m/);
-  assert.equal(runtimeChip.dataset.runtimeBaseSeconds, "780");
+  const runtimeMetricValue = document.querySelector('.incident-metric-value[data-metric="runtime"]');
+  assert.ok(runtimeMetricValue);
+  assert.match(runtimeMetricValue.textContent, /13m/);
+  assert.equal(runtimeMetricValue.dataset.runtimeBaseSeconds, "780");
 
   await new Promise((resolve) => window.setTimeout(resolve, 1100));
-  assert.match(runtimeChip.textContent, /13m(?: 1s)? \(en curso\)/);
+  assert.match(runtimeMetricValue.textContent, /13m(?: 1s)?/);
   window.stopIncidentRuntimeTicker();
+});
+
+test("resolved incidents without operational runtime do not derive real time from created_at", async () => {
+  const { dom } = await setupDashboardApp();
+  const { window } = dom;
+  const { document } = window;
+
+  await window.renderIncidents(
+    [
+      {
+        id: 28,
+        installation_id: 45,
+        note: "Incidencia cerrada sin tracking de trabajo",
+        severity: "medium",
+        incident_status: "resolved",
+        created_at: "2026-05-04T23:15:17.000Z",
+        resolved_at: "2026-05-18T23:34:00.000Z",
+        reporter_username: "ops-admin",
+        photos: [],
+      },
+    ],
+    45,
+  );
+
+  const runtimeMetricValue = document.querySelector('.incident-metric-value[data-metric="runtime"]');
+  assert.ok(runtimeMetricValue);
+  assert.equal(runtimeMetricValue.textContent, "--");
 });
 
 test("incident cards avoid repeating low-priority metadata already shown in chips and panels", async () => {
@@ -5088,6 +5113,94 @@ test("incident cards avoid repeating low-priority metadata already shown in chip
   assert.equal(card.querySelectorAll(".incident-dispatch-block").length, 1);
   assert.match(card.textContent, /Sin destino operativo definido/i);
   assert.equal(card.querySelectorAll(".incident-meta-line").length, 1);
+});
+
+test("resolved incidents disable destination, evidence and photo actions until reopened", async () => {
+  const router = createFetchRouter([
+    {
+      method: "POST",
+      match: "/web/auth/login",
+      resolver: async () =>
+        createJsonResponse(
+          buildWebSessionPayload({
+            username: "ops-admin",
+            role: "admin",
+          }),
+        ),
+    },
+  ]);
+
+  const { dom } = await setupDashboardApp({ fetchImpl: router.fetch });
+  const { window } = dom;
+  const { document } = window;
+
+  await loginThroughForm(dom, {
+    username: "ops-admin",
+    password: "StrongPass#2026",
+  });
+
+  await window.renderIncidents(
+    [
+      {
+        id: 80,
+        installation_id: 34,
+        severity: "medium",
+        incident_status: "resolved",
+        reporter_username: "ops-admin",
+        created_at: "2026-03-19T06:29:00.000Z",
+        resolved_at: "2026-03-19T07:00:00.000Z",
+        note: "Caso cerrado",
+        photos: [],
+      },
+    ],
+    34,
+  );
+
+  const resolvedCard = document.querySelector("#incidentsList .incident-card");
+  assert.ok(resolvedCard);
+  assert.equal(
+    resolvedCard.querySelector('.incident-action-btn[data-action="dispatch"]')?.disabled,
+    true,
+  );
+  assert.equal(
+    resolvedCard.querySelector('.incident-action-btn[data-action="evidence"]')?.disabled,
+    true,
+  );
+  assert.equal(
+    resolvedCard.querySelector('.incident-action-btn[data-action="photo"]')?.disabled,
+    true,
+  );
+
+  await window.renderIncidents(
+    [
+      {
+        id: 81,
+        installation_id: 34,
+        severity: "medium",
+        incident_status: "open",
+        reporter_username: "ops-admin",
+        created_at: "2026-03-19T08:00:00.000Z",
+        note: "Caso activo",
+        photos: [],
+      },
+    ],
+    34,
+  );
+
+  const openCard = document.querySelector("#incidentsList .incident-card");
+  assert.ok(openCard);
+  assert.equal(
+    openCard.querySelector('.incident-action-btn[data-action="dispatch"]')?.disabled,
+    false,
+  );
+  assert.equal(
+    openCard.querySelector('.incident-action-btn[data-action="evidence"]')?.disabled,
+    false,
+  );
+  assert.equal(
+    openCard.querySelector('.incident-action-btn[data-action="photo"]')?.disabled,
+    false,
+  );
 });
 
 test("qr preview builds payload and image url for installation codes", async () => {

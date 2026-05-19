@@ -119,6 +119,28 @@
             return false;
         }
 
+        function isIncidentOperationalEditionLocked(statusValue) {
+            return options.normalizeIncidentStatus(statusValue) === 'resolved';
+        }
+
+        function getIncidentOperationalLockMessage() {
+            return 'Incidencia resuelta. Reabrila para editar destino, evidencia o fotos.';
+        }
+
+        function getIncidentOperationalActionPermissionMessage(actionKey) {
+            const normalizedAction = String(actionKey || '').trim().toLowerCase();
+            if (normalizedAction === 'dispatch') {
+                return 'Solo roles operativos pueden editar destino operativo';
+            }
+            if (normalizedAction === 'evidence') {
+                return 'Solo roles operativos pueden actualizar evidencia';
+            }
+            if (normalizedAction === 'photo') {
+                return 'Solo roles operativos pueden subir fotos de incidencias';
+            }
+            return 'Solo roles operativos pueden editar incidencias';
+        }
+
         function requestDashboardRefresh() {
             if (typeof options.loadDashboard !== 'function') return;
             void options.loadDashboard();
@@ -1572,6 +1594,7 @@
             const utilityGroup = document.createElement('div');
             utilityGroup.className = 'incident-actions-group incident-actions-group-utility';
             const incidentStatus = options.normalizeIncidentStatus(incident.incident_status);
+            const isOperationalEditLocked = isIncidentOperationalEditionLocked(incidentStatus);
             const canUpdateIncident = canCurrentUserWriteOperationalData() && !isSoftDeleted;
             const updateOptions = buildIncidentStatusUpdateOptions(incident, config);
 
@@ -1605,9 +1628,11 @@
             evidenceBtn.type = 'button';
             evidenceBtn.className = 'btn-secondary';
             decorateIncidentActionButton(evidenceBtn, 'evidence', 'Evidencia', 'fact_check');
-            evidenceBtn.disabled = !canUpdateIncident;
+            evidenceBtn.disabled = !canUpdateIncident || isOperationalEditLocked;
             if (!canUpdateIncident) {
-                evidenceBtn.title = 'Solo roles operativos pueden actualizar evidencia';
+                evidenceBtn.title = getIncidentOperationalActionPermissionMessage('evidence');
+            } else if (isOperationalEditLocked) {
+                evidenceBtn.title = getIncidentOperationalLockMessage();
             }
             evidenceBtn.addEventListener('click', () => {
                 const liveIncident = evidenceBtn.closest('.incident-card')?.__incidentData || incident;
@@ -1618,9 +1643,11 @@
             dispatchBtn.type = 'button';
             dispatchBtn.className = 'btn-secondary';
             decorateIncidentActionButton(dispatchBtn, 'dispatch', 'Destino', 'place');
-            dispatchBtn.disabled = !canUpdateIncident;
+            dispatchBtn.disabled = !canUpdateIncident || isOperationalEditLocked;
             if (!canUpdateIncident) {
-                dispatchBtn.title = 'Solo roles operativos pueden editar destino operativo';
+                dispatchBtn.title = getIncidentOperationalActionPermissionMessage('dispatch');
+            } else if (isOperationalEditLocked) {
+                dispatchBtn.title = getIncidentOperationalLockMessage();
             }
             dispatchBtn.addEventListener('click', () => {
                 const liveIncident = dispatchBtn.closest('.incident-card')?.__incidentData || incident;
@@ -1663,6 +1690,8 @@
             uploadPhotoBtn.className = 'btn-secondary';
             const iconName = String(config.icon || '').trim();
             const buttonLabel = String(config.label || INCIDENT_PHOTO_UPLOAD_LABEL);
+            const isOperationalEditLocked = isIncidentOperationalEditionLocked(incident?.incident_status);
+            const canUploadIncidentPhotos = canCurrentUserWriteOperationalData() && !isOperationalEditLocked;
             decorateIncidentActionButton(
                 uploadPhotoBtn,
                 'photo',
@@ -1670,6 +1699,12 @@
                 iconName || 'add_a_photo',
             );
             uploadPhotoBtn.classList.add('incident-upload-btn');
+            uploadPhotoBtn.disabled = !canUploadIncidentPhotos;
+            if (!canCurrentUserWriteOperationalData()) {
+                uploadPhotoBtn.title = getIncidentOperationalActionPermissionMessage('photo');
+            } else if (isOperationalEditLocked) {
+                uploadPhotoBtn.title = getIncidentOperationalLockMessage();
+            }
             uploadPhotoBtn.addEventListener('click', () => {
                 const liveIncident = uploadPhotoBtn.closest('.incident-card')?.__incidentData || incident;
                 void selectAndUploadIncidentPhoto(liveIncident.id, installationId, {
@@ -2093,7 +2128,27 @@
                             || currentStatus === targetStatus
                             || (isReopenAction && !canCurrentUserReopenIncidents());
                     } else if (targetStatus === 'evidence') {
-                        button.disabled = !canCurrentUserWriteOperationalData();
+                        const canWriteOperationalData = canCurrentUserWriteOperationalData();
+                        const isOperationalEditLocked = isIncidentOperationalEditionLocked(currentStatus);
+                        button.disabled = !canWriteOperationalData || isOperationalEditLocked;
+                        if (!canWriteOperationalData) {
+                            button.title = getIncidentOperationalActionPermissionMessage('evidence');
+                        } else if (isOperationalEditLocked) {
+                            button.title = getIncidentOperationalLockMessage();
+                        } else {
+                            button.removeAttribute('title');
+                        }
+                    } else if (targetStatus === 'dispatch' || targetStatus === 'photo') {
+                        const canWriteOperationalData = canCurrentUserWriteOperationalData();
+                        const isOperationalEditLocked = isIncidentOperationalEditionLocked(currentStatus);
+                        button.disabled = !canWriteOperationalData || isOperationalEditLocked;
+                        if (!canWriteOperationalData) {
+                            button.title = getIncidentOperationalActionPermissionMessage(targetStatus);
+                        } else if (isOperationalEditLocked) {
+                            button.title = getIncidentOperationalLockMessage();
+                        } else {
+                            button.removeAttribute('title');
+                        }
                     }
                 });
             });

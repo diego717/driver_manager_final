@@ -777,6 +777,8 @@ export default function ApiSettingsScreen() {
             ]}
             placeholder="https://tu-worker.workers.dev"
             placeholderTextColor={palette.placeholder}
+            selectionColor={palette.accent}
+            cursorColor={palette.accent}
           />
           <View style={styles.buttonStack}>
             <TouchableOpacity
@@ -837,6 +839,8 @@ export default function ApiSettingsScreen() {
             ]}
             placeholder="Usuario web"
             placeholderTextColor={palette.placeholder}
+            selectionColor={palette.accent}
+            cursorColor={palette.accent}
             onFocus={focusLoginSection}
           />
           <TextInput
@@ -851,6 +855,8 @@ export default function ApiSettingsScreen() {
             ]}
             placeholder="Contrasena"
             placeholderTextColor={palette.placeholder}
+            selectionColor={palette.accent}
+            cursorColor={palette.accent}
             onFocus={focusLoginSection}
           />
 

@@ -39,7 +39,7 @@ import { captureCurrentGpsSnapshot } from "@/src/services/location";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies, inputFontFamily, textInputAccentColor, typeScale } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, typeScale } from "@/src/theme/typography";
 import {
   type GpsCapturePayload,
   type InstallationConformity,
@@ -578,8 +578,8 @@ export default function CaseConformityScreen() {
               ]}
               placeholder="Explica por que cierras sin una coordenada valida."
               placeholderTextColor={palette.placeholder}
-              selectionColor={textInputAccentColor}
-              cursorColor={textInputAccentColor}
+              selectionColor={palette.accent}
+              cursorColor={palette.accent}
               accessibilityLabel="Motivo de override GPS"
             />
             <Text style={[styles.gpsFootnote, { color: palette.textMuted }]}>
@@ -603,8 +603,8 @@ export default function CaseConformityScreen() {
           ]}
           placeholder="Nombre y apellido"
           placeholderTextColor={palette.placeholder}
-          selectionColor={textInputAccentColor}
-          cursorColor={textInputAccentColor}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
           accessibilityLabel="Nombre del firmante"
         />
 
@@ -618,8 +618,8 @@ export default function CaseConformityScreen() {
           ]}
           placeholder="CI, DNI o referencia interna"
           placeholderTextColor={palette.placeholder}
-          selectionColor={textInputAccentColor}
-          cursorColor={textInputAccentColor}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
           accessibilityLabel="Documento del firmante"
         />
 
@@ -636,8 +636,8 @@ export default function CaseConformityScreen() {
           ]}
           placeholder="cliente@empresa.com"
           placeholderTextColor={palette.placeholder}
-          selectionColor={textInputAccentColor}
-          cursorColor={textInputAccentColor}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
           accessibilityLabel="Email destino de la conformidad"
         />
 
@@ -676,8 +676,8 @@ export default function CaseConformityScreen() {
           ]}
           placeholder="Instalacion validada en sitio."
           placeholderTextColor={palette.placeholder}
-          selectionColor={textInputAccentColor}
-          cursorColor={textInputAccentColor}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
           accessibilityLabel="Resumen del cierre"
         />
 
@@ -693,8 +693,8 @@ export default function CaseConformityScreen() {
           ]}
           placeholder="Detalle tecnico breve para el PDF."
           placeholderTextColor={palette.placeholder}
-          selectionColor={textInputAccentColor}
-          cursorColor={textInputAccentColor}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
           accessibilityLabel="Nota tecnica del cierre"
         />
       </SectionCard>

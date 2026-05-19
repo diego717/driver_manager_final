@@ -4131,12 +4131,14 @@ test("PATCH /incidents/:id/status updates incident status and resolution fields"
   assert.equal(body.incident.status_updated_by, "tech_user");
   assert.equal(typeof body.incident.resolved_at, "string");
   assert.ok(body.incident.resolved_at.length > 0);
+  assert.equal(body.incident.actual_duration_seconds, null);
 
   const updatedIncident = db.state.incidents.find((row) => Number(row.id) === 11);
   assert.equal(updatedIncident.incident_status, "resolved");
   assert.equal(updatedIncident.resolution_note, "Resuelto en sitio");
   assert.equal(updatedIncident.resolved_by, "tech_user");
   assert.equal(updatedIncident.status_updated_by, "tech_user");
+  assert.equal(updatedIncident.actual_duration_seconds, null);
 
   const auditEvent = db.state.auditLogs.find((row) => row.action === "update_incident_status");
   assert.ok(auditEvent);

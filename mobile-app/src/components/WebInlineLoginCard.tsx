@@ -15,7 +15,7 @@ import { refreshSharedWebSessionState } from "@/src/session/web-session-store";
 import { getStoredWebAccessUsername } from "@/src/storage/secure";
 import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies, inputFontFamily, textInputAccentColor } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily } from "@/src/theme/typography";
 
 type WebInlineLoginCardProps = {
   hint: string;
@@ -135,8 +135,8 @@ export default function WebInlineLoginCard(props: WebInlineLoginCardProps) {
           ]}
           placeholder="nombre_usuario"
           placeholderTextColor={palette.placeholder}
-          selectionColor={textInputAccentColor}
-          cursorColor={textInputAccentColor}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
           accessibilityLabel="Usuario web para iniciar sesion"
           onFocus={() => setFocusedField("username")}
           onBlur={() => setFocusedField((current) => (current === "username" ? null : current))}
@@ -175,8 +175,8 @@ export default function WebInlineLoginCard(props: WebInlineLoginCardProps) {
           ]}
           placeholder="********"
           placeholderTextColor={palette.placeholder}
-          selectionColor={textInputAccentColor}
-          cursorColor={textInputAccentColor}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
           accessibilityLabel="Contrasena web para iniciar sesion"
           onFocus={() => setFocusedField("password")}
           onBlur={() => setFocusedField((current) => (current === "password" ? null : current))}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { Animated, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 
 import { radii, spacing } from "@/src/theme/layout";

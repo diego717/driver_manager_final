@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#d97706">
     <meta name="description" content="Dashboard de gestión de registros de drivers">
     <title>SiteOps Dashboard</title>
-    <link rel="stylesheet" href="/dashboard.css?v=54ab149933">
+    <link rel="stylesheet" href="/dashboard.css?v=9b41fb60e5">
     <link rel="manifest" href="/manifest.json?v=9130a5f920">
     <link rel="icon" href="/icons/icon-192x192.png">
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
@@ -842,6 +842,90 @@
                     </div>
                 </section>
 
+                <section class="visual-lab-dark-palette-pick" aria-labelledby="visualLabDarkPalettesTitle">
+                    <header class="visual-lab-dark-palette-head">
+                        <h4 id="visualLabDarkPalettesTitle">Paletas oscuras candidatas</h4>
+                        <p>Compara las 3 variantes en paralelo y aplica una al panel demo para decidir rápido.</p>
+                    </header>
+                    <div id="visualLabDarkPaletteGrid" class="visual-lab-dark-palette-grid">
+                        <article class="visual-lab-dark-option" data-dark-palette-id="graphite_amber" aria-label="Grafito calido + ambar">
+                            <p class="visual-lab-dark-option-kicker">Opción 1</p>
+                            <h5>Grafito cálido + ámbar</h5>
+                            <div class="visual-lab-dark-option-swatches" aria-hidden="true">
+                                <span class="swatch bg-a"></span>
+                                <span class="swatch bg-b"></span>
+                                <span class="swatch accent"></span>
+                                <span class="swatch text"></span>
+                            </div>
+                            <button class="visual-lab-dark-option-btn" type="button" data-dark-palette-id="graphite_amber" aria-pressed="false">Probar en panel</button>
+                        </article>
+                        <article class="visual-lab-dark-option" data-dark-palette-id="slate_executive" aria-label="Pizarra ejecutiva">
+                            <p class="visual-lab-dark-option-kicker">Opción 2</p>
+                            <h5>Pizarra ejecutiva</h5>
+                            <div class="visual-lab-dark-option-swatches" aria-hidden="true">
+                                <span class="swatch bg-a"></span>
+                                <span class="swatch bg-b"></span>
+                                <span class="swatch accent"></span>
+                                <span class="swatch text"></span>
+                            </div>
+                            <button class="visual-lab-dark-option-btn" type="button" data-dark-palette-id="slate_executive" aria-pressed="false">Probar en panel</button>
+                        </article>
+                        <article class="visual-lab-dark-option" data-dark-palette-id="obsidian_premium" aria-label="Obsidiana premium">
+                            <p class="visual-lab-dark-option-kicker">Opción 3</p>
+                            <h5>Obsidiana premium</h5>
+                            <div class="visual-lab-dark-option-swatches" aria-hidden="true">
+                                <span class="swatch bg-a"></span>
+                                <span class="swatch bg-b"></span>
+                                <span class="swatch accent"></span>
+                                <span class="swatch text"></span>
+                            </div>
+                            <button class="visual-lab-dark-option-btn" type="button" data-dark-palette-id="obsidian_premium" aria-pressed="false">Probar en panel</button>
+                        </article>
+                    </div>
+                </section>
+
+                <section class="visual-lab-light-palette-pick" aria-labelledby="visualLabLightPalettesTitle">
+                    <header class="visual-lab-light-palette-head">
+                        <h4 id="visualLabLightPalettesTitle">Paletas claras candidatas</h4>
+                        <p>Compara estas variantes para el modo claro y aplica una al panel demo con un clic.</p>
+                    </header>
+                    <div id="visualLabLightPaletteGrid" class="visual-lab-light-palette-grid">
+                        <article class="visual-lab-light-option" data-light-palette-id="amber_canvas" aria-label="Lienzo ambar">
+                            <p class="visual-lab-light-option-kicker">Opción 1</p>
+                            <h5>Lienzo ámbar</h5>
+                            <div class="visual-lab-light-option-swatches" aria-hidden="true">
+                                <span class="swatch bg-a"></span>
+                                <span class="swatch bg-b"></span>
+                                <span class="swatch accent"></span>
+                                <span class="swatch text"></span>
+                            </div>
+                            <button class="visual-lab-light-option-btn" type="button" data-light-palette-id="amber_canvas" aria-pressed="false">Probar en panel</button>
+                        </article>
+                        <article class="visual-lab-light-option" data-light-palette-id="sandstone_ops" aria-label="Arenisca operativa">
+                            <p class="visual-lab-light-option-kicker">Opción 2</p>
+                            <h5>Arenisca operativa</h5>
+                            <div class="visual-lab-light-option-swatches" aria-hidden="true">
+                                <span class="swatch bg-a"></span>
+                                <span class="swatch bg-b"></span>
+                                <span class="swatch accent"></span>
+                                <span class="swatch text"></span>
+                            </div>
+                            <button class="visual-lab-light-option-btn" type="button" data-light-palette-id="sandstone_ops" aria-pressed="false">Probar en panel</button>
+                        </article>
+                        <article class="visual-lab-light-option" data-light-palette-id="ivory_slate" aria-label="Marfil pizarra">
+                            <p class="visual-lab-light-option-kicker">Opción 3</p>
+                            <h5>Marfil pizarra</h5>
+                            <div class="visual-lab-light-option-swatches" aria-hidden="true">
+                                <span class="swatch bg-a"></span>
+                                <span class="swatch bg-b"></span>
+                                <span class="swatch accent"></span>
+                                <span class="swatch text"></span>
+                            </div>
+                            <button class="visual-lab-light-option-btn" type="button" data-light-palette-id="ivory_slate" aria-pressed="false">Probar en panel</button>
+                        </article>
+                    </div>
+                </section>
+
                 <p class="visual-lab-compare-note">Panel guia: mono dominante + acento ambar + borde semantico izquierdo en KPI.</p>
             </div>
 
@@ -1121,7 +1205,7 @@
     <script src="/dashboard-modals.js?v=38ffeb5d8c" defer></script>
     <script src="/dashboard-incidents-map.js?v=f3f5f13eba" defer></script>
     <script src="/dashboard-incidents-commercial.js?v=5c2aaa8400" defer></script>
-    <script src="/dashboard-incidents.js?v=d08c4dd0d5" defer></script>
+    <script src="/dashboard-incidents.js?v=26881bded2" defer></script>
     <script src="/dashboard-assets.js?v=84b179ae12" defer></script>
     <script src="/dashboard-drivers.js?v=4101fd2b78" defer></script>
     <script src="/dashboard-audit.js?v=cb0cf05086" defer></script>
@@ -1131,7 +1215,7 @@
     <script src="/dashboard-auth.js?v=6ca1f42a1c" defer></script>
     <script src="/dashboard-navigation.js?v=74eb06359c" defer></script>
     <script src="/dashboard-bootstrap.js?v=65dba6e7cf" defer></script>
-    <script src="/dashboard.js?v=505efd12e7" defer></script>
+    <script src="/dashboard.js?v=6728558e3d" defer></script>
     <script src="/dashboard-pwa.js?v=55b84aa40e" defer></script>
 </body>
 </html>

@@ -24,6 +24,12 @@ const techniciansApiMocks = vi.hoisted(() => ({
     user: { username: "usuario_web" },
     technician: null,
   })),
+  getLastAssignedIncidentsMapSource: vi.fn(() => "network"),
+  getLastLinkedTechnicianContextSource: vi.fn(() => "network"),
+  listAssignedIncidentsMap: vi.fn(async () => ({
+    technician: null,
+    incidents: [],
+  })),
 }));
 
 const secureStorageMocks = vi.hoisted(() => ({
@@ -300,7 +306,8 @@ afterAll(() => {
 
 vi.mock("@react-navigation/native", () => ({
   useFocusEffect: (callback: () => void | (() => void)) => {
-    React.useEffect(() => callback(), [callback]);
+    const ReactModule = require("react") as typeof React;
+    ReactModule.useEffect(() => callback(), [callback]);
   },
 }));
 vi.mock("expo-router", () => ({
@@ -384,36 +391,35 @@ describe("TodayScreen accessibility", () => {
       incident_in_progress_count: 1,
       incident_sla_minutes: 30,
     });
+    techniciansApiMocks.listAssignedIncidentsMap.mockResolvedValue({
+      technician: null,
+      incidents: [],
+    });
   });
 
   it("exposes labels, roles and touch target sizes for guided top-level controls", async () => {
     const { render, waitFor } = await import("@testing-library/react-native/pure");
     const view = render(<TodayScreen />);
     await waitFor(() => {
-      expect(incidentsApiMocks.listInstallations).toHaveBeenCalled();
+      expect(techniciansApiMocks.listAssignedIncidentsMap).toHaveBeenCalled();
     });
 
-    const refreshButton = view.getByLabelText("Refrescar resumen operativo");
+    const refreshButton = view.getByLabelText("Refrescar");
     expect(refreshButton.props.accessibilityRole).toBe("button");
-    expect(refreshButton.props.accessibilityState).toEqual(
-      expect.objectContaining({ disabled: false, busy: false }),
-    );
     expect(flattenStyle(refreshButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
 
-    const openFlowButton = view.getByLabelText("Abrir el caso 17");
-    expect(openFlowButton.props.accessibilityRole).toBe("button");
-    expect(flattenStyle(openFlowButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
+    expect(view.getByText("Escanear equipo")).toBeTruthy();
 
-    const backlogButton = view.getByLabelText("Abrir backlog del caso 17");
-    expect(backlogButton.props.accessibilityRole).toBe("button");
-    expect(flattenStyle(backlogButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
+    const newIncidentButton = view.getByLabelText("Nueva incidencia");
+    expect(newIncidentButton.props.accessibilityRole).toBe("button");
+    expect(flattenStyle(newIncidentButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
   });
 
   it("keeps a logical focus order for guided actions", async () => {
     const { render, waitFor } = await import("@testing-library/react-native/pure");
     const view = render(<TodayScreen />);
     await waitFor(() => {
-      expect(incidentsApiMocks.listInstallations).toHaveBeenCalled();
+      expect(techniciansApiMocks.listAssignedIncidentsMap).toHaveBeenCalled();
     });
 
     const labels = view
@@ -421,29 +427,22 @@ describe("TodayScreen accessibility", () => {
       .map((node) => node.props.accessibilityLabel)
       .filter(Boolean);
 
-    expect(labels.indexOf("Refrescar resumen operativo")).toBeGreaterThanOrEqual(0);
-    expect(labels.indexOf("Abrir el caso 17")).toBeGreaterThanOrEqual(0);
-    expect(labels.indexOf("Abrir backlog del caso 17")).toBeGreaterThanOrEqual(0);
+    expect(labels.indexOf("Refrescar")).toBeGreaterThanOrEqual(0);
+    expect(labels.indexOf("Nueva incidencia")).toBeGreaterThan(
+      labels.indexOf("Refrescar"),
+    );
   });
 
   it("renders the distilled home without exposing the old form on home", async () => {
     const { render, waitFor } = await import("@testing-library/react-native/pure");
-    incidentsApiMocks.listInstallations.mockResolvedValueOnce(
-      Array.from({ length: 30 }, (_, index) => ({
-        id: index + 1,
-        client_name: `Cliente ${index + 1}`,
-      })),
-    );
-
     const view = render(<TodayScreen />);
     await waitFor(() => {
-      expect(view.getByText("Caso foco")).toBeTruthy();
+      expect(view.getByText("Entrada rapida")).toBeTruthy();
     });
 
     expect(view.getByText("Escanear equipo")).toBeTruthy();
-    expect(view.getByText("Caso manual")).toBeTruthy();
-    expect(view.getByText("Inventario")).toBeTruthy();
-    expect(view.getByText("Ver backlog")).toBeTruthy();
+    expect(view.getByText("Nueva incidencia")).toBeTruthy();
+    expect(view.getByText("Incidencias asignadas")).toBeTruthy();
     expect(view.queryByLabelText("ID de registro para la incidencia")).toBeNull();
   });
 });

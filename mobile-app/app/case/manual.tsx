@@ -208,6 +208,8 @@ export default function ManualCaseScreen() {
           ]}
           placeholder="Cliente o area"
           placeholderTextColor={palette.placeholder}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
           accessibilityLabel="Cliente del caso manual"
         />
 
@@ -223,6 +225,8 @@ export default function ManualCaseScreen() {
           multiline
           placeholder="Describe por que se abre este trabajo"
           placeholderTextColor={palette.placeholder}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
           accessibilityLabel="Contexto del caso manual"
         />
       </SectionCard>
@@ -243,6 +247,8 @@ export default function ManualCaseScreen() {
           multiline
           placeholder="Describe la incidencia inicial"
           placeholderTextColor={palette.placeholder}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
           accessibilityLabel="Nota inicial de la incidencia"
         />
 

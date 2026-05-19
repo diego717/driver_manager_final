@@ -29,7 +29,7 @@ import { enqueueUploadIncidentPhoto } from "@/src/services/sync/photo-outbox-ser
 import { runSync } from "@/src/services/sync/sync-runner";
 import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies, inputFontFamily, textInputAccentColor, typeScale } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, typeScale } from "@/src/theme/typography";
 
 type SelectedImage = {
   uri: string;
@@ -800,8 +800,8 @@ export default function UploadIncidentPhotoScreen() {
         ]}
         placeholder="Ej: 15"
         placeholderTextColor={palette.placeholder}
-        selectionColor={textInputAccentColor}
-        cursorColor={textInputAccentColor}
+        selectionColor={palette.accent}
+        cursorColor={palette.accent}
         accessibilityLabel="ID de incidencia para subir evidencia"
       />
       {localIncidentLocalId ? (
@@ -866,8 +866,8 @@ export default function UploadIncidentPhotoScreen() {
             multiline
             placeholder="Describe contexto de la evidencia"
             placeholderTextColor={palette.placeholder}
-            selectionColor={textInputAccentColor}
-            cursorColor={textInputAccentColor}
+            selectionColor={palette.accent}
+            cursorColor={palette.accent}
             accessibilityLabel="Nota operativa de la evidencia"
           />
           <Text style={[styles.hintText, { color: palette.hint }]}>Caracteres: {note.trim().length}</Text>

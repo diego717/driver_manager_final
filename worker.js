@@ -3175,7 +3175,6 @@ function mapIncidentRow(incident, photos = undefined) {
   const workStartedAtIso = normalizeOptionalString(safeIncident.work_started_at, "").trim() || null;
   const workEndedAtIso = normalizeOptionalString(safeIncident.work_ended_at, "").trim() || null;
 
-  const createdAtMs = parseIsoMillis(createdAtIso);
   const statusUpdatedAtMs = parseIsoMillis(statusUpdatedAtIso);
   const resolvedAtMs = parseIsoMillis(resolvedAtIso);
   const workStartedAtMs = parseIsoMillis(workStartedAtIso);
@@ -3183,8 +3182,7 @@ function mapIncidentRow(incident, photos = undefined) {
 
   const runtimeStartMs =
     workStartedAtMs ??
-    (normalizedStatus === "in_progress" ? statusUpdatedAtMs : null) ??
-    createdAtMs;
+    (normalizedStatus === "in_progress" ? statusUpdatedAtMs : null);
   const runtimeEndMs =
     workEndedAtMs ??
     resolvedAtMs ??

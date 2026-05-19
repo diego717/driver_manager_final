@@ -119,6 +119,96 @@ const lazyAssetWarnings = new Set();
 const TREND_RANGE_ALLOWED_DAYS = new Set([1, 7]);
 let lastCriticalIncidentsCount = null;
 let incidentRuntimeTickerId = null;
+const VISUAL_LAB_DARK_PALETTE_STORAGE_KEY = 'visualLabDarkPalette';
+const VISUAL_LAB_LIGHT_PALETTE_STORAGE_KEY = 'visualLabLightPalette';
+const VISUAL_LAB_DARK_PALETTES = Object.freeze({
+    graphite_amber: Object.freeze({
+        label: 'Grafito cálido + ámbar',
+        '--accent-primary': '#f59e0b',
+        '--accent-secondary': '#d97706',
+        '--bg-primary': '#111315',
+        '--bg-secondary': '#23272b',
+        '--text-primary': '#f3f2ee',
+        '--text-secondary': '#b7b1a3',
+        '--border': '#343a40',
+        '--success': '#22c55e',
+        '--warning': '#f59e0b',
+        '--error': '#ef4444',
+        '--info': '#38bdf8',
+    }),
+    slate_executive: Object.freeze({
+        label: 'Pizarra ejecutiva',
+        '--accent-primary': '#eab308',
+        '--accent-secondary': '#ca8a04',
+        '--bg-primary': '#0f1216',
+        '--bg-secondary': '#171b21',
+        '--text-primary': '#edeff3',
+        '--text-secondary': '#a7afbc',
+        '--border': '#2e3540',
+        '--success': '#22c55e',
+        '--warning': '#f59e0b',
+        '--error': '#ef4444',
+        '--info': '#38bdf8',
+    }),
+    obsidian_premium: Object.freeze({
+        label: 'Obsidiana premium',
+        '--accent-primary': '#ffb020',
+        '--accent-secondary': '#d97706',
+        '--bg-primary': '#0d0f12',
+        '--bg-secondary': '#151922',
+        '--text-primary': '#f5f7fa',
+        '--text-secondary': '#aab3c2',
+        '--border': '#2b313d',
+        '--success': '#22c55e',
+        '--warning': '#ffb020',
+        '--error': '#ef4444',
+        '--info': '#38bdf8',
+    }),
+});
+const VISUAL_LAB_LIGHT_PALETTES = Object.freeze({
+    amber_canvas: Object.freeze({
+        label: 'Lienzo ámbar',
+        '--accent-primary': '#d97706',
+        '--accent-secondary': '#b45309',
+        '--bg-primary': '#f6f0e4',
+        '--bg-secondary': '#efe1c7',
+        '--text-primary': '#2b241c',
+        '--text-secondary': '#6a5c49',
+        '--border': '#c58a2c',
+        '--success': '#16a34a',
+        '--warning': '#d97706',
+        '--error': '#dc2626',
+        '--info': '#0284c7',
+    }),
+    sandstone_ops: Object.freeze({
+        label: 'Arenisca operativa',
+        '--accent-primary': '#c2410c',
+        '--accent-secondary': '#9a3412',
+        '--bg-primary': '#f4efe6',
+        '--bg-secondary': '#e6dccf',
+        '--text-primary': '#2f2921',
+        '--text-secondary': '#675f55',
+        '--border': '#b98b63',
+        '--success': '#15803d',
+        '--warning': '#c2410c',
+        '--error': '#b91c1c',
+        '--info': '#0369a1',
+    }),
+    ivory_slate: Object.freeze({
+        label: 'Marfil pizarra',
+        '--accent-primary': '#b45309',
+        '--accent-secondary': '#92400e',
+        '--bg-primary': '#f6f7f4',
+        '--bg-secondary': '#e8ebee',
+        '--text-primary': '#1f2937',
+        '--text-secondary': '#5b6472',
+        '--border': '#a8b0bd',
+        '--success': '#15803d',
+        '--warning': '#b45309',
+        '--error': '#b91c1c',
+        '--info': '#0369a1',
+    }),
+});
 
 // WebSocket/SSE State
 const MAX_SSE_RECONNECT_ATTEMPTS = 6;
@@ -416,6 +506,8 @@ const SECTION_REQUIRED_BINDINGS = Object.freeze({
         'visualLabOpsBoardTitle',
         'visualLabThemeLightBtn',
         'visualLabThemeDarkBtn',
+        'visualLabDarkPaletteGrid',
+        'visualLabLightPaletteGrid',
     ],
     tenants: [
         'tenantsList',
@@ -4710,9 +4802,15 @@ function resolveIncidentRuntimeStartMs(incident) {
         return Number.isFinite(parsed) ? parsed : null;
     };
 
-    return parseIso(incident?.work_started_at)
-        ?? (normalizedStatus === 'in_progress' ? parseIso(incident?.status_updated_at) : null)
-        ?? parseIso(incident?.created_at);
+    const startedAtMs = parseIso(incident?.work_started_at);
+    if (Number.isFinite(startedAtMs)) {
+        return startedAtMs;
+    }
+    if (normalizedStatus === 'in_progress') {
+        return parseIso(incident?.status_updated_at)
+            ?? parseIso(incident?.created_at);
+    }
+    return null;
 }
 
 function resolveIncidentRealDurationSeconds(incident) {
@@ -7826,6 +7924,152 @@ function getCurrentTheme() {
     return 'light';
 }
 
+function getVisualLabOpsBoardElement() {
+    return document.querySelector('#visualLabSection .visual-lab-ops-board');
+}
+
+function resolveVisualLabDarkPaletteId(rawValue) {
+    const normalized = String(rawValue || '').trim();
+    if (normalized && Object.prototype.hasOwnProperty.call(VISUAL_LAB_DARK_PALETTES, normalized)) {
+        return normalized;
+    }
+    return 'graphite_amber';
+}
+
+function resolveVisualLabLightPaletteId(rawValue) {
+    const normalized = String(rawValue || '').trim();
+    if (normalized && Object.prototype.hasOwnProperty.call(VISUAL_LAB_LIGHT_PALETTES, normalized)) {
+        return normalized;
+    }
+    return 'amber_canvas';
+}
+
+function syncVisualLabDarkPaletteControls(paletteId) {
+    const resolvedPaletteId = resolveVisualLabDarkPaletteId(paletteId);
+    const options = document.querySelectorAll('.visual-lab-dark-option[data-dark-palette-id]');
+    options.forEach((option) => {
+        if (!(option instanceof HTMLElement)) return;
+        const optionPaletteId = resolveVisualLabDarkPaletteId(option.dataset.darkPaletteId);
+        const isSelected = optionPaletteId === resolvedPaletteId;
+        option.classList.toggle('is-selected', isSelected);
+        const trigger = option.querySelector('.visual-lab-dark-option-btn[data-dark-palette-id]');
+        if (trigger instanceof HTMLButtonElement) {
+            trigger.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+        }
+    });
+}
+
+function syncVisualLabLightPaletteControls(paletteId) {
+    const resolvedPaletteId = resolveVisualLabLightPaletteId(paletteId);
+    const options = document.querySelectorAll('.visual-lab-light-option[data-light-palette-id]');
+    options.forEach((option) => {
+        if (!(option instanceof HTMLElement)) return;
+        const optionPaletteId = resolveVisualLabLightPaletteId(option.dataset.lightPaletteId);
+        const isSelected = optionPaletteId === resolvedPaletteId;
+        option.classList.toggle('is-selected', isSelected);
+        const trigger = option.querySelector('.visual-lab-light-option-btn[data-light-palette-id]');
+        if (trigger instanceof HTMLButtonElement) {
+            trigger.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+        }
+    });
+}
+
+function applyVisualLabDarkPalette(rawPaletteId, config = {}) {
+    const paletteId = resolveVisualLabDarkPaletteId(rawPaletteId);
+    const board = getVisualLabOpsBoardElement();
+    const palette = VISUAL_LAB_DARK_PALETTES[paletteId] || VISUAL_LAB_DARK_PALETTES.graphite_amber;
+
+    if (board instanceof HTMLElement) {
+        Object.entries(palette).forEach(([token, value]) => {
+            if (token === 'label') return;
+            board.style.setProperty(token, String(value));
+        });
+        board.dataset.darkPalette = paletteId;
+    }
+
+    syncVisualLabDarkPaletteControls(paletteId);
+    if (config.persist !== false) {
+        localStorage.setItem(VISUAL_LAB_DARK_PALETTE_STORAGE_KEY, paletteId);
+    }
+    if (config.notify === true) {
+        showNotification(`Visual Lab: ${palette.label}`, 'info');
+    }
+}
+
+function applyVisualLabLightPalette(rawPaletteId, config = {}) {
+    const paletteId = resolveVisualLabLightPaletteId(rawPaletteId);
+    const board = getVisualLabOpsBoardElement();
+    const palette = VISUAL_LAB_LIGHT_PALETTES[paletteId] || VISUAL_LAB_LIGHT_PALETTES.amber_canvas;
+
+    if (board instanceof HTMLElement) {
+        Object.entries(palette).forEach(([token, value]) => {
+            if (token === 'label') return;
+            board.style.setProperty(token, String(value));
+        });
+        board.dataset.lightPalette = paletteId;
+    }
+
+    syncVisualLabLightPaletteControls(paletteId);
+    if (config.persist !== false) {
+        localStorage.setItem(VISUAL_LAB_LIGHT_PALETTE_STORAGE_KEY, paletteId);
+    }
+    if (config.notify === true) {
+        showNotification(`Visual Lab: ${palette.label}`, 'info');
+    }
+}
+
+function applyVisualLabPaletteForTheme(theme = getCurrentTheme()) {
+    if (theme === 'dark') {
+        const storedDarkPaletteId = resolveVisualLabDarkPaletteId(
+            localStorage.getItem(VISUAL_LAB_DARK_PALETTE_STORAGE_KEY),
+        );
+        applyVisualLabDarkPalette(storedDarkPaletteId, { persist: false, notify: false });
+        return;
+    }
+    const storedLightPaletteId = resolveVisualLabLightPaletteId(
+        localStorage.getItem(VISUAL_LAB_LIGHT_PALETTE_STORAGE_KEY),
+    );
+    applyVisualLabLightPalette(storedLightPaletteId, { persist: false, notify: false });
+}
+
+function setupVisualLabDarkPalettePicker() {
+    const paletteGrid = document.getElementById('visualLabDarkPaletteGrid');
+    if (!(paletteGrid instanceof HTMLElement)) return;
+
+    const storedPaletteId = resolveVisualLabDarkPaletteId(
+        localStorage.getItem(VISUAL_LAB_DARK_PALETTE_STORAGE_KEY),
+    );
+    applyVisualLabDarkPalette(storedPaletteId, { persist: false, notify: false });
+
+    const paletteButtons = paletteGrid.querySelectorAll('.visual-lab-dark-option-btn[data-dark-palette-id]');
+    paletteButtons.forEach((button) => {
+        if (!(button instanceof HTMLButtonElement)) return;
+        button.addEventListener('click', () => {
+            const paletteId = resolveVisualLabDarkPaletteId(button.dataset.darkPaletteId);
+            applyVisualLabDarkPalette(paletteId, { persist: true, notify: true });
+        });
+    });
+}
+
+function setupVisualLabLightPalettePicker() {
+    const paletteGrid = document.getElementById('visualLabLightPaletteGrid');
+    if (!(paletteGrid instanceof HTMLElement)) return;
+
+    const storedPaletteId = resolveVisualLabLightPaletteId(
+        localStorage.getItem(VISUAL_LAB_LIGHT_PALETTE_STORAGE_KEY),
+    );
+    applyVisualLabLightPalette(storedPaletteId, { persist: false, notify: false });
+
+    const paletteButtons = paletteGrid.querySelectorAll('.visual-lab-light-option-btn[data-light-palette-id]');
+    paletteButtons.forEach((button) => {
+        if (!(button instanceof HTMLButtonElement)) return;
+        button.addEventListener('click', () => {
+            const paletteId = resolveVisualLabLightPaletteId(button.dataset.lightPaletteId);
+            applyVisualLabLightPalette(paletteId, { persist: true, notify: true });
+        });
+    });
+}
+
 function setTheme(theme) {
     const html = document.documentElement;
 
@@ -7841,6 +8085,7 @@ function setTheme(theme) {
     // Update Chart.js colors if charts exist
     updateChartTheme(theme);
     syncThemeSelectionControls(theme);
+    applyVisualLabPaletteForTheme(theme);
 }
 
 function toggleTheme() {
@@ -7903,6 +8148,9 @@ function setupThemeToggle() {
         });
     });
     syncThemeSelectionControls(currentTheme);
+    setupVisualLabDarkPalettePicker();
+    setupVisualLabLightPalettePicker();
+    applyVisualLabPaletteForTheme(currentTheme);
 
     // Listen for system theme changes
     if (window.matchMedia) {

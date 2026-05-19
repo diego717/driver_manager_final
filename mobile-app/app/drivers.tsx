@@ -284,6 +284,8 @@ export default function DriversScreen() {
           ]}
           placeholder="Ej: Zebra"
           placeholderTextColor={palette.placeholder}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
         />
 
         <Text style={[styles.label, { color: palette.label }]}>Version</Text>
@@ -296,6 +298,8 @@ export default function DriversScreen() {
           ]}
           placeholder="Ej: v1.2.3"
           placeholderTextColor={palette.placeholder}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
         />
 
         <Text style={[styles.label, { color: palette.label }]}>Descripcion (opcional)</Text>
@@ -308,6 +312,8 @@ export default function DriversScreen() {
           ]}
           placeholder="Notas del paquete"
           placeholderTextColor={palette.placeholder}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
         />
 
         <ConsoleButton

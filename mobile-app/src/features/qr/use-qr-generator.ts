@@ -181,7 +181,7 @@ export function useQrGenerator() {
     setQrLabelRenderState(null);
     lastAppliedPrefillSignatureRef.current = "";
     if (hasRoutePrefill) {
-      router.replace("/qr");
+      router.replace("/qr-generator");
     }
   }, [hasRoutePrefill, router]);
 

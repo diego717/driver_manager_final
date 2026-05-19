@@ -41,7 +41,7 @@ import TechnicianAssignmentsPanel from "@/src/components/TechnicianAssignmentsPa
 import { useReducedMotion } from "@/src/hooks/useReducedMotion";
 import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies, inputFontFamily, textInputAccentColor, typeScale } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, typeScale } from "@/src/theme/typography";
 import { type Incident, type TechnicianAssignment, type TechnicianRecord } from "@/src/types/api";
 import { buildIncidentNavigationTargets } from "@/src/utils/incident-dispatch";
 import {
@@ -743,8 +743,8 @@ export default function IncidentDetailScreen() {
                 multiline
                 placeholder="Nota de resolucion (opcional)"
                 placeholderTextColor={palette.textMuted}
-                selectionColor={textInputAccentColor}
-                cursorColor={textInputAccentColor}
+                selectionColor={palette.accent}
+                cursorColor={palette.accent}
               />
             </View>
 
@@ -798,15 +798,8 @@ export default function IncidentDetailScreen() {
                     size="sm"
                     style={styles.secondaryActionButton}
                     onPress={onAddEvidence}
-                    label="Evidencia"
-                    textStyle={styles.secondaryActionText}
-                  />
-                  <ConsoleButton
-                    variant="ghost"
-                    size="sm"
-                    style={styles.secondaryActionButton}
-                    onPress={onAddEvidence}
-                    label="Subir fotos"
+                    accessibilityLabel="Adjuntar evidencia fotografica"
+                    label="Adjuntar evidencia"
                     textStyle={styles.secondaryActionText}
                   />
                   <ConsoleButton

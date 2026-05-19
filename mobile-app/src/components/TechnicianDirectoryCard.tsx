@@ -256,6 +256,8 @@ export default function TechnicianDirectoryCard(props: {
             onChangeText={(value) => setDraft((current) => ({ ...current, displayName: value }))}
             placeholder="Nombre visible"
             placeholderTextColor={palette.placeholder}
+            selectionColor={palette.accent}
+            cursorColor={palette.accent}
             style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.title }]}
           />
           <TextInput
@@ -263,6 +265,8 @@ export default function TechnicianDirectoryCard(props: {
             onChangeText={(value) => setDraft((current) => ({ ...current, employeeCode: value }))}
             placeholder="Codigo interno"
             placeholderTextColor={palette.placeholder}
+            selectionColor={palette.accent}
+            cursorColor={palette.accent}
             style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.title }]}
           />
           <TextInput
@@ -270,6 +274,8 @@ export default function TechnicianDirectoryCard(props: {
             onChangeText={(value) => setDraft((current) => ({ ...current, email: value }))}
             placeholder="Email"
             placeholderTextColor={palette.placeholder}
+            selectionColor={palette.accent}
+            cursorColor={palette.accent}
             autoCapitalize="none"
             style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.title }]}
           />
@@ -278,6 +284,8 @@ export default function TechnicianDirectoryCard(props: {
             onChangeText={(value) => setDraft((current) => ({ ...current, phone: value }))}
             placeholder="Telefono"
             placeholderTextColor={palette.placeholder}
+            selectionColor={palette.accent}
+            cursorColor={palette.accent}
             style={[styles.input, { backgroundColor: palette.inputBg, borderColor: palette.inputBorder, color: palette.title }]}
           />
           <TextInput
@@ -285,6 +293,8 @@ export default function TechnicianDirectoryCard(props: {
             onChangeText={(value) => setDraft((current) => ({ ...current, notes: value }))}
             placeholder="Notas operativas"
             placeholderTextColor={palette.placeholder}
+            selectionColor={palette.accent}
+            cursorColor={palette.accent}
             multiline
             numberOfLines={4}
             style={[

@@ -33,7 +33,7 @@ import { runSync } from "@/src/services/sync/sync-runner";
 import { useSharedWebSessionState } from "@/src/session/web-session-store";
 import { radii, sizing, spacing } from "@/src/theme/layout";
 import { useAppPalette } from "@/src/theme/palette";
-import { fontFamilies, inputFontFamily, textInputAccentColor, typeScale } from "@/src/theme/typography";
+import { fontFamilies, inputFontFamily, typeScale } from "@/src/theme/typography";
 import {
   type GpsCapturePayload,
   type IncidentSeverity,
@@ -600,8 +600,8 @@ export default function CreateIncidentScreen() {
               multiline
               placeholder="Explica por que registras la incidencia sin coordenadas validas."
               placeholderTextColor={palette.placeholder}
-              selectionColor={textInputAccentColor}
-              cursorColor={textInputAccentColor}
+              selectionColor={palette.accent}
+              cursorColor={palette.accent}
               accessibilityLabel="Motivo de override GPS"
             />
             <Text style={[styles.gpsFootnote, { color: palette.textMuted }]}>
@@ -637,8 +637,8 @@ export default function CreateIncidentScreen() {
           multiline
           placeholder="Describe la incidencia"
           placeholderTextColor={palette.placeholder}
-          selectionColor={textInputAccentColor}
-          cursorColor={textInputAccentColor}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
           accessibilityLabel="Nota de la incidencia"
         />
 

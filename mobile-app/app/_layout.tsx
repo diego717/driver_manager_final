@@ -405,6 +405,14 @@ export function RootLayoutNav() {
             options={{ title: "Caso manual" }}
           />
           <Stack.Screen
+            name="case/conformity"
+            options={{ title: "Conformidad" }}
+          />
+          <Stack.Screen
+            name="case/signature"
+            options={{ title: "Firma" }}
+          />
+          <Stack.Screen
             name="incident/create"
             options={{ title: "Nueva incidencia" }}
           />
@@ -418,9 +426,11 @@ export function RootLayoutNav() {
           />
           <Stack.Screen name="incident/upload" options={{ title: "Subir foto" }} />
           <Stack.Screen name="scan/index" options={{ title: "Escaner" }} />
+          <Stack.Screen name="qr" options={{ headerShown: false }} />
           <Stack.Screen name="qr-generator" options={{ title: "Generar QR" }} />
           <Stack.Screen name="incident/photo-viewer" options={{ title: "Foto" }} />
           <Stack.Screen name="drivers" options={{ title: "Drivers R2" }} />
+          <Stack.Screen name="technicians" options={{ title: "Tecnicos" }} />
           <Stack.Screen
             name="modal"
             options={{ title: "Configuracion API", presentation: "modal" }}

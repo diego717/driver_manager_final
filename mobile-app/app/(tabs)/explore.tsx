@@ -258,6 +258,8 @@ export default function ExploreTabScreen() {
           ]}
           placeholder="Buscar equipo o cliente"
           placeholderTextColor={palette.placeholder}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
         />
         <ConsoleButton
           variant="primary"
@@ -289,7 +291,7 @@ export default function ExploreTabScreen() {
           style={styles.ghostButton}
           onPress={() => {
             void triggerSelectionHaptic();
-            router.push("/qr?mode=scan");
+            router.push("/scan" as never);
           }}
           label="Escanear"
           textStyle={styles.ghostButtonText}
@@ -418,6 +420,8 @@ export default function ExploreTabScreen() {
                 ]}
                 placeholder="Installation ID"
                 placeholderTextColor={palette.placeholder}
+                selectionColor={palette.accent}
+                cursorColor={palette.accent}
               />
               <ConsoleButton
                 variant="primary"

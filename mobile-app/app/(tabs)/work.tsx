@@ -1115,7 +1115,7 @@ export default function WorkTabScreen() {
             style={styles.topActionUtility}
             onPress={() => {
               void triggerSelectionHaptic();
-              router.push("/qr?mode=scan");
+              router.push("/scan" as never);
             }}
           >
             <Text style={[styles.utilityLabel, { color: palette.textMuted }]}>Entrada</Text>

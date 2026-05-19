@@ -52,7 +52,7 @@ export default function QuickActionCard(props: QuickActionCardProps) {
             { color: isPrimary ? palette.primaryButtonText : palette.accent },
           ]}
         >
-          {isPrimary ? actionLabel : `${actionLabel} →`}
+          {isPrimary ? actionLabel : `${actionLabel} ->`}
         </Text>
       </TouchableOpacity>
     </View>
