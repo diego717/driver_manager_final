@@ -11,6 +11,8 @@ import {
 } from "../lib/core.js";
 import { buildExecutiveMetricDefinitions, refreshIncidentKpiDaily } from "../services/analytics.js";
 
+const MAX_EXECUTIVE_RANGE_DAYS = 400;
+
 function sumBy(rows, key) {
   return (rows || []).reduce((acc, row) => acc + (Number(row?.[key] || 0) || 0), 0);
 }
@@ -31,6 +33,13 @@ function buildExecutiveFilters(url) {
   if (startInclusive.getTime() >= endExclusive.getTime()) {
     throw new HttpError(400, "Rango de fechas invalido.");
   }
+  const rangeDays = Math.ceil((endExclusive.getTime() - startInclusive.getTime()) / (24 * 60 * 60 * 1000));
+  if (rangeDays > MAX_EXECUTIVE_RANGE_DAYS) {
+    throw new HttpError(
+      400,
+      `Rango de fechas invalido. Maximo permitido: ${MAX_EXECUTIVE_RANGE_DAYS} dias.`,
+    );
+  }
 
   const siteId = parseOptionalPositiveInt(url.searchParams.get("site_id"), "site_id");
   const technicianId = parseOptionalPositiveInt(
@@ -44,6 +53,7 @@ function buildExecutiveFilters(url) {
   return {
     startInclusive,
     endExclusive,
+    rangeDays,
     startDateKey: toUtcDayKey(startInclusive),
     endDateKey: toUtcDayKey(endExclusive),
     startIso: startInclusive.toISOString(),
@@ -269,7 +279,10 @@ export function createAnalyticsRouteHandlers({
           ON wu.tenant_id = d.tenant_id
          AND wu.id = t.web_user_id
         WHERE ${dailyWhere.sql}
-        GROUP BY d.technician_id, technician_label, team_name
+        GROUP BY
+          d.technician_id,
+          technician_label,
+          COALESCE(NULLIF(TRIM(t.team_name), ''), '')
         ORDER BY closed_tickets DESC, technician_label ASC
         LIMIT 20
       `)

@@ -761,10 +761,16 @@
             const installationId = options.parseStrictInteger(config.installationId ?? incident?.installation_id);
             const assetId = options.parseStrictInteger(config.assetId ?? incident?.asset_id);
             const clientName = normalizeIncidentContextText(incident?.installation_client_name);
+            const installationLabel = Number.isInteger(installationId) && installationId > 0
+                ? `Registro #${installationId}`
+                : '';
+            const assetLabel = Number.isInteger(assetId) && assetId > 0
+                ? `Equipo #${assetId}`
+                : '';
 
             const title = clientName
-                || (Number.isInteger(assetId) && assetId > 0 ? `Equipo #${assetId}` : '')
-                || (Number.isInteger(installationId) && installationId > 0 ? `Registro #${installationId}` : '');
+                || assetLabel
+                || installationLabel;
             if (!title) return;
 
             const contextBlock = document.createElement('div');
@@ -776,11 +782,11 @@
             contextBlock.appendChild(primary);
 
             const metaParts = [];
-            if (Number.isInteger(assetId) && assetId > 0) {
-                metaParts.push(`Equipo #${assetId}`);
+            if (assetLabel && assetLabel !== title) {
+                metaParts.push(assetLabel);
             }
-            if (Number.isInteger(installationId) && installationId > 0) {
-                metaParts.push(`Registro #${installationId}`);
+            if (installationLabel && installationLabel !== title) {
+                metaParts.push(installationLabel);
             }
 
             const installationBrand = normalizeIncidentContextText(incident?.installation_brand);
@@ -809,11 +815,6 @@
             const statusValue = options.normalizeIncidentStatus(incident?.incident_status);
             const estimatedDurationSeconds = options.resolveIncidentEstimatedDurationSeconds(incident);
             const realDurationSeconds = options.resolveIncidentRealDurationSeconds(incident);
-            const runtimeStatusMeta = statusValue === 'in_progress'
-                ? 'En curso'
-                : statusValue === 'paused'
-                    ? 'En pausa'
-                    : '';
 
             const estimatedMetric = createIncidentMetricItem(
                 'Estimado',
@@ -833,7 +834,6 @@
                 {
                     metricKey: 'runtime',
                     tone: statusValue === 'resolved' ? 'resolved' : statusValue,
-                    meta: runtimeStatusMeta,
                 },
             );
             const runtimeMetricValue = runtimeMetric.querySelector('.incident-metric-value[data-metric="runtime"]');
@@ -855,37 +855,6 @@
             }
             highlights.appendChild(runtimeMetric);
 
-            // Compatibility chip for existing runtime selector/tests.
-            const runtimeChipLabel = Number.isInteger(realDurationSeconds) && realDurationSeconds >= 0
-                ? options.formatDuration(realDurationSeconds)
-                : '--';
-            const runtimeChipSuffix = statusValue === 'in_progress'
-                ? ' (en curso)'
-                : statusValue === 'paused'
-                    ? ' (en pausa)'
-                    : '';
-            const runtimeChip = createIncidentHighlightChip(
-                `Tiempo real: ${runtimeChipLabel}${runtimeChipSuffix}`,
-                statusValue === 'resolved' ? 'resolved' : statusValue,
-            );
-            runtimeChip.dataset.chip = 'runtime';
-            if (
-                statusValue === 'in_progress'
-                && Number.isInteger(realDurationSeconds)
-                && realDurationSeconds >= 0
-            ) {
-                const runtimeStartMs = options.resolveIncidentRuntimeStartMs(incident);
-                if (Number.isFinite(runtimeStartMs) && runtimeStartMs > 0) {
-                    runtimeChip.dataset.runtimeLive = '1';
-                    runtimeChip.dataset.runtimeStartMs = String(runtimeStartMs);
-                    runtimeChip.dataset.runtimeBaseSeconds = String(
-                        Math.max(0, Number(incident?.actual_duration_seconds || 0) || 0),
-                    );
-                    options.ensureIncidentRuntimeTicker();
-                }
-            }
-            highlights.appendChild(runtimeChip);
-
             const resolvedMetric = createIncidentMetricItem(
                 'Resuelta por',
                 formatIncidentResolvedByMetricValue(incident),
@@ -894,6 +863,7 @@
                     tone: statusValue === 'resolved' ? 'resolved' : 'neutral',
                 },
             );
+            resolvedMetric.hidden = statusValue !== 'resolved';
             highlights.appendChild(resolvedMetric);
 
             if (
@@ -2027,17 +1997,8 @@
                     if (runtimeMetric instanceof HTMLElement) {
                         runtimeMetric.dataset.tone = statusValue === 'resolved' ? 'resolved' : statusValue;
                         let runtimeMeta = runtimeMetric.querySelector('.incident-metric-meta');
-                        if (runtimeMetaText) {
-                            if (!(runtimeMeta instanceof HTMLElement)) {
-                                runtimeMeta = document.createElement('small');
-                                runtimeMeta.className = 'incident-metric-meta';
-                                runtimeMetric.appendChild(runtimeMeta);
-                            }
-                            runtimeMeta.textContent = runtimeMetaText;
-                            runtimeMeta.hidden = false;
-                        } else if (runtimeMeta instanceof HTMLElement) {
-                            runtimeMeta.textContent = '';
-                            runtimeMeta.hidden = true;
+                        if (runtimeMeta instanceof HTMLElement) {
+                            runtimeMeta.remove();
                         }
                     }
                     if (runtimeValueText && statusValue === 'in_progress') {
@@ -2056,36 +2017,14 @@
                         delete runtimeMetricValue.dataset.runtimeBaseSeconds;
                     }
                 }
-                const runtimeChip = card.querySelector('.incident-highlight-chip[data-chip="runtime"]');
-                if (runtimeChip instanceof HTMLElement) {
-                    const runtimeChipLabel = runtimeValueText || '--';
-                    const runtimeChipSuffix = statusValue === 'in_progress'
-                        ? ' (en curso)'
-                        : statusValue === 'paused'
-                            ? ' (en pausa)'
-                            : '';
-                    runtimeChip.textContent = `Tiempo real: ${runtimeChipLabel}${runtimeChipSuffix}`;
-                    runtimeChip.dataset.tone = statusValue === 'resolved' ? 'resolved' : statusValue;
-                    if (runtimeValueText && statusValue === 'in_progress') {
-                        const runtimeStartMs = options.resolveIncidentRuntimeStartMs(incident);
-                        if (Number.isFinite(runtimeStartMs) && runtimeStartMs > 0) {
-                            runtimeChip.dataset.runtimeLive = '1';
-                            runtimeChip.dataset.runtimeStartMs = String(runtimeStartMs);
-                            runtimeChip.dataset.runtimeBaseSeconds = String(
-                                Math.max(0, Number(incident?.actual_duration_seconds || 0) || 0),
-                            );
-                            options.ensureIncidentRuntimeTicker();
-                        }
-                    } else {
-                        delete runtimeChip.dataset.runtimeLive;
-                        delete runtimeChip.dataset.runtimeStartMs;
-                        delete runtimeChip.dataset.runtimeBaseSeconds;
-                    }
-                }
-
                 const resolvedMetricValue = card.querySelector('.incident-metric-value[data-metric="resolved-by"]');
                 if (resolvedMetricValue instanceof HTMLElement) {
-                    resolvedMetricValue.textContent = resolvedByMetricText;
+                    const resolvedMetric = resolvedMetricValue.closest('.incident-metric');
+                    if (resolvedMetric instanceof HTMLElement) {
+                        resolvedMetric.hidden = statusValue !== 'resolved';
+                        resolvedMetric.dataset.tone = statusValue === 'resolved' ? 'resolved' : 'neutral';
+                    }
+                    resolvedMetricValue.textContent = statusValue === 'resolved' ? resolvedByMetricText : '--';
                 }
 
                 ['open', 'in_progress', 'paused', 'resolved'].forEach((targetStatus) => {

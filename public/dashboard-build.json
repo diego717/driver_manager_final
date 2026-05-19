@@ -1,6 +1,6 @@
 {
   "versions": {
-    "css": "006e8df996",
+    "css": "54ab149933",
     "chart": "74401d738d",
     "jsqr": "bc40c8a151",
     "xlsx": "1c7abf2993",
@@ -11,7 +11,7 @@
     "modals": "38ffeb5d8c",
     "incidentsMap": "f3f5f13eba",
     "incidentsCommercial": "5c2aaa8400",
-    "incidents": "38fe6a9644",
+    "incidents": "d08c4dd0d5",
     "assets": "84b179ae12",
     "drivers": "4101fd2b78",
     "audit": "cb0cf05086",
@@ -21,11 +21,11 @@
     "auth": "6ca1f42a1c",
     "navigation": "74eb06359c",
     "bootstrap": "65dba6e7cf",
-    "js": "279fdef0d9",
+    "js": "505efd12e7",
     "pwa": "55b84aa40e",
     "manifest": "9130a5f920",
     "sw": "4c87568cf6",
     "materialSymbolsFont": "ee7248184b",
-    "build": "c4b0c47db1"
+    "build": "932d385fb9"
   }
 }

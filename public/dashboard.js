@@ -108,6 +108,7 @@ let dashboardLoadingRequests = 0;
 let executiveLoadPromise = null;
 let currentExecutiveAnalytics = null;
 let executiveTrendChart = null;
+const MAX_EXECUTIVE_TREND_POINTS = 400;
 const LAZY_ASSET_PATHS = {
     chart: '/chart.umd.js',
     jsqr: '/jsqr.js',
@@ -4195,7 +4196,8 @@ async function renderExecutiveTrendChart(trendRows = []) {
         executiveTrendChart.destroy();
         executiveTrendChart = null;
     }
-    if (!Array.isArray(trendRows) || !trendRows.length) {
+    const normalizedRows = normalizeExecutiveTrendRows(trendRows);
+    if (!normalizedRows.length) {
         const context = canvas.getContext('2d');
         context?.clearRect(0, 0, canvas.width, canvas.height);
         return;
@@ -4203,10 +4205,10 @@ async function renderExecutiveTrendChart(trendRows = []) {
     const canRenderCharts = await ensureChartLibrary();
     if (!canRenderCharts || !isChartAvailable()) return;
 
-    const labels = trendRows.map((row) => String(row?.day || ''));
-    const resolvedSeries = trendRows.map((row) => Number(row?.resolved_count || 0));
-    const mttrSeries = trendRows.map((row) => Number(row?.mttr_minutes || 0));
-    const slaSeries = trendRows.map((row) => Number(row?.sla_on_time_pct || 0));
+    const labels = normalizedRows.map((row) => row.day);
+    const resolvedSeries = normalizedRows.map((row) => row.resolved_count);
+    const mttrSeries = normalizedRows.map((row) => row.mttr_minutes);
+    const slaSeries = normalizedRows.map((row) => row.sla_on_time_pct);
 
     executiveTrendChart = new Chart(canvas.getContext('2d'), {
         type: 'line',
@@ -4242,6 +4244,22 @@ async function renderExecutiveTrendChart(trendRows = []) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            animation: false,
+            normalized: true,
+            spanGaps: true,
+            elements: {
+                point: {
+                    radius: labels.length > 120 ? 0 : 2,
+                    hoverRadius: 3,
+                },
+            },
+            plugins: {
+                decimation: {
+                    enabled: true,
+                    algorithm: 'lttb',
+                    threshold: 120,
+                },
+            },
             scales: {
                 y: {
                     beginAtZero: true,
@@ -4257,6 +4275,45 @@ async function renderExecutiveTrendChart(trendRows = []) {
             },
         },
     });
+}
+
+function clampTrendValue(value, min, max) {
+    const normalized = Number(value);
+    if (!Number.isFinite(normalized)) return min;
+    if (normalized < min) return min;
+    if (normalized > max) return max;
+    return normalized;
+}
+
+function downsampleTrendRows(rows, maxPoints = MAX_EXECUTIVE_TREND_POINTS) {
+    if (!Array.isArray(rows) || rows.length <= maxPoints) return rows;
+    const sampled = [];
+    const lastIndex = rows.length - 1;
+    const step = lastIndex / (maxPoints - 1);
+    for (let index = 0; index < maxPoints; index += 1) {
+        const sourceIndex = Math.round(index * step);
+        sampled.push(rows[sourceIndex]);
+    }
+    return sampled;
+}
+
+function normalizeExecutiveTrendRows(trendRows = []) {
+    if (!Array.isArray(trendRows) || !trendRows.length) return [];
+    const dedupByDay = new Map();
+    trendRows.forEach((row) => {
+        const dayRaw = String(row?.day || '').trim();
+        const day = /^\d{4}-\d{2}-\d{2}$/.test(dayRaw) ? dayRaw : dayRaw.slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+        dedupByDay.set(day, {
+            day,
+            resolved_count: clampTrendValue(row?.resolved_count, 0, 1000000),
+            mttr_minutes: clampTrendValue(row?.mttr_minutes, 0, 100000),
+            sla_on_time_pct: clampTrendValue(row?.sla_on_time_pct, 0, 100),
+        });
+    });
+    const sortedRows = Array.from(dedupByDay.values())
+        .sort((left, right) => left.day.localeCompare(right.day));
+    return downsampleTrendRows(sortedRows, MAX_EXECUTIVE_TREND_POINTS);
 }
 
 function renderExecutivePayload(payload = {}) {
@@ -4759,9 +4816,7 @@ function readIncidentEstimatedDurationFromModal() {
 function ensureIncidentRuntimeTicker() {
     if (incidentRuntimeTickerId) return;
     incidentRuntimeTickerId = window.setInterval(() => {
-        const liveRuntimeNodes = document.querySelectorAll(
-            '.incident-highlight-chip[data-runtime-live="1"], .incident-metric-value[data-runtime-live="1"]',
-        );
+        const liveRuntimeNodes = document.querySelectorAll('.incident-metric-value[data-runtime-live="1"]');
         if (!liveRuntimeNodes.length) {
             stopIncidentRuntimeTicker();
             return;
@@ -4772,11 +4827,7 @@ function ensureIncidentRuntimeTicker() {
             const baseSeconds = Math.max(0, Number(node.dataset.runtimeBaseSeconds || 0) || 0);
             if (!Number.isFinite(startMs) || startMs <= 0) continue;
             const runtimeSeconds = baseSeconds + Math.max(0, Math.floor((nowMs - startMs) / 1000));
-            if (node.classList.contains('incident-metric-value')) {
-                node.textContent = formatDuration(runtimeSeconds);
-            } else {
-                node.textContent = `Tiempo real: ${formatDuration(runtimeSeconds)} (en curso)`;
-            }
+            node.textContent = formatDuration(runtimeSeconds);
         }
     }, 1000);
 }

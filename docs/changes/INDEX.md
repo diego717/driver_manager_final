@@ -10,6 +10,8 @@ Indice resumido de cambios relevantes del proyecto.
 
 ## Entradas
 
+- `2026-05-05` - Branding multi-tenant y dashboard ejecutivo con KPIs (MTTR/SLA/FCR), tendencia, productividad, reincidencia y export CSV/XLSX; incluye nuevas rutas `/web/branding` y `/web/analytics/*`, migracion `0028` y refresh diario de agregados KPI. Ver `docs/changes/2026-05-05-tenant-branding-and-executive-analytics.md`.
+- `2026-04-26` - Refactor de incidencias web: split de `dashboard-incidents.js` en modulos `map` y `commercial`, con ajuste de sync/versionado y precache en service worker. Ver `docs/changes/2026-04-26-incidents-module-split.md`.
 - `2026-04-20` - Mejoras operativas en UI de Equipos/Drivers/Tenants + mapa de incidencias: indicador de incidencias activas en fila, distincion visual Descargar vs Eliminar, badge `Ultimo` por marca, roles por color, proteccion de borrado para `platform_owner`, jerarquia del panel lateral, lista de recientes con severidad/estado y CTA primario `Abrir caso`. Ver `docs/changes/2026-04-20-ops-ui-equipment-drivers-tenants-safety.md`.
 - `2026-04-20` - Hardening RBAC de tecnico en incidencias, alineacion de tracking publico y pasada visual de dashboard/tracking (layout, tema y mobile viewport), incluyendo cierre de permiso en `POST /web/assets/resolve`. Ver `docs/changes/2026-04-20-rbac-technician-incidents-and-tracking-hardening.md`.
 - `2026-04-12` - Presupuestos por instalacion con PDF/email, aprobacion versionada, bloqueo de conformidad y excepciones comerciales por garantia/abono/cortesia. Ver `docs/changes/2026-04-12-installation-budgets-and-conformity-gating.md`.

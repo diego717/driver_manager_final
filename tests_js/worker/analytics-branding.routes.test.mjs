@@ -36,6 +36,27 @@ test('analytics definitions route returns executive metric dictionary', async ()
   assert.match(String(metrics?.fcr_pct || ''), /7 dias/i);
 });
 
+test('analytics executive route rejects oversized date range', async () => {
+  const handlers = createAnalyticsRouteHandlers({ jsonResponse });
+  await assert.rejects(
+    handlers.handleAnalyticsRoute(
+      new Request('https://worker.example/web/analytics/executive?start_date=2024-01-01&end_date=2026-05-04'),
+      { DB: null },
+      new URL('https://worker.example/web/analytics/executive?start_date=2024-01-01&end_date=2026-05-04'),
+      {},
+      ['analytics', 'executive'],
+      true,
+      { role: 'admin', tenant_id: 'tenant-a' },
+      'tenant-a',
+    ),
+    (error) => {
+      assert.equal(error?.status, 400);
+      assert.match(String(error?.message || ''), /maximo permitido/i);
+      return true;
+    },
+  );
+});
+
 test('analytics executive route scopes KPI queries to authenticated tenant', async () => {
   const calls = [];
   const db = {
@@ -275,4 +296,100 @@ test('analytics executive route keeps responding when aggregate refresh fails du
   assert.equal(body.success, true);
   assert.equal(body.kpis?.resolved_tickets, 0);
   assert.equal(Array.isArray(body.top_causes), true);
+});
+
+test('analytics executive productivity query avoids ambiguous team_name grouping', async () => {
+  const calls = [];
+  const db = {
+    prepare(sql) {
+      const normalized = String(sql || '').replace(/\s+/g, ' ').trim();
+      const call = { normalized, bound: [] };
+      return {
+        bind(...args) {
+          call.bound = args;
+          return this;
+        },
+        async all() {
+          calls.push(call);
+
+          if (normalized.includes('GROUP BY d.technician_id, technician_label, team_name')) {
+            throw new Error('ambiguous column name: team_name');
+          }
+          if (normalized.includes('SELECT COUNT(*) AS total FROM incident_kpi_daily WHERE tenant_id = ?')) {
+            return { results: [{ total: 1 }] };
+          }
+          if (normalized.includes('SUM(d.resolved_count)')) {
+            return {
+              results: [{
+                resolved_total: 2,
+                mttr_seconds_sum: 600,
+                sla_on_time_count: 2,
+                sla_late_count: 0,
+                fcr_count: 2,
+              }],
+            };
+          }
+          if (normalized.includes('FROM incident_kpi_daily d LEFT JOIN technicians t')) {
+            return {
+              results: [{
+                technician_id: 1,
+                technician_label: 'Tecnico',
+                team_name: 'NOC',
+                closed_tickets: 2,
+                fcr_hits: 2,
+              }],
+            };
+          }
+          if (normalized.includes('GROUP BY d.cause_code')) {
+            return { results: [] };
+          }
+          if (normalized.includes('GROUP BY d.day')) {
+            return { results: [] };
+          }
+          if (normalized.includes('GROUP BY i.asset_id')) {
+            return { results: [] };
+          }
+          if (normalized.includes('GROUP BY i.site_id')) {
+            return { results: [] };
+          }
+          if (normalized.includes('GROUP BY category_code')) {
+            return { results: [] };
+          }
+          if (normalized.includes('FROM tenant_sites')) {
+            return { results: [] };
+          }
+          if (normalized.includes('SELECT DISTINCT team_name FROM technicians')) {
+            return { results: [] };
+          }
+          if (normalized.includes('SELECT id, display_name, team_name FROM technicians')) {
+            return { results: [] };
+          }
+          throw new Error(`Unexpected SQL: ${normalized}`);
+        },
+      };
+    },
+  };
+
+  const handlers = createAnalyticsRouteHandlers({ jsonResponse });
+  const response = await handlers.handleAnalyticsRoute(
+    new Request('https://worker.example/web/analytics/executive?start_date=2026-05-01&end_date=2026-05-04'),
+    { DB: db },
+    new URL('https://worker.example/web/analytics/executive?start_date=2026-05-01&end_date=2026-05-04'),
+    {},
+    ['analytics', 'executive'],
+    true,
+    { role: 'admin', tenant_id: 'tenant-a' },
+    'tenant-a',
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.success, true);
+
+  const productivityCall = calls.find((entry) => entry.normalized.includes('FROM incident_kpi_daily d LEFT JOIN technicians t'));
+  assert.ok(productivityCall);
+  assert.match(
+    productivityCall.normalized,
+    /GROUP BY d\.technician_id, technician_label, COALESCE\(NULLIF\(TRIM\(t\.team_name\), ''\), ''\)/,
+  );
 });
